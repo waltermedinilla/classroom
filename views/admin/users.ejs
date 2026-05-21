@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Usuarios - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/admin-nav', { activePage: 'users' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Usuarios</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px"><%= users.length %> usuario(s) encontrado(s)</p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/admin/users/create" class="btn btn-primary">
+          <span class="material-symbols-outlined">person_add</span>
+          Nuevo usuario
+        </a>
+      </div>
+    </div>
+
+    <div class="filter-bar">
+      <form method="GET" action="/admin/users" class="filter-form">
+        <div class="input-group" style="flex:1">
+          <span class="material-symbols-outlined input-icon">search</span>
+          <input type="text" name="search" placeholder="Buscar por nombre o email..." value="<%= search %>">
+        </div>
+        <div class="input-group" style="width:200px">
+          <span class="material-symbols-outlined input-icon">filter_list</span>
+          <select name="role" class="select-input" onchange="this.form.submit()">
+            <option value="">Todos los roles</option>
+            <option value="admin" <%= currentRole === 'admin' ? 'selected' : '' %>>Admin</option>
+            <option value="directivo" <%= currentRole === 'directivo' ? 'selected' : '' %>>Directivo</option>
+            <option value="teacher" <%= currentRole === 'teacher' ? 'selected' : '' %>>Profesor</option>
+            <option value="preceptor" <%= currentRole === 'preceptor' ? 'selected' : '' %>>Preceptor</option>
+            <option value="soe" <%= currentRole === 'soe' ? 'selected' : '' %>>SOE</option>
+            <option value="student" <%= currentRole === 'student' ? 'selected' : '' %>>Alumno</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-outline">Buscar</button>
+      </form>
+    </div>
+
+    <div class="users-table-card">
+      <% if (users.length === 0) { %>
+        <div class="empty-state">
+          <div class="empty-icon"><span class="material-symbols-outlined">search_off</span></div>
+          <p>No se encontraron usuarios</p>
+        </div>
+      <% } else { %>
+        <table class="users-table">
+          <thead>
+            <tr>
+              <th>Usuario</th>
+              <th>Email</th>
+              <th>Rol</th>
+              <th>Registro</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% users.forEach(u => { %>
+              <tr>
+                <td>
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <div class="avatar" style="width:32px;height:32px;font-size:14px"><%= u.name.charAt(0).toUpperCase() %></div>
+                    <span style="font-weight:500"><%= u.name %></span>
+                  </div>
+                </td>
+                <td class="td-email"><%= u.email %></td>
+                <td><span class="role-badge role-<%= u.role %>"><%= roleNames[u.role] || u.role %></span></td>
+                <td class="td-date"><%= new Date(u.createdAt).toLocaleDateString('es-ES', { day:'numeric', month:'short', year:'numeric' }) %></td>
+                <td>
+                  <a href="/admin/users/<%= u._id %>" class="btn btn-outline" style="padding:6px 16px;font-size:13px">Ver perfil</a>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      <% } %>
+    </div>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

@@ -1,0 +1,18 @@
+<nav class="admin-nav">
+  <a href="/admin" class="admin-nav-item <%= activePage === 'dashboard' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">dashboard</span>
+    Resumen
+  </a>
+  <a href="/admin/users" class="admin-nav-item <%= activePage === 'users' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">people</span>
+    Usuarios
+  </a>
+  <a href="/admin/subjects" class="admin-nav-item <%= activePage === 'subjects' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">menu_book</span>
+    Materias
+  </a>
+  <a href="/admin/import" class="admin-nav-item <%= activePage === 'import' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">upload_file</span>
+    Importar
+  </a>
+</nav>

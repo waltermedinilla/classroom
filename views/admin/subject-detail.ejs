@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= subject.name %> - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/admin-nav', { activePage: 'subjects' }) %>
+
+    <a href="/admin/subjects" class="btn btn-outline" style="margin-bottom:24px">
+      <span class="material-symbols-outlined">arrow_back</span>
+      Volver a materias
+    </a>
+
+    <div class="subject-profile-header" style="border-left:4px solid <%= subject.color %>">
+      <div class="subject-profile-icon" style="background:<%= subject.color %>">
+        <span class="material-symbols-outlined">menu_book</span>
+      </div>
+      <div class="subject-profile-info">
+        <h2><%= subject.name %></h2>
+        <p class="subject-profile-desc"><%= subject.description || 'Sin descripción' %></p>
+        <p class="subject-profile-date">
+          Creada el <%= new Date(subject.createdAt).toLocaleDateString('es-ES', { day:'numeric', month:'long', year:'numeric' }) %>
+        </p>
+      </div>
+      <div class="subject-profile-actions">
+        <a href="/admin/subjects/<%= subject._id %>/edit" class="btn btn-outline">
+          <span class="material-symbols-outlined">edit</span>
+          Editar
+        </a>
+        <button class="btn btn-danger" id="deleteBtn">
+          <span class="material-symbols-outlined">delete</span>
+          Eliminar
+        </button>
+      </div>
+    </div>
+
+    <div class="section" style="margin-top:32px">
+      <div class="section-header">
+        <span class="material-symbols-outlined section-icon">school</span>
+        <h3>Cursos asociados (<%= courses.length %>)</h3>
+      </div>
+
+      <% if (courses.length === 0) { %>
+        <div class="empty-state small">
+          <div class="empty-icon"><span class="material-symbols-outlined">school</span></div>
+          <p>No hay cursos asociados a esta materia aún</p>
+          <p style="font-size:13px;color:var(--text-hint);margin-top:8px">
+            Los docentes pueden asociar sus cursos a "<%= subject.name %>" al crearlo.
+          </p>
+        </div>
+      <% } else { %>
+        <div class="users-table-card">
+          <table class="users-table">
+            <thead>
+              <tr>
+                <th>Curso</th>
+                <th>Sección</th>
+                <th>Aula</th>
+                <th>Docente</th>
+                <th>Alumnos</th>
+                <th>Código</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% courses.forEach(c => { %>
+                <tr>
+                  <td><strong><%= c.name %></strong></td>
+                  <td><%= c.section || '—' %></td>
+                  <td><%= c.room || '—' %></td>
+                  <td>
+                    <a href="/admin/users/<%= c.owner._id %>" style="color:var(--primary);font-weight:500">
+                      <%= c.owner.name %>
+                    </a>
+                  </td>
+                  <td>
+                    <span style="font-weight:600"><%= c.students.length %></span>
+                  </td>
+                  <td>
+                    <code style="background:#f0f4f8;padding:3px 10px;border-radius:var(--radius-xs);font-size:13px;letter-spacing:1px">
+                      <%= c.code %>
+                    </code>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+    </div>
+  </main>
+
+  <%- include('../partials/footer') %>
+  <script>
+    document.getElementById('deleteBtn').addEventListener('click', async () => {
+      if (!confirm('¿Eliminar la materia "<%= subject.name %>"? Los cursos asociados no serán eliminados.')) return;
+      const res = await fetch('/admin/subjects/<%= subject._id %>/delete', { method: 'POST' });
+      if (res.ok) window.location.href = '/admin/subjects';
+      else alert('Error al eliminar la materia');
+    });
+  </script>
+</body>
+</html>

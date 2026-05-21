@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= target.name %> - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/admin-nav', { activePage: 'users' }) %>
+
+    <a href="/admin/users" class="btn btn-outline" style="margin-bottom:24px">
+      <span class="material-symbols-outlined">arrow_back</span>
+      Volver a usuarios
+    </a>
+
+    <div class="profile-header">
+      <div class="profile-avatar">
+        <div class="avatar-huge" style="width:80px;height:80px;font-size:36px;background:<%= target.role === 'admin' ? '#ea4335' : target.role === 'teacher' ? '#1a73e8' : target.role === 'directivo' ? '#9334e6' : target.role === 'preceptor' ? '#ea8600' : target.role === 'soe' ? '#0d7377' : '#5f6368' %>">
+          <%= target.name.charAt(0).toUpperCase() %>
+        </div>
+      </div>
+      <div class="profile-info">
+        <h2><%= target.name %></h2>
+        <p class="profile-email"><%= target.email %></p>
+        <span class="role-badge role-<%= target.role %>" style="font-size:14px;padding:6px 16px"><%= roleNames[target.role] || target.role %></span>
+        <p class="profile-date">Registrado el <%= new Date(target.createdAt).toLocaleDateString('es-ES', { day:'numeric', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit' }) %></p>
+      </div>
+      <div style="margin-left:auto;display:flex;flex-direction:column;gap:10px;align-items:flex-end">
+        <% if (target.email !== PROTECTED_ADMIN_EMAIL && target._id.toString() !== user._id.toString()) { %>
+          <button class="btn btn-primary" id="impersonateBtn">
+            <span class="material-symbols-outlined">swap_horiz</span>
+            Ver como este usuario
+          </button>
+          <button class="btn btn-danger" id="deleteBtn" style="font-size:13px;padding:8px 18px">
+            <span class="material-symbols-outlined">delete</span>
+            Eliminar usuario
+          </button>
+        <% } %>
+        <% if (target.email === PROTECTED_ADMIN_EMAIL) { %>
+          <span style="font-size:12px;color:var(--text-hint);display:flex;align-items:center;gap:4px">
+            <span class="material-symbols-outlined" style="font-size:16px">lock</span>
+            Administrador protegido
+          </span>
+        <% } %>
+      </div>
+    </div>
+
+    <% if (target.email !== PROTECTED_ADMIN_EMAIL) { %>
+    <div class="profile-actions">
+      <div class="profile-action-card">
+        <h4>Cambiar rol</h4>
+        <form id="roleForm" style="display:flex;gap:12px;align-items:center;margin-top:12px">
+          <div class="input-group" style="flex:1">
+            <span class="material-symbols-outlined input-icon">badge</span>
+            <select id="newRole" class="select-input">
+              <option value="admin" <%= target.role === 'admin' ? 'selected' : '' %>>Admin</option>
+              <option value="directivo" <%= target.role === 'directivo' ? 'selected' : '' %>>Directivo</option>
+              <option value="teacher" <%= target.role === 'teacher' ? 'selected' : '' %>>Profesor</option>
+              <option value="preceptor" <%= target.role === 'preceptor' ? 'selected' : '' %>>Preceptor</option>
+              <option value="soe" <%= target.role === 'soe' ? 'selected' : '' %>>SOE</option>
+              <option value="student" <%= target.role === 'student' ? 'selected' : '' %>>Alumno</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary">Guardar</button>
+        </form>
+        <div class="form-error" id="roleError" style="margin-top:8px"></div>
+      </div>
+    </div>
+    <% } %>
+
+    <div class="section" style="margin-top:32px">
+      <div class="section-header">
+        <span class="material-symbols-outlined section-icon">star</span>
+        <h3>Cursos creados (<%= createdCourses.length %>)</h3>
+      </div>
+      <% if (createdCourses.length === 0) { %>
+        <div class="empty-state small"><p>No creó cursos</p></div>
+      <% } else { %>
+        <div class="course-grid">
+          <% createdCourses.forEach(c => { %>
+            <a href="/courses/<%= c._id %>" class="course-card" style="--card-color:#1a73e8">
+              <div class="card-banner" style="min-height:80px">
+                <div class="card-banner-content"><h4 style="font-size:20px"><%= c.name %></h4></div>
+              </div>
+              <div class="card-footer"><span class="card-code"><%= c.code %></span></div>
+            </a>
+          <% }) %>
+        </div>
+      <% } %>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <span class="material-symbols-outlined section-icon">group</span>
+        <h3>Cursos unidos (<%= joinedCourses.length %>)</h3>
+      </div>
+      <% if (joinedCourses.length === 0) { %>
+        <div class="empty-state small"><p>No se unió a cursos</p></div>
+      <% } else { %>
+        <div class="course-grid">
+          <% joinedCourses.forEach(c => { %>
+            <a href="/courses/<%= c._id %>" class="course-card" style="--card-color:#34a853">
+              <div class="card-banner" style="min-height:80px">
+                <div class="card-banner-content"><h4 style="font-size:20px"><%= c.name %></h4></div>
+              </div>
+              <div class="card-footer"><span><%= c.owner.name %></span></div>
+            </a>
+          <% }) %>
+        </div>
+      <% } %>
+    </div>
+  </main>
+
+  <%- include('../partials/footer') %>
+  <script>
+    <% if (target.email !== PROTECTED_ADMIN_EMAIL) { %>
+    document.getElementById('roleForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById('roleError');
+      errorEl.classList.remove('show');
+      const res = await fetch('/admin/users/<%= target._id %>/role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: document.getElementById('newRole').value }),
+      });
+      const data = await res.json();
+      if (!res.ok) { errorEl.textContent = data.error; errorEl.classList.add('show'); return; }
+      location.reload();
+    });
+
+    document.getElementById('impersonateBtn').addEventListener('click', async () => {
+      if (!confirm('¿Ver la plataforma como <%= target.name %>? Podrás volver desde la barra superior.')) return;
+      const res = await fetch('/admin/users/<%= target._id %>/impersonate', { method: 'POST' });
+      if (res.ok) window.location.href = '/courses';
+      else { const d = await res.json(); alert(d.error); }
+    });
+
+    document.getElementById('deleteBtn').addEventListener('click', async () => {
+      if (!confirm('¿Eliminar a <%= target.name %>? Esta acción no se puede deshacer.')) return;
+      const res = await fetch('/admin/users/<%= target._id %>/delete', { method: 'POST' });
+      if (res.ok) window.location.href = '/admin/users';
+      else { const d = await res.json(); alert(d.error); }
+    });
+    <% } %>
+  </script>
+</body>
+</html>

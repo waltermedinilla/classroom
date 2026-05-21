@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Materias - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/admin-nav', { activePage: 'subjects' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Materias</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px"><%= subjects.length %> materia(s) encontrada(s)</p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/admin/subjects/create" class="btn btn-primary">
+          <span class="material-symbols-outlined">add</span>
+          Nueva materia
+        </a>
+      </div>
+    </div>
+
+    <div class="filter-bar">
+      <form method="GET" action="/admin/subjects" class="filter-form">
+        <div class="input-group" style="flex:1">
+          <span class="material-symbols-outlined input-icon">search</span>
+          <input type="text" name="search" placeholder="Buscar materia..." value="<%= search %>">
+        </div>
+        <button type="submit" class="btn btn-outline">Buscar</button>
+        <% if (search) { %>
+          <a href="/admin/subjects" class="btn btn-outline">Limpiar</a>
+        <% } %>
+      </form>
+    </div>
+
+    <% if (subjects.length === 0) { %>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">menu_book</span></div>
+        <p><%= search ? 'No se encontraron materias con ese nombre' : 'No hay materias registradas aún' %></p>
+        <% if (!search) { %>
+          <a href="/admin/subjects/create" class="btn btn-primary" style="margin-top:20px">Crear primera materia</a>
+        <% } %>
+      </div>
+    <% } else { %>
+      <div class="subjects-grid">
+        <% subjects.forEach(s => { %>
+          <a href="/admin/subjects/<%= s._id %>" class="subject-card">
+            <div class="subject-card-banner" style="background:<%= s.color %>">
+              <span class="material-symbols-outlined">menu_book</span>
+            </div>
+            <div class="subject-card-body">
+              <h4 class="subject-card-name"><%= s.name %></h4>
+              <p class="subject-card-desc"><%= s.description || 'Sin descripción' %></p>
+              <div class="subject-card-meta">
+                <span class="material-symbols-outlined">school</span>
+                <%= s.courseCount %> curso<%= s.courseCount !== 1 ? 's' : '' %>
+              </div>
+            </div>
+          </a>
+        <% }) %>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

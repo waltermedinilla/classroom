@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Iniciar sesión - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="auth-body">
+  <div class="auth-container">
+    <div class="auth-card">
+      <div class="auth-logo">
+        <svg width="56" height="56" viewBox="0 0 40 40" fill="none">
+          <rect width="40" height="40" rx="10" fill="#1a73e8"/>
+          <text x="20" y="27" text-anchor="middle" fill="white" font-size="22" font-family="Arial" font-weight="bold">C</text>
+        </svg>
+        <h1>Classroom</h1>
+        <p class="auth-subtitle">Inicia sesión para continuar</p>
+      </div>
+      <form class="auth-form" id="loginForm">
+        <div class="input-group">
+          <span class="material-symbols-outlined input-icon">email</span>
+          <input type="email" id="email" placeholder="Correo electrónico" required>
+        </div>
+        <div class="input-group">
+          <span class="material-symbols-outlined input-icon">lock</span>
+          <input type="password" id="password" placeholder="Contraseña" required>
+        </div>
+        <div class="form-error" id="loginError"></div>
+        <button type="submit" class="btn btn-primary btn-full">
+          <span class="material-symbols-outlined">login</span>
+          Iniciar sesión
+        </button>
+      </form>
+      <p class="auth-link">¿No tienes cuenta? <a href="/register">Regístrate</a></p>
+    </div>
+  </div>
+  <script src="/js/login.js"></script>
+</body>
+</html>

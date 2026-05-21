@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= subject ? 'Editar materia' : 'Nueva materia' %> - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content" style="max-width:600px">
+    <a href="<%= subject ? '/admin/subjects/' + subject._id : '/admin/subjects' %>" class="btn btn-outline" style="margin-bottom:24px">
+      <span class="material-symbols-outlined">arrow_back</span>
+      <%= subject ? 'Volver a la materia' : 'Volver a materias' %>
+    </a>
+
+    <div class="modal" style="box-shadow:none;border:1px solid var(--border);animation:none">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">menu_book</span>
+          <h3><%= subject ? 'Editar materia' : 'Nueva materia' %></h3>
+        </div>
+      </div>
+      <div class="modal-body">
+        <form id="subjectForm" data-url="<%= subject ? '/admin/subjects/' + subject._id + '/edit' : '/admin/subjects/create' %>">
+
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">title</span>
+            <input type="text" id="name" placeholder="Nombre de la materia (ej: Matemáticas)" value="<%= subject ? subject.name : '' %>" required>
+          </div>
+
+          <div class="input-group" style="margin-top:16px;align-items:flex-start;padding-top:12px">
+            <span class="material-symbols-outlined input-icon" style="margin-top:2px">description</span>
+            <textarea id="description" placeholder="Descripción opcional..." style="flex:1;border:none;outline:none;font-size:14px;resize:vertical;min-height:80px;background:transparent;color:var(--text)"><%= subject ? subject.description : '' %></textarea>
+          </div>
+
+          <div style="margin-top:20px">
+            <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;font-weight:500">Color de la materia</p>
+            <div class="color-picker">
+              <% const colors = ['#1a73e8','#34a853','#ea4335','#fbbc04','#9334e6','#0d7377','#e91e63','#ff5722','#795548','#607d8b']; %>
+              <% const activeColor = subject ? subject.color : '#1a73e8'; %>
+              <% colors.forEach(c => { %>
+                <button type="button"
+                  class="color-option <%= activeColor === c ? 'selected' : '' %>"
+                  data-color="<%= c %>"
+                  style="background:<%= c %>"
+                  title="<%= c %>">
+                </button>
+              <% }) %>
+            </div>
+            <input type="hidden" id="color" value="<%= activeColor %>">
+          </div>
+
+          <div class="form-error" id="formError" style="margin-top:16px"></div>
+
+          <button type="submit" class="btn btn-primary btn-full" style="margin-top:24px">
+            <span class="material-symbols-outlined">check</span>
+            <%= subject ? 'Guardar cambios' : 'Crear materia' %>
+          </button>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <%- include('../partials/footer') %>
+  <script>
+    document.querySelectorAll('.color-option').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.color-option').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        document.getElementById('color').value = btn.dataset.color;
+      });
+    });
+
+    document.getElementById('subjectForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById('formError');
+      errorEl.classList.remove('show');
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Guardando...';
+
+      const url = e.target.dataset.url;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: document.getElementById('name').value.trim(),
+          description: document.getElementById('description').value.trim(),
+          color: document.getElementById('color').value,
+        }),
+      });
+      const data = await res.json();
+      btn.disabled = false;
+      btn.innerHTML = '<span class="material-symbols-outlined">check</span> <%= subject ? "Guardar cambios" : "Crear materia" %>';
+
+      if (!res.ok) {
+        errorEl.textContent = data.error;
+        errorEl.classList.add('show');
+        return;
+      }
+      window.location.href = '/admin/subjects/' + data.subject._id;
+    });
+  </script>
+</body>
+</html>

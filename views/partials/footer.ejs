@@ -1,0 +1,27 @@
+  <script>
+    function toggleDrawer() {
+      document.getElementById('drawer').classList.toggle('open');
+    }
+    var path = window.location.pathname;
+    document.querySelectorAll('.drawer-item').forEach(function(item) {
+      var href = item.getAttribute('href');
+      if ((href === '/' && path !== '/admin' && !path.startsWith('/admin')) || (href !== '/' && path.startsWith(href))) {
+        item.classList.add('active');
+      }
+    });
+    function toggleUserMenu() {
+      document.getElementById('userMenu').classList.toggle('show');
+    }
+    document.addEventListener('click', function(e) {
+      if (!e.target.closest('.header-right')) {
+        document.getElementById('userMenu')?.classList.remove('show');
+      }
+    });
+    async function logout() {
+      if (!confirm('¿Cerrar sesión?')) return;
+      await fetch('/logout', { method: 'POST' });
+      window.location.href = '/login';
+    }
+  </script>
+</body>
+</html>

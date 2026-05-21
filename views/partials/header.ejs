@@ -1,0 +1,92 @@
+<% if (impersonating) { %>
+<style>
+  .header { top: 44px; }
+  .main-content { margin-top: 124px; }
+</style>
+<div class="impersonation-bar">
+  <span class="material-symbols-outlined">visibility</span>
+  Estás viendo como <strong><%= user ? user.name : '' %></strong>
+  <span class="role-badge role-<%= user ? user.role : '' %>" style="font-size:11px;padding:2px 10px"><%= user ? (roleNames[user.role] || user.role) : '' %></span>
+  <a href="/exit-impersonate" class="impersonation-exit">
+    <span class="material-symbols-outlined">logout</span>
+    Volver a mi cuenta
+  </a>
+</div>
+<% } %>
+
+<header class="header">
+  <div class="header-left">
+    <button class="icon-btn" id="menuBtn" onclick="toggleDrawer()">
+      <span class="material-symbols-outlined">menu</span>
+    </button>
+    <a href="/" class="header-logo">
+      <div class="logo-icon">
+        <svg width="32" height="32" viewBox="0 0 40 40" fill="none">
+          <rect width="40" height="40" rx="8" fill="#1a73e8"/>
+          <text x="20" y="27" text-anchor="middle" fill="white" font-size="22" font-family="Arial" font-weight="bold">C</text>
+        </svg>
+      </div>
+      <span class="header-title">Classroom</span>
+    </a>
+  </div>
+  <div class="header-right">
+    <% if (typeof user !== 'undefined' && user) { %>
+      <span class="user-role role-badge role-<%= user.role %>"><%= roleNames[user.role] || user.role %></span>
+      <button class="icon-btn" onclick="toggleUserMenu()" title="Menú de usuario">
+        <div class="avatar"><%= user.name.charAt(0).toUpperCase() %></div>
+      </button>
+      <div class="user-menu" id="userMenu">
+        <div class="user-menu-header">
+          <div class="avatar-huge"><%= user.name.charAt(0).toUpperCase() %></div>
+          <div class="user-menu-info">
+            <div class="user-menu-name"><%= user.name %></div>
+            <div class="user-menu-email"><%= user.email %></div>
+            <span class="role-badge role-<%= user.role %>" style="margin-top:8px"><%= roleNames[user.role] || user.role %></span>
+          </div>
+        </div>
+        <div class="user-menu-divider"></div>
+        <% if (impersonating) { %>
+          <a href="/exit-impersonate" class="user-menu-item">
+            <span class="material-symbols-outlined">swap_horiz</span>
+            Volver a mi cuenta (<%= impersonating.name %>)
+          </a>
+          <div class="user-menu-divider"></div>
+        <% } %>
+        <button class="user-menu-item" onclick="logout()">
+          <span class="material-symbols-outlined">logout</span>
+          Cerrar sesión
+        </button>
+      </div>
+    <% } %>
+  </div>
+</header>
+
+<nav class="drawer" id="drawer">
+  <div class="drawer-overlay" onclick="toggleDrawer()"></div>
+  <div class="drawer-content">
+    <div class="drawer-header">
+      <button class="icon-btn" onclick="toggleDrawer()">
+        <span class="material-symbols-outlined">menu</span>
+      </button>
+      <span class="drawer-title">Classroom</span>
+    </div>
+    <div class="drawer-body">
+      <a href="/" class="drawer-item">
+        <span class="material-symbols-outlined">school</span>
+        <span>Clases</span>
+      </a>
+      <% if (typeof user !== 'undefined' && user && user.role === 'admin' && !impersonating) { %>
+        <a href="/admin" class="drawer-item">
+          <span class="material-symbols-outlined">admin_panel_settings</span>
+          <span>Administración</span>
+        </a>
+      <% } %>
+      <% if (impersonating) { %>
+        <a href="/exit-impersonate" class="drawer-item" style="color:#ea8600">
+          <span class="material-symbols-outlined">swap_horiz</span>
+          <span>Salir de vista</span>
+        </a>
+      <% } %>
+    </div>
+  </div>
+</nav>

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Registrarse - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="auth-body">
+  <div class="auth-container">
+    <div class="auth-card">
+      <div class="auth-logo">
+        <svg width="56" height="56" viewBox="0 0 40 40" fill="none">
+          <rect width="40" height="40" rx="10" fill="#1a73e8"/>
+          <text x="20" y="27" text-anchor="middle" fill="white" font-size="22" font-family="Arial" font-weight="bold">C</text>
+        </svg>
+        <h1>Classroom</h1>
+        <p class="auth-subtitle">Crea tu cuenta</p>
+      </div>
+      <form class="auth-form" id="registerForm">
+        <div class="input-group">
+          <span class="material-symbols-outlined input-icon">badge</span>
+          <input type="text" id="name" placeholder="Nombre completo" required>
+        </div>
+        <div class="input-group">
+          <span class="material-symbols-outlined input-icon">email</span>
+          <input type="email" id="email" placeholder="Correo electrónico" required>
+        </div>
+        <div class="input-group">
+          <span class="material-symbols-outlined input-icon">lock</span>
+          <input type="password" id="password" placeholder="Contraseña (mín. 6 caracteres)" required>
+        </div>
+        <div class="input-group">
+          <span class="material-symbols-outlined input-icon">badge</span>
+          <select id="role" class="select-input">
+            <option value="student">Alumno</option>
+            <option value="teacher">Profesor</option>
+            <option value="preceptor">Preceptor</option>
+            <option value="soe">SOE</option>
+            <option value="directivo">Directivo</option>
+          </select>
+        </div>
+        <div class="form-error" id="registerError"></div>
+        <button type="submit" class="btn btn-primary btn-full">
+          <span class="material-symbols-outlined">person_add</span>
+          Registrarse
+        </button>
+      </form>
+      <p class="auth-link">¿Ya tienes cuenta? <a href="/login">Inicia sesión</a></p>
+    </div>
+  </div>
+  <script src="/js/register.js"></script>
+</body>
+</html>

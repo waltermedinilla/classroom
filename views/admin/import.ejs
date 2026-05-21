@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Importar - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/admin-nav', { activePage: 'import' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Importar desde Excel</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Soporta <strong>Reporte de Alumnos</strong> y <strong>Cargos</strong> — el tipo se detecta automáticamente
+        </p>
+      </div>
+    </div>
+
+    <!-- PASO 1: Subir archivo -->
+    <div id="step1">
+      <div class="upload-zone" id="uploadZone">
+        <span class="material-symbols-outlined">upload_file</span>
+        <h3>Subir archivo Excel</h3>
+        <p>Arrastrá un archivo .xls o .xlsx aquí, o hacé clic para seleccionar</p>
+        <button type="button" class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+          <span class="material-symbols-outlined">folder_open</span>
+          Seleccionar archivo
+        </button>
+        <input type="file" id="fileInput" accept=".xls,.xlsx" style="display:none">
+      </div>
+      <div class="form-error" id="uploadError" style="margin-top:12px"></div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px">
+        <div style="background:var(--surface);border-radius:var(--radius);padding:20px 24px;box-shadow:var(--shadow-sm);border-left:4px solid #1a73e8">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <span class="material-symbols-outlined" style="color:#1a73e8">group</span>
+            <strong>Reporte de Alumnos</strong>
+          </div>
+          <p style="font-size:13px;color:var(--text-secondary)">Importa alumnos, crea cursos por división y los inscribe automáticamente.</p>
+        </div>
+        <div style="background:var(--surface);border-radius:var(--radius);padding:20px 24px;box-shadow:var(--shadow-sm);border-left:4px solid #34a853">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <span class="material-symbols-outlined" style="color:#34a853">badge</span>
+            <strong>Cargos</strong>
+          </div>
+          <p style="font-size:13px;color:var(--text-secondary)">Importa docentes, crea un curso por materia-división y carga las materias.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- PASO 2: Configurar importación -->
+    <div id="step2" style="display:none">
+      <div class="import-file-info" id="fileInfo"></div>
+
+      <!-- === CARDS PARA ALUMNOS === -->
+      <div id="alumnosCards" style="display:none">
+        <div class="import-card active" id="cardAlumnos">
+          <label class="import-card-header">
+            <input type="checkbox" id="chkAlumnos" checked onchange="toggleCard('cardAlumnos',this.checked)">
+            <span class="material-symbols-outlined" style="color:#1a73e8">group</span>
+            <div><h3>Importar Alumnos</h3><p id="lblAlumnos"></p></div>
+          </label>
+          <div class="import-card-body">
+            <div class="warning-banner" id="warnSkipped" style="display:none">
+              <span class="material-symbols-outlined warning-icon">warning</span>
+              <span id="txtSkipped"></span>
+            </div>
+            <p style="font-size:14px;color:var(--text-secondary)">
+              Se crearán cuentas con rol <strong>Alumno</strong>. La contraseña inicial es el <strong>número de DNI</strong>.
+            </p>
+          </div>
+        </div>
+
+        <div class="import-card active" id="cardCursos">
+          <label class="import-card-header">
+            <input type="checkbox" id="chkCursos" checked onchange="toggleCard('cardCursos',this.checked)">
+            <span class="material-symbols-outlined" style="color:#34a853">school</span>
+            <div><h3>Importar Cursos por División</h3><p id="lblCursos"></p></div>
+          </label>
+          <div class="import-card-body">
+            <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px">
+              Asigná un docente y materia a cada división. Si también importás alumnos, se inscribirán automáticamente.
+            </p>
+            <div style="overflow-x:auto">
+              <table class="users-table" style="min-width:600px">
+                <thead><tr><th>División</th><th>Docente / Profesor</th><th>Materia</th></tr></thead>
+                <tbody id="cursosTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="import-card" id="cardMateriasA">
+          <label class="import-card-header">
+            <input type="checkbox" id="chkMateriasA" onchange="toggleCard('cardMateriasA',this.checked)">
+            <span class="material-symbols-outlined" style="color:#9334e6">menu_book</span>
+            <div><h3>Crear Materias nuevas</h3><p>Las materias escritas que no existan se crearán automáticamente</p></div>
+          </label>
+        </div>
+      </div>
+
+      <!-- === CARDS PARA CARGOS === -->
+      <div id="cargosCards" style="display:none">
+        <div class="import-card active" id="cardDocentes">
+          <label class="import-card-header">
+            <input type="checkbox" id="chkDocentes" checked onchange="toggleCard('cardDocentes',this.checked)">
+            <span class="material-symbols-outlined" style="color:#1a73e8">badge</span>
+            <div><h3>Crear usuarios Docentes</h3><p id="lblDocentes"></p></div>
+          </label>
+          <div class="import-card-body">
+            <p style="font-size:14px;color:var(--text-secondary)">
+              Se crearán cuentas con rol <strong>Profesor</strong>. Email: <code>doc.DNI@esc4039.edu.ar</code>. Contraseña: número de DNI.
+            </p>
+          </div>
+        </div>
+
+        <div class="import-card active" id="cardCursosMaterias">
+          <label class="import-card-header">
+            <input type="checkbox" id="chkCursosMaterias" checked onchange="toggleCard('cardCursosMaterias',this.checked)">
+            <span class="material-symbols-outlined" style="color:#34a853">school</span>
+            <div><h3>Crear Cursos por Materia</h3><p id="lblCursosMaterias"></p></div>
+          </label>
+          <div class="import-card-body">
+            <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px">
+              Se crea un curso por cada par <strong>División + Materia</strong> con su docente asignado.
+            </p>
+            <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+              <table class="users-table" style="min-width:700px">
+                <thead><tr><th>División</th><th>Materia</th><th>Docente</th><th>Turno</th></tr></thead>
+                <tbody id="cargosTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="import-card active" id="cardMateriasCargos">
+          <label class="import-card-header">
+            <input type="checkbox" id="chkMateriasCargos" checked onchange="toggleCard('cardMateriasCargos',this.checked)">
+            <span class="material-symbols-outlined" style="color:#9334e6">menu_book</span>
+            <div><h3>Registrar Materias</h3><p id="lblMateriasCargos"></p></div>
+          </label>
+          <div class="import-card-body">
+            <p style="font-size:14px;color:var(--text-secondary)">Las materias que no existan en el sistema serán creadas.</p>
+          </div>
+        </div>
+
+        <div class="import-card" id="cardInscribir">
+          <label class="import-card-header">
+            <input type="checkbox" id="chkInscribir" onchange="toggleCard('cardInscribir',this.checked)">
+            <span class="material-symbols-outlined" style="color:#ea8600">group_add</span>
+            <div>
+              <h3>Inscribir Alumnos existentes</h3>
+              <p>Busca alumnos ya importados en cada división y los inscribe en los cursos de materia creados</p>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:12px;align-items:center;margin-top:8px">
+        <button class="btn btn-primary" id="executeBtn" onclick="executeImport()">
+          <span class="material-symbols-outlined">cloud_upload</span>
+          Importar ahora
+        </button>
+        <button class="btn btn-outline" onclick="resetWizard()">
+          <span class="material-symbols-outlined">restart_alt</span>
+          Elegir otro archivo
+        </button>
+      </div>
+      <div class="form-error" id="execError" style="margin-top:12px"></div>
+    </div>
+
+    <!-- PASO 3: Resultados -->
+    <div id="step3" style="display:none">
+      <div class="import-results-banner" id="resultsBanner"></div>
+      <div class="import-results-grid" id="resultsGrid"></div>
+      <div style="display:flex;gap:12px;margin-top:8px">
+        <a href="/admin" class="btn btn-primary">
+          <span class="material-symbols-outlined">dashboard</span>
+          Ir al panel
+        </a>
+        <button class="btn btn-outline" onclick="resetWizard()">
+          <span class="material-symbols-outlined">upload_file</span>
+          Nueva importación
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <%- include('../partials/footer') %>
+
+  <script>
+    const DB_TEACHERS = <%- JSON.stringify(teachers) %>;
+    const DB_SUBJECTS = <%- JSON.stringify(subjects) %>;
+    let parsedData = null;
+
+    /* ── Upload Zone ── */
+    const uploadZone = document.getElementById('uploadZone');
+    uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+    uploadZone.addEventListener('drop', e => {
+      e.preventDefault(); uploadZone.classList.remove('drag-over');
+      if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]);
+    });
+    document.getElementById('fileInput').addEventListener('change', e => {
+      if (e.target.files[0]) uploadFile(e.target.files[0]);
+    });
+
+    async function uploadFile(file) {
+      const errorEl = document.getElementById('uploadError');
+      errorEl.classList.remove('show');
+      uploadZone.innerHTML = `
+        <span class="material-symbols-outlined" style="font-size:48px;animation:spin 1s linear infinite">progress_activity</span>
+        <p style="margin-top:12px">Procesando <strong>${file.name}</strong>...</p>
+      `;
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const res = await fetch('/admin/import/upload', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) { restoreUploadZone(); errorEl.textContent = data.error; errorEl.classList.add('show'); return; }
+        parsedData = data;
+        showStep2(data, file.name);
+      } catch {
+        restoreUploadZone(); errorEl.textContent = 'Error de conexión.'; errorEl.classList.add('show');
+      }
+    }
+
+    function restoreUploadZone() {
+      uploadZone.innerHTML = `
+        <span class="material-symbols-outlined">upload_file</span>
+        <h3>Subir archivo Excel</h3>
+        <p>Arrastrá un archivo .xls o .xlsx aquí, o hacé clic para seleccionar</p>
+        <button type="button" class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+          <span class="material-symbols-outlined">folder_open</span> Seleccionar archivo
+        </button>
+        <input type="file" id="fileInput" accept=".xls,.xlsx" style="display:none">
+      `;
+      document.getElementById('fileInput').addEventListener('change', e => {
+        if (e.target.files[0]) uploadFile(e.target.files[0]);
+      });
+    }
+
+    function showStep2(data, fileName) {
+      document.getElementById('step1').style.display = 'none';
+      document.getElementById('step2').style.display = 'block';
+      const total = data.total ?? data.entries?.length ?? (data.teachers?.length || 0) + (data.entries?.length || 0);
+      document.getElementById('fileInfo').innerHTML = `
+        <span class="material-symbols-outlined">table_view</span>
+        <strong>${fileName}</strong> &mdash; Hoja: <em>${data.sheetName}</em> &mdash;
+        Tipo detectado: <strong>${data.type === 'cargos' ? 'Cargos docentes' : 'Reporte de Alumnos'}</strong>
+      `;
+      if (data.type === 'cargos') showCargosCards(data);
+      else showAlumnosCards(data);
+    }
+
+    /* ── ALUMNOS ── */
+    function showAlumnosCards(data) {
+      document.getElementById('alumnosCards').style.display = 'block';
+      document.getElementById('lblAlumnos').textContent = `${data.students.length} alumno(s) con email válido`;
+      if (data.skipped > 0) {
+        document.getElementById('warnSkipped').style.display = 'flex';
+        document.getElementById('txtSkipped').textContent = `${data.skipped} alumno(s) sin email serán omitidos`;
+      }
+      document.getElementById('lblCursos').textContent = `${data.cursos.length} divisiones encontradas`;
+      const tbody = document.getElementById('cursosTableBody');
+      tbody.innerHTML = data.cursos.map(curso => `
+        <tr data-curso="${curso}">
+          <td><strong>${curso}</strong></td>
+          <td>
+            <div class="input-group" style="min-width:220px">
+              <span class="material-symbols-outlined input-icon">badge</span>
+              <select class="select-input teacher-select">
+                <option value="">— Seleccionar docente —</option>
+                ${DB_TEACHERS.map(t => `<option value="${t._id}">${t.name}</option>`).join('')}
+              </select>
+            </div>
+          </td>
+          <td>
+            <div class="input-group" style="min-width:180px">
+              <span class="material-symbols-outlined input-icon">menu_book</span>
+              <input type="text" class="subject-input" placeholder="Materia (opcional)" list="subjectsList"
+                style="flex:1;padding:14px 0;border:none;outline:none;font-size:14px;background:transparent;color:var(--text)">
+            </div>
+          </td>
+        </tr>
+      `).join('');
+      ensureSubjectsList();
+    }
+
+    /* ── CARGOS ── */
+    function showCargosCards(data) {
+      document.getElementById('cargosCards').style.display = 'block';
+      document.getElementById('lblDocentes').textContent =
+        `${data.teachers.length} docentes únicos encontrados`;
+      document.getElementById('lblCursosMaterias').textContent =
+        `${data.entries.length} pares División-Materia (cursos a crear)`;
+      document.getElementById('lblMateriasCargos').textContent =
+        `${data.materias.length} materias únicas encontradas`;
+
+      const tbody = document.getElementById('cargosTableBody');
+      tbody.innerHTML = data.entries.map(e => `
+        <tr>
+          <td><strong>${e.division}</strong></td>
+          <td style="font-size:13px">${e.materia}</td>
+          <td style="font-size:13px;color:var(--text-secondary)">${formatPersona(e.persona)}</td>
+          <td><span style="font-size:12px;background:#f0f4f8;padding:3px 8px;border-radius:4px">${e.turno}</span></td>
+        </tr>
+      `).join('');
+    }
+
+    function formatPersona(raw) {
+      const m = raw.match(/^\d{2}-\d{7,9}-\d\s+(.+)$/);
+      if (!m) return raw;
+      return m[1].trim().replace(/\s+[MF]$/, '').split(' ').map(w =>
+        w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+      ).join(' ');
+    }
+
+    function ensureSubjectsList() {
+      if (!document.getElementById('subjectsList')) {
+        const dl = document.createElement('datalist');
+        dl.id = 'subjectsList';
+        dl.innerHTML = DB_SUBJECTS.map(s => `<option value="${s.name}">`).join('');
+        document.body.appendChild(dl);
+      }
+    }
+
+    function toggleCard(id, checked) {
+      document.getElementById(id).classList.toggle('active', checked);
+    }
+
+    /* ── EXECUTE ── */
+    async function executeImport() {
+      const btn = document.getElementById('executeBtn');
+      const errorEl = document.getElementById('execError');
+      errorEl.classList.remove('show');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Importando...';
+
+      let body;
+      if (parsedData.type === 'cargos') {
+        body = {
+          type: 'cargos',
+          importDocentes: document.getElementById('chkDocentes').checked,
+          importCursosMaterias: document.getElementById('chkCursosMaterias').checked,
+          importMaterias: document.getElementById('chkMateriasCargos').checked,
+          inscribirAlumnos: document.getElementById('chkInscribir').checked,
+          entries: parsedData.entries,
+          teachers: parsedData.teachers,
+        };
+      } else {
+        const cursosConfig = [...document.querySelectorAll('#cursosTableBody tr')].map(row => ({
+          name: row.dataset.curso,
+          teacherId: row.querySelector('.teacher-select').value,
+          subjectName: row.querySelector('.subject-input').value.trim(),
+        }));
+        body = {
+          importAlumnos: document.getElementById('chkAlumnos').checked,
+          importCursos: document.getElementById('chkCursos').checked,
+          importMaterias: document.getElementById('chkMateriasA').checked,
+          students: parsedData.students,
+          cursosConfig,
+        };
+      }
+
+      try {
+        const res = await fetch('/admin/import/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          btn.disabled = false;
+          btn.innerHTML = '<span class="material-symbols-outlined">cloud_upload</span> Importar ahora';
+          errorEl.textContent = data.error || 'Error al ejecutar la importación';
+          errorEl.classList.add('show');
+          return;
+        }
+        showResults(data.results, parsedData.type);
+      } catch {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="material-symbols-outlined">cloud_upload</span> Importar ahora';
+        errorEl.textContent = 'Error de conexión.';
+        errorEl.classList.add('show');
+      }
+    }
+
+    function showResults(r, type) {
+      document.getElementById('step2').style.display = 'none';
+      document.getElementById('step3').style.display = 'block';
+
+      let cards = '';
+      if (type === 'cargos') {
+        const total = r.docentes.created + r.cursos.created + r.materias.created;
+        document.getElementById('resultsBanner').innerHTML = `
+          <span class="material-symbols-outlined">check_circle</span>
+          Importación completada — <strong>${total}</strong> elemento(s) creados
+        `;
+        cards = `
+          <div class="import-result-card" style="--stat-color:#1a73e8">
+            <div class="import-result-number">${r.docentes.created}</div>
+            <div class="import-result-label">Docentes creados</div>
+            <div class="import-result-detail">${r.docentes.skipped} ya existían</div>
+          </div>
+          <div class="import-result-card" style="--stat-color:#34a853">
+            <div class="import-result-number">${r.cursos.created}</div>
+            <div class="import-result-label">Cursos creados</div>
+            <div class="import-result-detail">${r.cursos.skipped} omitidos</div>
+          </div>
+          <div class="import-result-card" style="--stat-color:#9334e6">
+            <div class="import-result-number">${r.materias.created}</div>
+            <div class="import-result-label">Materias nuevas</div>
+            <div class="import-result-detail">${r.materias.skipped} ya existían</div>
+          </div>
+          <div class="import-result-card" style="--stat-color:#ea8600">
+            <div class="import-result-number">${r.inscriptos}</div>
+            <div class="import-result-label">Inscripciones</div>
+            <div class="import-result-detail">alumnos en cursos</div>
+          </div>
+        `;
+      } else {
+        const total = r.alumnos.created + r.cursos.created + r.materias.created;
+        document.getElementById('resultsBanner').innerHTML = `
+          <span class="material-symbols-outlined">check_circle</span>
+          Importación completada — <strong>${total}</strong> elemento(s) creados
+        `;
+        cards = `
+          <div class="import-result-card" style="--stat-color:#1a73e8">
+            <div class="import-result-number">${r.alumnos.created}</div>
+            <div class="import-result-label">Alumnos creados</div>
+            <div class="import-result-detail">${r.alumnos.skipped} ya existían</div>
+          </div>
+          <div class="import-result-card" style="--stat-color:#34a853">
+            <div class="import-result-number">${r.cursos.created}</div>
+            <div class="import-result-label">Cursos creados</div>
+            <div class="import-result-detail">${r.cursos.skipped} omitidos</div>
+          </div>
+          <div class="import-result-card" style="--stat-color:#9334e6">
+            <div class="import-result-number">${r.materias.created}</div>
+            <div class="import-result-label">Materias creadas</div>
+            <div class="import-result-detail">${r.materias.skipped} ya existían</div>
+          </div>
+          <div class="import-result-card" style="--stat-color:#ea8600">
+            <div class="import-result-number">${r.inscriptos}</div>
+            <div class="import-result-label">Alumnos inscriptos</div>
+            <div class="import-result-detail">en sus cursos</div>
+          </div>
+        `;
+      }
+      document.getElementById('resultsGrid').innerHTML = cards;
+    }
+
+    function resetWizard() {
+      parsedData = null;
+      document.getElementById('step2').style.display = 'none';
+      document.getElementById('step3').style.display = 'none';
+      document.getElementById('alumnosCards').style.display = 'none';
+      document.getElementById('cargosCards').style.display = 'none';
+      document.getElementById('step1').style.display = 'block';
+      document.getElementById('uploadError').classList.remove('show');
+      restoreUploadZone();
+    }
+  </script>
+  <style>@keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }</style>
+</body>
+</html>

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= course.name %> - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('partials/header') %>
+
+  <main class="main-content">
+    <div class="course-header" style="--card-color: #1a73e8">
+      <div class="course-header-info">
+        <h2><%= course.name %></h2>
+        <% if (course.section) { %>
+          <p class="course-section"><%= course.section %></p>
+        <% } %>
+        <div class="course-meta">
+          <div class="course-code-badge">
+            <span class="material-symbols-outlined">vpn_key</span>
+            <span><%= course.code %></span>
+          </div>
+        </div>
+      </div>
+      <div class="course-owner">
+        <div class="avatar" style="width:48px;height:48px;font-size:22px;background:rgba(255,255,255,0.3)"><%= course.owner.name.charAt(0).toUpperCase() %></div>
+        <span class="course-owner-name"><%= course.owner.name %></span>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="stream">
+        <span class="material-symbols-outlined">dynamic_feed</span>
+        Novedades
+      </button>
+      <button class="tab" data-tab="people">
+        <span class="material-symbols-outlined">people</span>
+        Personas
+      </button>
+      <button class="tab" data-tab="activities">
+        <span class="material-symbols-outlined">assignment</span>
+        Actividades
+      </button>
+    </div>
+
+    <!-- Tab: Novedades -->
+    <div class="tab-content" id="streamTab">
+      <div class="announcement-card">
+        <div class="announcement-form-header">
+          <div class="avatar"><%= user.name.charAt(0).toUpperCase() %></div>
+          <input type="text" id="announcementInput" placeholder="Anuncia algo a tu clase" readonly onclick="openAnnouncementForm()">
+        </div>
+        <div class="announcement-form-expanded" id="announcementFormExpanded">
+          <textarea id="announcementText" placeholder="Anuncia algo a tu clase..." rows="3"></textarea>
+          <div class="announcement-actions">
+            <label class="icon-btn" title="Adjuntar imagen">
+              <input type="file" id="imageInput" accept="image/*" hidden>
+              <span class="material-symbols-outlined">image</span>
+            </label>
+            <span id="imageName" class="image-name"></span>
+            <div class="announcement-form-btns">
+              <button class="btn btn-outline" onclick="closeAnnouncementForm()">
+                <span class="material-symbols-outlined">close</span>
+                Cancelar
+              </button>
+              <button class="btn btn-primary" onclick="postAnnouncement()">
+                <span class="material-symbols-outlined">send</span>
+                Publicar
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="streamList"></div>
+    </div>
+
+    <!-- Tab: Personas -->
+    <div class="tab-content hidden" id="peopleTab">
+      <div class="people-card">
+        <div class="people-card-header">
+          <span class="material-symbols-outlined">school</span>
+          <h3>Profesor</h3>
+        </div>
+        <div class="person-item">
+          <div class="avatar" style="background:#1a73e8"><%= course.owner.name.charAt(0).toUpperCase() %></div>
+          <div class="person-info">
+            <div class="person-name"><%= course.owner.name %></div>
+            <div class="person-email"><%= course.owner.email %></div>
+          </div>
+        </div>
+      </div>
+      <div class="people-card">
+        <div class="people-card-header">
+          <span class="material-symbols-outlined">people</span>
+          <h3>Estudiantes</h3>
+          <span class="people-count"><%= course.students.length %></span>
+        </div>
+        <% if (course.students.length === 0) { %>
+          <div class="empty-state small">
+            <div class="empty-icon"><span class="material-symbols-outlined">person_add</span></div>
+            <p>Aún no hay estudiantes</p>
+          </div>
+        <% } %>
+        <% course.students.forEach(student => { %>
+          <div class="person-item">
+            <div class="avatar"><%= student.name.charAt(0).toUpperCase() %></div>
+            <div class="person-info">
+              <div class="person-name"><%= student.name %></div>
+              <div class="person-email"><%= student.email %></div>
+            </div>
+          </div>
+        <% }) %>
+      </div>
+    </div>
+
+    <!-- Tab: Actividades -->
+    <div class="tab-content hidden" id="activitiesTab">
+      <div class="activities-list" id="activitiesList">
+        <div class="empty-state">
+          <div class="empty-icon"><span class="material-symbols-outlined">hourglass_empty</span></div>
+          <p>Cargando actividades...</p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- FAB solo para docente del curso -->
+  <% if (course.owner._id.toString() === user._id.toString()) { %>
+  <button class="fab" id="fabBtn" style="display:none" onclick="openActivityModal()" title="Nueva actividad">
+    <span class="material-symbols-outlined">add</span>
+  </button>
+  <% } %>
+
+  <!-- Modal: Crear Actividad -->
+  <div class="modal-overlay" id="activityModal">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">assignment_add</span>
+          <h3>Nueva actividad</h3>
+        </div>
+        <button class="icon-btn" onclick="closeActivityModal()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="input-group" style="margin-bottom:16px">
+          <span class="material-symbols-outlined input-icon">title</span>
+          <input type="text" id="activityTitle" placeholder="Título de la actividad *" autocomplete="off">
+        </div>
+        <div class="input-group" style="margin-bottom:16px;align-items:flex-start">
+          <span class="material-symbols-outlined input-icon" style="margin-top:14px">description</span>
+          <textarea id="activityDesc" placeholder="Instrucciones (opcional)" rows="4"
+            style="resize:vertical;padding:12px 16px;border:1px solid var(--border);border-radius:var(--radius-sm);width:100%;font-size:14px;outline:none;font-family:inherit;transition:border-color 0.2s"
+            onfocus="this.style.borderColor='var(--primary)'" onblur="this.style.borderColor='var(--border)'"></textarea>
+        </div>
+        <div style="display:flex;gap:12px;margin-bottom:12px">
+          <div class="input-group" style="flex:1">
+            <span class="material-symbols-outlined input-icon">schedule</span>
+            <input type="datetime-local" id="activityDueDate" title="Fecha de entrega">
+          </div>
+          <div class="input-group" style="width:130px">
+            <span class="material-symbols-outlined input-icon">star</span>
+            <input type="number" id="activityPoints" placeholder="Puntos" min="0" max="9999">
+          </div>
+        </div>
+        <div class="input-group" style="margin-bottom:16px">
+          <span class="material-symbols-outlined input-icon">event_available</span>
+          <input type="datetime-local" id="activityAvailableFrom" title="Disponible para alumnos desde (vacío = ahora)">
+        </div>
+        <p style="font-size:12px;color:var(--text-hint);margin-bottom:16px;margin-top:-8px;padding-left:4px">
+          "Disponible desde" controla cuándo los alumnos pueden ver la actividad. Si se deja vacío, se publica inmediatamente.
+        </p>
+        <div class="form-error" id="activityError" style="margin-bottom:16px"></div>
+        <div style="display:flex;justify-content:flex-end;gap:12px">
+          <button class="btn btn-outline" onclick="closeActivityModal()">Cancelar</button>
+          <button class="btn btn-primary" id="activitySubmitBtn" onclick="createActivity()">
+            <span class="material-symbols-outlined">check</span>
+            Crear actividad
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Detalle de Actividad -->
+  <div class="modal-overlay" id="activityDetailModal">
+    <div class="modal" style="max-width:720px;width:100%">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">assignment</span>
+          <h3 id="detailTitle">Actividad</h3>
+        </div>
+        <button class="icon-btn" onclick="closeActivityDetail()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body" id="detailBody" style="min-height:120px">
+      </div>
+    </div>
+  </div>
+
+  <%- include('partials/footer') %>
+  <script>
+    window.COURSE_ID = '<%= course._id %>';
+    window.IS_OWNER = <%= course.owner._id.toString() === user._id.toString() %>;
+  </script>
+  <script src="/js/course.js"></script>
+</body>
+</html>
