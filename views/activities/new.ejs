@@ -104,8 +104,8 @@
       <div class="sidebar-card">
         <div class="sidebar-label">Para</div>
         <div class="sidebar-course-name"><%= course.name %></div>
-        <% if (course.section || course.subject) { %>
-          <div class="sidebar-course-sub"><%= [course.section, course.subject].filter(Boolean).join(' · ') %></div>
+        <% if (course.division?.name) { %>
+          <div class="sidebar-course-sub"><%= course.division.name %></div>
         <% } %>
       </div>
 

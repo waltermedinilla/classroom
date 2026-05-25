@@ -27,7 +27,7 @@
     <div class="course-header" style="<%= _headerStyle %>">
       <div class="course-header-info">
         <h2><%= course.name %></h2>
-        <% const _courseSubtitle = [course.subject, course.section].filter(Boolean).join(' '); %>
+        <% const _courseSubtitle = course.division?.name || ''; %>
         <% if (_courseSubtitle) { %>
           <p class="course-section"><%= _courseSubtitle %></p>
         <% } %>

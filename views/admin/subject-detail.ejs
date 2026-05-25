@@ -74,7 +74,7 @@
               <% courses.forEach(c => { %>
                 <tr>
                   <td><strong><%= c.name %></strong></td>
-                  <td><%= c.section || '—' %></td>
+                  <td><%= c.division?.name || '—' %></td>
                   <td><%= c.room || '—' %></td>
                   <td>
                     <a href="/admin/users/<%= c.owner._id %>" style="color:var(--primary);font-weight:500">

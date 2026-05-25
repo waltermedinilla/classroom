@@ -57,7 +57,7 @@
       <div class="course-grid">
         <% courses.forEach(course => { %>
           <%
-            const subtitle = [course.subject, course.section].filter(Boolean).join(' · ');
+            const subtitle = course.division?.name || '';
             const _h = course.header || {};
             const _defaultColor = course.isOwner ? '#1a73e8' : '#34a853';
             const _cardColor = _h.color || _defaultColor;
@@ -132,19 +132,17 @@
         <form id="createForm">
           <div class="input-group">
             <span class="material-symbols-outlined input-icon">badge</span>
-            <input type="text" id="className" placeholder="Nombre de la clase (obligatorio)" required>
+            <input type="text" id="className" placeholder="Nombre de la materia (obligatorio)" required>
           </div>
           <div class="input-group">
-            <span class="material-symbols-outlined input-icon">chrome_reader_mode</span>
-            <input type="text" id="section" placeholder="Sección">
-          </div>
-          <div class="input-group">
-            <span class="material-symbols-outlined input-icon">book</span>
-            <input type="text" id="subject" placeholder="Materia">
+            <span class="material-symbols-outlined input-icon">class</span>
+            <select id="divisionId" required style="flex:1;border:none;background:transparent;font-size:14px;color:var(--text-primary);outline:none;padding:0">
+              <option value="">Cargando cursos...</option>
+            </select>
           </div>
           <div class="input-group">
             <span class="material-symbols-outlined input-icon">meeting_room</span>
-            <input type="text" id="room" placeholder="Salón">
+            <input type="text" id="room" placeholder="Salón (opcional)">
           </div>
           <div class="form-error" id="createError"></div>
           <button type="submit" class="btn btn-primary btn-full">

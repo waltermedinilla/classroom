@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cursos / Divisiones - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/admin-nav', { activePage: 'divisions' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Cursos / Divisiones</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px"><%= divisions.length %> curso(s) encontrado(s)</p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/admin/divisions/create" class="btn btn-primary">
+          <span class="material-symbols-outlined">add</span>
+          Nuevo Curso
+        </a>
+      </div>
+    </div>
+
+    <div class="filter-bar">
+      <form method="GET" action="/admin/divisions" class="filter-form">
+        <div class="input-group" style="flex:1">
+          <span class="material-symbols-outlined input-icon">search</span>
+          <input type="text" name="search" placeholder="Buscar curso..." value="<%= search %>">
+        </div>
+        <button type="submit" class="btn btn-outline">Buscar</button>
+        <% if (search) { %>
+          <a href="/admin/divisions" class="btn btn-outline">Limpiar</a>
+        <% } %>
+      </form>
+    </div>
+
+    <% if (divisions.length === 0) { %>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">class</span></div>
+        <p><%= search ? 'No se encontraron cursos con ese nombre' : 'No hay cursos registrados aún' %></p>
+        <% if (!search) { %>
+          <a href="/admin/divisions/create" class="btn btn-primary" style="margin-top:20px">Crear primer curso</a>
+        <% } %>
+      </div>
+    <% } else { %>
+      <table class="users-table">
+        <thead>
+          <tr>
+            <th>Nombre</th>
+            <th>Materias</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% divisions.forEach(d => { %>
+          <tr>
+            <td>
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:36px;height:36px;border-radius:50%;background:#fce8e6;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                  <span class="material-symbols-outlined" style="color:#ea4335;font-size:18px">class</span>
+                </div>
+                <strong><%= d.name %></strong>
+              </div>
+            </td>
+            <td>
+              <% if (d.courseCount === 0) { %>
+                <span class="badge-unmatriculated">(Sin materias)</span>
+              <% } else { %>
+                <span><%= d.courseCount %> materia<%= d.courseCount !== 1 ? 's' : '' %></span>
+              <% } %>
+            </td>
+            <td>
+              <div style="display:flex;gap:8px">
+                <a href="/admin/divisions/<%= d._id %>/edit" class="btn btn-outline" style="padding:6px 12px;font-size:13px">
+                  <span class="material-symbols-outlined" style="font-size:16px">edit</span>
+                  Editar
+                </a>
+                <button class="btn btn-outline" style="padding:6px 12px;font-size:13px;color:#ea4335;border-color:#ea4335"
+                  onclick="deleteDivision('<%= d._id %>', '<%= d.name %>', <%= d.courseCount %>)">
+                  <span class="material-symbols-outlined" style="font-size:16px">delete</span>
+                  Eliminar
+                </button>
+              </div>
+            </td>
+          </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+  <script>
+    async function deleteDivision(id, name, courseCount) {
+      if (courseCount > 0) {
+        alert(`No se puede eliminar "${name}": tiene ${courseCount} materia(s) asociada(s). Primero eliminá o reasigná las materias.`);
+        return;
+      }
+      if (!confirm(`¿Eliminar el curso "${name}"?`)) return;
+      const res  = await fetch(`/admin/divisions/${id}/delete`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) location.reload();
+      else alert(data.error || 'Error al eliminar');
+    }
+  </script>
+</body>
+</html>

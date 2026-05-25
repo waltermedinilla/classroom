@@ -24,6 +24,10 @@
           <span class="material-symbols-outlined">person_add</span>
           Nuevo usuario
         </a>
+        <a href="/admin/divisions/create" class="btn btn-outline">
+          <span class="material-symbols-outlined">add</span>
+          Nuevo Curso
+        </a>
         <a href="/admin/subjects/create" class="btn btn-primary">
           <span class="material-symbols-outlined">add</span>
           Nueva materia
@@ -67,6 +71,13 @@
           <span class="stat-label">Materias</span>
         </div>
       </div>
+      <div class="stat-card" style="--stat-color:#ea4335">
+        <div class="stat-icon"><span class="material-symbols-outlined">class</span></div>
+        <div class="stat-info">
+          <span class="stat-value"><%= divisionCount %></span>
+          <span class="stat-label">Cursos / Divisiones</span>
+        </div>
+      </div>
     </div>
 
     <div class="admin-section-cards">
@@ -87,6 +98,16 @@
         <div class="admin-section-card-info">
           <h3>Materias</h3>
           <p><%= subjectCount %> materia(s) registrada(s)</p>
+        </div>
+        <span class="material-symbols-outlined admin-section-card-arrow">chevron_right</span>
+      </a>
+      <a href="/admin/divisions" class="admin-section-card">
+        <div class="admin-section-card-icon" style="background:#fce8e6">
+          <span class="material-symbols-outlined" style="color:#ea4335">class</span>
+        </div>
+        <div class="admin-section-card-info">
+          <h3>Cursos / Divisiones</h3>
+          <p><%= divisionCount %> curso(s) registrado(s)</p>
         </div>
         <span class="material-symbols-outlined admin-section-card-arrow">chevron_right</span>
       </a>

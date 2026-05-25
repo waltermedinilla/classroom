@@ -101,7 +101,7 @@ router.get('/schools/:id', async (req, res) => {
 
     const [users, courses, subjects] = await Promise.all([
       User.find({ school: school._id }).sort({ createdAt: -1 }),
-      Course.find({ school: school._id }).populate('owner', 'name email').sort({ name: 1 }),
+      Course.find({ school: school._id }).populate('owner', 'name email').populate('division', 'name').sort({ name: 1 }),
       Subject.find({ school: school._id }).sort({ name: 1 }),
     ]);
 

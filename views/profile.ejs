@@ -108,7 +108,7 @@
       <% } %>
       <div class="course-grid">
         <% createdCourses.forEach(c => { %>
-          <% const subtitle = [c.section, c.subject].filter(Boolean).join(' · '); %>
+          <% const subtitle = c.division?.name || ''; %>
           <a href="/courses/<%= c._id %>" class="course-card" style="--card-color:#1a73e8">
             <div class="card-banner">
               <div class="card-banner-content">
@@ -156,7 +156,7 @@
       <% } %>
       <div class="course-grid">
         <% joinedCourses.forEach(c => { %>
-          <% const subtitle = [c.section, c.subject].filter(Boolean).join(' · '); %>
+          <% const subtitle = c.division?.name || ''; %>
           <a href="/courses/<%= c._id %>" class="course-card" style="--card-color:#34a853">
             <div class="card-banner">
               <div class="card-banner-content">

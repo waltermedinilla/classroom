@@ -631,8 +631,7 @@
               <div style="flex:1">
                 <div class="sp-course-name"><%= c.name %></div>
                 <div class="sp-course-meta">
-                  <% if (c.section) { %><span>Sección: <%= c.section %></span> · <% } %>
-                  <% if (c.subject) { %><span>Materia: <%= c.subject %></span> · <% } %>
+                  <% if (c.division?.name) { %><span>Curso: <%= c.division.name %></span> · <% } %>
                   <span>Docente: <%= c.owner ? c.owner.name : 'Sin asignar' %></span>
                 </div>
               </div>
