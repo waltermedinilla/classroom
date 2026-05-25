@@ -10,7 +10,9 @@
     "prod:stop": "pm2 stop classroom",
     "prod:restart": "pm2 restart classroom",
     "prod:logs": "pm2 logs classroom",
-    "prod:status": "pm2 status"
+    "prod:status": "pm2 status",
+    "cleanup": "node cleanup-files.js",
+    "cleanup:dry": "node cleanup-files.js --dry-run"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

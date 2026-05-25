@@ -26,6 +26,11 @@ connectDB();
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
+// Tailscale Funnel (y cualquier reverse proxy) termina TLS y reenvía HTTP local.
+// trust proxy=1 hace que Express use X-Forwarded-For/Proto para IPs y req.secure reales.
+// Necesario para rate limiting por IP real y para cookies con secure:true.
+app.set('trust proxy', 1);
+
 // ── Compresión Gzip ──────────────────────────────────────────────────────────
 // Comprime todas las respuestas > 1 KB. Reduce el tamaño del HTML/JSON un 60-70%,
 // lo que disminuye la carga de red cuando muchos usuarios acceden al mismo tiempo.
@@ -146,34 +151,29 @@ app.use((err, req, res, next) => {
   res.status(status).send(status === 404 ? 'Página no encontrada' : 'Error del servidor');
 });
 
-// ── Inicio del servidor ──────────────────────────────────────────────────────
-const server = app.listen(PORT, () => {
-  console.log(`[${new Date().toISOString()}] Servidor en http://localhost:${PORT} (PID ${process.pid})`);
-});
-
-// ── Cierre ordenado (graceful shutdown) ─────────────────────────────────────
-// Cuando PM2 reinicia o detiene el proceso, espera que las requests en curso terminen
-// antes de cerrar. Evita cortar conexiones activas de usuarios.
-const shutdown = (signal) => {
-  console.log(`[${signal}] Cerrando servidor (PID ${process.pid})...`);
-  server.close(() => {
-    console.log('Servidor cerrado correctamente.');
-    process.exit(0);
-  });
-  // Fuerza el cierre después de 10 segundos si hay requests colgadas
-  setTimeout(() => process.exit(1), 10_000);
-};
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT',  () => shutdown('SIGINT'));
-
 // ── Captura de errores no manejados ─────────────────────────────────────────
-// Evita que una promesa rechazada o una excepción sin catch cierren el proceso.
-// PM2 reiniciará el proceso de todas formas, pero estos handlers dan tiempo para loguear.
 process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection]', reason);
 });
 process.on('uncaughtException', (err) => {
   console.error('[uncaughtException]', err.message);
-  // En excepciones no capturadas es más seguro salir; PM2 reiniciará el worker
   process.exit(1);
+});
+
+// ── Inicio del servidor (espera a que MongoDB esté listo) ────────────────────
+connectDB().then(() => {
+  const server = app.listen(PORT, () => {
+    console.log(`[${new Date().toISOString()}] Servidor en http://100.112.13.31:${PORT} (PID ${process.pid})`);
+  });
+
+  const shutdown = (signal) => {
+    console.log(`[${signal}] Cerrando servidor (PID ${process.pid})...`);
+    server.close(() => {
+      console.log('Servidor cerrado correctamente.');
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(0), 10_000);
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT',  () => shutdown('SIGINT'));
 });

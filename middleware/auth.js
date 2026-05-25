@@ -12,7 +12,7 @@ const requireAuth = (req, res, next) => {
 
   try {
     // Verifica firma y expiración del JWT; lanza si es inválido
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     req.userId = decoded.userId; // Disponible en todas las rutas protegidas
     next();
   } catch (err) {
@@ -38,7 +38,7 @@ const checkUser = async (req, res, next) => {
 
   try {
     // Decodifica el token principal para obtener el userId
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
 
     // Busca el usuario en la BD; excluye el campo password por seguridad
     res.locals.user = await User.findById(decoded.userId).select('-password');

@@ -17,7 +17,7 @@
     <div class="profile-header">
       <div class="profile-avatar">
         <% const _avatarBg = user.role === 'admin' ? '#ea4335' : user.role === 'teacher' ? '#1a73e8' : user.role === 'directivo' ? '#9334e6' : user.role === 'preceptor' ? '#ea8600' : user.role === 'soe' ? '#0d7377' : '#5f6368'; %>
-        <div class="profile-avatar-wrap" id="avatarWrap">
+        <div class="profile-avatar-wrap" id="avatarWrap" style="border-radius:50%">
           <% if (user.avatar) { %>
             <div class="avatar-huge avatar-img" style="width:80px;height:80px"><img src="<%= user.avatar %>" alt="<%= user.name %>"></div>
           <% } else { %>
@@ -25,6 +25,9 @@
               <%= user.name.charAt(0).toUpperCase() %>
             </div>
           <% } %>
+          <div class="upload-overlay" id="avatarUploadOverlay" style="border-radius:50%">
+            <div class="upload-spinner"></div>
+          </div>
           <label class="avatar-upload-btn" title="Cambiar foto de perfil">
             <input type="file" id="avatarFileInput" accept="image/jpeg,image/png,image/webp" hidden>
             <span class="material-symbols-outlined">photo_camera</span>
@@ -191,26 +194,42 @@
     document.getElementById('avatarFileInput').addEventListener('change', async function () {
       const file = this.files[0];
       if (!file) return;
+
+      const wrap    = document.getElementById('avatarWrap');
+      const overlay = document.getElementById('avatarUploadOverlay');
+
+      // 1. Preview local inmediata — el usuario ve la imagen antes de que suba
+      const localUrl = URL.createObjectURL(file);
+      const prev = wrap.querySelector('.avatar-huge, .avatar-img');
+      if (prev) prev.remove();
+      const previewDiv = document.createElement('div');
+      previewDiv.className = 'avatar-huge avatar-img';
+      previewDiv.style.cssText = 'width:80px;height:80px';
+      previewDiv.innerHTML = `<img src="${localUrl}" alt="">`;
+      wrap.prepend(previewDiv);
+
+      // 2. Spinner encima de la preview mientras sube
+      overlay.classList.add('show');
+
       const fd = new FormData();
       fd.append('avatar', file);
       const res = await fetch('/courses/profile/avatar', { method: 'POST', body: fd });
+
+      overlay.classList.remove('show');
+      URL.revokeObjectURL(localUrl);
+
       if (res.ok) {
         const { avatar } = await res.json();
-        const wrap = document.getElementById('avatarWrap');
-        wrap.querySelector('.avatar-huge, .avatar-img')?.remove();
-        const img = document.createElement('div');
-        img.className = 'avatar-huge avatar-img';
-        img.style.cssText = 'width:80px;height:80px';
-        img.innerHTML = `<img src="${avatar}" alt="">`;
-        wrap.prepend(img);
+        // Reemplaza la preview local con la URL definitiva del servidor
+        previewDiv.innerHTML = `<img src="${avatar}" alt="">`;
         document.getElementById('avatarRemoveBtn').style.display = '';
-        // Actualiza el avatar en el header sin recargar
         const headerAvatar = document.querySelector('.header .avatar, .header .avatar-img');
         if (headerAvatar) {
           headerAvatar.className = 'avatar avatar-img';
           headerAvatar.innerHTML = `<img src="${avatar}" alt="">`;
         }
       } else {
+        previewDiv.remove();
         alert('No se pudo subir la imagen');
       }
       this.value = '';

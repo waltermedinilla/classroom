@@ -264,11 +264,10 @@ router.post('/users/:id/impersonate', async (req, res) => {
     if (req.params.id === req.userId) return res.status(400).json({ error: 'Ya eres este usuario' });
 
     const twoHours = 2 * 60 * 60 * 1000;
-    // Guarda el token actual del admin en adminToken (para poder volver)
-    res.cookie('adminToken', req.cookies.token, { httpOnly: true, maxAge: twoHours });
-    // Genera un JWT temporal (2h) para el usuario target
+    const impersonateOpts = { httpOnly: true, maxAge: twoHours, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' };
+    res.cookie('adminToken', req.cookies.token, impersonateOpts);
     const targetToken = jwt.sign({ userId: target._id }, process.env.JWT_SECRET, { expiresIn: '2h' });
-    res.cookie('token', targetToken, { httpOnly: true, maxAge: twoHours });
+    res.cookie('token', targetToken, impersonateOpts);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });

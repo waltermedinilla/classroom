@@ -5,8 +5,13 @@ const School = require('../models/School');
 
 const router = express.Router();
 
-// Duración de la sesión: 7 días en milisegundos (para la cookie) y en texto (para el JWT)
 const maxAge = 7 * 24 * 60 * 60 * 1000;
+const cookieOpts = {
+  httpOnly: true,
+  maxAge,
+  sameSite: 'lax',
+  secure: process.env.NODE_ENV === 'production', // Funnel sirve HTTPS; necesario para secure cookies
+};
 
 // Crea un JWT firmado con el secreto del .env; expiración en 7 días
 // Retorna el token string que se setea como cookie httpOnly
@@ -34,12 +39,12 @@ router.get('/register', (req, res) => {
 router.post('/register', async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
-    const userRole = role || 'student'; // Si no se envía rol, se asigna student por defecto
+    const allowedRoles = ['student', 'teacher', 'preceptor', 'soe', 'directivo'];
+    const userRole = allowedRoles.includes(role) ? role : 'student';
     const user = await User.create({ name, email, password, role: userRole });
 
-    // Genera token y lo pone en cookie httpOnly (no accesible desde JS del navegador)
     const token = createToken(user._id);
-    res.cookie('token', token, { httpOnly: true, maxAge });
+    res.cookie('token', token, cookieOpts);
     res.status(201).json({ user });
   } catch (err) {
     // Error 11000 = índice único violado → email ya registrado
@@ -80,7 +85,7 @@ router.post('/login', async (req, res) => {
     }
 
     const token = createToken(user._id);
-    res.cookie('token', token, { httpOnly: true, maxAge });
+    res.cookie('token', token, cookieOpts);
     res.json({ user });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -116,7 +121,7 @@ router.post('/register/invite/:token', async (req, res) => {
 
     const user = await User.create({ name, email, password, role: userRole, school: school._id });
     const token = createToken(user._id);
-    res.cookie('token', token, { httpOnly: true, maxAge });
+    res.cookie('token', token, cookieOpts);
     res.status(201).json({ user });
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ error: 'El correo electrónico ya está registrado' });
@@ -144,9 +149,9 @@ router.get('/exit-impersonate', (req, res) => {
   res.clearCookie('adminToken');
   try {
     // Verifica que el adminToken siga siendo válido (no expirado)
-    jwt.verify(adminToken, process.env.JWT_SECRET);
+    jwt.verify(adminToken, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     // Restaura la sesión del admin original
-    res.cookie('token', adminToken, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
+    res.cookie('token', adminToken, cookieOpts);
   } catch {
     // Si el adminToken expiró, cierra sesión completamente
     res.clearCookie('token');

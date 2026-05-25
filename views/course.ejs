@@ -27,8 +27,9 @@
     <div class="course-header" style="<%= _headerStyle %>">
       <div class="course-header-info">
         <h2><%= course.name %></h2>
-        <% if (course.section) { %>
-          <p class="course-section"><%= course.section %></p>
+        <% const _courseSubtitle = [course.subject, course.section].filter(Boolean).join(' '); %>
+        <% if (_courseSubtitle) { %>
+          <p class="course-section"><%= _courseSubtitle %></p>
         <% } %>
         <div class="course-meta">
           <div class="course-code-badge">
@@ -484,7 +485,10 @@
       </div>
       <div class="modal-body">
         <!-- Preview -->
-        <div id="customizePreview" style="height:80px;border-radius:var(--radius-sm);margin-bottom:20px;transition:background 0.3s;display:flex;align-items:flex-end;padding:10px 14px">
+        <div id="customizePreview" style="height:80px;border-radius:var(--radius-sm);margin-bottom:20px;transition:background 0.3s;display:flex;align-items:flex-end;padding:10px 14px;position:relative;overflow:hidden">
+          <div class="upload-overlay" id="customizePreviewOverlay" style="border-radius:var(--radius-sm)">
+            <div class="upload-spinner"></div>
+          </div>
           <span style="color:white;font-weight:500;font-size:15px;text-shadow:0 1px 3px rgba(0,0,0,0.4)"><%= course.name %></span>
         </div>
 
@@ -618,7 +622,7 @@
           : `linear-gradient(135deg, ${c1}, ${c1}88)`;
       } else {
         const blend = document.getElementById('hBlendColor').value + 'bb';
-        const imgSrc = _newImageFile ? URL.createObjectURL(_newImageFile)
+        const imgSrc = _newImageFile ? (window._previewObjectUrl || URL.createObjectURL(_newImageFile))
                      : (_removeImage ? null : (_INIT_IMAGE || null));
         preview.style.background = imgSrc
           ? `linear-gradient(${blend},${blend}), url('${imgSrc}') center/cover no-repeat`
@@ -632,6 +636,9 @@
       _newImageFile = file; _removeImage = false;
       document.getElementById('imageFilename').textContent = file.name;
       document.getElementById('removeImageBtn').style.display = '';
+      // Preview local inmediata: libera la URL anterior si existía
+      if (window._previewObjectUrl) URL.revokeObjectURL(window._previewObjectUrl);
+      window._previewObjectUrl = URL.createObjectURL(file);
       updateCustomizePreview();
     }
 
@@ -644,10 +651,13 @@
     }
 
     async function saveCustomize() {
-      const btn = document.getElementById('customizeSaveBtn');
-      const errEl = document.getElementById('customizeError');
+      const btn     = document.getElementById('customizeSaveBtn');
+      const errEl   = document.getElementById('customizeError');
+      const overlay = document.getElementById('customizePreviewOverlay');
       errEl.classList.remove('show');
       btn.disabled = true;
+      overlay.classList.add('show');
+
       const fd = new FormData();
       fd.append('mode', _customizeTab);
       if (_customizeTab === 'color') {
@@ -659,6 +669,8 @@
         else if (_removeImage) fd.append('removeImage', 'true');
       }
       const res = await fetch(`/courses/${COURSE_ID}/customize`, { method: 'POST', body: fd });
+      overlay.classList.remove('show');
+      if (window._previewObjectUrl) { URL.revokeObjectURL(window._previewObjectUrl); window._previewObjectUrl = null; }
       if (res.ok) { location.reload(); return; }
       const d = await res.json();
       errEl.textContent = d.error || 'Error al guardar';

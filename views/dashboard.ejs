@@ -57,7 +57,7 @@
       <div class="course-grid">
         <% courses.forEach(course => { %>
           <%
-            const subtitle = [course.section, course.subject].filter(Boolean).join(' · ');
+            const subtitle = [course.subject, course.section].filter(Boolean).join(' · ');
             const _h = course.header || {};
             const _defaultColor = course.isOwner ? '#1a73e8' : '#34a853';
             const _cardColor = _h.color || _defaultColor;

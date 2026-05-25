@@ -13,7 +13,7 @@ module.exports = {
     // Modo cluster: PM2 lanza un worker por core de CPU.
     // Cada worker es un proceso Node.js independiente que comparte el puerto.
     // Si un worker cae, los demás siguen atendiendo; PM2 reinicia el caído solo.
-    instances:  'max',   // Usa todos los cores disponibles. Cambiar a 2 si el servidor es chico.
+    instances:  2,
     exec_mode:  'cluster',
 
     // Reinicia el worker si consume más de 400 MB de RAM (previene memory leaks acumulados)
