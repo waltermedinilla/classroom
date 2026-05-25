@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Materias - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/admin-nav', { activePage: 'courses' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Materias de clase</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px"><%= courses.length %> materia(s) encontrada(s)</p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/admin/courses/create" class="btn btn-primary">
+          <span class="material-symbols-outlined">add</span>
+          Nueva Materia
+        </a>
+      </div>
+    </div>
+
+    <div class="filter-bar">
+      <form method="GET" action="/admin/courses" class="filter-form">
+        <div class="input-group" style="flex:1">
+          <span class="material-symbols-outlined input-icon">search</span>
+          <input type="text" name="search" placeholder="Buscar materia..." value="<%= search %>">
+        </div>
+        <select name="division" style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);font-size:14px;color:var(--text-primary)">
+          <option value="">Todos los cursos</option>
+          <% divisions.forEach(d => { %>
+            <option value="<%= d._id %>" <%= divisionFilter === d._id.toString() ? 'selected' : '' %>><%= d.name %></option>
+          <% }) %>
+        </select>
+        <button type="submit" class="btn btn-outline">Filtrar</button>
+        <% if (search || divisionFilter) { %>
+          <a href="/admin/courses" class="btn btn-outline">Limpiar</a>
+        <% } %>
+      </form>
+    </div>
+
+    <% if (courses.length === 0) { %>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">menu_book</span></div>
+        <p><%= search || divisionFilter ? 'No se encontraron materias con ese filtro' : 'No hay materias de clase registradas aún' %></p>
+        <% if (!search && !divisionFilter) { %>
+          <a href="/admin/courses/create" class="btn btn-primary" style="margin-top:20px">Crear primera materia</a>
+        <% } %>
+      </div>
+    <% } else { %>
+      <div class="users-table-card">
+        <table class="users-table">
+          <thead>
+            <tr>
+              <th>Materia</th>
+              <th>Curso / División</th>
+              <th>Docente</th>
+              <th>Alumnos</th>
+              <th>Código</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% courses.forEach(c => { %>
+            <tr>
+              <td>
+                <a href="/courses/<%= c._id %>" target="_blank" style="font-weight:600;color:var(--primary)"><%= c.name %></a>
+              </td>
+              <td>
+                <% if (c.division) { %>
+                  <span style="background:#fce8e6;color:#ea4335;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:600"><%= c.division.name %></span>
+                <% } else { %>
+                  <span style="color:var(--text-hint)">—</span>
+                <% } %>
+              </td>
+              <td>
+                <a href="/admin/users/<%= c.owner._id %>" style="color:var(--primary)"><%= c.owner.name %></a>
+              </td>
+              <td><%= c.students.length %></td>
+              <td><code style="background:#f0f4f8;padding:2px 8px;border-radius:4px;font-size:12px;letter-spacing:1px"><%= c.code %></code></td>
+              <td>
+                <div style="display:flex;gap:6px">
+                  <a href="/admin/courses/<%= c._id %>/edit" class="btn btn-outline" style="padding:4px 10px;font-size:12px">
+                    <span class="material-symbols-outlined" style="font-size:14px">edit</span>
+                    Editar
+                  </a>
+                  <button class="btn btn-outline" style="padding:4px 10px;font-size:12px;color:#ea4335;border-color:#ea4335"
+                    onclick="deleteCourse('<%= c._id %>', '<%= c.name %>')">
+                    <span class="material-symbols-outlined" style="font-size:14px">delete</span>
+                    Eliminar
+                  </button>
+                </div>
+              </td>
+            </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+  <script>
+    async function deleteCourse(id, name) {
+      if (!confirm(`¿Eliminar la materia "${name}"? Se perderán las actividades y novedades asociadas.`)) return;
+      const res  = await fetch(`/admin/courses/${id}/delete`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) location.reload();
+      else alert(data.error || 'Error al eliminar');
+    }
+  </script>
+</body>
+</html>

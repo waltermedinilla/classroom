@@ -24,13 +24,9 @@
           <span class="material-symbols-outlined">person_add</span>
           Nuevo usuario
         </a>
-        <a href="/admin/divisions/create" class="btn btn-outline">
+        <a href="/admin/courses/create" class="btn btn-primary">
           <span class="material-symbols-outlined">add</span>
-          Nuevo Curso
-        </a>
-        <a href="/admin/subjects/create" class="btn btn-primary">
-          <span class="material-symbols-outlined">add</span>
-          Nueva materia
+          Nueva Materia
         </a>
       </div>
     </div>
@@ -44,10 +40,10 @@
         </div>
       </div>
       <div class="stat-card" style="--stat-color:#34a853">
-        <div class="stat-icon"><span class="material-symbols-outlined">school</span></div>
+        <div class="stat-icon"><span class="material-symbols-outlined">menu_book</span></div>
         <div class="stat-info">
           <span class="stat-value"><%= courseCount %></span>
-          <span class="stat-label">Cursos totales</span>
+          <span class="stat-label">Materias de clase</span>
         </div>
       </div>
       <div class="stat-card" style="--stat-color:#ea8600">
@@ -91,13 +87,13 @@
         </div>
         <span class="material-symbols-outlined admin-section-card-arrow">chevron_right</span>
       </a>
-      <a href="/admin/subjects" class="admin-section-card">
+      <a href="/admin/courses" class="admin-section-card">
         <div class="admin-section-card-icon" style="background:#e6f4ea">
           <span class="material-symbols-outlined" style="color:#34a853">menu_book</span>
         </div>
         <div class="admin-section-card-info">
-          <h3>Materias</h3>
-          <p><%= subjectCount %> materia(s) registrada(s)</p>
+          <h3>Materias de clase</h3>
+          <p><%= courseCount %> materia(s) registrada(s)</p>
         </div>
         <span class="material-symbols-outlined admin-section-card-arrow">chevron_right</span>
       </a>

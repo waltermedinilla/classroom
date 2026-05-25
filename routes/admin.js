@@ -229,6 +229,117 @@ router.post('/users/:id/impersonate', async (req, res) => {
   }
 });
 
+/* ─── Courses (admin CRUD) ─── */
+router.get('/courses', async (req, res) => {
+  const school = res.locals.user.school;
+  const sf     = school ? { school } : {};
+  const { division: divisionFilter, search } = req.query;
+
+  const filter = { ...sf };
+  if (divisionFilter) filter.division = divisionFilter;
+  if (search) filter.name = { $regex: search, $options: 'i' };
+
+  const [courses, divisions, teachers] = await Promise.all([
+    Course.find(filter)
+      .populate('division', 'name')
+      .populate('owner', 'name email')
+      .sort({ name: 1 }),
+    Division.find(sf).sort({ name: 1 }),
+    User.find({ ...sf, role: { $in: ['teacher', 'admin'] } }).sort({ name: 1 }).select('_id name email'),
+  ]);
+  res.render('admin/courses', { courses, divisions, teachers, search: search || '', divisionFilter: divisionFilter || '' });
+});
+
+router.get('/courses/create', async (req, res) => {
+  const school = res.locals.user.school;
+  const sf     = school ? { school } : {};
+  const [divisions, teachers, subjects] = await Promise.all([
+    Division.find(sf).sort({ name: 1 }),
+    User.find({ ...sf, role: { $in: ['teacher', 'admin'] } }).sort({ name: 1 }).select('_id name email'),
+    Subject.find(sf).sort({ name: 1 }).select('name'),
+  ]);
+  res.render('admin/course-form', { course: null, divisions, teachers, subjects });
+});
+
+router.post('/courses/create', async (req, res) => {
+  try {
+    const { name, divisionId, teacherId, room } = req.body;
+    const school = res.locals.user.school;
+    if (!school) return res.status(400).json({ error: 'Sin escuela asignada' });
+
+    const division = await Division.findOne({ _id: divisionId, school });
+    if (!division) return res.status(400).json({ error: 'División no válida' });
+    const teacher = await User.findOne({ _id: teacherId, school });
+    if (!teacher) return res.status(400).json({ error: 'Docente no válido' });
+
+    const course = await Course.create({ name, room: room || '', division: division._id, owner: teacher._id, school });
+    res.status(201).json({ course });
+  } catch (err) {
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
+    }
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+router.get('/courses/:id/edit', async (req, res) => {
+  const school = res.locals.user.school;
+  const sf     = school ? { school } : {};
+  const course = await Course.findById(req.params.id).populate('division').populate('owner', 'name email');
+  if (!course) return res.status(404).send('Materia no encontrada');
+  if (school && course.school?.toString() !== school.toString()) return res.status(403).send('Acceso denegado');
+  const [divisions, teachers, subjects] = await Promise.all([
+    Division.find(sf).sort({ name: 1 }),
+    User.find({ ...sf, role: { $in: ['teacher', 'admin'] } }).sort({ name: 1 }).select('_id name email'),
+    Subject.find(sf).sort({ name: 1 }).select('name'),
+  ]);
+  res.render('admin/course-form', { course, divisions, teachers, subjects });
+});
+
+router.post('/courses/:id/edit', async (req, res) => {
+  try {
+    const school   = res.locals.user.school;
+    const existing = await Course.findById(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Materia no encontrada' });
+    if (school && existing.school?.toString() !== school.toString()) return res.status(403).json({ error: 'Sin acceso' });
+
+    const { name, divisionId, teacherId, room } = req.body;
+    const updates = { name, room: room || '' };
+
+    if (divisionId) {
+      const division = await Division.findOne({ _id: divisionId, school: school || existing.school });
+      if (!division) return res.status(400).json({ error: 'División no válida' });
+      updates.division = division._id;
+    }
+    if (teacherId) {
+      const teacher = await User.findOne({ _id: teacherId });
+      if (!teacher) return res.status(400).json({ error: 'Docente no válido' });
+      updates.owner = teacher._id;
+    }
+
+    const course = await Course.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
+    res.json({ course });
+  } catch (err) {
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
+    }
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+router.post('/courses/:id/delete', async (req, res) => {
+  try {
+    const school = res.locals.user.school;
+    const course = await Course.findById(req.params.id);
+    if (!course) return res.status(404).json({ error: 'Materia no encontrada' });
+    if (school && course.school?.toString() !== school.toString()) return res.status(403).json({ error: 'Sin acceso' });
+    await Course.findByIdAndDelete(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 /* ─── Divisions ─── */
 router.get('/divisions', async (req, res) => {
   const school = res.locals.user.school;

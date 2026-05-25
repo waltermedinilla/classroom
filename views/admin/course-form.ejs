@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= course ? 'Editar materia' : 'Nueva Materia' %> - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content" style="max-width:640px">
+    <a href="/admin/courses" class="btn btn-outline" style="margin-bottom:24px">
+      <span class="material-symbols-outlined">arrow_back</span>
+      Volver a materias
+    </a>
+
+    <div class="modal" style="box-shadow:none;border:1px solid var(--border);animation:none">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">menu_book</span>
+          <h3><%= course ? 'Editar materia de clase' : 'Nueva Materia de Clase' %></h3>
+        </div>
+      </div>
+      <div class="modal-body">
+        <% if (!course) { %>
+        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:20px">
+          Creá una materia dentro de un curso (división). Asignale un docente y los alumnos se podrán unir usando el código generado automáticamente.
+        </p>
+        <% } %>
+
+        <form id="courseForm" data-url="<%= course ? '/admin/courses/' + course._id + '/edit' : '/admin/courses/create' %>">
+
+          <label style="display:block;font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">Nombre de la materia *</label>
+          <div class="input-group" style="margin-bottom:16px">
+            <span class="material-symbols-outlined input-icon">menu_book</span>
+            <input type="text" id="name" placeholder="Ej: Matemática, Historia, Lengua" value="<%= course ? course.name : '' %>" required list="subjectsList">
+          </div>
+          <datalist id="subjectsList">
+            <% subjects.forEach(s => { %>
+              <option value="<%= s.name %>">
+            <% }) %>
+          </datalist>
+
+          <label style="display:block;font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">Curso / División *</label>
+          <div class="input-group" style="margin-bottom:16px">
+            <span class="material-symbols-outlined input-icon">class</span>
+            <select id="divisionId" required style="flex:1;border:none;background:transparent;font-size:14px;color:var(--text-primary);outline:none;padding:0">
+              <option value="">Seleccioná un curso...</option>
+              <% divisions.forEach(d => { %>
+                <option value="<%= d._id %>" <%= course && course.division && course.division._id?.toString() === d._id.toString() ? 'selected' : '' %>><%= d.name %></option>
+              <% }) %>
+            </select>
+          </div>
+          <% if (divisions.length === 0) { %>
+            <p style="font-size:13px;color:#ea4335;margin-top:-10px;margin-bottom:16px">
+              <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle">warning</span>
+              No hay cursos / divisiones creados. <a href="/admin/divisions/create">Crear uno primero</a>.
+            </p>
+          <% } %>
+
+          <label style="display:block;font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">Docente *</label>
+          <div class="input-group" style="margin-bottom:16px">
+            <span class="material-symbols-outlined input-icon">badge</span>
+            <select id="teacherId" required style="flex:1;border:none;background:transparent;font-size:14px;color:var(--text-primary);outline:none;padding:0">
+              <option value="">Seleccioná un docente...</option>
+              <% teachers.forEach(t => { %>
+                <option value="<%= t._id %>" <%= course && course.owner && course.owner._id?.toString() === t._id.toString() ? 'selected' : '' %>><%= t.name %> (<%= t.email %>)</option>
+              <% }) %>
+            </select>
+          </div>
+          <% if (teachers.length === 0) { %>
+            <p style="font-size:13px;color:#ea4335;margin-top:-10px;margin-bottom:16px">
+              <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle">warning</span>
+              No hay docentes registrados. <a href="/admin/users/create">Crear uno primero</a>.
+            </p>
+          <% } %>
+
+          <label style="display:block;font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">Aula (opcional)</label>
+          <div class="input-group" style="margin-bottom:16px">
+            <span class="material-symbols-outlined input-icon">meeting_room</span>
+            <input type="text" id="room" placeholder="Ej: Aula 12, Laboratorio" value="<%= course ? course.room : '' %>">
+          </div>
+
+          <div class="form-error" id="formError" style="margin-top:8px"></div>
+
+          <button type="submit" class="btn btn-primary btn-full" style="margin-top:20px">
+            <span class="material-symbols-outlined">check</span>
+            <%= course ? 'Guardar cambios' : 'Crear Materia' %>
+          </button>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <%- include('../partials/footer') %>
+  <script>
+    document.getElementById('courseForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById('formError');
+      errorEl.classList.remove('show');
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Guardando...';
+
+      const res = await fetch(e.target.dataset.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name:       document.getElementById('name').value.trim(),
+          divisionId: document.getElementById('divisionId').value,
+          teacherId:  document.getElementById('teacherId').value,
+          room:       document.getElementById('room').value.trim(),
+        }),
+      });
+      const data = await res.json();
+      btn.disabled = false;
+      btn.innerHTML = '<span class="material-symbols-outlined">check</span> <%= course ? "Guardar cambios" : "Crear Materia" %>';
+
+      if (!res.ok) {
+        errorEl.textContent = data.error;
+        errorEl.classList.add('show');
+        return;
+      }
+      window.location.href = '/admin/courses';
+    });
+  </script>
+</body>
+</html>
