@@ -19,97 +19,93 @@
           <span class="material-symbols-outlined">group_add</span>
           Unirse a clase
         </button>
+        <% if (user.role !== 'student') { %>
         <button class="btn btn-primary" onclick="showCreateModal()">
           <span class="material-symbols-outlined">add</span>
           Crear clase
         </button>
+        <% } %>
       </div>
     </div>
 
-    <section class="section">
-      <div class="section-header">
-        <span class="material-symbols-outlined section-icon">star</span>
-        <h3>Creadas por ti</h3>
-      </div>
-      <% if (createdCourses.length === 0) { %>
-        <div class="empty-state">
-          <div class="empty-icon">
-            <span class="material-symbols-outlined">school</span>
-          </div>
-          <p>Aún no has creado ninguna clase</p>
-        </div>
-      <% } %>
-      <div class="course-grid">
-        <% createdCourses.forEach(course => { %>
-          <a href="/courses/<%= course._id %>" class="course-card" style="--card-color: #1a73e8">
-            <div class="card-banner">
-              <div class="card-banner-content">
-                <h4><%= course.name %></h4>
-                <p><%= course.owner.name %></p>
-              </div>
-            </div>
-            <div class="card-body">
-              <% if (course.section) { %>
-                <div class="card-info">
-                  <span class="material-symbols-outlined card-info-icon">chrome_reader_mode</span>
-                  <span><%= course.section %></span>
-                </div>
-              <% } %>
-              <% if (course.subject) { %>
-                <div class="card-info">
-                  <span class="material-symbols-outlined card-info-icon">book</span>
-                  <span><%= course.subject %></span>
-                </div>
-              <% } %>
-            </div>
-            <div class="card-footer">
-              <div class="card-code">
-                <span class="material-symbols-outlined">vpn_key</span>
-                <span><%= course.code %></span>
-              </div>
-              <span class="card-owner-badge">Creador</span>
-            </div>
-          </a>
-        <% }) %>
-      </div>
-    </section>
+    <% if (typeof pendingSummary !== 'undefined' && pendingSummary) { %>
+    <div class="pending-band">
+      <span class="material-symbols-outlined">assignment_late</span>
+      <span>
+        Tenés <strong><%= pendingSummary.total %></strong>
+        tarea<%= pendingSummary.total !== 1 ? 's' : '' %> pendiente<%= pendingSummary.total !== 1 ? 's' : '' %>
+        <% if (pendingSummary.dueToday > 0) { %>
+          &nbsp;·&nbsp; <strong class="pending-band-urgent"><%= pendingSummary.dueToday %> vence<%= pendingSummary.dueToday !== 1 ? 'n' : '' %> hoy</strong>
+        <% } %>
+      </span>
+      <a href="/activities/my-pending" class="pending-band-link">Ver todas</a>
+    </div>
+    <% } %>
 
     <section class="section">
-      <div class="section-header">
-        <span class="material-symbols-outlined section-icon">group</span>
-        <h3>Unidas por ti</h3>
-      </div>
-      <% if (joinedCourses.length === 0) { %>
+      <% if (courses.length === 0) { %>
         <div class="empty-state">
-          <div class="empty-icon">
-            <span class="material-symbols-outlined">group_add</span>
-          </div>
-          <p>Aún no te has unido a ninguna clase</p>
+          <div class="empty-icon"><span class="material-symbols-outlined">school</span></div>
+          <% if (user.role === 'student') { %>
+            <p><span class="badge-unmatriculated" style="font-size:13px;padding:4px 12px">(Sin Matricular)</span></p>
+            <p style="margin-top:10px;color:var(--text-secondary);font-size:14px">No estás matriculado en ningún curso. Pedile el código de clase a tu docente.</p>
+          <% } else { %>
+            <p>Aún no tenés clases. Creá una o unite con un código.</p>
+          <% } %>
         </div>
       <% } %>
       <div class="course-grid">
-        <% joinedCourses.forEach(course => { %>
-          <a href="/courses/<%= course._id %>" class="course-card" style="--card-color: #34a853">
-            <div class="card-banner">
+        <% courses.forEach(course => { %>
+          <%
+            const subtitle = [course.section, course.subject].filter(Boolean).join(' · ');
+            const _h = course.header || {};
+            const _defaultColor = course.isOwner ? '#1a73e8' : '#34a853';
+            const _cardColor = _h.color || _defaultColor;
+            let _bannerStyle = '';
+            if (_h.image) {
+              _bannerStyle = `background: linear-gradient(${_cardColor}bb,${_cardColor}bb), url('${_h.image}') center/cover no-repeat;`;
+            } else if (_h.color && _h.color2) {
+              _bannerStyle = `background: linear-gradient(135deg, ${_h.color}, ${_h.color2});`;
+            }
+          %>
+          <a href="/courses/<%= course._id %>" class="course-card" style="--card-color: <%= _cardColor %>">
+            <div class="card-banner"<% if (_bannerStyle) { %> style="<%= _bannerStyle %>"<% } %>>
               <div class="card-banner-content">
                 <h4><%= course.name %></h4>
-                <p><%= course.owner.name %></p>
+                <% if (subtitle) { %><p><%= subtitle %></p><% } %>
+              </div>
+              <div class="card-banner-deco">
+                <span class="material-symbols-outlined"><%= course.isOwner ? 'school' : 'menu_book' %></span>
               </div>
             </div>
             <div class="card-body">
-              <% if (course.section) { %>
-                <div class="card-info">
-                  <span class="material-symbols-outlined card-info-icon">chrome_reader_mode</span>
-                  <span><%= course.section %></span>
+              <% if (course.isOwner) { %>
+                <div class="card-stat">
+                  <span class="material-symbols-outlined">group</span>
+                  <span><%= course.students.length %> alumno<%= course.students.length !== 1 ? 's' : '' %></span>
+                </div>
+              <% } else { %>
+                <div class="card-stat">
+                  <div class="avatar" style="width:26px;height:26px;font-size:11px;background:#1a73e8"><%= course.owner.name.charAt(0).toUpperCase() %></div>
+                  <span><%= course.owner.name %></span>
                 </div>
               <% } %>
             </div>
             <div class="card-footer">
-              <div class="card-teacher">
-                <span class="material-symbols-outlined">person</span>
-                <span><%= course.owner.name %></span>
+              <div class="card-footer-icons">
+                <button class="icon-btn card-icon-btn" title="Novedades"
+                  onclick="event.preventDefault();event.stopPropagation();window.location.href='/courses/<%= course._id %>'">
+                  <span class="material-symbols-outlined">campaign</span>
+                </button>
+                <button class="icon-btn card-icon-btn" title="Actividades"
+                  onclick="event.preventDefault();event.stopPropagation();window.location.href='/courses/<%= course._id %>'">
+                  <span class="material-symbols-outlined">assignment</span>
+                </button>
               </div>
-              <span class="card-student-badge">Estudiante</span>
+              <button class="icon-btn card-icon-btn" title="Copiar código de clase"
+                onclick="event.preventDefault();event.stopPropagation();copyCode('<%= course.code %>')">
+                <span class="material-symbols-outlined">more_vert</span>
+              </button>
             </div>
           </a>
         <% }) %>

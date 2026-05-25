@@ -1,3 +1,9 @@
+<script>
+  (function () {
+    var t = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
 <% if (impersonating) { %>
 <style>
   .header { top: 44px; }
@@ -26,18 +32,32 @@
           <text x="20" y="27" text-anchor="middle" fill="white" font-size="22" font-family="Arial" font-weight="bold">C</text>
         </svg>
       </div>
-      <span class="header-title">Classroom</span>
+      <span class="header-title">Clases</span>
     </a>
+  </div>
+  <div class="header-center">
+    <% if (school) { %><span class="header-school-name"><%= school.name %></span><% } %>
   </div>
   <div class="header-right">
     <% if (typeof user !== 'undefined' && user) { %>
+      <button class="icon-btn" id="darkModeBtn" onclick="toggleDarkMode()" title="Cambiar tema">
+        <span class="material-symbols-outlined">dark_mode</span>
+      </button>
       <span class="user-role role-badge role-<%= user.role %>"><%= roleNames[user.role] || user.role %></span>
       <button class="icon-btn" onclick="toggleUserMenu()" title="Menú de usuario">
-        <div class="avatar"><%= user.name.charAt(0).toUpperCase() %></div>
+        <% if (user.avatar) { %>
+          <div class="avatar avatar-img"><img src="<%= user.avatar %>" alt="<%= user.name %>"></div>
+        <% } else { %>
+          <div class="avatar"><%= user.name.charAt(0).toUpperCase() %></div>
+        <% } %>
       </button>
       <div class="user-menu" id="userMenu">
         <div class="user-menu-header">
-          <div class="avatar-huge"><%= user.name.charAt(0).toUpperCase() %></div>
+          <% if (user.avatar) { %>
+            <div class="avatar-huge avatar-img"><img src="<%= user.avatar %>" alt="<%= user.name %>"></div>
+          <% } else { %>
+            <div class="avatar-huge"><%= user.name.charAt(0).toUpperCase() %></div>
+          <% } %>
           <div class="user-menu-info">
             <div class="user-menu-name"><%= user.name %></div>
             <div class="user-menu-email"><%= user.email %></div>
@@ -75,10 +95,28 @@
         <span class="material-symbols-outlined">school</span>
         <span>Clases</span>
       </a>
+      <% if (typeof user !== 'undefined' && user && user.role !== 'superadmin') { %>
+        <a href="/courses/profile" class="drawer-item">
+          <span class="material-symbols-outlined">account_circle</span>
+          <span>Mi perfil</span>
+        </a>
+      <% } %>
+      <% if (typeof user !== 'undefined' && user && user.role === 'student') { %>
+        <a href="/activities/my-pending" class="drawer-item">
+          <span class="material-symbols-outlined">pending_actions</span>
+          <span>Mis pendientes</span>
+        </a>
+      <% } %>
       <% if (typeof user !== 'undefined' && user && user.role === 'admin' && !impersonating) { %>
         <a href="/admin" class="drawer-item">
           <span class="material-symbols-outlined">admin_panel_settings</span>
           <span>Administración</span>
+        </a>
+      <% } %>
+      <% if (typeof user !== 'undefined' && user && user.role === 'superadmin' && !impersonating) { %>
+        <a href="/superadmin" class="drawer-item">
+          <span class="material-symbols-outlined">manage_accounts</span>
+          <span>Superadministración</span>
         </a>
       <% } %>
       <% if (impersonating) { %>

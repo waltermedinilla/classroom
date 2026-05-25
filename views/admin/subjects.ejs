@@ -59,8 +59,12 @@
               <h4 class="subject-card-name"><%= s.name %></h4>
               <p class="subject-card-desc"><%= s.description || 'Sin descripción' %></p>
               <div class="subject-card-meta">
-                <span class="material-symbols-outlined">school</span>
-                <%= s.courseCount %> curso<%= s.courseCount !== 1 ? 's' : '' %>
+                <% if (s.courseCount === 0) { %>
+                  <span class="badge-unmatriculated">(Sin Matricular)</span>
+                <% } else { %>
+                  <span class="material-symbols-outlined">school</span>
+                  <%= s.courseCount %> curso<%= s.courseCount !== 1 ? 's' : '' %>
+                <% } %>
               </div>
             </div>
           </a>

@@ -1,0 +1,35 @@
+;;
+;; Domain:     escuela4118sanjose.ar.
+;; Exported:   2026-05-23 04:53:21
+;;
+;; This file is intended for use for informational and archival
+;; purposes ONLY and MUST be edited before use on a production
+;; DNS server.  In particular, you must:
+;;   -- update the SOA record with the correct authoritative name server
+;;   -- update the SOA record with the contact e-mail address information
+;;   -- update the NS record(s) with the authoritative name servers for this domain.
+;;
+;; For further information, please consult the BIND documentation
+;; located on the following website:
+;;
+;; http://www.isc.org/
+;;
+;; And RFC 1035:
+;;
+;; http://www.ietf.org/rfc/rfc1035.txt
+;;
+;; Please note that we do NOT offer technical support for any use
+;; of this zone data, the BIND name server, or any other third-party
+;; DNS software.
+;;
+;; Use at your own risk.
+;; SOA Record
+escuela4118sanjose.ar	3600	IN	SOA	damien.ns.cloudflare.com. dns.cloudflare.com. 2053117860 10000 2400 604800 3600
+
+;; NS Records
+escuela4118sanjose.ar.	86400	IN	NS	damien.ns.cloudflare.com.
+escuela4118sanjose.ar.	86400	IN	NS	jasmine.ns.cloudflare.com.
+
+;; CNAME Records
+escuela4118sanjose.ar.	1	IN	CNAME	a1b2c3d4-e5f6-7890-abcd-ef1234567890.cfargotunnel.com. ; cf_tags=cf-proxied:true
+www.escuela4118sanjose.ar.	1	IN	CNAME	escuela4118sanjose.ar. ; cf_tags=cf-proxied:true

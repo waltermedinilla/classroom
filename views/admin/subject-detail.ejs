@@ -51,9 +51,9 @@
       <% if (courses.length === 0) { %>
         <div class="empty-state small">
           <div class="empty-icon"><span class="material-symbols-outlined">school</span></div>
-          <p>No hay cursos asociados a esta materia aún</p>
+          <p><span class="badge-unmatriculated" style="font-size:13px;padding:4px 12px">(Sin Matricular)</span></p>
           <p style="font-size:13px;color:var(--text-hint);margin-top:8px">
-            Los docentes pueden asociar sus cursos a "<%= subject.name %>" al crearlo.
+            Esta materia no tiene cursos asociados. Los docentes pueden vincularla al crear un curso.
           </p>
         </div>
       <% } else { %>
@@ -66,6 +66,7 @@
                 <th>Aula</th>
                 <th>Docente</th>
                 <th>Alumnos</th>
+                <th>Escuela</th>
                 <th>Código</th>
               </tr>
             </thead>
@@ -80,8 +81,13 @@
                       <%= c.owner.name %>
                     </a>
                   </td>
+                  <td><span style="font-weight:600"><%= c.students.length %></span></td>
                   <td>
-                    <span style="font-weight:600"><%= c.students.length %></span>
+                    <% if (c.school) { %>
+                      <span style="font-size:13px"><%= c.school.name || c.school %></span>
+                    <% } else { %>
+                      <span class="badge-unmatriculated">(Sin Matricular)</span>
+                    <% } %>
                   </td>
                   <td>
                     <code style="background:#f0f4f8;padding:3px 10px;border-radius:var(--radius-xs);font-size:13px;letter-spacing:1px">

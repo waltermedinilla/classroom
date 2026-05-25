@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= school.name %> - Superadmin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='<%= encodeURIComponent(school.color) %>'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'><%= school.name[0].toUpperCase() %></text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .sp-back {
+      display: inline-flex; align-items: center; gap: 6px;
+      color: var(--text-secondary); font-size: 13px; text-decoration: none;
+      margin-bottom: 20px; padding: 6px 0;
+    }
+    .sp-back:hover { color: var(--primary); }
+
+    /* ── Profile card ── */
+    .sp-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: visible;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* Banner */
+    .sp-banner {
+      height: 160px;
+      border-radius: var(--radius) var(--radius) 0 0;
+      position: relative;
+    }
+
+    /* Logo: overlaps banner */
+    .sp-logo {
+      position: absolute;
+      bottom: -44px;
+      left: 32px;
+      width: 88px; height: 88px;
+      border-radius: 18px;
+      background: var(--surface);
+      border: 4px solid var(--surface);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 38px; font-weight: 800; color: #fff;
+      user-select: none;
+    }
+
+    /* Header info */
+    .sp-header {
+      padding: 56px 32px 20px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .sp-name { font-size: 1.4rem; font-weight: 700; line-height: 1.2; }
+    .sp-slug { font-size: 13px; color: var(--text-secondary); margin-top: 2px; font-family: monospace; }
+    .sp-desc { font-size: 13px; color: var(--text-secondary); margin-top: 6px; max-width: 480px; }
+    .sp-stats {
+      display: flex; gap: 16px; flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .sp-stat {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 13px; font-weight: 600; color: var(--text-secondary);
+    }
+    .sp-stat .material-symbols-outlined { font-size: 16px; }
+
+    /* Action buttons */
+    .sp-actions {
+      display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0;
+    }
+
+    /* ── Tabs ── */
+    .sp-tabs {
+      border-top: 1px solid var(--border);
+      padding: 0 32px;
+      display: flex; gap: 0;
+      overflow-x: auto;
+    }
+    .sp-tab {
+      padding: 14px 20px;
+      font-size: 14px; font-weight: 500;
+      color: var(--text-secondary);
+      border: none; background: none;
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      white-space: nowrap;
+      transition: color 0.15s;
+      display: flex; align-items: center; gap: 7px;
+    }
+    .sp-tab:hover { color: var(--text); }
+    .sp-tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+    .sp-tab-badge {
+      background: var(--bg);
+      color: var(--text-secondary);
+      font-size: 11px; font-weight: 700;
+      padding: 2px 7px; border-radius: 10px;
+    }
+    .sp-tab.active .sp-tab-badge { background: var(--primary-light); color: var(--primary); }
+
+    /* ── Tab content ── */
+    .sp-tab-content { display: none; }
+    .sp-tab-content.active { display: block; }
+
+    /* ── Resumen tab ── */
+    .sp-resumen-grid {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 20px;
+      align-items: start;
+    }
+    @media (max-width: 900px) { .sp-resumen-grid { grid-template-columns: 1fr; } }
+
+    .sp-role-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .sp-role-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 16px;
+      text-align: center;
+    }
+    .sp-role-count { font-size: 1.8rem; font-weight: 800; line-height: 1; }
+    .sp-role-label { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+    .sp-role-bar {
+      height: 3px; border-radius: 2px;
+      margin-top: 10px;
+    }
+
+    /* Recent users */
+    .sp-section-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+    }
+    .sp-section-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px; font-weight: 700;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .sp-user-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .sp-user-row:last-child { border-bottom: none; }
+    .sp-avatar {
+      width: 34px; height: 34px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 700; color: #fff; flex-shrink: 0;
+    }
+    .sp-user-name { font-weight: 600; color: var(--text); }
+    .sp-user-email { color: var(--text-secondary); font-size: 12px; }
+    .sp-user-meta { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+    /* Right column cards */
+    .sp-invite-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+    .sp-invite-url {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 11px; font-family: monospace;
+      color: var(--text-secondary);
+      word-break: break-all; line-height: 1.4;
+      margin: 12px 16px 8px;
+    }
+
+    /* ── Usuarios tab ── */
+    .sp-filter-row {
+      display: flex; gap: 8px; flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .sp-filter-chip {
+      padding: 5px 14px; border-radius: 20px;
+      font-size: 12px; font-weight: 600;
+      border: 1px solid var(--border);
+      background: var(--surface); color: var(--text-secondary);
+      cursor: pointer; transition: all 0.15s;
+    }
+    .sp-filter-chip:hover,
+    .sp-filter-chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+    .sp-table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+    }
+    .sp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .sp-table th {
+      background: var(--bg); color: var(--text-secondary);
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+      padding: 10px 14px; text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .sp-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .sp-table tr:last-child td { border-bottom: none; }
+    .sp-table tr:hover td { background: var(--bg); }
+    .sp-table .td-name { font-weight: 600; }
+    .sp-table .td-email { color: var(--text-secondary); font-size: 12px; }
+    .sp-table .td-actions { display: flex; gap: 6px; align-items: center; }
+    .sp-inline-select {
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 4px 8px; font-size: 12px;
+      background: var(--bg); color: var(--text);
+      cursor: pointer;
+    }
+
+    /* ── Cursos tab ── */
+    .sp-course-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .sp-course-row:last-child { border-bottom: none; }
+    .sp-course-thumb {
+      width: 40px; height: 40px; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; flex-shrink: 0;
+    }
+    .sp-course-name { font-weight: 600; }
+    .sp-course-meta { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+
+    /* ── Materias tab ── */
+    .sp-subject-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sp-subject-row:last-child { border-bottom: none; }
+    .sp-color-dot {
+      width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+    }
+
+    /* Role chip */
+    .role-chip {
+      display: inline-block;
+      font-size: 11px; font-weight: 600;
+      padding: 2px 8px; border-radius: 10px;
+    }
+    /* Active chip */
+    .chip-active   { background: #e6f4ea; color: #137333; }
+    .chip-inactive { background: #fce8e6; color: #c5221f; }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/superadmin-nav', { activePage: 'schools' }) %>
+
+    <a href="/superadmin/schools" class="sp-back">
+      <span class="material-symbols-outlined" style="font-size:18px">arrow_back</span>
+      Volver a escuelas
+    </a>
+
+    <%
+      const totalUsers   = users.length;
+      const totalCourses = courses.length;
+      const totalSubjects= subjects.length;
+      const initial      = school.name[0].toUpperCase();
+
+      const roleLabels = {
+        admin:     'Administrador',
+        directivo: 'Directivo',
+        teacher:   'Docente',
+        preceptor: 'Preceptor',
+        soe:       'SOE',
+        student:   'Alumno',
+      };
+      const roleColors = {
+        admin:     '#9334e6',
+        directivo: '#0d7377',
+        teacher:   '#1a73e8',
+        preceptor: '#fbbc04',
+        soe:       '#ff5722',
+        student:   '#34a853',
+      };
+      const roleIcons = {
+        admin: 'manage_accounts', directivo: 'supervisor_account',
+        teacher: 'school', preceptor: 'badge', soe: 'psychology', student: 'person',
+      };
+    %>
+
+    <!-- ── Profile card ── -->
+    <div class="sp-card">
+
+      <!-- Banner -->
+      <div class="sp-banner" style="background: linear-gradient(135deg, <%= school.color %>, <%= school.color %>aa)">
+        <!-- Logo overlapping banner -->
+        <div class="sp-logo" style="background:<%= school.color %>">
+          <%= initial %>
+        </div>
+      </div>
+
+      <!-- Header info + actions -->
+      <div class="sp-header">
+        <div>
+          <div class="sp-name"><%= school.name %></div>
+          <div class="sp-slug"><%= school.slug %></div>
+          <% if (school.description) { %>
+            <div class="sp-desc"><%= school.description %></div>
+          <% } %>
+          <div class="sp-stats">
+            <span class="sp-stat">
+              <span class="material-symbols-outlined">people</span>
+              <strong><%= totalUsers %></strong> usuario<%= totalUsers !== 1 ? 's' : '' %>
+            </span>
+            <span class="sp-stat">
+              <span class="material-symbols-outlined">menu_book</span>
+              <strong><%= totalCourses %></strong> curso<%= totalCourses !== 1 ? 's' : '' %>
+            </span>
+            <span class="sp-stat">
+              <span class="material-symbols-outlined">book</span>
+              <strong><%= totalSubjects %></strong> materia<%= totalSubjects !== 1 ? 's' : '' %>
+            </span>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="sp-actions">
+          <button class="btn btn-outline" style="font-size:13px" onclick="openEditModal()">
+            <span class="material-symbols-outlined" style="font-size:16px">edit</span>
+            Editar
+          </button>
+          <button class="btn btn-outline" style="font-size:13px" onclick="openInvitePanel()">
+            <span class="material-symbols-outlined" style="font-size:16px"><%= school.inviteToken ? 'link' : 'add_link' %></span>
+            <%= school.inviteToken ? 'Enlace activo' : 'Generar enlace' %>
+          </button>
+          <a href="/superadmin/import" class="btn btn-outline" style="font-size:13px">
+            <span class="material-symbols-outlined" style="font-size:16px">upload_file</span>
+            Importar
+          </a>
+          <button class="btn btn-danger" style="font-size:13px" onclick="deleteSchool()">
+            <span class="material-symbols-outlined" style="font-size:16px">delete</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="sp-tabs">
+        <button class="sp-tab active" data-tab="resumen" onclick="switchTab('resumen',this)">
+          <span class="material-symbols-outlined" style="font-size:17px">dashboard</span>
+          Resumen
+        </button>
+        <button class="sp-tab" data-tab="usuarios" onclick="switchTab('usuarios',this)">
+          <span class="material-symbols-outlined" style="font-size:17px">people</span>
+          Usuarios
+          <span class="sp-tab-badge"><%= totalUsers %></span>
+        </button>
+        <button class="sp-tab" data-tab="cursos" onclick="switchTab('cursos',this)">
+          <span class="material-symbols-outlined" style="font-size:17px">menu_book</span>
+          Cursos
+          <span class="sp-tab-badge"><%= totalCourses %></span>
+        </button>
+        <button class="sp-tab" data-tab="materias" onclick="switchTab('materias',this)">
+          <span class="material-symbols-outlined" style="font-size:17px">book</span>
+          Materias
+          <span class="sp-tab-badge"><%= totalSubjects %></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         TAB: RESUMEN
+    ══════════════════════════════════════ -->
+    <div id="tab-resumen" class="sp-tab-content active">
+      <div class="sp-resumen-grid">
+
+        <!-- Left: role counts + recent users -->
+        <div>
+          <div class="sp-role-grid">
+            <% ['admin','directivo','teacher','preceptor','soe','student'].forEach(role => { %>
+              <div class="sp-role-card">
+                <span class="material-symbols-outlined" style="font-size:22px;color:<%= roleColors[role] %>"><%= roleIcons[role] %></span>
+                <div class="sp-role-count" style="color:<%= roleColors[role] %>"><%= roleCounts[role] %></div>
+                <div class="sp-role-label"><%= roleLabels[role] %><%= roleCounts[role] !== 1 ? 's' : '' %></div>
+                <div class="sp-role-bar" style="background:<%= roleColors[role] %>22">
+                  <div style="height:100%;width:<%= totalUsers > 0 ? Math.round(roleCounts[role]/totalUsers*100) : 0 %>%;background:<%= roleColors[role] %>;border-radius:2px"></div>
+                </div>
+              </div>
+            <% }) %>
+          </div>
+
+          <!-- Usuarios recientes -->
+          <div class="sp-section-card">
+            <div class="sp-section-header">
+              <span>Usuarios recientes</span>
+              <button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="switchTab('usuarios',document.querySelector('[data-tab=usuarios]'))">
+                Ver todos
+              </button>
+            </div>
+            <% users.slice(0, 8).forEach(u => { %>
+              <div class="sp-user-row">
+                <div class="sp-avatar" style="background:<%= roleColors[u.role] || '#64748b' %>">
+                  <%= u.name[0].toUpperCase() %>
+                </div>
+                <div>
+                  <div class="sp-user-name"><%= u.name %></div>
+                  <div class="sp-user-email"><%= u.email %></div>
+                </div>
+                <div class="sp-user-meta">
+                  <span class="role-chip" style="background:<%= roleColors[u.role] %>22;color:<%= roleColors[u.role] %>">
+                    <%= roleLabels[u.role] || u.role %>
+                  </span>
+                  <% if (!u.active) { %>
+                    <span class="role-chip chip-inactive">Bloqueado</span>
+                  <% } %>
+                </div>
+              </div>
+            <% }) %>
+            <% if (users.length === 0) { %>
+              <div style="padding:24px;text-align:center;color:var(--text-secondary);font-size:13px">
+                No hay usuarios en esta escuela todavía
+              </div>
+            <% } %>
+          </div>
+        </div>
+
+        <!-- Right: invite card + quick stats -->
+        <div>
+
+          <!-- Enlace de invitación -->
+          <div class="sp-invite-card">
+            <div class="sp-section-header">
+              <span style="display:flex;align-items:center;gap:6px">
+                <span class="material-symbols-outlined" style="font-size:16px;color:<%= school.inviteToken ? '#34a853' : '#9aa0a6' %>">
+                  <%= school.inviteToken ? 'link' : 'link_off' %>
+                </span>
+                Enlace de registro
+              </span>
+              <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:<%= school.inviteToken ? '#e6f4ea' : '#f0f4f8' %>;color:<%= school.inviteToken ? '#137333' : '#9aa0a6' %>">
+                <%= school.inviteToken ? 'Activo' : 'Sin enlace' %>
+              </span>
+            </div>
+            <div style="padding:12px 16px 16px">
+              <p style="font-size:12px;color:var(--text-secondary);line-height:1.5;margin-bottom:10px">
+                Compartí este enlace con los usuarios de la escuela para que puedan crear su cuenta directamente.
+              </p>
+              <% if (school.inviteToken) { %>
+                <div class="sp-invite-url" id="inviteUrlDisplay">
+                  <%= baseUrl %>/register/invite/<%= school.inviteToken %>
+                </div>
+                <div style="display:flex;gap:6px;margin-top:8px">
+                  <button class="btn btn-outline" style="flex:1;font-size:12px" onclick="copyInviteUrl()">
+                    <span class="material-symbols-outlined" style="font-size:14px" id="copyBtnIcon">content_copy</span>
+                    Copiar
+                  </button>
+                  <button class="btn btn-outline" style="font-size:12px" onclick="regenerateInvite()" title="Regenerar">
+                    <span class="material-symbols-outlined" style="font-size:14px">refresh</span>
+                  </button>
+                  <button class="btn btn-danger" style="font-size:12px" onclick="revokeInvite()" title="Revocar">
+                    <span class="material-symbols-outlined" style="font-size:14px">link_off</span>
+                  </button>
+                </div>
+              <% } else { %>
+                <button class="btn btn-primary" style="width:100%;font-size:13px" onclick="regenerateInvite()">
+                  <span class="material-symbols-outlined" style="font-size:16px">add_link</span>
+                  Generar enlace
+                </button>
+              <% } %>
+              <div class="form-error" id="inviteError" style="margin-top:8px"></div>
+            </div>
+          </div>
+
+          <!-- Resumen de roles (barra apilada) -->
+          <div class="sp-invite-card">
+            <div class="sp-section-header">
+              <span>Distribución por rol</span>
+            </div>
+            <div style="padding:14px 16px">
+              <% if (totalUsers > 0) { %>
+                <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;gap:1px;margin-bottom:14px">
+                  <% ['admin','directivo','teacher','preceptor','soe','student'].forEach(role => {
+                    const pct = Math.round(roleCounts[role]/totalUsers*100);
+                    if (pct > 0) { %>
+                    <div style="width:<%= pct %>%;background:<%= roleColors[role] %>" title="<%= roleLabels[role] %>: <%= roleCounts[role] %>"></div>
+                  <% } }) %>
+                </div>
+              <% } %>
+              <% ['admin','directivo','teacher','preceptor','soe','student'].forEach(role => {
+                if (roleCounts[role] > 0) { %>
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;font-size:12px;border-bottom:1px solid var(--border)">
+                  <span style="display:flex;align-items:center;gap:6px">
+                    <span style="width:10px;height:10px;border-radius:50%;background:<%= roleColors[role] %>;flex-shrink:0"></span>
+                    <%= roleLabels[role] %>s
+                  </span>
+                  <strong><%= roleCounts[role] %></strong>
+                </div>
+              <% } }) %>
+              <% if (totalUsers === 0) { %>
+                <p style="font-size:12px;color:var(--text-secondary);text-align:center;padding:8px 0">Sin usuarios</p>
+              <% } %>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         TAB: USUARIOS
+    ══════════════════════════════════════ -->
+    <div id="tab-usuarios" class="sp-tab-content">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+        <div class="sp-filter-row" style="margin:0">
+          <button class="sp-filter-chip active" onclick="filterRole('', this)">Todos (<%= totalUsers %>)</button>
+          <% ['admin','directivo','teacher','preceptor','soe','student'].forEach(role => {
+            if (roleCounts[role] > 0) { %>
+            <button class="sp-filter-chip" onclick="filterRole('<%= role %>',this)" style="--role-color:<%= roleColors[role] %>">
+              <%= roleLabels[role] %>s (<%= roleCounts[role] %>)
+            </button>
+          <% } }) %>
+        </div>
+        <a href="/superadmin/users/create" class="btn btn-primary" style="font-size:13px">
+          <span class="material-symbols-outlined" style="font-size:16px">person_add</span>
+          Nuevo usuario
+        </a>
+      </div>
+
+      <div class="sp-table-wrap">
+        <table class="sp-table" id="usersTable">
+          <thead>
+            <tr>
+              <th>Usuario</th>
+              <th>Rol</th>
+              <th>DNI</th>
+              <th>Estado</th>
+              <th>Desde</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <% users.forEach(u => { %>
+              <tr data-role="<%= u.role %>">
+                <td>
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <div class="sp-avatar" style="width:30px;height:30px;font-size:12px;background:<%= roleColors[u.role] || '#64748b' %>">
+                      <%= u.name[0].toUpperCase() %>
+                    </div>
+                    <div>
+                      <div class="td-name"><%= u.name %></div>
+                      <div class="td-email"><%= u.email %></div>
+                    </div>
+                  </div>
+                </td>
+                <td>
+                  <select class="sp-inline-select" onchange="changeRole('<%= u._id %>', this.value)" data-original="<%= u.role %>">
+                    <% ['admin','directivo','teacher','preceptor','soe','student'].forEach(r => { %>
+                      <option value="<%= r %>" <%= u.role === r ? 'selected' : '' %>><%= roleLabels[r] %></option>
+                    <% }) %>
+                  </select>
+                </td>
+                <td style="color:var(--text-secondary);font-family:monospace;font-size:12px">
+                  <%= u.dni || '—' %>
+                </td>
+                <td>
+                  <span class="role-chip <%= u.active ? 'chip-active' : 'chip-inactive' %>">
+                    <%= u.active ? 'Activo' : 'Bloqueado' %>
+                  </span>
+                </td>
+                <td style="color:var(--text-secondary);font-size:12px">
+                  <%= new Date(u.createdAt).toLocaleDateString('es-AR', { day:'2-digit', month:'short', year:'numeric' }) %>
+                </td>
+                <td>
+                  <div class="td-actions">
+                    <button class="btn btn-outline" style="font-size:12px;padding:5px 10px"
+                      onclick="toggleActive('<%= u._id %>', <%= u.active %>, this)">
+                      <span class="material-symbols-outlined" style="font-size:14px"><%= u.active ? 'block' : 'check_circle' %></span>
+                    </button>
+                    <button class="btn btn-danger" style="font-size:12px;padding:5px 10px"
+                      onclick="deleteUser('<%= u._id %>', '<%= u.name.replace(/'/g, "\\'") %>')">
+                      <span class="material-symbols-outlined" style="font-size:14px">delete</span>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            <% }) %>
+            <% if (users.length === 0) { %>
+              <tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-secondary)">
+                No hay usuarios en esta escuela
+              </td></tr>
+            <% } %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         TAB: CURSOS
+    ══════════════════════════════════════ -->
+    <div id="tab-cursos" class="sp-tab-content">
+      <% if (courses.length === 0) { %>
+        <div class="empty-state">
+          <div class="empty-icon"><span class="material-symbols-outlined">menu_book</span></div>
+          <p>No hay cursos creados en esta escuela</p>
+        </div>
+      <% } else { %>
+        <div class="sp-section-card">
+          <div class="sp-section-header">
+            <span><%= totalCourses %> curso<%= totalCourses !== 1 ? 's' : '' %></span>
+          </div>
+          <% courses.forEach(c => { %>
+            <div class="sp-course-row">
+              <div class="sp-course-thumb" style="background:<%= c.header && c.header.color ? c.header.color : school.color %>22">
+                <span class="material-symbols-outlined" style="color:<%= c.header && c.header.color ? c.header.color : school.color %>">menu_book</span>
+              </div>
+              <div style="flex:1">
+                <div class="sp-course-name"><%= c.name %></div>
+                <div class="sp-course-meta">
+                  <% if (c.section) { %><span>Sección: <%= c.section %></span> · <% } %>
+                  <% if (c.subject) { %><span>Materia: <%= c.subject %></span> · <% } %>
+                  <span>Docente: <%= c.owner ? c.owner.name : 'Sin asignar' %></span>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                <span style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:4px">
+                  <span class="material-symbols-outlined" style="font-size:15px">people</span>
+                  <%= c.students ? c.students.length : 0 %> alumno<%= (!c.students || c.students.length !== 1) ? 's' : '' %>
+                </span>
+                <span style="font-size:11px;font-family:monospace;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 8px;color:var(--text-secondary)">
+                  <%= c.code %>
+                </span>
+              </div>
+            </div>
+          <% }) %>
+        </div>
+      <% } %>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         TAB: MATERIAS
+    ══════════════════════════════════════ -->
+    <div id="tab-materias" class="sp-tab-content">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:16px">
+        <button class="btn btn-primary" style="font-size:13px" onclick="openAddSubjectModal()">
+          <span class="material-symbols-outlined" style="font-size:16px">add</span>
+          Nueva materia
+        </button>
+      </div>
+      <% if (subjects.length === 0) { %>
+        <div class="empty-state">
+          <div class="empty-icon"><span class="material-symbols-outlined">book</span></div>
+          <p>No hay materias en esta escuela</p>
+          <button class="btn btn-primary" style="margin-top:16px" onclick="openAddSubjectModal()">Agregar materia</button>
+        </div>
+      <% } else { %>
+        <div class="sp-section-card">
+          <div class="sp-section-header">
+            <span><%= totalSubjects %> materia<%= totalSubjects !== 1 ? 's' : '' %></span>
+          </div>
+          <% subjects.forEach(s => { %>
+            <div class="sp-subject-row">
+              <div class="sp-color-dot" style="background:<%= s.color %>"></div>
+              <div style="flex:1">
+                <div style="font-size:13px;font-weight:600"><%= s.name %></div>
+                <% if (s.description) { %>
+                  <div style="font-size:12px;color:var(--text-secondary)"><%= s.description %></div>
+                <% } %>
+              </div>
+              <button class="btn btn-danger" style="font-size:12px;padding:5px 10px"
+                onclick="deleteSubject('<%= s._id %>', '<%= s.name.replace(/'/g, "\\'") %>')">
+                <span class="material-symbols-outlined" style="font-size:14px">delete</span>
+              </button>
+            </div>
+          <% }) %>
+        </div>
+      <% } %>
+    </div>
+
+  </main>
+
+  <!-- ══ Modal: Editar escuela ══ -->
+  <div id="editModal" class="modal-overlay" onclick="if(event.target===this)closeEditModal()">
+    <div class="modal" style="max-width:480px" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">edit</span>
+          <h3>Editar escuela</h3>
+        </div>
+        <button class="modal-close" onclick="closeEditModal()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <form id="editSchoolForm">
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">title</span>
+            <input type="text" id="editName" placeholder="Nombre de la escuela" value="<%= school.name %>" required>
+          </div>
+          <div class="input-group" style="margin-top:14px;align-items:flex-start;padding-top:12px">
+            <span class="material-symbols-outlined input-icon" style="margin-top:2px">description</span>
+            <textarea id="editDesc" placeholder="Descripción opcional..." style="flex:1;border:none;outline:none;font-size:14px;resize:vertical;min-height:70px;background:transparent;color:var(--text)"><%= school.description || '' %></textarea>
+          </div>
+          <div style="margin-top:18px">
+            <p style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;font-weight:600">Color</p>
+            <div class="color-picker" id="editColorPicker">
+              <% const COLORS=['#1a73e8','#34a853','#ea4335','#fbbc04','#9334e6','#0d7377','#e91e63','#ff5722','#795548','#607d8b']; %>
+              <% COLORS.forEach(c => { %>
+                <button type="button" class="color-option <%= school.color === c ? 'selected' : '' %>"
+                  data-color="<%= c %>" style="background:<%= c %>" onclick="selectEditColor('<%= c %>')"></button>
+              <% }) %>
+            </div>
+            <input type="hidden" id="editColor" value="<%= school.color %>">
+          </div>
+          <div class="form-error" id="editError" style="margin-top:14px"></div>
+          <button type="submit" class="btn btn-primary btn-full" style="margin-top:20px">
+            <span class="material-symbols-outlined">check</span>
+            Guardar cambios
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Modal: Nueva materia ══ -->
+  <div id="subjectModal" class="modal-overlay" onclick="if(event.target===this)closeSubjectModal()">
+    <div class="modal" style="max-width:420px" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">book</span>
+          <h3>Nueva materia</h3>
+        </div>
+        <button class="modal-close" onclick="closeSubjectModal()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <form id="subjectForm">
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">title</span>
+            <input type="text" id="subjectName" placeholder="Nombre de la materia" required>
+          </div>
+          <div class="input-group" style="margin-top:14px;align-items:flex-start;padding-top:12px">
+            <span class="material-symbols-outlined input-icon" style="margin-top:2px">description</span>
+            <textarea id="subjectDesc" placeholder="Descripción opcional..." style="flex:1;border:none;outline:none;font-size:14px;resize:vertical;min-height:60px;background:transparent;color:var(--text)"></textarea>
+          </div>
+          <div style="margin-top:18px">
+            <p style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;font-weight:600">Color</p>
+            <div class="color-picker" id="subjectColorPicker">
+              <% COLORS.forEach((c, i) => { %>
+                <button type="button" class="color-option <%= i === 0 ? 'selected' : '' %>"
+                  data-color="<%= c %>" style="background:<%= c %>" onclick="selectSubjectColor('<%= c %>')"></button>
+              <% }) %>
+            </div>
+            <input type="hidden" id="subjectColor" value="<%= COLORS[0] %>">
+          </div>
+          <div class="form-error" id="subjectError" style="margin-top:14px"></div>
+          <button type="submit" class="btn btn-primary btn-full" style="margin-top:20px">
+            <span class="material-symbols-outlined">add</span>
+            Crear materia
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <%- include('../partials/footer') %>
+
+  <script>
+    const SCHOOL_ID = '<%= school._id %>';
+    let _inviteToken = '<%= school.inviteToken || "" %>';
+
+    /* ── Tabs ── */
+    function switchTab(name, btn) {
+      document.querySelectorAll('.sp-tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.sp-tab').forEach(el => el.classList.remove('active'));
+      document.getElementById('tab-' + name).classList.add('active');
+      btn.classList.add('active');
+    }
+
+    /* ── Role filter (usuarios tab) ── */
+    function filterRole(role, btn) {
+      document.querySelectorAll('.sp-filter-chip').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('#usersTable tbody tr').forEach(tr => {
+        tr.style.display = (!role || tr.dataset.role === role) ? '' : 'none';
+      });
+    }
+
+    /* ── Invite link ── */
+    function openInvitePanel() {
+      if (_inviteToken) {
+        copyInviteUrl();
+      } else {
+        regenerateInvite();
+      }
+    }
+
+    function copyInviteUrl() {
+      const url = window.location.origin + '/register/invite/' + _inviteToken;
+      navigator.clipboard.writeText(url).then(() => {
+        const icon = document.getElementById('copyBtnIcon');
+        if (icon) { icon.textContent = 'check'; setTimeout(() => icon.textContent = 'content_copy', 2000); }
+        showToast('Enlace copiado al portapapeles');
+      });
+    }
+
+    async function regenerateInvite() {
+      const errorEl = document.getElementById('inviteError');
+      if (errorEl) errorEl.classList.remove('show');
+      const res = await fetch(`/superadmin/schools/${SCHOOL_ID}/invite`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) { if (errorEl) { errorEl.textContent = data.error; errorEl.classList.add('show'); } return; }
+      _inviteToken = data.inviteUrl.split('/').pop();
+      const display = document.getElementById('inviteUrlDisplay');
+      if (display) display.textContent = data.inviteUrl;
+      showToast('Enlace generado — copiado al portapapeles');
+      navigator.clipboard.writeText(data.inviteUrl).catch(() => {});
+      // Si la sección "sin enlace" está visible, recarga para mostrar el nuevo estado completo
+      if (document.getElementById('inviteNoToken') && !data.inviteUrl) location.reload();
+    }
+
+    async function revokeInvite() {
+      if (!confirm('¿Revocar el enlace? Los usuarios ya no podrán registrarse con él.')) return;
+      const res = await fetch(`/superadmin/schools/${SCHOOL_ID}/revoke-invite`, { method: 'POST' });
+      if (res.ok) { _inviteToken = ''; location.reload(); }
+    }
+
+    /* ── Edit school ── */
+    function openEditModal() {
+      document.getElementById('editModal').classList.add('show');
+      document.body.style.overflow = 'hidden';
+    }
+    function closeEditModal() {
+      document.getElementById('editModal').classList.remove('show');
+      document.body.style.overflow = '';
+    }
+    function selectEditColor(c) {
+      document.querySelectorAll('#editColorPicker .color-option').forEach(b => b.classList.remove('selected'));
+      document.querySelector(`#editColorPicker [data-color="${c}"]`).classList.add('selected');
+      document.getElementById('editColor').value = c;
+    }
+    document.getElementById('editSchoolForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const errorEl = document.getElementById('editError');
+      errorEl.classList.remove('show');
+      const btn = e.target.querySelector('button[type=submit]');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Guardando...';
+      const res = await fetch(`/superadmin/schools/${SCHOOL_ID}/edit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name:        document.getElementById('editName').value.trim(),
+          description: document.getElementById('editDesc').value.trim(),
+          color:       document.getElementById('editColor').value,
+        }),
+      });
+      const data = await res.json();
+      btn.disabled = false;
+      btn.innerHTML = '<span class="material-symbols-outlined">check</span> Guardar cambios';
+      if (!res.ok) { errorEl.textContent = data.error; errorEl.classList.add('show'); return; }
+      location.reload();
+    });
+
+    /* ── Delete school ── */
+    async function deleteSchool() {
+      if (!confirm('¿Eliminar esta escuela? Esta acción no se puede deshacer.')) return;
+      const res = await fetch(`/superadmin/schools/${SCHOOL_ID}/delete`, { method: 'POST' });
+      if (res.ok) window.location.href = '/superadmin/schools';
+      else { const d = await res.json(); alert(d.error); }
+    }
+
+    /* ── Users: change role ── */
+    async function changeRole(userId, newRole) {
+      const res = await fetch(`/superadmin/users/${userId}/role`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: newRole }),
+      });
+      if (!res.ok) { showToast('Error al cambiar el rol', true); return; }
+      showToast('Rol actualizado');
+    }
+
+    /* ── Users: toggle active ── */
+    async function toggleActive(userId, currentActive, btn) {
+      const res = await fetch(`/admin/users/${userId}/toggle-active`, { method: 'POST' });
+      if (res.ok) location.reload();
+      else showToast('Error al cambiar estado', true);
+    }
+
+    /* ── Users: delete ── */
+    async function deleteUser(userId, name) {
+      if (!confirm(`¿Eliminar al usuario "${name}"?`)) return;
+      const res = await fetch(`/admin/users/${userId}/delete`, { method: 'POST' });
+      if (res.ok) location.reload();
+      else showToast('Error al eliminar usuario', true);
+    }
+
+    /* ── Subjects ── */
+    function openAddSubjectModal() {
+      document.getElementById('subjectModal').classList.add('show');
+      document.body.style.overflow = 'hidden';
+    }
+    function closeSubjectModal() {
+      document.getElementById('subjectModal').classList.remove('show');
+      document.body.style.overflow = '';
+      document.getElementById('subjectForm').reset();
+    }
+    function selectSubjectColor(c) {
+      document.querySelectorAll('#subjectColorPicker .color-option').forEach(b => b.classList.remove('selected'));
+      document.querySelector(`#subjectColorPicker [data-color="${c}"]`).classList.add('selected');
+      document.getElementById('subjectColor').value = c;
+    }
+    document.getElementById('subjectForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const errorEl = document.getElementById('subjectError');
+      errorEl.classList.remove('show');
+      const btn = e.target.querySelector('button[type=submit]');
+      btn.disabled = true;
+      const res = await fetch('/admin/subjects/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name:        document.getElementById('subjectName').value.trim(),
+          description: document.getElementById('subjectDesc').value.trim(),
+          color:       document.getElementById('subjectColor').value,
+          school:      SCHOOL_ID,
+        }),
+      });
+      const data = await res.json();
+      btn.disabled = false;
+      if (!res.ok) { errorEl.textContent = data.error; errorEl.classList.add('show'); return; }
+      location.reload();
+    });
+
+    async function deleteSubject(id, name) {
+      if (!confirm(`¿Eliminar la materia "${name}"?`)) return;
+      const res = await fetch(`/admin/subjects/${id}/delete`, { method: 'POST' });
+      if (res.ok) location.reload();
+      else showToast('Error al eliminar la materia', true);
+    }
+
+    /* ── Toast ── */
+    function showToast(msg, isError) {
+      const t = document.createElement('div');
+      t.className = 'card-copied-toast';
+      t.textContent = msg;
+      if (isError) t.style.background = '#ea4335';
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 2500);
+    }
+
+    /* ── Escape para cerrar modales ── */
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { closeEditModal(); closeSubjectModal(); }
+    });
+  </script>
+</body>
+</html>

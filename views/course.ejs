@@ -12,7 +12,19 @@
   <%- include('partials/header') %>
 
   <main class="main-content">
-    <div class="course-header" style="--card-color: #1a73e8">
+    <%
+      const _h = course.header || {};
+      let _headerStyle;
+      if (_h.image) {
+        const _c = (_h.color || '#1a73e8') + 'bb';
+        _headerStyle = `background: linear-gradient(${_c},${_c}), url('${_h.image}') center/cover no-repeat`;
+      } else if (_h.color && _h.color2) {
+        _headerStyle = `background: linear-gradient(135deg, ${_h.color}, ${_h.color2})`;
+      } else {
+        _headerStyle = `--card-color: ${_h.color || '#1a73e8'}`;
+      }
+    %>
+    <div class="course-header" style="<%= _headerStyle %>">
       <div class="course-header-info">
         <h2><%= course.name %></h2>
         <% if (course.section) { %>
@@ -29,6 +41,12 @@
         <div class="avatar" style="width:48px;height:48px;font-size:22px;background:rgba(255,255,255,0.3)"><%= course.owner.name.charAt(0).toUpperCase() %></div>
         <span class="course-owner-name"><%= course.owner.name %></span>
       </div>
+      <% if (course.owner._id.toString() === user._id.toString()) { %>
+      <button class="header-customize-btn" onclick="openCustomizeModal()">
+        <span class="material-symbols-outlined">palette</span>
+        Personalizar
+      </button>
+      <% } %>
     </div>
 
     <div class="tabs">
@@ -36,45 +54,96 @@
         <span class="material-symbols-outlined">dynamic_feed</span>
         Novedades
       </button>
-      <button class="tab" data-tab="people">
-        <span class="material-symbols-outlined">people</span>
-        Personas
-      </button>
       <button class="tab" data-tab="activities">
         <span class="material-symbols-outlined">assignment</span>
         Actividades
+      </button>
+      <% if (course.owner._id.toString() === user._id.toString()) { %>
+      <button class="tab" data-tab="calificaciones">
+        <span class="material-symbols-outlined">grade</span>
+        Calificaciones
+      </button>
+      <% } else { %>
+      <button class="tab" data-tab="misnotas">
+        <span class="material-symbols-outlined">grade</span>
+        Mis notas
+      </button>
+      <% } %>
+      <button class="tab" data-tab="people">
+        <span class="material-symbols-outlined">people</span>
+        Personas
       </button>
     </div>
 
     <!-- Tab: Novedades -->
     <div class="tab-content" id="streamTab">
-      <div class="announcement-card">
-        <div class="announcement-form-header">
-          <div class="avatar"><%= user.name.charAt(0).toUpperCase() %></div>
-          <input type="text" id="announcementInput" placeholder="Anuncia algo a tu clase" readonly onclick="openAnnouncementForm()">
-        </div>
-        <div class="announcement-form-expanded" id="announcementFormExpanded">
-          <textarea id="announcementText" placeholder="Anuncia algo a tu clase..." rows="3"></textarea>
-          <div class="announcement-actions">
-            <label class="icon-btn" title="Adjuntar imagen">
-              <input type="file" id="imageInput" accept="image/*" hidden>
-              <span class="material-symbols-outlined">image</span>
-            </label>
-            <span id="imageName" class="image-name"></span>
-            <div class="announcement-form-btns">
-              <button class="btn btn-outline" onclick="closeAnnouncementForm()">
-                <span class="material-symbols-outlined">close</span>
-                Cancelar
+      <div class="stream-layout">
+
+        <!-- Sidebar izquierda -->
+        <aside class="stream-aside">
+          <div class="stream-aside-card">
+            <div class="stream-code-header">
+              <span class="stream-code-label">Código de clase</span>
+              <button class="icon-btn" onclick="navigator.clipboard.writeText('<%= course.code %>')" title="Copiar código">
+                <span class="material-symbols-outlined">more_vert</span>
               </button>
-              <button class="btn btn-primary" onclick="postAnnouncement()">
-                <span class="material-symbols-outlined">send</span>
-                Publicar
+            </div>
+            <div class="stream-code-value">
+              <span><%= course.code %></span>
+              <button class="icon-btn" onclick="navigator.clipboard.writeText('<%= course.code %>')" title="Copiar">
+                <span class="material-symbols-outlined" style="font-size:18px!important">open_in_full</span>
               </button>
             </div>
           </div>
+          <div class="stream-aside-card">
+            <div class="stream-upcoming-title">Próximas entregas</div>
+            <div id="upcomingList">
+              <p class="stream-no-upcoming">No tenés tareas pendientes</p>
+            </div>
+            <button class="stream-ver-todo" onclick="switchToActivities()">Ver todo</button>
+          </div>
+        </aside>
+
+        <!-- Columna principal -->
+        <div class="stream-main">
+          <% if (course.owner._id.toString() === user._id.toString()) { %>
+          <!-- Botón Nuevo anuncio (solo docente) -->
+          <div class="stream-action-row" id="streamActionRow">
+            <button class="stream-announce-btn" onclick="openAnnouncementForm()">
+              <span class="material-symbols-outlined">edit</span>
+              Nuevo anuncio
+            </button>
+          </div>
+
+          <!-- Formulario de anuncio (oculto por defecto) -->
+          <div class="announcement-card" id="announcementFormCard" style="display:none">
+            <div class="announcement-form-header">
+              <div class="avatar"><%= user.name.charAt(0).toUpperCase() %></div>
+              <span class="stream-form-username"><%= user.name %></span>
+            </div>
+            <textarea id="announcementText" class="stream-textarea" placeholder="Anuncia algo a tu clase..." rows="3"></textarea>
+            <div id="imagePreviewContainer"></div>
+            <div class="announcement-actions">
+              <label class="icon-btn" title="Adjuntar imagen">
+                <input type="file" id="imageInput" accept="image/*" hidden>
+                <span class="material-symbols-outlined">image</span>
+              </label>
+              <span id="imageName" class="image-name"></span>
+              <div class="announcement-form-btns">
+                <button class="btn btn-outline" onclick="closeAnnouncementForm()">Cancelar</button>
+                <button class="btn btn-primary" onclick="postAnnouncement()">
+                  <span class="material-symbols-outlined">send</span>
+                  Publicar
+                </button>
+              </div>
+            </div>
+          </div>
+          <% } %>
+
+          <div id="streamList"></div>
         </div>
+
       </div>
-      <div id="streamList"></div>
     </div>
 
     <!-- Tab: Personas -->
@@ -97,6 +166,14 @@
           <span class="material-symbols-outlined">people</span>
           <h3>Estudiantes</h3>
           <span class="people-count"><%= course.students.length %></span>
+          <% if (course.owner._id.toString() === user._id.toString()) { %>
+          <button class="add-person-btn" onclick="openAddStudentModal()" title="Agregar alumno">
+            <span class="material-symbols-outlined">person_add</span>
+          </button>
+          <button class="add-person-btn" onclick="exportStudents()" title="Exportar lista (.xlsx)" style="margin-left:4px">
+            <span class="material-symbols-outlined">download</span>
+          </button>
+          <% } %>
         </div>
         <% if (course.students.length === 0) { %>
           <div class="empty-state small">
@@ -105,12 +182,38 @@
           </div>
         <% } %>
         <% course.students.forEach(student => { %>
-          <div class="person-item">
-            <div class="avatar"><%= student.name.charAt(0).toUpperCase() %></div>
+          <%
+            const isDisabled = student.active === false;
+            const isOwnerView = course.owner._id.toString() === user._id.toString();
+          %>
+          <div class="person-item<%= isDisabled ? ' person-disabled' : '' %>" data-student-id="<%= student._id %>" data-active="<%= isDisabled ? 'false' : 'true' %>">
+            <% if (student.avatar) { %>
+              <div class="avatar avatar-img" style="<%= isDisabled ? 'opacity:.4' : '' %>"><img src="<%= student.avatar %>" alt="<%= student.name %>"></div>
+            <% } else { %>
+              <div class="avatar" style="<%= isDisabled ? 'opacity:.4' : '' %>"><%= student.name.charAt(0).toUpperCase() %></div>
+            <% } %>
             <div class="person-info">
+              <% if (student.dni) { %><div style="font-family:monospace;font-size:12px;color:var(--text-hint)">DNI: <%= student.dni %></div><% } %>
               <div class="person-name"><%= student.name %></div>
               <div class="person-email"><%= student.email %></div>
             </div>
+            <% if (isDisabled) { %>
+            <span class="badge-disabled" style="margin-left:auto">DESHABILITADO</span>
+            <% } %>
+            <% if (isOwnerView) { %>
+            <div style="<%= isDisabled ? '' : 'margin-left:auto' %>;display:flex;gap:4px">
+              <button class="icon-btn toggle-active-btn" onclick="toggleStudentActive('<%= student._id %>')"
+                title="<%= isDisabled ? 'Habilitar cuenta' : 'Deshabilitar cuenta' %>"
+                style="color:<%= isDisabled ? '#34a853' : '#f9ab00' %>;opacity:.8"
+                onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=.8">
+                <span class="material-symbols-outlined"><%= isDisabled ? 'person_check' : 'block' %></span>
+              </button>
+              <button class="icon-btn" onclick="removeStudent('<%= student._id %>')" title="Quitar del curso"
+                style="color:var(--danger);opacity:.7" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=.7">
+                <span class="material-symbols-outlined">person_remove</span>
+              </button>
+            </div>
+            <% } %>
           </div>
         <% }) %>
       </div>
@@ -118,6 +221,13 @@
 
     <!-- Tab: Actividades -->
     <div class="tab-content hidden" id="activitiesTab">
+      <div class="act-search-wrap" id="actSearchWrap" style="display:none">
+        <div class="input-group">
+          <span class="material-symbols-outlined input-icon">search</span>
+          <input type="text" id="activitySearch" placeholder="Buscar actividad..." autocomplete="off"
+            oninput="filterActivities(this.value)">
+        </div>
+      </div>
       <div class="activities-list" id="activitiesList">
         <div class="empty-state">
           <div class="empty-icon"><span class="material-symbols-outlined">hourglass_empty</span></div>
@@ -125,11 +235,33 @@
         </div>
       </div>
     </div>
+
+    <!-- Tab: Calificaciones (solo docente) -->
+    <% if (course.owner._id.toString() === user._id.toString()) { %>
+    <div class="tab-content hidden" id="calificacionesTab">
+      <div id="calificacionesList">
+        <div class="empty-state">
+          <div class="empty-icon"><span class="material-symbols-outlined">hourglass_empty</span></div>
+          <p>Cargando calificaciones...</p>
+        </div>
+      </div>
+    </div>
+    <% } else { %>
+    <!-- Tab: Mis notas (solo alumno) -->
+    <div class="tab-content hidden" id="misnotasTab">
+      <div id="misnotasList">
+        <div class="empty-state">
+          <div class="empty-icon"><span class="material-symbols-outlined">hourglass_empty</span></div>
+          <p>Cargando...</p>
+        </div>
+      </div>
+    </div>
+    <% } %>
   </main>
 
   <!-- FAB solo para docente del curso -->
   <% if (course.owner._id.toString() === user._id.toString()) { %>
-  <button class="fab" id="fabBtn" style="display:none" onclick="openActivityModal()" title="Nueva actividad">
+  <button class="fab" id="fabBtn" style="display:none" onclick="window.location.href='/activities/new?courseId=<%= course._id %>'" title="Nueva tarea">
     <span class="material-symbols-outlined">add</span>
   </button>
   <% } %>
@@ -147,9 +279,20 @@
         </button>
       </div>
       <div class="modal-body">
-        <div class="input-group" style="margin-bottom:16px">
-          <span class="material-symbols-outlined input-icon">title</span>
-          <input type="text" id="activityTitle" placeholder="Título de la actividad *" autocomplete="off">
+        <div style="display:flex;gap:12px;margin-bottom:16px">
+          <div class="input-group" style="flex:1">
+            <span class="material-symbols-outlined input-icon">title</span>
+            <input type="text" id="activityTitle" placeholder="Título de la actividad *" autocomplete="off">
+          </div>
+          <div class="input-group" style="width:170px">
+            <span class="material-symbols-outlined input-icon">category</span>
+            <select id="activityType" style="border:none;outline:none;width:100%;background:transparent;font-size:14px;font-family:inherit;color:var(--text-primary);padding:0 8px">
+              <option value="tarea">Tarea</option>
+              <option value="evaluacion">Evaluación</option>
+              <option value="tp">Trabajo Práctico</option>
+              <option value="examen">Examen</option>
+            </select>
+          </div>
         </div>
         <div class="input-group" style="margin-bottom:16px;align-items:flex-start">
           <span class="material-symbols-outlined input-icon" style="margin-top:14px">description</span>
@@ -174,6 +317,35 @@
         <p style="font-size:12px;color:var(--text-hint);margin-bottom:16px;margin-top:-8px;padding-left:4px">
           "Disponible desde" controla cuándo los alumnos pueden ver la actividad. Si se deja vacío, se publica inmediatamente.
         </p>
+
+        <!-- Adjuntos -->
+        <div class="att-section">
+          <div class="att-buttons">
+            <label class="btn btn-outline att-btn">
+              <input type="file" id="activityFileInput" accept=".pdf,.doc,.docx,.xls,.xlsx" multiple hidden>
+              <span class="material-symbols-outlined">attach_file</span>
+              Subir archivo
+            </label>
+            <button type="button" class="btn btn-outline att-btn" onclick="toggleLinkInput()">
+              <span class="material-symbols-outlined">link</span>
+              Agregar vínculo
+            </button>
+          </div>
+          <div id="linkInputArea" class="link-input-area" style="display:none">
+            <div style="display:flex;gap:8px;align-items:center">
+              <div class="input-group" style="flex:1">
+                <span class="material-symbols-outlined input-icon">link</span>
+                <input type="url" id="linkUrlInput" placeholder="https://ejemplo.com">
+              </div>
+              <button type="button" class="btn btn-primary" style="padding:0 18px;height:46px" onclick="addLinkFromInput()">Agregar</button>
+              <button type="button" class="icon-btn" onclick="toggleLinkInput()" title="Cancelar">
+                <span class="material-symbols-outlined">close</span>
+              </button>
+            </div>
+          </div>
+          <div id="attachmentPreviews" class="att-preview-grid"></div>
+        </div>
+
         <div class="form-error" id="activityError" style="margin-bottom:16px"></div>
         <div style="display:flex;justify-content:flex-end;gap:12px">
           <button class="btn btn-outline" onclick="closeActivityModal()">Cancelar</button>
@@ -186,9 +358,70 @@
     </div>
   </div>
 
+  <!-- Modal: Editar Actividad -->
+  <div class="modal-overlay" id="editActivityModal">
+    <div class="modal" style="max-width:480px">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">edit</span>
+          <h3>Editar actividad</h3>
+        </div>
+        <button class="icon-btn" onclick="closeEditModal()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editActivityId">
+        <div style="display:flex;gap:12px;margin-bottom:16px">
+          <div class="input-group" style="flex:1">
+            <span class="material-symbols-outlined input-icon">title</span>
+            <input type="text" id="editTitle" placeholder="Título *" autocomplete="off">
+          </div>
+          <div class="input-group" style="width:170px">
+            <span class="material-symbols-outlined input-icon">category</span>
+            <select id="editType" style="border:none;outline:none;width:100%;background:transparent;font-size:14px;font-family:inherit;color:var(--text-primary);padding:0 8px">
+              <option value="tarea">Tarea</option>
+              <option value="evaluacion">Evaluación</option>
+              <option value="tp">Trabajo Práctico</option>
+              <option value="examen">Examen</option>
+            </select>
+          </div>
+        </div>
+        <div class="input-group" style="margin-bottom:16px;align-items:flex-start">
+          <span class="material-symbols-outlined input-icon" style="margin-top:14px">description</span>
+          <textarea id="editDesc" placeholder="Instrucciones (opcional)" rows="3"
+            style="resize:vertical;padding:12px 16px;border:1px solid var(--border);border-radius:var(--radius-sm);width:100%;font-size:14px;outline:none;font-family:inherit;transition:border-color 0.2s"
+            onfocus="this.style.borderColor='var(--primary)'" onblur="this.style.borderColor='var(--border)'"></textarea>
+        </div>
+        <div style="display:flex;gap:12px;margin-bottom:16px">
+          <div class="input-group" style="flex:1">
+            <span class="material-symbols-outlined input-icon">schedule</span>
+            <input type="datetime-local" id="editDueDate" title="Fecha de entrega">
+          </div>
+          <div class="input-group" style="width:120px">
+            <span class="material-symbols-outlined input-icon">star</span>
+            <input type="number" id="editPoints" placeholder="Puntos" min="0" max="10">
+          </div>
+        </div>
+        <div class="input-group" style="margin-bottom:16px">
+          <span class="material-symbols-outlined input-icon">event_available</span>
+          <input type="datetime-local" id="editAvailableFrom" title="Disponible desde">
+        </div>
+        <div class="form-error" id="editError" style="margin-bottom:12px"></div>
+        <div style="display:flex;justify-content:flex-end;gap:12px">
+          <button class="btn btn-outline" onclick="closeEditModal()">Cancelar</button>
+          <button class="btn btn-primary" id="editSubmitBtn" onclick="saveEditActivity()">
+            <span class="material-symbols-outlined">check</span>
+            Guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: Detalle de Actividad -->
   <div class="modal-overlay" id="activityDetailModal">
-    <div class="modal" style="max-width:720px;width:100%">
+    <div class="modal modal-detail">
       <div class="modal-header">
         <div class="modal-header-left">
           <span class="material-symbols-outlined modal-header-icon">assignment</span>
@@ -203,11 +436,253 @@
     </div>
   </div>
 
+  <!-- Modal: Agregar Alumno -->
+  <div class="modal-overlay" id="addStudentModal">
+    <div class="modal" style="max-width:440px">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">person_add</span>
+          <h3>Agregar alumno</h3>
+        </div>
+        <button class="icon-btn" onclick="closeAddStudentModal()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:14px;color:var(--text-secondary);margin-bottom:16px">
+          Ingresá el correo electrónico del alumno para agregarlo al curso.
+        </p>
+        <div class="input-group" style="margin-bottom:16px">
+          <span class="material-symbols-outlined input-icon">email</span>
+          <input type="email" id="addStudentEmail" placeholder="correo@ejemplo.com" autocomplete="off"
+            onkeydown="if(event.key==='Enter') addStudent()">
+        </div>
+        <div class="form-error" id="addStudentError" style="margin-bottom:16px"></div>
+        <div style="display:flex;justify-content:flex-end;gap:12px">
+          <button class="btn btn-outline" onclick="closeAddStudentModal()">Cancelar</button>
+          <button class="btn btn-primary" id="addStudentBtn" onclick="addStudent()">
+            <span class="material-symbols-outlined">person_add</span>
+            Agregar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Personalizar portada -->
+  <% if (course.owner._id.toString() === user._id.toString()) { %>
+  <div class="modal-overlay" id="customizeModal">
+    <div class="modal" style="max-width:460px">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">palette</span>
+          <h3>Personalizar portada</h3>
+        </div>
+        <button class="icon-btn" onclick="closeCustomizeModal()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <!-- Preview -->
+        <div id="customizePreview" style="height:80px;border-radius:var(--radius-sm);margin-bottom:20px;transition:background 0.3s;display:flex;align-items:flex-end;padding:10px 14px">
+          <span style="color:white;font-weight:500;font-size:15px;text-shadow:0 1px 3px rgba(0,0,0,0.4)"><%= course.name %></span>
+        </div>
+
+        <!-- Pestañas -->
+        <div style="display:flex;gap:8px;margin-bottom:20px">
+          <button class="btn btn-primary" id="tabColorBtn" onclick="switchCustomizeTab('color')">
+            <span class="material-symbols-outlined" style="font-size:16px!important">palette</span>
+            Color
+          </button>
+          <button class="btn btn-outline" id="tabImageBtn" onclick="switchCustomizeTab('image')">
+            <span class="material-symbols-outlined" style="font-size:16px!important">image</span>
+            Imagen
+          </button>
+        </div>
+
+        <!-- Panel: Color -->
+        <div id="customizePanelColor">
+          <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">Color principal</p>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+            <input type="color" id="hColor" value="#1a73e8" oninput="updateCustomizePreview()" style="width:40px;height:40px;border:none;border-radius:50%;cursor:pointer;padding:2px">
+            <div style="display:flex;gap:6px;flex-wrap:wrap" id="colorSwatches"></div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;margin-bottom:14px">
+            <input type="checkbox" id="hGradient" onchange="toggleGradient()">
+            Degradado con segundo color
+          </label>
+          <div id="hColor2Wrap" style="display:none">
+            <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">Segundo color</p>
+            <div style="display:flex;align-items:center;gap:10px">
+              <input type="color" id="hColor2" value="#9334e6" oninput="updateCustomizePreview()" style="width:40px;height:40px;border:none;border-radius:50%;cursor:pointer;padding:2px">
+              <div style="display:flex;gap:6px;flex-wrap:wrap" id="color2Swatches"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Panel: Imagen -->
+        <div id="customizePanelImage" style="display:none">
+          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+            <label class="btn btn-outline" style="cursor:pointer">
+              <input type="file" id="hImageInput" accept="image/jpeg,image/png,image/webp" hidden onchange="onImageSelected()">
+              <span class="material-symbols-outlined" style="font-size:16px!important">upload</span>
+              Subir imagen
+            </label>
+            <button class="btn btn-outline" id="removeImageBtn" onclick="removeHeaderImage()" style="display:none;color:var(--danger);border-color:var(--danger)">
+              <span class="material-symbols-outlined" style="font-size:16px!important">close</span>
+              Quitar imagen
+            </button>
+          </div>
+          <p id="imageFilename" style="font-size:12px;color:var(--text-hint);margin-bottom:14px"></p>
+          <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">Color de fusión</p>
+          <div style="display:flex;align-items:center;gap:10px">
+            <input type="color" id="hBlendColor" value="#1a73e8" oninput="updateCustomizePreview()" style="width:40px;height:40px;border:none;border-radius:50%;cursor:pointer;padding:2px">
+            <div style="display:flex;gap:6px;flex-wrap:wrap" id="blendSwatches"></div>
+          </div>
+        </div>
+
+        <div class="form-error" id="customizeError" style="margin-top:14px"></div>
+        <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:24px">
+          <button class="btn btn-outline" onclick="closeCustomizeModal()">Cancelar</button>
+          <button class="btn btn-primary" id="customizeSaveBtn" onclick="saveCustomize()">
+            <span class="material-symbols-outlined">check</span>
+            Guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <% } %>
+
   <%- include('partials/footer') %>
   <script>
     window.COURSE_ID = '<%= course._id %>';
     window.IS_OWNER = <%= course.owner._id.toString() === user._id.toString() %>;
+    window.USER_INITIAL = '<%= user.name.charAt(0).toUpperCase() %>';
+    window.COURSE_COLOR = '<%= (course.header && course.header.color) ? course.header.color : "#1a73e8" %>';
+    window.COURSE_COLOR2 = '<%= (course.header && course.header.color2) ? course.header.color2 : "" %>';
   </script>
   <script src="/js/course.js"></script>
+  <% if (course.owner._id.toString() === user._id.toString()) { %>
+  <script>
+    const PRESET_COLORS = ['#1a73e8','#34a853','#ea4335','#fbbc04','#9334e6','#0d7377','#e91e63','#ff5722','#795548','#607d8b'];
+    const _INIT_COLOR  = '<%= (course.header && course.header.color)  ? course.header.color  : "#1a73e8" %>';
+    const _INIT_COLOR2 = '<%= (course.header && course.header.color2) ? course.header.color2 : "" %>';
+    const _INIT_IMAGE  = '<%= (course.header && course.header.image)  ? course.header.image  : "" %>';
+
+    let _customizeTab  = _INIT_IMAGE ? 'image' : 'color';
+    let _newImageFile  = null;
+    let _removeImage   = false;
+
+    function openCustomizeModal() {
+      document.getElementById('hColor').value      = _INIT_COLOR;
+      document.getElementById('hColor2').value     = _INIT_COLOR2 || '#9334e6';
+      document.getElementById('hGradient').checked = !!_INIT_COLOR2;
+      document.getElementById('hColor2Wrap').style.display = _INIT_COLOR2 ? '' : 'none';
+      document.getElementById('hBlendColor').value = _INIT_COLOR;
+      document.getElementById('imageFilename').textContent = _INIT_IMAGE ? 'Imagen guardada' : '';
+      document.getElementById('removeImageBtn').style.display = _INIT_IMAGE ? '' : 'none';
+      _newImageFile = null; _removeImage = false;
+      switchCustomizeTab(_customizeTab);
+      document.getElementById('customizeModal').classList.add('show');
+    }
+
+    function closeCustomizeModal() {
+      document.getElementById('customizeModal').classList.remove('show');
+      document.getElementById('hImageInput').value = '';
+      _newImageFile = null;
+    }
+
+    function switchCustomizeTab(tab) {
+      _customizeTab = tab;
+      document.getElementById('customizePanelColor').style.display = tab === 'color' ? '' : 'none';
+      document.getElementById('customizePanelImage').style.display = tab === 'image' ? '' : 'none';
+      document.getElementById('tabColorBtn').className = tab === 'color' ? 'btn btn-primary' : 'btn btn-outline';
+      document.getElementById('tabImageBtn').className = tab === 'image' ? 'btn btn-primary' : 'btn btn-outline';
+      updateCustomizePreview();
+    }
+
+    function toggleGradient() {
+      document.getElementById('hColor2Wrap').style.display = document.getElementById('hGradient').checked ? '' : 'none';
+      updateCustomizePreview();
+    }
+
+    function updateCustomizePreview() {
+      const preview = document.getElementById('customizePreview');
+      if (_customizeTab === 'color') {
+        const c1 = document.getElementById('hColor').value;
+        const useGrad = document.getElementById('hGradient').checked;
+        const c2 = document.getElementById('hColor2').value;
+        preview.style.background = useGrad
+          ? `linear-gradient(135deg, ${c1}, ${c2})`
+          : `linear-gradient(135deg, ${c1}, ${c1}88)`;
+      } else {
+        const blend = document.getElementById('hBlendColor').value + 'bb';
+        const imgSrc = _newImageFile ? URL.createObjectURL(_newImageFile)
+                     : (_removeImage ? null : (_INIT_IMAGE || null));
+        preview.style.background = imgSrc
+          ? `linear-gradient(${blend},${blend}), url('${imgSrc}') center/cover no-repeat`
+          : document.getElementById('hBlendColor').value;
+      }
+    }
+
+    function onImageSelected() {
+      const file = document.getElementById('hImageInput').files[0];
+      if (!file) return;
+      _newImageFile = file; _removeImage = false;
+      document.getElementById('imageFilename').textContent = file.name;
+      document.getElementById('removeImageBtn').style.display = '';
+      updateCustomizePreview();
+    }
+
+    function removeHeaderImage() {
+      _newImageFile = null; _removeImage = true;
+      document.getElementById('hImageInput').value = '';
+      document.getElementById('imageFilename').textContent = '';
+      document.getElementById('removeImageBtn').style.display = 'none';
+      updateCustomizePreview();
+    }
+
+    async function saveCustomize() {
+      const btn = document.getElementById('customizeSaveBtn');
+      const errEl = document.getElementById('customizeError');
+      errEl.classList.remove('show');
+      btn.disabled = true;
+      const fd = new FormData();
+      fd.append('mode', _customizeTab);
+      if (_customizeTab === 'color') {
+        fd.append('color', document.getElementById('hColor').value);
+        if (document.getElementById('hGradient').checked) fd.append('color2', document.getElementById('hColor2').value);
+      } else {
+        fd.append('color', document.getElementById('hBlendColor').value);
+        if (_newImageFile) fd.append('image', _newImageFile);
+        else if (_removeImage) fd.append('removeImage', 'true');
+      }
+      const res = await fetch(`/courses/${COURSE_ID}/customize`, { method: 'POST', body: fd });
+      if (res.ok) { location.reload(); return; }
+      const d = await res.json();
+      errEl.textContent = d.error || 'Error al guardar';
+      errEl.classList.add('show');
+      btn.disabled = false;
+    }
+
+    function renderSwatches(containerId, inputId) {
+      const el = document.getElementById(containerId);
+      PRESET_COLORS.forEach(c => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.title = c;
+        b.style.cssText = `width:22px;height:22px;border-radius:50%;background:${c};border:2px solid transparent;cursor:pointer;flex-shrink:0;transition:transform .1s,border-color .1s`;
+        b.onclick = () => { document.getElementById(inputId).value = c; updateCustomizePreview(); };
+        b.onmouseover = () => { b.style.transform = 'scale(1.25)'; b.style.borderColor = 'white'; };
+        b.onmouseout  = () => { b.style.transform = ''; b.style.borderColor = 'transparent'; };
+        el.appendChild(b);
+      });
+    }
+    renderSwatches('colorSwatches', 'hColor');
+    renderSwatches('color2Swatches', 'hColor2');
+    renderSwatches('blendSwatches', 'hBlendColor');
+  </script>
+  <% } %>
 </body>
 </html>

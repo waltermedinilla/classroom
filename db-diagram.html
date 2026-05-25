@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Base de Datos — Classroom Clone</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg:       #0f1117;
+      --surface:  #1a1d23;
+      --surface2: #22262e;
+      --border:   #2e3340;
+      --text:     #e2e8f0;
+      --text-2:   #94a3b8;
+      --text-3:   #64748b;
+      --primary:  #1a73e8;
+      --radius:   12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      padding: 40px 32px 64px;
+    }
+
+    /* ── Header ── */
+    .page-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 20px;
+      margin-bottom: 40px;
+    }
+    .header-icon {
+      width: 52px; height: 52px; border-radius: 14px;
+      background: linear-gradient(135deg, #1a73e8, #9334e6);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 26px; flex-shrink: 0; color: #fff;
+    }
+    .page-header h1 { font-size: 1.5rem; font-weight: 700; line-height: 1.2; }
+    .page-header p  { font-size: 0.85rem; color: var(--text-2); margin-top: 5px; }
+
+    /* ── Section titles ── */
+    .section-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-3);
+      margin-bottom: 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* ── Legend chips ── */
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 32px;
+    }
+    .legend-chip {
+      display: flex; align-items: center; gap: 7px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 5px 12px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-2);
+      cursor: default;
+    }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+    /* ── Diagram card ── */
+    .diagram-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px 24px;
+      overflow-x: auto;
+      margin-bottom: 32px;
+    }
+    .mermaid { min-width: 960px; }
+
+    /* ── Sub-documents grid ── */
+    .subdoc-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+    .subdoc-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .subdoc-card-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 700;
+      font-size: 0.88rem;
+    }
+    .subdoc-badge {
+      font-size: 0.65rem; font-weight: 700; letter-spacing: 0.05em;
+      background: #2e3340; color: var(--text-3);
+      border-radius: 4px; padding: 2px 6px;
+      margin-left: auto; text-transform: uppercase;
+    }
+    .subdoc-parent {
+      font-size: 0.72rem; color: var(--text-3); font-weight: 400;
+    }
+    .subdoc-fields { padding: 10px 0; }
+    .subdoc-field {
+      display: flex; align-items: baseline; gap: 8px;
+      padding: 5px 16px;
+      font-size: 0.8rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .subdoc-field:last-child { border-bottom: none; }
+    .field-name  { font-weight: 600; color: var(--text); min-width: 90px; flex-shrink: 0; }
+    .field-type  { color: #7dd3fc; font-size: 0.75rem; font-family: monospace; }
+    .field-note  { color: var(--text-3); font-size: 0.72rem; font-style: italic; margin-left: auto; text-align: right; }
+
+    /* ── Notes ── */
+    .notes-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--primary);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+    }
+    .notes-card ul { padding-left: 18px; margin-top: 10px; }
+    .notes-card li { font-size: 0.84rem; color: var(--text-2); line-height: 1.7; margin-bottom: 2px; }
+    .notes-card code {
+      background: var(--surface2); color: #7dd3fc;
+      border-radius: 4px; padding: 1px 6px;
+      font-size: 0.8rem; font-family: monospace;
+    }
+
+    /* ── Relationships table ── */
+    .rel-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    .rel-table th {
+      background: var(--surface2);
+      color: var(--text-3);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      padding: 10px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .rel-table td {
+      padding: 9px 16px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-2);
+      vertical-align: middle;
+    }
+    .rel-table tr:last-child td { border-bottom: none; }
+    .rel-table tr:hover td { background: var(--surface2); }
+    .rel-from, .rel-to { color: var(--text); font-weight: 600; font-family: monospace; font-size: 0.78rem; }
+    .rel-type { color: #86efac; font-family: monospace; font-size: 0.8rem; }
+    .rel-how  { color: var(--text-3); font-size: 0.75rem; font-style: italic; }
+
+    /* ── Roles hierarchy ── */
+    .roles-row {
+      display: flex; flex-wrap: wrap; gap: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 32px;
+    }
+    .role-item {
+      flex: 1; min-width: 100px;
+      padding: 14px 10px;
+      text-align: center;
+      border-right: 1px solid var(--border);
+      position: relative;
+    }
+    .role-item:last-child { border-right: none; }
+    .role-name { font-size: 0.82rem; font-weight: 600; color: var(--text); }
+    .role-label { font-size: 0.72rem; color: var(--text-3); margin-top: 3px; }
+    .role-arrow {
+      position: absolute; right: -1px; top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-3); font-size: 12px;
+      z-index: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="page-header">
+    <div class="header-icon">🗄️</div>
+    <div>
+      <h1>Diagrama de Base de Datos</h1>
+      <p>Classroom Clone · Escuela 4039 San José · MongoDB / Mongoose · 2026</p>
+    </div>
+  </div>
+
+  <!-- Jerarquía de roles -->
+  <p class="section-title">Jerarquía de roles (User.role)</p>
+  <div class="roles-row">
+    <div class="role-item" style="border-top:3px solid #9334e6">
+      <div class="role-name">superadmin</div>
+      <div class="role-label">Plataforma</div>
+      <span class="role-arrow">›</span>
+    </div>
+    <div class="role-item" style="border-top:3px solid #1a73e8">
+      <div class="role-name">admin</div>
+      <div class="role-label">Escuela</div>
+      <span class="role-arrow">›</span>
+    </div>
+    <div class="role-item" style="border-top:3px solid #0d7377">
+      <div class="role-name">directivo</div>
+      <div class="role-label">Dirección</div>
+      <span class="role-arrow">›</span>
+    </div>
+    <div class="role-item" style="border-top:3px solid #34a853">
+      <div class="role-name">teacher</div>
+      <div class="role-label">Docente</div>
+      <span class="role-arrow">›</span>
+    </div>
+    <div class="role-item" style="border-top:3px solid #fbbc04">
+      <div class="role-name">preceptor</div>
+      <div class="role-label">Preceptor</div>
+      <span class="role-arrow">›</span>
+    </div>
+    <div class="role-item" style="border-top:3px solid #ff5722">
+      <div class="role-name">soe</div>
+      <div class="role-label">SOE</div>
+      <span class="role-arrow">›</span>
+    </div>
+    <div class="role-item" style="border-top:3px solid #ea4335">
+      <div class="role-name">student</div>
+      <div class="role-label">Alumno</div>
+    </div>
+  </div>
+
+  <!-- Legend -->
+  <p class="section-title">Colecciones MongoDB</p>
+  <div class="legend">
+    <div class="legend-chip"><div class="legend-dot" style="background:#1a73e8"></div>School</div>
+    <div class="legend-chip"><div class="legend-dot" style="background:#34a853"></div>User</div>
+    <div class="legend-chip"><div class="legend-dot" style="background:#ea4335"></div>Course</div>
+    <div class="legend-chip"><div class="legend-dot" style="background:#fbbc04"></div>Subject</div>
+    <div class="legend-chip"><div class="legend-dot" style="background:#9334e6"></div>Activity</div>
+    <div class="legend-chip"><div class="legend-dot" style="background:#e91e63"></div>Submission</div>
+    <div class="legend-chip"><div class="legend-dot" style="background:#0d7377"></div>Announcement</div>
+  </div>
+
+  <!-- Main ER Diagram -->
+  <div class="diagram-card">
+    <div class="mermaid">
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "primaryColor":       "#ffffff",
+    "primaryTextColor":   "#000000",
+    "primaryBorderColor": "#c0c8d8",
+    "lineColor":          "#64748b",
+    "secondaryColor":     "#f0f4f8",
+    "tertiaryColor":      "#e8eef5",
+    "edgeLabelBackground":"#f0f4f8",
+    "background":         "#ffffff",
+    "fontFamily":         "Segoe UI, system-ui, sans-serif",
+    "fontSize":           "13px"
+  }
+}}%%
+erDiagram
+
+    SCHOOL {
+        ObjectId _id       PK
+        String   name         "UNIQUE"
+        String   slug         "UNIQUE · URL-friendly"
+        String   color        "Paleta de 10 colores"
+        String   inviteToken  "UNIQUE sparse · null = sin enlace"
+        Date     createdAt
+        Date     updatedAt
+    }
+
+    USER {
+        ObjectId _id      PK
+        String   name
+        String   email       "UNIQUE global"
+        String   password    "bcrypt hash"
+        String   role        "superadmin|admin|directivo|teacher|preceptor|soe|student"
+        ObjectId school   FK "null = superadmin"
+        String   dni         "UNIQUE por escuela (sparse)"
+        Boolean  active      "false = bloqueado"
+        Date     createdAt
+        Date     updatedAt
+    }
+
+    COURSE {
+        ObjectId _id      PK
+        String   name
+        String   section     "p.ej. 1A"
+        String   subject     "Nombre libre — ref lógica a Subject.name"
+        String   room
+        String   code        "UNIQUE · 6 chars"
+        ObjectId owner    FK "docente dueño"
+        ObjectId school   FK
+        String   header_color
+        String   header_color2
+        String   header_image
+        Date     createdAt
+        Date     updatedAt
+    }
+
+    SUBJECT {
+        ObjectId _id     PK
+        String   name
+        String   color
+        ObjectId school  FK
+        Date     createdAt
+        Date     updatedAt
+    }
+
+    ACTIVITY {
+        ObjectId _id      PK
+        ObjectId course   FK
+        ObjectId author   FK "siempre el owner del curso"
+        String   title
+        Date     dueDate      "null = sin límite"
+        Date     availableFrom
+        Number   points       "null = sin nota"
+        Boolean  allowLateSubmissions
+        Date     createdAt
+        Date     updatedAt
+    }
+
+    SUBMISSION {
+        ObjectId _id      PK
+        ObjectId activity FK
+        ObjectId student  FK
+        String   text        "comentario del alumno"
+        Date     createdAt   "= fecha de entrega"
+        Date     updatedAt
+    }
+
+    ANNOUNCEMENT {
+        ObjectId _id     PK
+        ObjectId course  FK
+        ObjectId author  FK
+        String   text
+        String   image      "ruta pública · null = sin imagen"
+        Date     createdAt
+        Date     updatedAt
+    }
+
+    SCHOOL         ||--o{ USER          : "agrupa"
+    SCHOOL         ||--o{ COURSE        : "agrupa"
+    SCHOOL         ||--o{ SUBJECT       : "agrupa"
+    USER           ||--o{ COURSE        : "owner de"
+    USER           }o--o{ COURSE        : "inscripto en (students[])"
+    COURSE         ||--o{ ACTIVITY      : "tiene"
+    COURSE         ||--o{ ANNOUNCEMENT  : "tiene"
+    ACTIVITY       ||--o{ SUBMISSION    : "recibe"
+    USER           ||--o{ SUBMISSION    : "entregó"
+    USER           ||--o{ ANNOUNCEMENT  : "publicó"
+    </div>
+  </div>
+
+  <!-- Sub-documentos embebidos -->
+  <p class="section-title" style="margin-bottom:16px">Sub-documentos embebidos (no son colecciones separadas)</p>
+  <div class="subdoc-grid">
+
+    <div class="subdoc-card">
+      <div class="subdoc-card-header" style="border-left:4px solid #9334e6">
+        Activity.grades[]
+        <span class="subdoc-badge">Embebido</span>
+      </div>
+      <div style="padding:8px 16px 4px;font-size:0.75rem;color:#64748b">Dentro de cada Activity</div>
+      <div class="subdoc-fields">
+        <div class="subdoc-field"><span class="field-name">student</span><span class="field-type">ObjectId → User</span></div>
+        <div class="subdoc-field"><span class="field-name">points</span><span class="field-type">Number</span><span class="field-note">min: 0</span></div>
+        <div class="subdoc-field"><span class="field-name">gradedAt</span><span class="field-type">Date</span></div>
+      </div>
+    </div>
+
+    <div class="subdoc-card">
+      <div class="subdoc-card-header" style="border-left:4px solid #9334e6">
+        Activity.attachments[]
+        <span class="subdoc-badge">Embebido</span>
+      </div>
+      <div style="padding:8px 16px 4px;font-size:0.75rem;color:#64748b">Adjuntos del docente</div>
+      <div class="subdoc-fields">
+        <div class="subdoc-field"><span class="field-name">type</span><span class="field-type">String</span><span class="field-note">file | link</span></div>
+        <div class="subdoc-field"><span class="field-name">name</span><span class="field-type">String</span></div>
+        <div class="subdoc-field"><span class="field-name">url</span><span class="field-type">String</span><span class="field-note">ruta o URL externa</span></div>
+        <div class="subdoc-field"><span class="field-name">mime</span><span class="field-type">String</span></div>
+      </div>
+    </div>
+
+    <div class="subdoc-card">
+      <div class="subdoc-card-header" style="border-left:4px solid #e91e63">
+        Submission.files[]
+        <span class="subdoc-badge">Embebido</span>
+      </div>
+      <div style="padding:8px 16px 4px;font-size:0.75rem;color:#64748b">Archivos del alumno</div>
+      <div class="subdoc-fields">
+        <div class="subdoc-field"><span class="field-name">name</span><span class="field-type">String</span><span class="field-note">nombre original</span></div>
+        <div class="subdoc-field"><span class="field-name">filename</span><span class="field-type">String</span><span class="field-note">nombre en disco</span></div>
+        <div class="subdoc-field"><span class="field-name">storagePath</span><span class="field-type">String</span><span class="field-note">schoolId/actId/uid/file</span></div>
+        <div class="subdoc-field"><span class="field-name">mime</span><span class="field-type">String</span></div>
+        <div class="subdoc-field"><span class="field-name">size</span><span class="field-type">Number</span><span class="field-note">bytes</span></div>
+      </div>
+    </div>
+
+    <div class="subdoc-card">
+      <div class="subdoc-card-header" style="border-left:4px solid #0d7377">
+        Announcement.comments[]
+        <span class="subdoc-badge">Embebido</span>
+      </div>
+      <div style="padding:8px 16px 4px;font-size:0.75rem;color:#64748b">Comentarios de la novedad</div>
+      <div class="subdoc-fields">
+        <div class="subdoc-field"><span class="field-name">author</span><span class="field-type">ObjectId → User</span></div>
+        <div class="subdoc-field"><span class="field-name">text</span><span class="field-type">String</span></div>
+        <div class="subdoc-field"><span class="field-name">createdAt</span><span class="field-type">Date</span></div>
+      </div>
+    </div>
+
+    <div class="subdoc-card">
+      <div class="subdoc-card-header" style="border-left:4px solid #ea4335">
+        Course.students[]
+        <span class="subdoc-badge">Array FK</span>
+      </div>
+      <div style="padding:8px 16px 4px;font-size:0.75rem;color:#64748b">Alumnos inscriptos (N:M)</div>
+      <div class="subdoc-fields">
+        <div class="subdoc-field"><span class="field-name">students[i]</span><span class="field-type">ObjectId → User</span><span class="field-note">role=student</span></div>
+      </div>
+    </div>
+
+    <div class="subdoc-card">
+      <div class="subdoc-card-header" style="border-left:4px solid #ea4335">
+        Course.header
+        <span class="subdoc-badge">Embebido</span>
+      </div>
+      <div style="padding:8px 16px 4px;font-size:0.75rem;color:#64748b">Personalización visual</div>
+      <div class="subdoc-fields">
+        <div class="subdoc-field"><span class="field-name">color</span><span class="field-type">String</span><span class="field-note">hex primario</span></div>
+        <div class="subdoc-field"><span class="field-name">color2</span><span class="field-type">String</span><span class="field-note">hex secundario</span></div>
+        <div class="subdoc-field"><span class="field-name">image</span><span class="field-type">String</span><span class="field-note">ruta pública</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Relaciones quick-reference -->
+  <p class="section-title" style="margin-bottom:16px">Referencia rápida de relaciones</p>
+  <div class="diagram-card" style="padding:0;overflow:hidden;margin-bottom:32px">
+    <table class="rel-table">
+      <thead>
+        <tr>
+          <th>Desde</th>
+          <th>Tipo</th>
+          <th>Hacia</th>
+          <th>Campo / Mecanismo</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="rel-from">School</td><td class="rel-type">1 → N</td><td class="rel-to">User</td><td class="rel-how">User.school = School._id</td></tr>
+        <tr><td class="rel-from">School</td><td class="rel-type">1 → N</td><td class="rel-to">Course</td><td class="rel-how">Course.school = School._id</td></tr>
+        <tr><td class="rel-from">School</td><td class="rel-type">1 → N</td><td class="rel-to">Subject</td><td class="rel-how">Subject.school = School._id</td></tr>
+        <tr><td class="rel-from">User</td><td class="rel-type">1 → N</td><td class="rel-to">Course</td><td class="rel-how">Course.owner = User._id (docente dueño)</td></tr>
+        <tr><td class="rel-from">User</td><td class="rel-type">N → N</td><td class="rel-to">Course</td><td class="rel-how">Course.students[] array de ObjectId</td></tr>
+        <tr><td class="rel-from">Subject</td><td class="rel-type">Lógica</td><td class="rel-to">Course</td><td class="rel-how">Course.subject === Subject.name (texto libre, sin FK)</td></tr>
+        <tr><td class="rel-from">Course</td><td class="rel-type">1 → N</td><td class="rel-to">Activity</td><td class="rel-how">Activity.course = Course._id</td></tr>
+        <tr><td class="rel-from">Course</td><td class="rel-type">1 → N</td><td class="rel-to">Announcement</td><td class="rel-how">Announcement.course = Course._id</td></tr>
+        <tr><td class="rel-from">Activity</td><td class="rel-type">1 → N</td><td class="rel-to">Submission</td><td class="rel-how">Submission.activity = Activity._id</td></tr>
+        <tr><td class="rel-from">User</td><td class="rel-type">1 → 1</td><td class="rel-to">Submission</td><td class="rel-how">Índice único (activity, student) — upsert al reenviar</td></tr>
+        <tr><td class="rel-from">Activity</td><td class="rel-type">Embebido</td><td class="rel-to">Grade</td><td class="rel-how">Activity.grades[] subdoc con ref a User</td></tr>
+        <tr><td class="rel-from">Announcement</td><td class="rel-type">Embebido</td><td class="rel-to">Comment</td><td class="rel-how">Announcement.comments[] subdoc con ref a User</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Notes -->
+  <div class="notes-card">
+    <p class="section-title" style="border-color:#334155;margin-bottom:10px">Decisiones de diseño importantes</p>
+    <ul>
+      <li><strong>School.inviteToken</strong> — índice único sparse. El superadmin genera el token; los usuarios se registran en <code>/register/invite/:token</code> y quedan vinculados a la escuela.</li>
+      <li><strong>Subject ↔ Course</strong> — relación lógica por texto (<code>Course.subject === Subject.name</code>). No hay FK directa para simplificar la importación por Excel.</li>
+      <li><strong>Submission</strong> — índice único compuesto <code>(activity, student)</code>. El reenvío hace <code>findOneAndUpdate upsert:true</code>; los archivos anteriores se borran del disco primero.</li>
+      <li><strong>Activity.grades[]</strong> — embebido dentro de Activity para minimizar joins. El gradebook construye un <code>gradeMap</code> en memoria al abrir la pestaña.</li>
+      <li><strong>Submission.files[].storagePath</strong> — ruta relativa desde <code>archivos/entregas/</code> con formato <code>schoolId/actId/userId/filename</code>.</li>
+      <li><strong>User.school = null</strong> → superadmin; sin restricción de escuela en ninguna query.</li>
+      <li><strong>Cascade delete de Activity</strong>: archivos físicos de entregas → Submission docs → archivos adjuntos del docente → Activity doc.</li>
+    </ul>
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'base',
+      er: { useMaxWidth: true, diagramPadding: 20 },
+    });
+  </script>
+</body>
+</html>

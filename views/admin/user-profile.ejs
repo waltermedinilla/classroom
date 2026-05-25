@@ -21,28 +21,55 @@
 
     <div class="profile-header">
       <div class="profile-avatar">
-        <div class="avatar-huge" style="width:80px;height:80px;font-size:36px;background:<%= target.role === 'admin' ? '#ea4335' : target.role === 'teacher' ? '#1a73e8' : target.role === 'directivo' ? '#9334e6' : target.role === 'preceptor' ? '#ea8600' : target.role === 'soe' ? '#0d7377' : '#5f6368' %>">
+        <div class="avatar-huge" style="width:80px;height:80px;font-size:36px;background:<%= target.role === 'superadmin' ? '#6200ea' : target.role === 'admin' ? '#ea4335' : target.role === 'teacher' ? '#1a73e8' : target.role === 'directivo' ? '#9334e6' : target.role === 'preceptor' ? '#ea8600' : target.role === 'soe' ? '#0d7377' : '#5f6368' %>">
           <%= target.name.charAt(0).toUpperCase() %>
         </div>
       </div>
       <div class="profile-info">
         <h2><%= target.name %></h2>
+        <% if (target.dni) { %><p style="font-family:monospace;font-size:13px;color:var(--text-secondary);margin-bottom:2px">DNI: <%= target.dni %></p><% } %>
         <p class="profile-email"><%= target.email %></p>
         <span class="role-badge role-<%= target.role %>" style="font-size:14px;padding:6px 16px"><%= roleNames[target.role] || target.role %></span>
         <p class="profile-date">Registrado el <%= new Date(target.createdAt).toLocaleDateString('es-ES', { day:'numeric', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit' }) %></p>
+        <% const totalStudents = createdCourses.reduce((sum, c) => sum + c.students.length, 0); %>
+        <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap">
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:5px 14px;background:var(--surface-variant,#f1f3f4);border-radius:20px;font-size:13px;color:var(--text)">
+            <span class="material-symbols-outlined" style="font-size:16px;color:var(--primary)">school</span>
+            <strong><%= createdCourses.length %></strong>&nbsp;curso<%= createdCourses.length !== 1 ? 's' : '' %> dictado<%= createdCourses.length !== 1 ? 's' : '' %>
+          </div>
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:5px 14px;background:var(--surface-variant,#f1f3f4);border-radius:20px;font-size:13px;color:var(--text)">
+            <span class="material-symbols-outlined" style="font-size:16px;color:#34a853">people</span>
+            <strong><%= totalStudents %></strong>&nbsp;alumno<%= totalStudents !== 1 ? 's' : '' %> en total
+          </div>
+        </div>
       </div>
       <div style="margin-left:auto;display:flex;flex-direction:column;gap:10px;align-items:flex-end">
-        <% if (target.email !== PROTECTED_ADMIN_EMAIL && target._id.toString() !== user._id.toString()) { %>
+        <% const isProtected = target.email === PROTECTED_ADMIN_EMAIL || target.role === 'superadmin'; %>
+        <% if (target.active === false) { %>
+          <span style="display:inline-flex;align-items:center;gap:6px;background:#fce8e6;color:#ea4335;font-size:12px;font-weight:700;padding:5px 14px;border-radius:20px;letter-spacing:.3px">
+            <span class="material-symbols-outlined" style="font-size:15px">block</span>
+            CUENTA DESHABILITADA
+          </span>
+        <% } %>
+        <% if (!isProtected && target._id.toString() !== user._id.toString()) { %>
           <button class="btn btn-primary" id="impersonateBtn">
             <span class="material-symbols-outlined">swap_horiz</span>
             Ver como este usuario
+          </button>
+          <button class="btn btn-outline" id="toggleActiveBtn" style="font-size:13px;padding:8px 18px;border-color:<%= target.active === false ? '#34a853' : '#ea4335' %>;color:<%= target.active === false ? '#34a853' : '#ea4335' %>">
+            <span class="material-symbols-outlined"><%= target.active === false ? 'check_circle' : 'block' %></span>
+            <%= target.active === false ? 'Habilitar cuenta' : 'Deshabilitar cuenta' %>
+          </button>
+          <button class="btn btn-outline" id="resetPasswordBtn" style="font-size:13px;padding:8px 18px">
+            <span class="material-symbols-outlined">lock_reset</span>
+            Restablecer contraseña
           </button>
           <button class="btn btn-danger" id="deleteBtn" style="font-size:13px;padding:8px 18px">
             <span class="material-symbols-outlined">delete</span>
             Eliminar usuario
           </button>
         <% } %>
-        <% if (target.email === PROTECTED_ADMIN_EMAIL) { %>
+        <% if (isProtected) { %>
           <span style="font-size:12px;color:var(--text-hint);display:flex;align-items:center;gap:4px">
             <span class="material-symbols-outlined" style="font-size:16px">lock</span>
             Administrador protegido
@@ -51,7 +78,7 @@
       </div>
     </div>
 
-    <% if (target.email !== PROTECTED_ADMIN_EMAIL) { %>
+    <% if (!isProtected) { %>
     <div class="profile-actions">
       <div class="profile-action-card">
         <h4>Cambiar rol</h4>
@@ -59,9 +86,9 @@
           <div class="input-group" style="flex:1">
             <span class="material-symbols-outlined input-icon">badge</span>
             <select id="newRole" class="select-input">
-              <option value="admin" <%= target.role === 'admin' ? 'selected' : '' %>>Admin</option>
+              <option value="admin" <%= target.role === 'admin' ? 'selected' : '' %>>Administrador</option>
               <option value="directivo" <%= target.role === 'directivo' ? 'selected' : '' %>>Directivo</option>
-              <option value="teacher" <%= target.role === 'teacher' ? 'selected' : '' %>>Profesor</option>
+              <option value="teacher" <%= target.role === 'teacher' ? 'selected' : '' %>>Docente</option>
               <option value="preceptor" <%= target.role === 'preceptor' ? 'selected' : '' %>>Preceptor</option>
               <option value="soe" <%= target.role === 'soe' ? 'selected' : '' %>>SOE</option>
               <option value="student" <%= target.role === 'student' ? 'selected' : '' %>>Alumno</option>
@@ -86,7 +113,12 @@
           <% createdCourses.forEach(c => { %>
             <a href="/courses/<%= c._id %>" class="course-card" style="--card-color:#1a73e8">
               <div class="card-banner" style="min-height:80px">
-                <div class="card-banner-content"><h4 style="font-size:20px"><%= c.name %></h4></div>
+                <div class="card-banner-content">
+                  <h4 style="font-size:20px"><%= c.name %></h4>
+                  <% if (!c.school) { %>
+                    <p style="font-size:12px;margin-top:4px;opacity:.85">(Sin Matricular)</p>
+                  <% } %>
+                </div>
               </div>
               <div class="card-footer"><span class="card-code"><%= c.code %></span></div>
             </a>
@@ -98,16 +130,31 @@
     <div class="section">
       <div class="section-header">
         <span class="material-symbols-outlined section-icon">group</span>
-        <h3>Cursos unidos (<%= joinedCourses.length %>)</h3>
+        <h3>Cursos unidos (<%= joinedCourses.length %>)
+          <% if (target.role === 'student' && joinedCourses.length === 0) { %>
+            <span class="badge-unmatriculated" style="margin-left:8px">(Sin Matricular)</span>
+          <% } %>
+        </h3>
       </div>
       <% if (joinedCourses.length === 0) { %>
-        <div class="empty-state small"><p>No se unió a cursos</p></div>
+        <div class="empty-state small">
+          <% if (target.role === 'student') { %>
+            <p>Este alumno no está matriculado en ningún curso.</p>
+          <% } else { %>
+            <p>No se unió a cursos</p>
+          <% } %>
+        </div>
       <% } else { %>
         <div class="course-grid">
           <% joinedCourses.forEach(c => { %>
             <a href="/courses/<%= c._id %>" class="course-card" style="--card-color:#34a853">
               <div class="card-banner" style="min-height:80px">
-                <div class="card-banner-content"><h4 style="font-size:20px"><%= c.name %></h4></div>
+                <div class="card-banner-content">
+                  <h4 style="font-size:20px"><%= c.name %></h4>
+                  <% if (!c.school) { %>
+                    <p style="font-size:12px;margin-top:4px;opacity:.85">(Sin Matricular)</p>
+                  <% } %>
+                </div>
               </div>
               <div class="card-footer"><span><%= c.owner.name %></span></div>
             </a>
@@ -119,7 +166,7 @@
 
   <%- include('../partials/footer') %>
   <script>
-    <% if (target.email !== PROTECTED_ADMIN_EMAIL) { %>
+    <% if (!isProtected) { %>
     document.getElementById('roleForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const errorEl = document.getElementById('roleError');
@@ -139,6 +186,25 @@
       const res = await fetch('/admin/users/<%= target._id %>/impersonate', { method: 'POST' });
       if (res.ok) window.location.href = '/courses';
       else { const d = await res.json(); alert(d.error); }
+    });
+
+    document.getElementById('toggleActiveBtn').addEventListener('click', async () => {
+      const isActive = <%= target.active !== false %>;
+      const accion = isActive ? 'deshabilitar' : 'habilitar';
+      if (!confirm(`¿Querés ${accion} la cuenta de <%= target.name %>?`)) return;
+      const res = await fetch('/admin/users/<%= target._id %>/toggle-active', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) location.reload();
+      else alert(data.error);
+    });
+
+    document.getElementById('resetPasswordBtn').addEventListener('click', async () => {
+      const hint = '<%= target.dni ? `el DNI (${target.dni})` : "Classroom1234" %>';
+      if (!confirm(`¿Restablecer la contraseña de <%= target.name %>?\nLa nueva contraseña será ${hint}.`)) return;
+      const res = await fetch('/admin/users/<%= target._id %>/reset-password', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) alert(`Contraseña restablecida. La nueva contraseña es: ${data.hint}`);
+      else alert(data.error);
     });
 
     document.getElementById('deleteBtn').addEventListener('click', async () => {

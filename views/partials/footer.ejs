@@ -22,6 +22,19 @@
       await fetch('/logout', { method: 'POST' });
       window.location.href = '/login';
     }
+
+    function _applyTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      var icon = document.querySelector('#darkModeBtn .material-symbols-outlined');
+      if (icon) icon.textContent = theme === 'dark' ? 'light_mode' : 'dark_mode';
+    }
+    function toggleDarkMode() {
+      var current = document.documentElement.getAttribute('data-theme') || 'light';
+      var next = current === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('theme', next);
+      _applyTheme(next);
+    }
+    _applyTheme(localStorage.getItem('theme') || 'light');
   </script>
 </body>
 </html>

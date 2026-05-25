@@ -31,6 +31,10 @@
             <input type="text" id="name" placeholder="Nombre completo" required>
           </div>
           <div class="input-group" style="margin-top:16px">
+            <span class="material-symbols-outlined input-icon">fingerprint</span>
+            <input type="text" id="dni" placeholder="DNI (opcional)">
+          </div>
+          <div class="input-group" style="margin-top:16px">
             <span class="material-symbols-outlined input-icon">email</span>
             <input type="email" id="email" placeholder="Correo electrónico" required>
           </div>
@@ -42,11 +46,11 @@
             <span class="material-symbols-outlined input-icon">badge</span>
             <select id="role" class="select-input">
               <option value="student">Alumno</option>
-              <option value="teacher">Profesor</option>
+              <option value="teacher">Docente</option>
               <option value="preceptor">Preceptor</option>
               <option value="soe">SOE</option>
               <option value="directivo">Directivo</option>
-              <option value="admin">Admin</option>
+              <option value="admin">Administrador</option>
             </select>
           </div>
           <div class="form-error" id="formError" style="margin-top:16px"></div>
@@ -73,6 +77,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: document.getElementById('name').value,
+          dni: document.getElementById('dni').value.trim() || undefined,
           email: document.getElementById('email').value,
           password: document.getElementById('password').value,
           role: document.getElementById('role').value,

@@ -37,9 +37,9 @@
           <span class="material-symbols-outlined input-icon">filter_list</span>
           <select name="role" class="select-input" onchange="this.form.submit()">
             <option value="">Todos los roles</option>
-            <option value="admin" <%= currentRole === 'admin' ? 'selected' : '' %>>Admin</option>
+            <option value="admin" <%= currentRole === 'admin' ? 'selected' : '' %>>Administrador</option>
             <option value="directivo" <%= currentRole === 'directivo' ? 'selected' : '' %>>Directivo</option>
-            <option value="teacher" <%= currentRole === 'teacher' ? 'selected' : '' %>>Profesor</option>
+            <option value="teacher" <%= currentRole === 'teacher' ? 'selected' : '' %>>Docente</option>
             <option value="preceptor" <%= currentRole === 'preceptor' ? 'selected' : '' %>>Preceptor</option>
             <option value="soe" <%= currentRole === 'soe' ? 'selected' : '' %>>SOE</option>
             <option value="student" <%= currentRole === 'student' ? 'selected' : '' %>>Alumno</option>
@@ -59,6 +59,7 @@
         <table class="users-table">
           <thead>
             <tr>
+              <th>DNI</th>
               <th>Usuario</th>
               <th>Email</th>
               <th>Rol</th>
@@ -69,10 +70,21 @@
           <tbody>
             <% users.forEach(u => { %>
               <tr>
+                <td style="font-family:monospace;font-size:13px"><%= u.dni || '—' %></td>
                 <td>
                   <div style="display:flex;align-items:center;gap:12px">
-                    <div class="avatar" style="width:32px;height:32px;font-size:14px"><%= u.name.charAt(0).toUpperCase() %></div>
-                    <span style="font-weight:500"><%= u.name %></span>
+                    <div class="avatar" style="width:32px;height:32px;font-size:14px;opacity:<%= u.active === false ? 0.4 : 1 %>"><%= u.name.charAt(0).toUpperCase() %></div>
+                    <div>
+                      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                        <span style="font-weight:500;color:<%= u.active === false ? 'var(--text-hint)' : 'inherit' %>"><%= u.name %></span>
+                        <% if (u.role === 'student' && !enrolledMap[u._id.toString()]) { %>
+                          <span class="badge-unmatriculated">(Sin Matricular)</span>
+                        <% } %>
+                      </div>
+                      <% if (u.active === false) { %>
+                        <span style="display:block;font-size:11px;color:#ea4335;font-weight:600;letter-spacing:.3px">DESHABILITADO</span>
+                      <% } %>
+                    </div>
                   </div>
                 </td>
                 <td class="td-email"><%= u.email %></td>

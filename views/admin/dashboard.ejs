@@ -17,7 +17,7 @@
     <div class="dashboard-topbar">
       <div>
         <h2>Panel de Administración</h2>
-        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">Gestión general del sistema</p>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px"><%= school ? school.name : 'Gestión de la institución' %></p>
       </div>
       <div class="dashboard-actions">
         <a href="/admin/users/create" class="btn btn-outline">

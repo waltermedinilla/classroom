@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Usuarios - Superadmin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%239334e6'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>S</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/superadmin-nav', { activePage: 'users' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Todos los usuarios</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          <%= total %> usuario(s) en total
+          <% const from = (page-1)*limit+1; const to = Math.min(page*limit, total); %>
+          <% if (total > 0) { %> — mostrando <%= from %>–<%= to %><% } %>
+        </p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/superadmin/users/create" class="btn btn-primary">
+          <span class="material-symbols-outlined">person_add</span>
+          Nuevo usuario
+        </a>
+      </div>
+    </div>
+
+    <!-- Filtros -->
+    <div class="filter-bar">
+      <form method="GET" action="/superadmin/users" id="filterForm" class="filter-form">
+        <div class="input-group" style="flex:1;min-width:180px">
+          <span class="material-symbols-outlined input-icon">search</span>
+          <input type="text" name="search" placeholder="Buscar por nombre o email..." value="<%= search %>">
+        </div>
+        <div class="input-group" style="width:170px">
+          <span class="material-symbols-outlined input-icon">filter_list</span>
+          <select name="role" class="select-input" onchange="resetPage(this.form)">
+            <option value="">Todos los roles</option>
+            <option value="superadmin" <%= currentRole==='superadmin'?'selected':'' %>>Superadministrador</option>
+            <option value="admin"      <%= currentRole==='admin'     ?'selected':'' %>>Administrador</option>
+            <option value="directivo"  <%= currentRole==='directivo' ?'selected':'' %>>Directivo</option>
+            <option value="teacher"    <%= currentRole==='teacher'   ?'selected':'' %>>Docente</option>
+            <option value="preceptor"  <%= currentRole==='preceptor' ?'selected':'' %>>Preceptor</option>
+            <option value="soe"        <%= currentRole==='soe'       ?'selected':'' %>>SOE</option>
+            <option value="student"    <%= currentRole==='student'   ?'selected':'' %>>Alumno</option>
+          </select>
+        </div>
+        <div class="input-group" style="width:190px">
+          <span class="material-symbols-outlined input-icon">domain</span>
+          <select name="schoolId" class="select-input" onchange="resetPage(this.form)">
+            <option value="">Todas las escuelas</option>
+            <option value="none" <%= currentSchool==='none'?'selected':'' %>>Sin escuela</option>
+            <% schools.forEach(s => { %>
+              <option value="<%= s._id %>" <%= currentSchool===s._id.toString()?'selected':'' %>><%= s.name %></option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="input-group" style="width:145px">
+          <span class="material-symbols-outlined input-icon">person_check</span>
+          <select name="active" class="select-input" onchange="resetPage(this.form)">
+            <option value="">Todos</option>
+            <option value="true"  <%= currentActive==='true' ?'selected':'' %>>Activos</option>
+            <option value="false" <%= currentActive==='false'?'selected':'' %>>Deshabilitados</option>
+          </select>
+        </div>
+        <div class="input-group" style="width:90px">
+          <span class="material-symbols-outlined input-icon">format_list_numbered</span>
+          <select name="limit" class="select-input" onchange="resetPage(this.form)">
+            <option value="10"  <%= limit===10 ?'selected':'' %>>10</option>
+            <option value="25"  <%= limit===25 ?'selected':'' %>>25</option>
+            <option value="50"  <%= limit===50 ?'selected':'' %>>50</option>
+            <option value="100" <%= limit===100?'selected':'' %>>100</option>
+          </select>
+        </div>
+        <input type="hidden" name="page" value="1" id="pageInput">
+        <button type="submit" class="btn btn-outline">Buscar</button>
+        <% if (search || currentRole || currentSchool || currentActive) { %>
+          <a href="/superadmin/users" class="btn btn-ghost" title="Limpiar filtros">
+            <span class="material-symbols-outlined" style="font-size:18px">filter_alt_off</span>
+          </a>
+        <% } %>
+      </form>
+    </div>
+
+    <!-- Tabla -->
+    <div class="users-table-card">
+      <% if (users.length === 0) { %>
+        <div class="empty-state">
+          <div class="empty-icon"><span class="material-symbols-outlined">search_off</span></div>
+          <p>No se encontraron usuarios</p>
+        </div>
+      <% } else { %>
+        <table class="users-table" id="usersTable">
+          <thead>
+            <tr>
+              <th class="cb-cell"><input type="checkbox" id="selectAll" title="Seleccionar todos"></th>
+              <th>DNI</th>
+              <th>Usuario</th>
+              <th>Email</th>
+              <th>Rol</th>
+              <th>Escuela</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% users.forEach(u => { %>
+              <tr data-id="<%= u._id %>">
+                <td class="cb-cell"><input type="checkbox" class="row-cb" value="<%= u._id %>"></td>
+                <td style="font-family:monospace;font-size:13px"><%= u.dni || '—' %></td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <div class="avatar" style="width:32px;height:32px;font-size:14px"><%= u.name.charAt(0).toUpperCase() %></div>
+                    <div>
+                      <span style="font-weight:500"><%= u.name %></span>
+                      <% if (!u.active) { %><span class="badge-disabled">Deshabilitado</span><% } %>
+                    </div>
+                  </div>
+                </td>
+                <td class="td-email"><%= u.email %></td>
+                <td><span class="role-badge role-<%= u.role %>"><%= roleNames[u.role] || u.role %></span></td>
+                <td>
+                  <% if (u.school) { %>
+                    <span style="display:inline-flex;align-items:center;gap:6px;font-size:13px">
+                      <span style="width:10px;height:10px;border-radius:50%;background:<%= u.school.color %>;display:inline-block;flex-shrink:0"></span>
+                      <%= u.school.name %>
+                    </span>
+                  <% } else { %>
+                    <span style="color:var(--text-hint);font-size:13px">—</span>
+                  <% } %>
+                </td>
+                <td>
+                  <div style="display:flex;gap:8px;align-items:center">
+                    <select class="select-input" style="font-size:12px;padding:4px 8px;width:auto" onchange="changeSchool('<%= u._id %>', this.value, this)">
+                      <option value="">Sin escuela</option>
+                      <% schools.forEach(s => { %>
+                        <option value="<%= s._id %>" <%= u.school && u.school._id.toString()===s._id.toString()?'selected':'' %>><%= s.name %></option>
+                      <% }) %>
+                    </select>
+                    <select class="select-input" style="font-size:12px;padding:4px 8px;width:auto" onchange="changeRole('<%= u._id %>', this.value)">
+                      <% ['superadmin','admin','directivo','teacher','preceptor','soe','student'].forEach(r => { %>
+                        <option value="<%= r %>" <%= u.role===r?'selected':'' %>><%= roleNames[r]||r %></option>
+                      <% }) %>
+                    </select>
+                  </div>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+
+        <!-- Paginación -->
+        <%
+          function buildUrl(overrides) {
+            const p = {};
+            if (search) p.search = search;
+            if (currentRole) p.role = currentRole;
+            if (currentSchool) p.schoolId = currentSchool;
+            if (currentActive) p.active = currentActive;
+            if (limit !== 25) p.limit = limit;
+            Object.assign(p, overrides);
+            return '/superadmin/users?' + Object.entries(p).map(([k,v]) => k+'='+encodeURIComponent(v)).join('&');
+          }
+          let pagesToShow = [];
+          if (pages <= 7) {
+            for (let i = 1; i <= pages; i++) pagesToShow.push(i);
+          } else {
+            pagesToShow.push(1);
+            if (page > 3) pagesToShow.push('...');
+            for (let i = Math.max(2, page-2); i <= Math.min(pages-1, page+2); i++) pagesToShow.push(i);
+            if (page < pages-2) pagesToShow.push('...');
+            pagesToShow.push(pages);
+          }
+        %>
+        <% if (pages > 1) { %>
+          <div class="pagination">
+            <% if (page > 1) { %>
+              <a href="<%= buildUrl({page: page-1}) %>" class="page-btn" title="Anterior">
+                <span class="material-symbols-outlined" style="font-size:18px">chevron_left</span>
+              </a>
+            <% } %>
+            <% pagesToShow.forEach(p => { %>
+              <% if (p === '...') { %>
+                <span class="page-ellipsis">…</span>
+              <% } else { %>
+                <a href="<%= buildUrl({page: p}) %>" class="page-btn <%= p === page ? 'active' : '' %>"><%= p %></a>
+              <% } %>
+            <% }) %>
+            <% if (page < pages) { %>
+              <a href="<%= buildUrl({page: page+1}) %>" class="page-btn" title="Siguiente">
+                <span class="material-symbols-outlined" style="font-size:18px">chevron_right</span>
+              </a>
+            <% } %>
+          </div>
+        <% } %>
+      <% } %>
+    </div>
+  </main>
+
+  <!-- Barra de acciones masivas -->
+  <div class="bulk-bar" id="bulkBar">
+    <span class="bulk-bar-count" id="bulkCount">0 seleccionado(s)</span>
+    <div class="bulk-bar-group">
+      <label>Escuela:</label>
+      <select id="bulkSchool">
+        <option value="">Sin escuela</option>
+        <% schools.forEach(s => { %>
+          <option value="<%= s._id %>"><%= s.name %></option>
+        <% }) %>
+      </select>
+      <button class="bulk-bar-apply" onclick="applyBulkSchool()">Asignar</button>
+    </div>
+    <div class="bulk-bar-sep"></div>
+    <div class="bulk-bar-group">
+      <label>Rol:</label>
+      <select id="bulkRole">
+        <% [['superadmin','Superadministrador'],['admin','Administrador'],['directivo','Directivo'],['teacher','Docente'],['preceptor','Preceptor'],['soe','SOE'],['student','Alumno']].forEach(([val,lbl]) => { %>
+          <option value="<%= val %>"><%= lbl %></option>
+        <% }) %>
+      </select>
+      <button class="bulk-bar-apply" onclick="applyBulkRole()">Cambiar</button>
+    </div>
+    <button class="bulk-bar-clear" onclick="clearSelection()">
+      <span class="material-symbols-outlined" style="font-size:16px">close</span>
+      Cancelar
+    </button>
+  </div>
+
+  <%- include('../partials/footer') %>
+
+  <script>
+    // ── Selección ──
+    const selectAll = document.getElementById('selectAll');
+    const bulkBar   = document.getElementById('bulkBar');
+    const bulkCount = document.getElementById('bulkCount');
+
+    function getChecked() {
+      return [...document.querySelectorAll('.row-cb:checked')].map(c => c.value);
+    }
+
+    function updateBulkBar() {
+      const ids = getChecked();
+      bulkCount.textContent = ids.length + ' seleccionado(s)';
+      bulkBar.classList.toggle('visible', ids.length > 0);
+      const all = document.querySelectorAll('.row-cb');
+      selectAll.indeterminate = ids.length > 0 && ids.length < all.length;
+      selectAll.checked = ids.length === all.length && all.length > 0;
+    }
+
+    selectAll.addEventListener('change', () => {
+      document.querySelectorAll('.row-cb').forEach(cb => cb.checked = selectAll.checked);
+      updateBulkBar();
+    });
+
+    document.querySelectorAll('.row-cb').forEach(cb => {
+      cb.addEventListener('change', updateBulkBar);
+    });
+
+    function clearSelection() {
+      document.querySelectorAll('.row-cb').forEach(cb => cb.checked = false);
+      selectAll.checked = false;
+      updateBulkBar();
+    }
+
+    // ── Acciones masivas ──
+    async function applyBulkSchool() {
+      const ids = getChecked();
+      if (!ids.length) return;
+      const schoolId = document.getElementById('bulkSchool').value;
+      const dest = schoolId ? document.getElementById('bulkSchool').options[document.getElementById('bulkSchool').selectedIndex].text : 'Sin escuela';
+      if (!confirm(`¿Asignar ${ids.length} usuario(s) a "${dest}"?`)) return;
+      const res = await fetch('/superadmin/users/bulk-school', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userIds: ids, schoolId }),
+      });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error);
+      location.reload();
+    }
+
+    async function applyBulkRole() {
+      const ids = getChecked();
+      if (!ids.length) return;
+      const role = document.getElementById('bulkRole').value;
+      const lbl  = document.getElementById('bulkRole').options[document.getElementById('bulkRole').selectedIndex].text;
+      if (!confirm(`¿Cambiar el rol de ${ids.length} usuario(s) a "${lbl}"?`)) return;
+      const res = await fetch('/superadmin/users/bulk-role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userIds: ids, role }),
+      });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error);
+      location.reload();
+    }
+
+    // ── Acciones individuales ──
+    async function changeSchool(userId, schoolId, selectEl) {
+      const destName = schoolId ? selectEl.options[selectEl.selectedIndex].text : 'Sin escuela';
+      if (!confirm(`¿Cambiar la escuela de este usuario a "${destName}"?`)) {
+        location.reload(); return;
+      }
+      const res = await fetch('/superadmin/users/' + userId + '/school', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schoolId }),
+      });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error); location.reload(); return; }
+      location.reload();
+    }
+
+    async function changeRole(userId, role) {
+      const res = await fetch('/superadmin/users/' + userId + '/role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role }),
+      });
+      if (!res.ok) { const d = await res.json(); alert(d.error); location.reload(); }
+    }
+
+    // ── Filtro: resetear página al cambiar filtro ──
+    function resetPage(form) {
+      document.getElementById('pageInput').value = 1;
+      form.submit();
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Educacion\\\\OneDrive\\\\Desktop\\\\proyectos\\\\classroom-clone\" -Recurse -File)",
+      "Bash(Select-Object FullName)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(node -e \"require\\('./server.js'\\)\")",
+      "Bash(node -e ' *)"
+    ]
+  }
+}

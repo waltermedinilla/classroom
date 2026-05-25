@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= school ? 'Registrarse en ' + school.name : 'Enlace inválido' %> - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='<%= school ? encodeURIComponent(school.color) : "%231a73e8" %>'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+  <% if (school) { %>
+  <style>
+    /* Sobrescribe el color primario con el color de la escuela */
+    :root {
+      --primary: <%= school.color %>;
+      --primary-dark: <%= school.color %>;
+      --primary-light: <%= school.color %>22;
+    }
+    .invite-banner {
+      background: linear-gradient(135deg, <%= school.color %>, <%= school.color %>cc);
+      color: #fff;
+      border-radius: 16px 16px 0 0;
+      padding: 28px 32px 24px;
+      text-align: center;
+      margin: -32px -32px 24px;
+    }
+    .invite-school-icon {
+      width: 56px; height: 56px; border-radius: 14px;
+      background: rgba(255,255,255,0.2);
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 12px;
+      font-size: 28px;
+    }
+    .invite-school-name { font-size: 1.2rem; font-weight: 700; margin-bottom: 4px; }
+    .invite-subtitle { font-size: 0.85rem; opacity: 0.85; }
+  </style>
+  <% } %>
+</head>
+<body class="auth-body">
+  <div class="auth-container">
+    <div class="auth-card">
+
+      <% if (!school) { %>
+        <!-- Estado de error: token inválido o revocado -->
+        <div style="text-align:center;padding:16px 0 8px">
+          <div style="width:64px;height:64px;border-radius:50%;background:#fce8e6;display:flex;align-items:center;justify-content:center;margin:0 auto 16px">
+            <span class="material-symbols-outlined" style="font-size:32px;color:#ea4335">link_off</span>
+          </div>
+          <h2 style="font-size:1.2rem;font-weight:700;color:#202124;margin-bottom:8px">Enlace inválido</h2>
+          <p style="color:#5f6368;font-size:0.9rem;line-height:1.5">
+            Este enlace de registro ya no es válido o fue revocado por el administrador.<br>
+            Contactá a tu institución para obtener uno nuevo.
+          </p>
+          <a href="/login" class="btn btn-outline" style="margin-top:24px;display:inline-flex">
+            <span class="material-symbols-outlined">arrow_back</span>
+            Ir al inicio de sesión
+          </a>
+        </div>
+
+      <% } else { %>
+        <!-- Banner con el nombre y color de la escuela -->
+        <div class="invite-banner">
+          <div class="invite-school-icon">
+            <span class="material-symbols-outlined" style="color:#fff">domain</span>
+          </div>
+          <div class="invite-school-name"><%= school.name %></div>
+          <div class="invite-subtitle">Creá tu cuenta para acceder a Classroom</div>
+        </div>
+
+        <form class="auth-form" id="inviteForm" data-token="<%= token %>">
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">badge</span>
+            <input type="text" id="name" placeholder="Nombre completo" required autocomplete="name">
+          </div>
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">email</span>
+            <input type="email" id="email" placeholder="Correo electrónico" required autocomplete="email">
+          </div>
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">lock</span>
+            <input type="password" id="password" placeholder="Contraseña (mín. 5 caracteres)" required autocomplete="new-password">
+          </div>
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">school</span>
+            <select id="role" class="select-input">
+              <% const roleLabels = {
+                student: 'Alumno',
+                teacher: 'Docente',
+                preceptor: 'Preceptor',
+                soe: 'SOE',
+                directivo: 'Directivo'
+              }; %>
+              <% roles.forEach(r => { %>
+                <option value="<%= r %>"><%= roleLabels[r] || r %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="form-error" id="inviteError"></div>
+          <button type="submit" class="btn btn-primary btn-full">
+            <span class="material-symbols-outlined">person_add</span>
+            Crear cuenta
+          </button>
+        </form>
+
+        <p class="auth-link">¿Ya tenés cuenta? <a href="/login">Iniciá sesión</a></p>
+      <% } %>
+
+    </div>
+  </div>
+
+  <% if (school) { %>
+  <script>
+    document.getElementById('inviteForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById('inviteError');
+      errorEl.classList.remove('show');
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Creando cuenta...';
+
+      const token = e.target.dataset.token;
+      const res = await fetch('/register/invite/' + token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name:     document.getElementById('name').value.trim(),
+          email:    document.getElementById('email').value.trim(),
+          password: document.getElementById('password').value,
+          role:     document.getElementById('role').value,
+        }),
+      });
+
+      const data = await res.json();
+      btn.disabled = false;
+      btn.innerHTML = '<span class="material-symbols-outlined">person_add</span> Crear cuenta';
+
+      if (!res.ok) {
+        errorEl.textContent = data.error;
+        errorEl.classList.add('show');
+        return;
+      }
+      // Redirige al dashboard al crear la cuenta exitosamente
+      window.location.href = '/';
+    });
+  </script>
+  <% } %>
+</body>
+</html>

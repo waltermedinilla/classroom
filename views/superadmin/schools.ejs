@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Escuelas - Superadmin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%239334e6'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>S</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .invite-url-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      margin: 16px 0 12px;
+    }
+    .invite-url-text {
+      flex: 1;
+      font-size: 12px;
+      color: var(--text-secondary);
+      word-break: break-all;
+      font-family: monospace;
+      line-height: 1.4;
+    }
+    .invite-copy-btn {
+      flex-shrink: 0;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--primary);
+      padding: 4px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+    }
+    .invite-copy-btn:hover { background: var(--primary-light); }
+    .invite-status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 20px;
+    }
+    .invite-status-active {
+      background: #e6f4ea;
+      color: #137333;
+    }
+    .invite-status-none {
+      background: #fce8e6;
+      color: #c5221f;
+    }
+    .invite-actions { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+    .link-btn {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 7px 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      color: var(--text-secondary);
+      font-size: 13px;
+      transition: all 0.15s;
+    }
+    .link-btn:hover { background: var(--primary-light); color: var(--primary); border-color: var(--primary); }
+    .link-btn .material-symbols-outlined { font-size: 16px; }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/superadmin-nav', { activePage: 'schools' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Escuelas</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px"><%= schools.length %> escuela(s) encontrada(s)</p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/superadmin/schools/create" class="btn btn-primary">
+          <span class="material-symbols-outlined">add</span>
+          Nueva escuela
+        </a>
+      </div>
+    </div>
+
+    <div class="filter-bar">
+      <form method="GET" action="/superadmin/schools" class="filter-form">
+        <div class="input-group" style="flex:1">
+          <span class="material-symbols-outlined input-icon">search</span>
+          <input type="text" name="search" placeholder="Buscar escuela..." value="<%= search %>">
+        </div>
+        <button type="submit" class="btn btn-outline">Buscar</button>
+        <% if (search) { %>
+          <a href="/superadmin/schools" class="btn btn-outline">Limpiar</a>
+        <% } %>
+      </form>
+    </div>
+
+    <% if (schools.length === 0) { %>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">domain</span></div>
+        <p><%= search ? 'No se encontraron escuelas con ese nombre' : 'No hay escuelas registradas aún' %></p>
+        <% if (!search) { %>
+          <a href="/superadmin/schools/create" class="btn btn-primary" style="margin-top:20px">Crear primera escuela</a>
+        <% } %>
+      </div>
+    <% } else { %>
+      <div class="subjects-grid">
+        <% schools.forEach(s => { %>
+          <div class="subject-card" style="position:relative">
+            <a href="/superadmin/schools/<%= s._id %>" style="text-decoration:none">
+              <div class="subject-card-banner" style="background:<%= s.color %>;cursor:pointer">
+                <span class="material-symbols-outlined">domain</span>
+              </div>
+            </a>
+            <div class="subject-card-body">
+              <h4 class="subject-card-name">
+                <a href="/superadmin/schools/<%= s._id %>" style="text-decoration:none;color:inherit"><%= s.name %></a>
+              </h4>
+              <p class="subject-card-desc"><%= s.description || 'Sin descripción' %></p>
+              <div class="subject-card-meta" style="display:flex;gap:16px;flex-wrap:wrap">
+                <span><span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle">people</span> <%= s.userCount %> usuario<%= s.userCount !== 1 ? 's' : '' %></span>
+                <span><span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle">school</span> <%= s.courseCount %> curso<%= s.courseCount !== 1 ? 's' : '' %></span>
+              </div>
+              <!-- Estado del enlace de invitación -->
+              <div style="margin-top:10px">
+                <% if (s.inviteToken) { %>
+                  <span class="invite-status-chip invite-status-active">
+                    <span class="material-symbols-outlined" style="font-size:14px">link</span>
+                    Enlace activo
+                  </span>
+                <% } else { %>
+                  <span class="invite-status-chip invite-status-none">
+                    <span class="material-symbols-outlined" style="font-size:14px">link_off</span>
+                    Sin enlace
+                  </span>
+                <% } %>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:14px">
+                <a href="/superadmin/schools/<%= s._id %>/edit" class="btn btn-outline" style="flex:1;text-align:center;font-size:13px;padding:7px 0">
+                  <span class="material-symbols-outlined" style="font-size:16px">edit</span> Editar
+                </a>
+                <!-- Botón enlace de invitación -->
+                <button class="btn btn-outline" style="font-size:13px;padding:7px 12px"
+                  title="Gestionar enlace de registro"
+                  onclick="openInviteModal('<%= s._id %>', '<%= s.name %>', '<%= s.color %>', '<%= s.inviteToken || '' %>')">
+                  <span class="material-symbols-outlined" style="font-size:16px">link</span>
+                </button>
+                <button class="btn btn-danger" style="font-size:13px;padding:7px 14px" onclick="deleteSchool('<%= s._id %>', '<%= s.name %>')">
+                  <span class="material-symbols-outlined" style="font-size:16px">delete</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        <% }) %>
+      </div>
+    <% } %>
+  </main>
+
+  <!-- Modal de gestión del enlace de invitación -->
+  <div id="inviteModal" class="modal-overlay" onclick="if(event.target===this) closeInviteModal()">
+    <div class="modal" style="max-width:460px" onclick="event.stopPropagation()">
+      <div class="modal-header" id="inviteModalHeader">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon" id="inviteModalIcon">link</span>
+          <h3 id="inviteModalTitle">Enlace de registro</h3>
+        </div>
+        <button class="modal-close" onclick="closeInviteModal()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px;color:var(--text-secondary);line-height:1.5">
+          Compartí este enlace con los usuarios de la escuela para que puedan crear su cuenta directamente asociada a esta institución.
+        </p>
+
+        <!-- Estado: tiene token -->
+        <div id="inviteHasToken" style="display:none">
+          <div class="invite-url-box">
+            <span class="invite-url-text" id="inviteUrlText"></span>
+            <button class="invite-copy-btn" onclick="copyInviteUrl()" title="Copiar enlace">
+              <span class="material-symbols-outlined" style="font-size:20px" id="copyIcon">content_copy</span>
+            </button>
+          </div>
+          <div class="invite-actions">
+            <button class="btn btn-outline" style="font-size:13px;flex:1" onclick="generateInvite()">
+              <span class="material-symbols-outlined" style="font-size:16px">refresh</span>
+              Regenerar enlace
+            </button>
+            <button class="btn btn-danger" style="font-size:13px" onclick="revokeInvite()">
+              <span class="material-symbols-outlined" style="font-size:16px">link_off</span>
+              Revocar
+            </button>
+          </div>
+          <p style="font-size:11px;color:var(--text-hint);margin-top:10px;line-height:1.5">
+            Al regenerar, el enlace anterior queda inválido automáticamente.
+          </p>
+        </div>
+
+        <!-- Estado: sin token -->
+        <div id="inviteNoToken" style="display:none;text-align:center;padding:16px 0 8px">
+          <div style="width:52px;height:52px;border-radius:50%;background:var(--bg);display:flex;align-items:center;justify-content:center;margin:0 auto 12px;border:2px dashed var(--border)">
+            <span class="material-symbols-outlined" style="font-size:24px;color:var(--text-hint)">link_off</span>
+          </div>
+          <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px">
+            Esta escuela no tiene un enlace de registro activo.
+          </p>
+          <button class="btn btn-primary" style="width:100%" onclick="generateInvite()">
+            <span class="material-symbols-outlined">add_link</span>
+            Generar enlace de registro
+          </button>
+        </div>
+
+        <div class="form-error" id="inviteError" style="margin-top:12px"></div>
+      </div>
+    </div>
+  </div>
+
+  <%- include('../partials/footer') %>
+
+  <script>
+    // Estado del modal en memoria
+    let _inviteSchoolId   = null;
+    let _inviteSchoolName = null;
+    let _inviteToken      = null;
+
+    function openInviteModal(id, name, color, token) {
+      _inviteSchoolId   = id;
+      _inviteSchoolName = name;
+      _inviteToken      = token;
+
+      // Aplica el color de la escuela al icono del encabezado
+      document.getElementById('inviteModalIcon').style.color = color;
+      document.getElementById('inviteModalTitle').textContent = 'Enlace – ' + name;
+      renderInviteModal();
+      document.getElementById('inviteModal').classList.add('show');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeInviteModal() {
+      document.getElementById('inviteModal').classList.remove('show');
+      document.body.style.overflow = '';
+      document.getElementById('inviteError').classList.remove('show');
+    }
+
+    // Muestra el bloque correcto según si hay token o no
+    function renderInviteModal() {
+      const hasToken = !!_inviteToken;
+      document.getElementById('inviteHasToken').style.display = hasToken ? '' : 'none';
+      document.getElementById('inviteNoToken').style.display  = hasToken ? 'none' : '';
+      if (hasToken) {
+        const url = window.location.origin + '/register/invite/' + _inviteToken;
+        document.getElementById('inviteUrlText').textContent = url;
+      }
+      // Resetea ícono de copia
+      document.getElementById('copyIcon').textContent = 'content_copy';
+    }
+
+    function copyInviteUrl() {
+      const url = document.getElementById('inviteUrlText').textContent;
+      navigator.clipboard.writeText(url).then(() => {
+        document.getElementById('copyIcon').textContent = 'check';
+        setTimeout(() => { document.getElementById('copyIcon').textContent = 'content_copy'; }, 2000);
+      });
+    }
+
+    // Genera o regenera el token llamando al endpoint del superadmin
+    async function generateInvite() {
+      const errorEl = document.getElementById('inviteError');
+      errorEl.classList.remove('show');
+      const res = await fetch(`/superadmin/schools/${_inviteSchoolId}/invite`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) { errorEl.textContent = data.error; errorEl.classList.add('show'); return; }
+      // Extrae el token de la URL devuelta y actualiza el estado local
+      _inviteToken = data.inviteUrl.split('/').pop();
+      renderInviteModal();
+      // Actualiza el chip de estado en la tarjeta sin recargar la página
+      updateCardChip(_inviteSchoolId, true);
+    }
+
+    // Revoca el token de la escuela actual
+    async function revokeInvite() {
+      if (!confirm(`¿Revocar el enlace de "${_inviteSchoolName}"? Los usuarios ya no podrán registrarse con él.`)) return;
+      const errorEl = document.getElementById('inviteError');
+      errorEl.classList.remove('show');
+      const res = await fetch(`/superadmin/schools/${_inviteSchoolId}/revoke-invite`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) { errorEl.textContent = data.error; errorEl.classList.add('show'); return; }
+      _inviteToken = null;
+      renderInviteModal();
+      updateCardChip(_inviteSchoolId, false);
+    }
+
+    // Actualiza el chip de estado en la tarjeta de la escuela sin recargar la página
+    function updateCardChip(schoolId, hasToken) {
+      // Busca el botón de enlace de esa tarjeta y sube al contenedor para encontrar el chip
+      const btns = document.querySelectorAll('button[onclick*="openInviteModal"]');
+      for (const btn of btns) {
+        if (btn.getAttribute('onclick').includes(`'${schoolId}'`)) {
+          const card = btn.closest('.subject-card-body');
+          const chip = card.querySelector('.invite-status-chip');
+          if (chip) {
+            chip.className = 'invite-status-chip ' + (hasToken ? 'invite-status-active' : 'invite-status-none');
+            chip.innerHTML = hasToken
+              ? '<span class="material-symbols-outlined" style="font-size:14px">link</span> Enlace activo'
+              : '<span class="material-symbols-outlined" style="font-size:14px">link_off</span> Sin enlace';
+          }
+          break;
+        }
+      }
+    }
+
+    async function deleteSchool(id, name) {
+      if (!confirm(`¿Eliminar la escuela "${name}"? Esta acción no se puede deshacer.`)) return;
+      const res = await fetch('/superadmin/schools/' + id + '/delete', { method: 'POST' });
+      if (res.ok) location.reload();
+      else { const d = await res.json(); alert(d.error); }
+    }
+
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeInviteModal(); });
+  </script>
+</body>
+</html>

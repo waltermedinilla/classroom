@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mi perfil - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('partials/header') %>
+
+  <main class="main-content">
+
+    <!-- Encabezado del perfil -->
+    <div class="profile-header">
+      <div class="profile-avatar">
+        <% const _avatarBg = user.role === 'admin' ? '#ea4335' : user.role === 'teacher' ? '#1a73e8' : user.role === 'directivo' ? '#9334e6' : user.role === 'preceptor' ? '#ea8600' : user.role === 'soe' ? '#0d7377' : '#5f6368'; %>
+        <div class="profile-avatar-wrap" id="avatarWrap">
+          <% if (user.avatar) { %>
+            <div class="avatar-huge avatar-img" style="width:80px;height:80px"><img src="<%= user.avatar %>" alt="<%= user.name %>"></div>
+          <% } else { %>
+            <div class="avatar-huge" id="avatarInitial" style="width:80px;height:80px;font-size:36px;background:<%= _avatarBg %>">
+              <%= user.name.charAt(0).toUpperCase() %>
+            </div>
+          <% } %>
+          <label class="avatar-upload-btn" title="Cambiar foto de perfil">
+            <input type="file" id="avatarFileInput" accept="image/jpeg,image/png,image/webp" hidden>
+            <span class="material-symbols-outlined">photo_camera</span>
+          </label>
+        </div>
+        <% if (user.avatar) { %>
+          <button class="avatar-remove-btn" id="avatarRemoveBtn" onclick="removeAvatar()">Quitar foto</button>
+        <% } else { %>
+          <button class="avatar-remove-btn" id="avatarRemoveBtn" onclick="removeAvatar()" style="display:none">Quitar foto</button>
+        <% } %>
+      </div>
+      <div class="profile-info">
+        <h2><%= user.name %></h2>
+        <% if (user.dni) { %>
+          <p style="font-family:monospace;font-size:13px;color:var(--text-secondary);margin-bottom:2px">DNI: <%= user.dni %></p>
+        <% } %>
+        <p class="profile-email"><%= user.email %></p>
+        <span class="role-badge role-<%= user.role %>" style="font-size:14px;padding:6px 16px"><%= roleNames[user.role] || user.role %></span>
+        <% if (school) { %>
+          <p style="font-size:13px;color:var(--text-secondary);margin-top:8px;display:flex;align-items:center;gap:6px">
+            <span style="width:10px;height:10px;border-radius:50%;background:<%= school.color %>;display:inline-block;flex-shrink:0"></span>
+            <%= school.name %>
+          </p>
+        <% } %>
+        <p class="profile-date">Miembro desde <%= new Date(user.createdAt).toLocaleDateString('es-ES', { day:'numeric', month:'long', year:'numeric' }) %></p>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <% if (user.role !== 'student') { %>
+    <div class="stats-grid" style="margin-top:32px">
+      <div class="stat-card" style="--stat-color:#1a73e8">
+        <div class="stat-icon"><span class="material-symbols-outlined">school</span></div>
+        <div>
+          <div class="stat-value"><%= createdCourses.length %></div>
+          <div class="stat-label">Curso<%= createdCourses.length !== 1 ? 's' : '' %> dictado<%= createdCourses.length !== 1 ? 's' : '' %></div>
+        </div>
+      </div>
+      <div class="stat-card" style="--stat-color:#34a853">
+        <div class="stat-icon"><span class="material-symbols-outlined">people</span></div>
+        <div>
+          <div class="stat-value"><%= totalStudents %></div>
+          <div class="stat-label">Alumno<%= totalStudents !== 1 ? 's' : '' %> en total</div>
+        </div>
+      </div>
+      <div class="stat-card" style="--stat-color:#ea8600">
+        <div class="stat-icon"><span class="material-symbols-outlined">assignment</span></div>
+        <div>
+          <div class="stat-value"><%= activityCount %></div>
+          <div class="stat-label">Actividad<%= activityCount !== 1 ? 'es' : '' %> creada<%= activityCount !== 1 ? 's' : '' %></div>
+        </div>
+      </div>
+    </div>
+    <% } else { %>
+    <div class="stats-grid" style="margin-top:32px">
+      <div class="stat-card" style="--stat-color:#34a853">
+        <div class="stat-icon"><span class="material-symbols-outlined">menu_book</span></div>
+        <div>
+          <div class="stat-value"><%= joinedCourses.length %></div>
+          <div class="stat-label">Curso<%= joinedCourses.length !== 1 ? 's' : '' %> inscripto<%= joinedCourses.length !== 1 ? 's' : '' %></div>
+        </div>
+      </div>
+    </div>
+    <% } %>
+
+    <!-- Mis cursos (docente) -->
+    <% if (user.role !== 'student') { %>
+    <section class="section" style="margin-top:40px">
+      <div class="section-header">
+        <span class="material-symbols-outlined section-icon">school</span>
+        <h3>Mis cursos</h3>
+      </div>
+      <% if (createdCourses.length === 0) { %>
+        <div class="empty-state">
+          <div class="empty-icon"><span class="material-symbols-outlined">class</span></div>
+          <p>Todavía no creaste ningún curso.</p>
+        </div>
+      <% } %>
+      <div class="course-grid">
+        <% createdCourses.forEach(c => { %>
+          <% const subtitle = [c.section, c.subject].filter(Boolean).join(' · '); %>
+          <a href="/courses/<%= c._id %>" class="course-card" style="--card-color:#1a73e8">
+            <div class="card-banner">
+              <div class="card-banner-content">
+                <h4><%= c.name %></h4>
+                <% if (subtitle) { %><p><%= subtitle %></p><% } %>
+              </div>
+              <div class="card-banner-deco">
+                <span class="material-symbols-outlined">school</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="card-stat">
+                <span class="material-symbols-outlined">group</span>
+                <span><%= c.students.length %> alumno<%= c.students.length !== 1 ? 's' : '' %></span>
+              </div>
+            </div>
+            <div class="card-footer">
+              <div class="card-footer-icons">
+                <button class="icon-btn card-icon-btn" title="Ir al curso"
+                  onclick="event.preventDefault();event.stopPropagation();window.location.href='/courses/<%= c._id %>'">
+                  <span class="material-symbols-outlined">open_in_new</span>
+                </button>
+              </div>
+              <button class="icon-btn card-icon-btn" title="Copiar código"
+                onclick="event.preventDefault();event.stopPropagation();navigator.clipboard.writeText('<%= c.code %>')">
+                <span class="material-symbols-outlined">more_vert</span>
+              </button>
+            </div>
+          </a>
+        <% }) %>
+      </div>
+    </section>
+    <% } else { %>
+    <!-- Cursos del alumno -->
+    <section class="section" style="margin-top:40px">
+      <div class="section-header">
+        <span class="material-symbols-outlined section-icon">menu_book</span>
+        <h3>Mis clases</h3>
+      </div>
+      <% if (joinedCourses.length === 0) { %>
+        <div class="empty-state">
+          <div class="empty-icon"><span class="material-symbols-outlined">class</span></div>
+          <p>No estás inscripto en ningún curso.</p>
+        </div>
+      <% } %>
+      <div class="course-grid">
+        <% joinedCourses.forEach(c => { %>
+          <% const subtitle = [c.section, c.subject].filter(Boolean).join(' · '); %>
+          <a href="/courses/<%= c._id %>" class="course-card" style="--card-color:#34a853">
+            <div class="card-banner">
+              <div class="card-banner-content">
+                <h4><%= c.name %></h4>
+                <% if (subtitle) { %><p><%= subtitle %></p><% } %>
+              </div>
+              <div class="card-banner-deco">
+                <span class="material-symbols-outlined">menu_book</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="card-stat">
+                <div class="avatar" style="width:22px;height:22px;font-size:10px;background:#34a853"><%= c.owner.name.charAt(0).toUpperCase() %></div>
+                <span><%= c.owner.name %></span>
+              </div>
+            </div>
+            <div class="card-footer">
+              <div class="card-footer-icons">
+                <button class="icon-btn card-icon-btn" title="Ir al curso"
+                  onclick="event.preventDefault();event.stopPropagation();window.location.href='/courses/<%= c._id %>'">
+                  <span class="material-symbols-outlined">open_in_new</span>
+                </button>
+              </div>
+            </div>
+          </a>
+        <% }) %>
+      </div>
+    </section>
+    <% } %>
+
+  </main>
+
+  <%- include('partials/footer') %>
+  <script>
+    document.getElementById('avatarFileInput').addEventListener('change', async function () {
+      const file = this.files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append('avatar', file);
+      const res = await fetch('/courses/profile/avatar', { method: 'POST', body: fd });
+      if (res.ok) {
+        const { avatar } = await res.json();
+        const wrap = document.getElementById('avatarWrap');
+        wrap.querySelector('.avatar-huge, .avatar-img')?.remove();
+        const img = document.createElement('div');
+        img.className = 'avatar-huge avatar-img';
+        img.style.cssText = 'width:80px;height:80px';
+        img.innerHTML = `<img src="${avatar}" alt="">`;
+        wrap.prepend(img);
+        document.getElementById('avatarRemoveBtn').style.display = '';
+        // Actualiza el avatar en el header sin recargar
+        const headerAvatar = document.querySelector('.header .avatar, .header .avatar-img');
+        if (headerAvatar) {
+          headerAvatar.className = 'avatar avatar-img';
+          headerAvatar.innerHTML = `<img src="${avatar}" alt="">`;
+        }
+      } else {
+        alert('No se pudo subir la imagen');
+      }
+      this.value = '';
+    });
+
+    async function removeAvatar() {
+      if (!confirm('¿Quitar tu foto de perfil?')) return;
+      const res = await fetch('/courses/profile/avatar', { method: 'DELETE' });
+      if (res.ok) location.reload();
+      else alert('No se pudo quitar el avatar');
+    }
+  </script>
+</body>
+</html>

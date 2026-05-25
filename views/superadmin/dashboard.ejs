@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Superadmin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%239334e6'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>S</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/superadmin-nav', { activePage: 'dashboard' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Panel de Superadministración</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">Gestión global del sistema</p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/superadmin/schools/create" class="btn btn-primary">
+          <span class="material-symbols-outlined">add</span>
+          Nueva escuela
+        </a>
+      </div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card" style="--stat-color:#9334e6">
+        <div class="stat-icon"><span class="material-symbols-outlined">domain</span></div>
+        <div class="stat-info">
+          <span class="stat-value"><%= schoolCount %></span>
+          <span class="stat-label">Escuelas</span>
+        </div>
+      </div>
+      <div class="stat-card" style="--stat-color:#1a73e8">
+        <div class="stat-icon"><span class="material-symbols-outlined">people</span></div>
+        <div class="stat-info">
+          <span class="stat-value"><%= userCount %></span>
+          <span class="stat-label">Usuarios totales</span>
+        </div>
+      </div>
+      <div class="stat-card" style="--stat-color:#34a853">
+        <div class="stat-icon"><span class="material-symbols-outlined">school</span></div>
+        <div class="stat-info">
+          <span class="stat-value"><%= courseCount %></span>
+          <span class="stat-label">Cursos totales</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" style="margin-top:32px">
+      <div class="section-header">
+        <span class="material-symbols-outlined section-icon">domain</span>
+        <h3>Escuelas registradas</h3>
+      </div>
+      <% if (schools.length === 0) { %>
+        <div class="empty-state">
+          <div class="empty-icon"><span class="material-symbols-outlined">domain</span></div>
+          <p>No hay escuelas registradas aún.</p>
+          <a href="/superadmin/schools/create" class="btn btn-primary" style="margin-top:20px">Crear primera escuela</a>
+        </div>
+      <% } else { %>
+        <div class="subjects-grid">
+          <% schools.forEach(s => { %>
+            <a href="/superadmin/schools/<%= s._id %>/edit" class="subject-card">
+              <div class="subject-card-banner" style="background:<%= s.color %>">
+                <span class="material-symbols-outlined">domain</span>
+              </div>
+              <div class="subject-card-body">
+                <h4 class="subject-card-name"><%= s.name %></h4>
+                <p class="subject-card-desc"><%= s.description || 'Sin descripción' %></p>
+                <div class="subject-card-meta" style="display:flex;gap:16px">
+                  <span><span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle">people</span> <%= s.userCount %> usuario<%= s.userCount !== 1 ? 's' : '' %></span>
+                  <span><span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle">school</span> <%= s.courseCount %> curso<%= s.courseCount !== 1 ? 's' : '' %></span>
+                </div>
+              </div>
+            </a>
+          <% }) %>
+        </div>
+      <% } %>
+    </div>
+
+    <div class="admin-section-cards" style="margin-top:32px">
+      <a href="/superadmin/schools" class="admin-section-card">
+        <div class="admin-section-card-icon" style="background:#f3e8fd">
+          <span class="material-symbols-outlined" style="color:#9334e6">domain</span>
+        </div>
+        <div class="admin-section-card-info">
+          <h3>Escuelas</h3>
+          <p><%= schoolCount %> escuela(s) registrada(s)</p>
+        </div>
+        <span class="material-symbols-outlined admin-section-card-arrow">chevron_right</span>
+      </a>
+      <a href="/superadmin/users" class="admin-section-card">
+        <div class="admin-section-card-icon" style="background:#e8f0fe">
+          <span class="material-symbols-outlined" style="color:#1a73e8">people</span>
+        </div>
+        <div class="admin-section-card-info">
+          <h3>Todos los usuarios</h3>
+          <p><%= userCount %> usuario(s) en el sistema</p>
+        </div>
+        <span class="material-symbols-outlined admin-section-card-arrow">chevron_right</span>
+      </a>
+    </div>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

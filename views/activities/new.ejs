@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nueva tarea — <%= course.name %></title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="creator-page">
+
+  <!-- Header fijo -->
+  <header class="creator-header">
+    <div class="creator-header-left">
+      <a href="/courses/<%= course._id %>" class="icon-btn" title="Cancelar">
+        <span class="material-symbols-outlined">close</span>
+      </a>
+      <span class="material-symbols-outlined creator-header-icon">assignment</span>
+      <span class="creator-header-title">Tarea</span>
+    </div>
+    <div class="creator-header-right">
+      <div id="globalError" class="creator-error-inline" style="display:none"></div>
+      <button class="btn btn-primary" id="createBtn" onclick="submitActivity()">
+        Crear tarea
+      </button>
+    </div>
+  </header>
+
+  <!-- Cuerpo de dos columnas -->
+  <div class="creator-body">
+
+    <!-- Columna principal -->
+    <div class="creator-main">
+
+      <!-- Card: Título + Instrucciones -->
+      <div class="creator-card">
+        <div class="creator-title-field">
+          <input type="text" id="actTitle" class="creator-title-input" placeholder="Título">
+          <span class="creator-required">* Obligatorio</span>
+        </div>
+        <div class="creator-divider"></div>
+        <div class="creator-editor-wrap">
+          <div
+            id="actInstructions"
+            class="creator-editor"
+            contenteditable="true"
+            data-placeholder="Instrucciones (opcional)"
+          ></div>
+          <div class="creator-toolbar">
+            <button type="button" class="toolbar-btn" onclick="fmt('bold')" title="Negrita"><strong>B</strong></button>
+            <button type="button" class="toolbar-btn" onclick="fmt('italic')" title="Cursiva"><em>I</em></button>
+            <button type="button" class="toolbar-btn" onclick="fmt('underline')" title="Subrayado"><u>U</u></button>
+            <button type="button" class="toolbar-btn" onclick="fmt('insertUnorderedList')" title="Lista">
+              <span class="material-symbols-outlined">format_list_bulleted</span>
+            </button>
+            <button type="button" class="toolbar-btn" onclick="fmt('strikeThrough')" title="Tachado">
+              <s>S</s>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card: Adjuntar -->
+      <div class="creator-card">
+        <div class="creator-card-section-title">Adjuntar</div>
+        <div class="creator-att-row">
+          <label class="creator-att-btn" title="Subir archivo (PDF, Word, Excel)">
+            <input type="file" id="fileInput" accept=".pdf,.doc,.docx,.xls,.xlsx" multiple hidden>
+            <div class="creator-att-circle">
+              <span class="material-symbols-outlined">upload</span>
+            </div>
+            <span>Subir</span>
+          </label>
+          <button type="button" class="creator-att-btn" onclick="openLinkDialog()" title="Agregar enlace">
+            <div class="creator-att-circle">
+              <span class="material-symbols-outlined">link</span>
+            </div>
+            <span>Enlace</span>
+          </button>
+        </div>
+
+        <!-- Input de enlace -->
+        <div id="linkDialog" class="creator-link-dialog" style="display:none">
+          <div class="input-group" style="flex:1">
+            <span class="material-symbols-outlined input-icon">link</span>
+            <input type="url" id="linkUrlInput" placeholder="https://...">
+          </div>
+          <button class="btn btn-primary" style="padding:0 18px;height:46px" onclick="addLink()">Agregar</button>
+          <button class="icon-btn" onclick="closeLinkDialog()" title="Cancelar">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <!-- Previsualización de adjuntos -->
+        <div id="attPreviews" class="att-preview-grid" style="padding:0 24px 20px;margin-top:4px"></div>
+      </div>
+
+    </div>
+
+    <!-- Sidebar -->
+    <aside class="creator-sidebar">
+
+      <div class="sidebar-card">
+        <div class="sidebar-label">Para</div>
+        <div class="sidebar-course-name"><%= course.name %></div>
+        <% if (course.section || course.subject) { %>
+          <div class="sidebar-course-sub"><%= [course.section, course.subject].filter(Boolean).join(' · ') %></div>
+        <% } %>
+      </div>
+
+      <div class="sidebar-card">
+        <div class="sidebar-label">Asignar a</div>
+        <div class="sidebar-chip">
+          <span class="material-symbols-outlined">group</span>
+          Todos los alumnos
+        </div>
+      </div>
+
+      <div class="sidebar-card">
+        <div class="sidebar-label">Puntos</div>
+        <div class="sidebar-input-wrap">
+          <input type="number" id="sPoints" class="sidebar-input" value="10" min="0" max="10" placeholder="Sin puntos">
+        </div>
+      </div>
+
+      <div class="sidebar-card">
+        <div class="sidebar-label">Fecha de entrega</div>
+        <div class="sidebar-input-wrap">
+          <input type="datetime-local" id="sDueDate" class="sidebar-input">
+        </div>
+        <div class="sidebar-hint">Vacío = sin fecha límite</div>
+      </div>
+
+      <div class="sidebar-card">
+        <div class="sidebar-label">Disponible desde</div>
+        <div class="sidebar-input-wrap">
+          <input type="datetime-local" id="sAvailableFrom" class="sidebar-input">
+        </div>
+        <div class="sidebar-hint">Vacío = publicación inmediata</div>
+      </div>
+
+    </aside>
+  </div>
+
+  <script>
+    const COURSE_ID = '<%= course._id %>';
+    const EXT_COLOR = { PDF: '#ea4335', DOC: '#1a73e8', DOCX: '#1a73e8', XLS: '#34a853', XLSX: '#34a853' };
+
+    let actFiles = [];
+    let actLinks = [];
+
+    /* ─── Rich text ─── */
+    function fmt(cmd) {
+      document.getElementById('actInstructions').focus();
+      document.execCommand(cmd, false, null);
+    }
+
+    /* ─── Adjuntos: archivos ─── */
+    document.getElementById('fileInput').addEventListener('change', function () {
+      Array.from(this.files).forEach(f => actFiles.push(f));
+      this.value = '';
+      renderPreviews();
+    });
+
+    function removeFile(i) { actFiles.splice(i, 1); renderPreviews(); }
+    function removeLink(i) { actLinks.splice(i, 1); renderPreviews(); }
+
+    /* ─── Adjuntos: enlace ─── */
+    function openLinkDialog() {
+      document.getElementById('linkDialog').style.display = 'flex';
+      document.getElementById('linkUrlInput').focus();
+    }
+    function closeLinkDialog() {
+      document.getElementById('linkDialog').style.display = 'none';
+      document.getElementById('linkUrlInput').value = '';
+    }
+    document.getElementById('linkUrlInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); addLink(); }
+      if (e.key === 'Escape') closeLinkDialog();
+    });
+    function addLink() {
+      let url = document.getElementById('linkUrlInput').value.trim();
+      if (!url) return;
+      if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+      let domain = url;
+      try { domain = new URL(url).hostname; } catch {}
+      actLinks.push({ name: domain, url });
+      closeLinkDialog();
+      renderPreviews();
+    }
+
+    /* ─── Previsualización ─── */
+    function renderPreviews() {
+      const grid = document.getElementById('attPreviews');
+      grid.innerHTML = '';
+
+      actFiles.forEach((f, i) => {
+        const ext = f.name.split('.').pop().toUpperCase();
+        const color = EXT_COLOR[ext] || '#5f6368';
+        const card = document.createElement('div');
+        card.className = 'att-preview-card';
+        card.innerHTML = `
+          <div class="att-preview-thumb" style="background:${color}">
+            <span class="att-preview-ext">${ext}</span>
+          </div>
+          <div class="att-preview-name" title="${f.name}">${f.name}</div>
+          <button class="att-preview-remove" onclick="removeFile(${i})">
+            <span class="material-symbols-outlined">close</span>
+          </button>`;
+        grid.appendChild(card);
+      });
+
+      actLinks.forEach((l, i) => {
+        const domain = l.name || l.url;
+        const card = document.createElement('div');
+        card.className = 'att-preview-card';
+        card.innerHTML = `
+          <div class="att-preview-thumb link-thumb">
+            <img src="https://www.google.com/s2/favicons?domain=${domain}&sz=64" width="36" height="36"
+              style="border-radius:6px"
+              onerror="this.outerHTML='<span class=\\'material-symbols-outlined\\' style=\\'font-size:36px;color:var(--primary)\\'>language</span>'">
+          </div>
+          <div class="att-preview-name" title="${l.url}">${domain}</div>
+          <button class="att-preview-remove" onclick="removeLink(${i})">
+            <span class="material-symbols-outlined">close</span>
+          </button>`;
+        grid.appendChild(card);
+      });
+    }
+
+    /* ─── Enviar ─── */
+    async function submitActivity() {
+      const title = document.getElementById('actTitle').value.trim();
+      const errEl = document.getElementById('globalError');
+
+      if (!title) {
+        errEl.textContent = 'El título es obligatorio';
+        errEl.style.display = 'block';
+        document.getElementById('actTitle').focus();
+        return;
+      }
+      errEl.style.display = 'none';
+
+      const btn = document.getElementById('createBtn');
+      btn.disabled = true;
+      btn.textContent = 'Creando...';
+
+      const fd = new FormData();
+      fd.append('courseId', COURSE_ID);
+      fd.append('title', title);
+      fd.append('description', document.getElementById('actInstructions').innerText.trim());
+      fd.append('points', document.getElementById('sPoints').value || '');
+      fd.append('dueDate', document.getElementById('sDueDate').value || '');
+      fd.append('availableFrom', document.getElementById('sAvailableFrom').value || '');
+      actFiles.forEach(f => fd.append('files', f));
+      fd.append('links', JSON.stringify(actLinks));
+
+      const res = await fetch('/activities/create', { method: 'POST', body: fd });
+      const data = await res.json();
+
+      btn.disabled = false;
+      btn.textContent = 'Crear tarea';
+
+      if (!res.ok) {
+        errEl.textContent = data.error || 'Error al crear la tarea';
+        errEl.style.display = 'block';
+        return;
+      }
+
+      window.location.href = '/courses/' + COURSE_ID;
+    }
+  </script>
+</body>
+</html>

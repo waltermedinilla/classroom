@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mis pendientes - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <div class="dashboard-topbar">
+      <h2>Mis pendientes</h2>
+      <a href="/courses" class="btn btn-outline" style="text-decoration:none">
+        <span class="material-symbols-outlined">arrow_back</span>
+        Volver a clases
+      </a>
+    </div>
+
+    <% if (pending.length === 0) { %>
+      <div class="empty-state" style="margin-top:48px">
+        <div class="empty-icon"><span class="material-symbols-outlined">check_circle</span></div>
+        <p>¡Todo al día! No tenés actividades pendientes.</p>
+      </div>
+    <% } else { %>
+      <div style="margin-bottom:16px;font-size:14px;color:var(--text-secondary)">
+        <span style="font-weight:600;color:var(--text)"><%= pending.length %></span>
+        actividad<%= pending.length !== 1 ? 'es' : '' %> pendiente<%= pending.length !== 1 ? 's' : '' %>
+      </div>
+
+      <div class="pending-list">
+        <%
+          const now = new Date();
+          const endOfToday = new Date(now);
+          endOfToday.setHours(23, 59, 59, 999);
+        %>
+        <% pending.forEach(act => { %>
+          <%
+            const isOverdue = act.dueDate && new Date(act.dueDate) < now;
+            const isDueToday = act.dueDate && !isOverdue && new Date(act.dueDate) <= endOfToday;
+            let urgencyClass = '';
+            if (isOverdue) urgencyClass = 'pending-item-overdue';
+            else if (isDueToday) urgencyClass = 'pending-item-today';
+          %>
+          <a href="/courses/<%= act.course._id %>" class="pending-item <%= urgencyClass %>">
+            <div class="pending-item-icon">
+              <span class="material-symbols-outlined">assignment</span>
+            </div>
+            <div class="pending-item-body">
+              <div class="pending-item-course"><%= act.course.name %></div>
+              <div class="pending-item-title"><%= act.title %></div>
+              <% if (act.description) { %>
+                <div class="pending-item-desc"><%= act.description.slice(0, 80) %><%= act.description.length > 80 ? '…' : '' %></div>
+              <% } %>
+            </div>
+            <div class="pending-item-right">
+              <% if (act.dueDate) { %>
+                <% if (isOverdue) { %>
+                  <span class="pending-due-badge due-overdue">
+                    <span class="material-symbols-outlined" style="font-size:13px">lock_open</span>
+                    Tardía
+                  </span>
+                  <div class="pending-due-date" style="color:var(--danger)">
+                    Venció <%= new Date(act.dueDate).toLocaleDateString('es-ES', { day:'numeric', month:'short' }) %>
+                  </div>
+                <% } else if (isDueToday) { %>
+                  <span class="pending-due-badge due-today">
+                    <span class="material-symbols-outlined" style="font-size:13px">today</span>
+                    Hoy
+                  </span>
+                  <div class="pending-due-date" style="color:var(--warning)">
+                    <%= new Date(act.dueDate).toLocaleTimeString('es-ES', { hour:'2-digit', minute:'2-digit' }) %>
+                  </div>
+                <% } else { %>
+                  <div class="pending-due-date">
+                    <%= new Date(act.dueDate).toLocaleDateString('es-ES', { day:'numeric', month:'short' }) %>
+                  </div>
+                  <div class="pending-due-date" style="font-size:12px;color:var(--text-hint)">
+                    <%= new Date(act.dueDate).toLocaleTimeString('es-ES', { hour:'2-digit', minute:'2-digit' }) %>
+                  </div>
+                <% } %>
+              <% } else { %>
+                <div class="pending-due-date" style="color:var(--text-hint)">Sin fecha</div>
+              <% } %>
+              <% if (act.points != null) { %>
+                <div style="font-size:12px;color:var(--text-hint);margin-top:4px"><%= act.points %> pts</div>
+              <% } %>
+            </div>
+          </a>
+        <% }) %>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

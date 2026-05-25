@@ -1,0 +1,524 @@
+================================================================================
+  REVISIÓN PROFUNDA DE ERRORES - CLASSROOM CLONE
+  Fecha: 24/05/2026
+================================================================================
+
+Se revisaron: models (7), routes (6), middleware (3), config (1), seed (1),
+server (1), public/js (4), views (27 EJS)
+
+================================================================================
+  🔴 CRÍTICOS
+================================================================================
+
+1. XSS MASIVO VIA innerHTML (60+ lugares)
+   Archivo: public/js/course.js
+   Líneas: 268-293, 340-351, 546-554, 711-725, 788-801, 1162-1164, 1269,
+           1332-1334, 1603-1615, 1805-1822
+   Problema: Se interpola contenido de usuarios (anuncios, comentarios,
+   actividades, nombres de archivo, etc.) directamente en innerHTML sin
+   sanitización. Cualquier alumno puede ejecutar JavaScript arbitrario
+   en el navegador de todos los docentes y compañeros.
+
+2. XSS EN ATTACHMENTS - escAtt() incompleto
+   Archivo: public/js/course.js
+   Línea: 35, 47-79, 114
+   Problema: La función escAtt() solo escapa & y ", pero no <, > ni '.
+   Las URLs de archivos se inyectan sin sanitizar en atributos src/href
+   de iframes y links de descarga, permitiendo inyección de atributos.
+
+3. CSRF - SIN PROTECCIÓN EN NINGÚN ENDPOINT
+   Archivo: TODOS (routes/*.js, public/js/*.js, views/*.ejs)
+   Problema: Ninguna de las rutas POST/PUT/DELETE implementa tokens
+   CSRF ni SameSite=Strict/Lax. Un atacante puede engañar a un usuario
+   autenticado para crear cursos, publicar anuncios, cambiar notas,
+   eliminar usuarios, etc. desde un sitio malicioso.
+
+4. REGISTRO SIN VALIDACIÓN DE ROL - ESCALADA A ADMIN
+   Archivo: routes/auth.js
+   Línea: 37-38
+   Código:
+     const { name, email, password, role } = req.body;
+     const userRole = role || 'student';
+     const user = await User.create({ name, email, password, role: userRole });
+   Problema: No hay whitelist server-side de roles permitidos. Un
+   atacante puede enviar role: "admin" en el POST /register y
+   registrarse como administrador.
+   Contraste: la ruta invite (línea 114-115) sí tiene whitelist:
+     const allowed = ['student', 'teacher', 'preceptor', 'soe', 'directivo'];
+     const userRole = allowed.includes(role) ? role : 'student';
+
+5. PATH TRAVERSAL EN SUBIDA DE ARCHIVOS
+   Archivo: routes/announcements.js
+   Línea: 20
+   Código:
+     const courseId = req.body.courseId || 'general';
+     const dir = path.join(ARCHIVOS_BASE, schoolId, 'novedades', courseId);
+   Problema: req.body.courseId se usa directamente en la construcción
+   de rutas de archivos sin sanitizar. Un atacante puede enviar
+   courseId = "../../../some/directory" para escribir archivos en
+   directorios arbitrarios. El middleware multer se ejecuta ANTES de
+   la verificación de autorización (línea 103-107).
+
+6. PATH TRAVERSAL EN ACTIVIDADES
+   Archivo: routes/activities.js
+   Línea: 39
+   Problema: Mismo patrón que #5. req.body.courseId usado directamente
+   en path.join() para almacenar archivos. Multer corre antes que la
+   autorización (línea 150).
+
+7. DUPLICATE ENROLLMENT - includes() no funciona con ObjectId
+   Archivo: routes/courses.js
+   Línea: 177
+   Código:
+     if (course.students.includes(req.userId)) {
+       return res.status(400).json({ error: 'Ya estás en este curso' });
+     }
+   Problema: course.students es un array de ObjectId, req.userId es
+   un string. Array.includes() usa === que nunca matchea ObjectId
+   con string. Un estudiante puede unirse al mismo curso infinitas
+   veces. En otras partes del código (líneas 259, 293) usan
+   .toString() correctamente.
+
+================================================================================
+  🟠 ALTOS
+================================================================================
+
+8. SIN ÍNDICE EN ACTIVITY.course
+   Archivo: models/Activity.js
+   Línea: 21
+   Problema: La consulta principal es "actividades por curso" pero no
+   hay índice en course. Escanea toda la colección.
+
+9. SIN ÍNDICE EN ANNOUNCEMENT.course
+   Archivo: models/Announcement.js
+   Líneas: 11-15
+   Problema: Misma falla que #8. El comentario en la línea 11 dice que
+   se usa para filtrar, pero no hay índice.
+
+10. CÓDIGO DE CURSO COLISIONA (birthday paradox)
+    Archivo: models/Course.js
+    Línea: 29
+    Código:
+      code: { type: String, default: () => uuidv4().slice(0, 6).toUpperCase() }
+    Problema: UUID v4 en hex = 16^6 = 16.7M combinaciones. Con ~4,800
+    cursos hay ~50% de colisión. Con 10,000 hay >95%. El índice unique
+    causará fallos aleatorios al guardar.
+
+11. NO HAY CASCADE DELETE AL BORRAR USUARIO
+    Archivo: routes/admin.js
+    Líneas: 227-244
+    Problema: Al borrar un usuario no se:
+    - Elimina de course.students
+    - Reasigna course.owner
+    - Borra sus submissions
+    - Elimina sus notas en activities
+    - Limpia avatar del disco
+    Si se borra un docente, sus cursos quedan huérfanos.
+
+12. NO HAY CASCADE DELETE AL BORRAR ESCUELA
+    Archivo: routes/superadmin.js
+    Líneas: 146-153
+    Problema: Al borrar una escuela no se borran ni reasignan sus
+    usuarios, cursos, materias ni tokens de invitación. Todo queda
+    huérfano.
+
+13. SIN RATE LIMITING EN NINGÚN ENDPOINT
+    Archivo: server.js y todas las rutas
+    Problema: Los rate limiters declarados en server.js (generalLimiter,
+    authLimiter, uploadLimiter) están configurados pero el login/register
+    no tienen protección contra fuerza bruta más allá del authLimiter
+    (15 intentos/15min). El resto de endpoints no tienen límites.
+
+14. seed.js SIEMPRE SALE CON CÓDIGO 0
+    Archivo: seed.js
+    Línea: 87
+    Código:
+      } finally {
+        await mongoose.connection.close();
+        process.exit(0);
+      }
+    Problema: Aunque falle la seed, finally ejecuta exit(0) → éxito
+    falso. Enmascara errores en CI/CD.
+
+15. SERVER EMPIEZA ANTES QUE LA DB
+    Archivo: server.js
+    Línea: 23
+    Código:
+      connectDB();  // No await
+      const server = app.listen(PORT, () => { ... });
+    Problema: connectDB() retorna una Promise pero no se await. El
+    servidor acepta requests antes de que MongoDB esté listo. Las
+    primeras requests fallan.
+
+16. REGEX INJECTION EN BÚSQUEDA (admin)
+    Archivo: routes/admin.js
+    Líneas: 90-91
+    Código:
+      if (search) filter.$or = [
+        { name:  { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+      ];
+    Problema: search se pasa directo a $regex sin escapar. Un atacante
+    puede mandar .* (match all) o un patrón ReDoS como (a|aa)+b que
+    consuma CPU en MongoDB.
+
+17. REGEX INJECTION EN BÚSQUEDA (superadmin)
+    Archivo: routes/superadmin.js
+    Líneas: 231-232
+    Problema: Misma falla que #16.
+
+18. MIDDLEWARE requireAdmin BLOQUEA A SUPERADMIN
+    Archivo: middleware/admin.js
+    Línea: 2
+    Código:
+      if (!res.locals.user || res.locals.user.role !== 'admin') {
+    Problema: Solo permite rol exacto 'admin'. Pero routes/admin.js
+    tiene lógica explícita para superadmin (línea 66, school filter).
+    El comentario en admin.js:59 dice que superadmin debería tener
+    acceso. Es un bug: el código muerto indica la intención.
+
+19. JWT VERIFY SIN RESTRICCIÓN DE ALGORITMO
+    Archivo: middleware/auth.js
+    Líneas: 15, 41, 61
+    Código:
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    Problema: No se especifica { algorithms: ['HS256'] }. Un atacante
+    puede enviar un token con alg: "none" o cambiar el algoritmo.
+
+20. FALLA EN CONTENT-NEGOTIATION DEL ERROR HANDLER
+    Archivo: server.js
+    Línea: 143
+    Código:
+      if (req.accepts('json') && !req.accepts('html')) {
+    Problema: Los navegadores mandan Accept que incluye */*, que
+    matchea tanto json como html. La condición nunca da true para
+    browsers. Siempre reciben HTML aunque sea una API call.
+
+21. GRACEFUL SHUTDOWN USA process.exit(1)
+    Archivo: server.js
+    Línea: 164
+    Código:
+      setTimeout(() => process.exit(1), 10_000);
+    Problema: Si el shutdown se alarga >10s, force-exit con código 1
+    (indicando fallo) aunque el shutdown fue intencional.
+
+22. QUERY A SCHOOL EN CADA REQUEST
+    Archivo: server.js
+    Líneas: 90-100
+    Problema: En cada request (incluyendo estáticos), si el usuario
+    está logueado se ejecuta School.findById(). Esto es una carga
+    innecesaria a MongoDB. Debería cachearse en sesión o JWT.
+
+================================================================================
+  🟡 MEDIOS
+================================================================================
+
+23. SIN VALIDACIÓN EN grade.points (permite NaN, negativos)
+    Archivo: routes/activities.js
+    Líneas: 283, 287
+    Código:
+      existing.points = Number(points);
+      activity.grades.push({ student: studentId, points: Number(points), ... });
+    Problema: Number("abc") → NaN, Number("-100") → -100. No hay
+    check route-level de que sea número válido no negativo.
+
+24. GRADE.points SIN VALIDACIÓN max EN SCHEMA
+    Archivo: models/Activity.js
+    Línea: 6
+    Problema: El subdocumento gradeSchema tiene min: 0 pero no max.
+    Se puede guardar nota de 150 en actividad de 100 pts.
+
+25. SIN UNIQUE EN grades.student POR ACTIVIDAD
+    Archivo: models/Activity.js
+    Líneas: 4-9, 33
+    Problema: El comentario dice "cada alumno tiene max 1 entrada"
+    pero no hay unique constraint. Si la ruta tiene un bug, un alumno
+    puede tener múltiples notas en la misma actividad.
+
+26. CONTRASEÑAS DÉBILES EN IMPORTACIÓN
+    Archivo: routes/admin.js
+    Líneas: 475, 553
+    Problema: Usuarios importados tienen password = DNI (ej: "28456789").
+    Sin cambio forzado de contraseña en primer login.
+
+27. CONTRASEÑAS DÉBILES EN IMPORT SUPERADMIN
+    Archivo: routes/superadmin.js
+    Líneas: 488-491
+    Problema: Passwords vienen directo del Excel sin validación de
+    complejidad.
+
+28. PASSWORD RESET HINT FILTRA SCHEMA
+    Archivo: routes/admin.js
+    Línea: 220
+    Código:
+      res.json({ ok: true, hint: target.dni ? 'DNI del usuario' : 'Classroom1234' });
+    Problema: La respuesta revela el esquema de passwords. Si un admin
+    es comprometido, el atacante sabe que usuarios sin DNI tienen
+    password "Classroom1234".
+
+29. URL DE LINK NO VALIDADA
+    Archivo: routes/activities.js
+    Línea: 170
+    Código:
+      if (l.url) attachments.push({ ... url: l.url ... });
+    Problema: Solo checkea truthiness. Podría ser javascript: URL o
+    file:/// (XSS, información interna).
+
+30. INVITE TOKEN SIN VALIDACIÓN DE FORMATO
+    Archivo: models/School.js
+    Línea: 25
+    Problema: Debería ser 48 caracteres hex, pero el schema acepta
+    cualquier string. Sin match validator.
+
+31. SLUG DE ESCUELA COLISIONA
+    Archivo: models/School.js
+    Líneas: 9-13, 19, 33-36
+    Problema: Sin lógica anti-colisión. "Escuela San Martin" y
+    "Escuela San Martín" slugifican a "escuela-san-martin".
+
+32. EMAIL ÚNICO GLOBAL VS MULTI-TENANT
+    Archivo: models/User.js
+    Línea: 16
+    Problema: El email tiene unique global. Dos escuelas distintas
+    no pueden tener un alumno con mismo email. Debería ser
+    compuesto { school, email }.
+
+33. SCHOOL DEBERÍA SER REQUIRED
+    Archivos: models/Course.js (línea 46), models/Subject.js (línea 13),
+              models/User.js (línea 34)
+    Problema: Comentarios dicen "no debería ser null en prod" pero el
+    schema lo permite con default: null. Datos huérfanos por bugs.
+
+34. SCHOOL.NOT INYECTA ESCUELA EN CADA VISTA
+    Archivo: server.js (líneas 103-114)
+    Problema: req.locals.school se setea en cada request. Si hay un
+    bug en la asignación de school a un usuario, la navegación entera
+    se ve afectada.
+
+35. SIN PAGINACIÓN EN ENDPOINTS
+    Archivos: courses.js (gradebook), admin.js (users), superadmin.js
+    (schools/:id)
+    Problema: Múltiples endpoints devuelven datos sin límite. Con
+    muchos usuarios/actividades, las respuestas serán lentas y pesadas.
+
+36. FALTA secure Y sameSite EN COOKIES
+    Archivo: routes/auth.js
+    Líneas: 42, 83, 119, 268, 271
+    Problema: Cookies sin secure: true en producción (frente a HTTPS).
+    Sin sameSite, vulnerables a CSRF.
+
+37. CSP COMPLETAMENTE DESACTIVADO
+    Archivo: server.js
+    Línea: 38
+    Código:
+      contentSecurityPolicy: false,
+    Problema: Sin CSP, la app es más vulnerable a XSS. Se podría
+    implementar nonce-based CSP.
+
+38. SIN safe handler EN PROMESAS RECHAZADAS
+    Archivo: server.js
+    Líneas: 172-174
+    Problema: unhandledRejection solo logea pero no sale del proceso.
+    Desde Node 15, debería terminar el proceso.
+
+39. toJSON NO OCULTA inviteToken
+    Archivo: models/School.js
+    Problema: El inviteToken se serializa en JSON por defecto. Campo
+    sensible expuesto en respuestas API.
+
+40. ERROR MESSAGE LEAKAGE
+    Archivo: routes/activities.js
+    Línea: 341
+    Código:
+      res.status(500).json({ error: 'Error al eliminar: ' + err.message });
+    Problema: Fuga de detalles internos (MongoDB cast errors, file paths).
+
+41. JSON.parse SIN TRY/CATCH
+    Archivo: routes/activities.js
+    Línea: 169
+    Problema: Si links no es JSON válido, lanza SyntaxError. Fuga
+    de mensaje de error interno.
+
+42. AMBIGUEDAD EN MATCH DE DIVISIÓN
+    Archivo: routes/admin.js
+    Línea: 531
+    Código:
+      const divCourse = await Course.findOne({
+        $or: [{ name: division }, { section: division }],
+        ...(school ? { school } : {})
+      });
+    Problema: Busca en name y section con el mismo valor. Puede
+    matchear el curso equivocado si hay ambigüedad.
+
+43. findByIdAndUpdate BYPASSEA PRE-SAVE HOOKS
+    Archivos: superadmin.js (línea 307), admin.js (línea 172)
+    Problema: Las actualizaciones de rol/school usan findByIdAndUpdate
+    que NO ejecuta hooks pre('save'). Si en el futuro se agrega
+    lógica ahí, será omitida.
+
+44. SIN ÍNDICE EN User.school, User.role, User.active
+    Archivo: models/User.js
+    Problema: Búsquedas frecuentes por escuela/rol/estado activo no
+    tienen índices. Full collection scans.
+
+45. SIN ÍNDICE EN Course.owner, Course.school, Course.students
+    Archivo: models/Course.js
+    Problema: owner, school, students sin índices. Las consultas
+    principales (cursos de un teacher, de una escuela, de un alumno)
+    escanean toda la colección.
+
+46. SIN ÍNDICE EN Submission.student
+    Archivo: models/Submission.js
+    Problema: Buscar submissions de un estudiante no tiene índice.
+
+47. SIN ÍNDICES EN Subject
+    Archivo: models/Subject.js
+    Problema: Subject no tiene NINGÚN índice. Búsquedas por nombre
+    o escuela son full scan.
+
+================================================================================
+  🟢 BAJOS / INFORMATIVOS
+================================================================================
+
+48. seed.js BORRA TODOS LOS COURSES Y ANNOUNCEMENTS
+    Archivo: seed.js
+    Líneas: 34-35
+    Problema: deleteMany({}) sin filtro. Si se ejecuta en prod, borra
+    todo. Users se borran con filtro (email), courses y announcements no.
+
+49. seed.js NO LIMPIA ACTIVITIES NI SUBMISSIONS
+    Archivo: seed.js
+    Problema: Al re-seedear, actividades y submissions viejas quedan
+    huérfanas referenciando cursos que ya no existen.
+
+50. CONTRASEÑAS EN PLANO EN seed.js
+    Archivo: seed.js
+    Líneas: 9, 14
+    Problema: "123456" hardcodeado en código fuente. Expuesto en repo.
+
+51. JWT SIN VERIFICACIÓN DE EXISTENCIA DE SECRET
+    Archivo: routes/auth.js
+    Línea: 14
+    Problema: Si process.env.JWT_SECRET es undefined, jwt.sign falla
+    silenciosamente.
+
+52. User.create() FRACASA COMPLETAMENTE SI UNO FALLA
+    Archivo: seed.js
+    Líneas: 49, 52
+    Problema: User.create() con array: si un email duplicado, ningún
+    usuario del array se crea.
+
+53. EXPIRED TOKEN REDIRECT LOOP
+    Archivo: routes/auth.js
+    Líneas: 19-22
+    Problema: GET /login checkea si existe cookie, no si es válida.
+    Token expirado → redirect a / → requireAuth rechaza → redirect
+    a /login.
+
+54. CÓDIGO MUERTO: toJSON EN Course.js
+    Archivo: models/Course.js
+    Líneas: 56-59
+    Problema: toJSON() retorna this.toObject() que es el default.
+    No hace nada. Código muerto.
+
+55. LÓGICA COMPLEJA INNECESARIA
+    Archivo: routes/courses.js
+    Línea: 350
+    Código:
+      student.active = !(student.active !== false);
+    Problema: Es equivalente a student.active = !student.active pero
+    mucho menos legible.
+
+56. OPERACIONES SÍNCRONAS EN MULTER CALLBACK
+    Archivo: routes/courses.js
+    Líneas: 33-39
+    Problema: fs.readdirSync y fs.unlinkSync dentro del callback de
+    multer. Bloquean el event loop durante uploads.
+
+57. SIN VALIDACIÓN EN firstSubmittedAt
+    Archivo: models/Submission.js
+    Línea: 25
+    Problema: El comentario dice que se setea una vez con $setOnInsert
+    pero el schema no lo enforcea. Podría sobreescribirse.
+
+58. NO GUARDA CONTRA ELIMINAR ÚLTIMO SUPERADMIN
+    Archivo: routes/superadmin.js
+    Problema: Sin check para evitar borrar al último superadmin.
+    El sistema quedaría inmanejable.
+
+59. ASIGNACIÓN MASIVA PUEDE MODIFICAR SUPERADMIN
+    Archivo: routes/superadmin.js
+    Líneas: 267-277
+    Problema: bulk-school puede cambiar school del propio superadmin
+    si incluye su _id en userIds.
+
+60. RESOLUCIÓN DE USUARIO EN IMPORT CRUZA ESCUELAS
+    Archivo: routes/superadmin.js
+    Líneas: 473-481
+    Problema: El fallback por email no filtra por school. Podría
+    resolver un usuario de otra escuela.
+
+61. SIN VIRTUALES PARA CAMPOS COMPUTADOS
+    Archivo: Todos los models
+    Problema: Faltan virtuales como studentCount, submissionCount,
+    isSuperAdmin, etc.
+
+62. XSS EN profile.ejs (avatar)
+    Archivo: views/profile.ejs
+    Líneas: 204, 211
+    Problema: Avatar URL insertado en innerHTML. Si el server devuelve
+    URL maliciosa, hay XSS.
+
+63. EJS <%- vs <%=- - EN SCRIPT TAGS
+    Archivo: views/course.ejs
+    Líneas: 559-563, 569-571
+    Problema: <%= no escapa \n ni \. Si course.header.image tiene
+    un backslash o newline, rompe el JS. Usar JSON.stringify.
+
+64. ERROR HANDLING FALTANTE EN FETCH (UI se traba)
+    Archivo: public/js/course.js
+    Funciones: postComment, postAnnouncement, createActivity,
+    deleteActivity, loadActivitiesTab, submitWork, addStudent, etc.
+    Problema: Múltiples fetch sin try/catch. Si hay error de red,
+    los botones quedan deshabilitados permanentemente y los spinners
+    nunca desaparecen.
+
+65. SIN VALIDACIÓN CLIENTE EN FORMULARIOS
+    Archivo: public/js/dashboard.js, course.js, register.js
+    Problema: Join class, create course, register sin validación de
+    formato en cliente. Solo validación server-side.
+
+66. MEMORY LEAK: EVENT LISTENER REBOUND EN SUBMIT
+    Archivo: public/js/course.js
+    Líneas: 1649-1654
+    Problema: addEventListener('change', ...) en subFileInput se agrega
+    cada vez que se renderiza la sección de submission. Los listeners
+    viejos no se remueven.
+
+67. DOBLE CONFIRM REMOVE STUDENT
+    Archivo: public/js/course.js
+    Líneas: 1828-1845
+    Problema: Si el server responde 409, el usuario ve dos confirm
+    dialogs. Si rechaza el segundo, el primero ya fue confirmado.
+
+68. ROLLBACK PARCIAL EN GRADE SAVE
+    Archivo: public/js/course.js
+    Líneas: 1444-1457
+    Problema: Si falla una nota en el loop, las anteriores ya se
+    guardaron. No hay rollback.
+
+69. RACE CONDITION: STALE COMMENT TEXT
+    Archivo: public/js/course.js
+    Líneas: 308-330
+    Problema: El texto del comentario se captura antes del fetch.
+    Si el usuario sigue escribiendo, se pierde su edición al limpiar.
+
+70. getDomain() DEVUELVE RAW URL SI FALLA PARSE
+    Archivo: public/js/course.js
+    Línea: 29
+    Problema: Si la URL no es válida, retorna la URL cruda que se usa
+    en atributos HTML. Potencial inyección.
+
+================================================================================
+  FIN DEL REPORTE
+================================================================================

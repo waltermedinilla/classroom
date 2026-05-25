@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Importar - Superadmin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%239334e6'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>S</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/superadmin-nav', { activePage: 'import' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Importar datos de escuela</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Cargá usuarios, materias y cursos desde un archivo Excel con 3 hojas
+        </p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/superadmin/import/template" class="btn btn-outline">
+          <span class="material-symbols-outlined">download</span>
+          Descargar plantilla
+        </a>
+      </div>
+    </div>
+
+    <!-- PASO 1: Seleccionar escuela + subir archivo -->
+    <div id="step1">
+
+      <div class="import-card active" style="margin-bottom:20px">
+        <div class="import-card-header" style="cursor:default">
+          <span class="material-symbols-outlined" style="color:#9334e6">domain</span>
+          <div><h3>Seleccionar escuela destino</h3><p>Los datos se importarán a esta escuela</p></div>
+        </div>
+        <div class="import-card-body">
+          <div class="input-group" style="max-width:400px">
+            <span class="material-symbols-outlined input-icon">domain</span>
+            <select id="schoolSelect" class="select-input">
+              <option value="">— Seleccioná una escuela —</option>
+              <% schools.forEach(s => { %>
+                <option value="<%= s._id %>"><%= s.name %></option>
+              <% }) %>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="upload-zone" id="uploadZone">
+        <span class="material-symbols-outlined">upload_file</span>
+        <h3>Subir archivo Excel</h3>
+        <p>Debe contener las hojas <strong>Usuarios</strong>, <strong>Materias</strong> y/o <strong>Cursos</strong></p>
+        <button type="button" class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+          <span class="material-symbols-outlined">folder_open</span>
+          Seleccionar archivo
+        </button>
+        <input type="file" id="fileInput" accept=".xls,.xlsx" style="display:none">
+      </div>
+      <div class="form-error" id="uploadError" style="margin-top:12px"></div>
+
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:20px">
+        <div style="background:var(--surface);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow-sm);border-left:4px solid #1a73e8">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span class="material-symbols-outlined" style="color:#1a73e8;font-size:20px">group</span>
+            <strong style="font-size:14px">Hoja "Usuarios"</strong>
+          </div>
+          <p style="font-size:12px;color:var(--text-secondary)">nombre · dni · email · contraseña · rol</p>
+        </div>
+        <div style="background:var(--surface);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow-sm);border-left:4px solid #9334e6">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span class="material-symbols-outlined" style="color:#9334e6;font-size:20px">menu_book</span>
+            <strong style="font-size:14px">Hoja "Materias"</strong>
+          </div>
+          <p style="font-size:12px;color:var(--text-secondary)">nombre · descripcion · color</p>
+        </div>
+        <div style="background:var(--surface);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow-sm);border-left:4px solid #34a853">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span class="material-symbols-outlined" style="color:#34a853;font-size:20px">school</span>
+            <strong style="font-size:14px">Hoja "Cursos"</strong>
+          </div>
+          <p style="font-size:12px;color:var(--text-secondary)">nombre · seccion · materia · aula · email_docente</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- PASO 2: Preview y configurar -->
+    <div id="step2" style="display:none">
+      <div class="import-file-info" id="fileInfo"></div>
+
+      <div id="cardUsuarios" class="import-card active">
+        <label class="import-card-header">
+          <input type="checkbox" id="chkUsuarios" checked onchange="toggleCard('cardUsuarios',this.checked)">
+          <span class="material-symbols-outlined" style="color:#1a73e8">group</span>
+          <div><h3>Importar Usuarios</h3><p id="lblUsuarios"></p></div>
+        </label>
+        <div class="import-card-body">
+          <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
+            <table class="users-table" id="usuariosTable">
+              <thead><tr><th>DNI</th><th>Nombre</th><th>Email</th><th>Rol</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="cardMaterias" class="import-card active">
+        <label class="import-card-header">
+          <input type="checkbox" id="chkMaterias" checked onchange="toggleCard('cardMaterias',this.checked)">
+          <span class="material-symbols-outlined" style="color:#9334e6">menu_book</span>
+          <div><h3>Importar Materias</h3><p id="lblMaterias"></p></div>
+        </label>
+        <div class="import-card-body">
+          <div style="display:flex;flex-wrap:wrap;gap:8px" id="materiasPreview"></div>
+        </div>
+      </div>
+
+      <div id="cardCursos" class="import-card active">
+        <label class="import-card-header">
+          <input type="checkbox" id="chkCursos" checked onchange="toggleCard('cardCursos',this.checked)">
+          <span class="material-symbols-outlined" style="color:#34a853">school</span>
+          <div><h3>Importar Cursos</h3><p id="lblCursos"></p></div>
+        </label>
+        <div class="import-card-body">
+          <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
+            <table class="users-table" id="cursosTable">
+              <thead><tr><th>Nombre</th><th>Sección</th><th>Materia</th><th>Aula</th><th>Docente (email)</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <p id="cursosWarning" style="margin-top:10px;font-size:13px;color:#ea8600;display:none">
+            <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle">warning</span>
+            Los cursos sin docente encontrado serán omitidos.
+          </p>
+        </div>
+      </div>
+
+      <div id="warningsBox" style="display:none;margin-top:4px;padding:14px 18px;background:#fff8e1;border-radius:var(--radius);border-left:4px solid #fbbc04">
+        <strong style="font-size:13px">Advertencias:</strong>
+        <ul id="warningsList" style="margin:8px 0 0 20px;font-size:13px;color:var(--text-secondary)"></ul>
+      </div>
+
+      <div style="display:flex;gap:12px;align-items:center;margin-top:8px">
+        <button class="btn btn-primary" id="executeBtn" onclick="executeImport()">
+          <span class="material-symbols-outlined">cloud_upload</span>
+          Importar ahora
+        </button>
+        <button class="btn btn-outline" onclick="resetWizard()">
+          <span class="material-symbols-outlined">restart_alt</span>
+          Elegir otro archivo
+        </button>
+      </div>
+      <div class="form-error" id="execError" style="margin-top:12px"></div>
+    </div>
+
+    <!-- PASO 3: Resultados -->
+    <div id="step3" style="display:none">
+      <div class="import-results-banner" id="resultsBanner"></div>
+      <div class="import-results-grid" id="resultsGrid"></div>
+      <div style="display:flex;gap:12px;margin-top:8px">
+        <a href="/superadmin" class="btn btn-primary">
+          <span class="material-symbols-outlined">dashboard</span>
+          Ir al panel
+        </a>
+        <button class="btn btn-outline" onclick="resetWizard()">
+          <span class="material-symbols-outlined">upload_file</span>
+          Nueva importación
+        </button>
+      </div>
+    </div>
+
+  </main>
+
+  <%- include('../partials/footer') %>
+  <script>
+    const ROLE_NAMES = <%- JSON.stringify({ superadmin:'Superadministrador', admin:'Administrador', directivo:'Directivo', teacher:'Docente', preceptor:'Preceptor', soe:'SOE', student:'Alumno' }) %>;
+    let parsedData = null;
+
+    /* ── Upload zone ── */
+    const uploadZone = document.getElementById('uploadZone');
+    uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+    uploadZone.addEventListener('drop', e => {
+      e.preventDefault(); uploadZone.classList.remove('drag-over');
+      if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]);
+    });
+    document.getElementById('fileInput').addEventListener('change', e => {
+      if (e.target.files[0]) uploadFile(e.target.files[0]);
+    });
+
+    async function uploadFile(file) {
+      const school = document.getElementById('schoolSelect').value;
+      if (!school) {
+        const err = document.getElementById('uploadError');
+        err.textContent = 'Seleccioná una escuela antes de subir el archivo.';
+        err.classList.add('show');
+        return;
+      }
+      const errorEl = document.getElementById('uploadError');
+      errorEl.classList.remove('show');
+      uploadZone.innerHTML = `
+        <span class="material-symbols-outlined" style="font-size:48px;animation:spin 1s linear infinite">progress_activity</span>
+        <p style="margin-top:12px">Procesando <strong>${file.name}</strong>...</p>
+      `;
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const res = await fetch('/superadmin/import/upload', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) { restoreUploadZone(); errorEl.textContent = data.error; errorEl.classList.add('show'); return; }
+        parsedData = data;
+        showStep2(data, file.name);
+      } catch {
+        restoreUploadZone(); errorEl.textContent = 'Error de conexión.'; errorEl.classList.add('show');
+      }
+    }
+
+    function restoreUploadZone() {
+      uploadZone.innerHTML = `
+        <span class="material-symbols-outlined">upload_file</span>
+        <h3>Subir archivo Excel</h3>
+        <p>Debe contener las hojas <strong>Usuarios</strong>, <strong>Materias</strong> y/o <strong>Cursos</strong></p>
+        <button type="button" class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+          <span class="material-symbols-outlined">folder_open</span> Seleccionar archivo
+        </button>
+        <input type="file" id="fileInput" accept=".xls,.xlsx" style="display:none">
+      `;
+      document.getElementById('fileInput').addEventListener('change', e => {
+        if (e.target.files[0]) uploadFile(e.target.files[0]);
+      });
+    }
+
+    function showStep2(data, fileName) {
+      document.getElementById('step1').style.display = 'none';
+      document.getElementById('step2').style.display = 'block';
+
+      document.getElementById('fileInfo').innerHTML = `
+        <span class="material-symbols-outlined">table_view</span>
+        <strong>${fileName}</strong> &mdash;
+        ${data.usuarios.length} usuario(s) · ${data.materias.length} materia(s) · ${data.cursos.length} curso(s)
+      `;
+
+      // Usuarios
+      const uCount = data.usuarios.length;
+      document.getElementById('lblUsuarios').textContent = `${uCount} usuario(s) encontrado(s)`;
+      if (!uCount) document.getElementById('cardUsuarios').style.display = 'none';
+      else {
+        const tbody = document.querySelector('#usuariosTable tbody');
+        tbody.innerHTML = data.usuarios.map(u => `
+          <tr>
+            <td style="font-family:monospace;font-size:13px">${u.dni || '—'}</td>
+            <td>${u.nombre}</td>
+            <td class="td-email">${u.email || '—'}</td>
+            <td><span class="role-badge role-${u.rol}">${ROLE_NAMES[u.rol] || u.rol}</span></td>
+          </tr>
+        `).join('');
+      }
+
+      // Materias
+      const mCount = data.materias.length;
+      document.getElementById('lblMaterias').textContent = `${mCount} materia(s) encontrada(s)`;
+      if (!mCount) document.getElementById('cardMaterias').style.display = 'none';
+      else {
+        document.getElementById('materiasPreview').innerHTML = data.materias.map(m => `
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;font-size:13px;background:${m.color}22;border:1px solid ${m.color}44;color:var(--text)">
+            <span style="width:10px;height:10px;border-radius:50%;background:${m.color}"></span>
+            ${m.nombre}
+          </span>
+        `).join('');
+      }
+
+      // Cursos
+      const cCount = data.cursos.length;
+      document.getElementById('lblCursos').textContent = `${cCount} curso(s) encontrado(s)`;
+      if (!cCount) document.getElementById('cardCursos').style.display = 'none';
+      else {
+        const hasDocentes = data.cursos.some(c => !c.email_docente);
+        if (hasDocentes) document.getElementById('cursosWarning').style.display = 'block';
+        const tbody = document.querySelector('#cursosTable tbody');
+        tbody.innerHTML = data.cursos.map(c => `
+          <tr>
+            <td>${c.nombre}</td>
+            <td>${c.seccion || '—'}</td>
+            <td>${c.materia || '—'}</td>
+            <td>${c.aula || '—'}</td>
+            <td class="td-email" style="${!c.email_docente ? 'color:#ea4335' : ''}">${c.email_docente || 'Sin docente'}</td>
+          </tr>
+        `).join('');
+      }
+
+      // Warnings
+      if (data.warnings?.length) {
+        document.getElementById('warningsBox').style.display = 'block';
+        document.getElementById('warningsList').innerHTML = data.warnings.map(w => `<li>${w}</li>`).join('');
+      }
+    }
+
+    function toggleCard(id, checked) {
+      document.getElementById(id).classList.toggle('active', checked);
+    }
+
+    async function executeImport() {
+      const btn = document.getElementById('executeBtn');
+      const errorEl = document.getElementById('execError');
+      errorEl.classList.remove('show');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Importando...';
+
+      const body = {
+        schoolId:        document.getElementById('schoolSelect').value,
+        importUsuarios:  document.getElementById('chkUsuarios').checked,
+        importMaterias:  document.getElementById('chkMaterias').checked,
+        importCursos:    document.getElementById('chkCursos').checked,
+        usuarios:        parsedData.usuarios,
+        materias:        parsedData.materias,
+        cursos:          parsedData.cursos,
+      };
+
+      try {
+        const res = await fetch('/superadmin/import/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          btn.disabled = false;
+          btn.innerHTML = '<span class="material-symbols-outlined">cloud_upload</span> Importar ahora';
+          errorEl.textContent = data.error || 'Error al ejecutar la importación';
+          errorEl.classList.add('show');
+          return;
+        }
+        showResults(data.results);
+      } catch {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="material-symbols-outlined">cloud_upload</span> Importar ahora';
+        errorEl.textContent = 'Error de conexión.';
+        errorEl.classList.add('show');
+      }
+    }
+
+    function showResults(r) {
+      document.getElementById('step2').style.display = 'none';
+      document.getElementById('step3').style.display = 'block';
+      const total = r.usuarios.created + r.materias.created + r.cursos.created;
+      document.getElementById('resultsBanner').innerHTML = `
+        <span class="material-symbols-outlined">check_circle</span>
+        Importación completada — <strong>${total}</strong> elemento(s) creado(s)
+      `;
+      document.getElementById('resultsGrid').innerHTML = `
+        <div class="import-result-card" style="--stat-color:#1a73e8">
+          <div class="import-result-number">${r.usuarios.created}</div>
+          <div class="import-result-label">Usuarios creados</div>
+          <div class="import-result-detail">${r.usuarios.skipped} ya existían</div>
+        </div>
+        <div class="import-result-card" style="--stat-color:#9334e6">
+          <div class="import-result-number">${r.materias.created}</div>
+          <div class="import-result-label">Materias creadas</div>
+          <div class="import-result-detail">${r.materias.skipped} ya existían</div>
+        </div>
+        <div class="import-result-card" style="--stat-color:#34a853">
+          <div class="import-result-number">${r.cursos.created}</div>
+          <div class="import-result-label">Cursos creados</div>
+          <div class="import-result-detail">${r.cursos.skipped} sin docente/error</div>
+        </div>
+      `;
+    }
+
+    function resetWizard() {
+      parsedData = null;
+      document.getElementById('step2').style.display = 'none';
+      document.getElementById('step3').style.display = 'none';
+      document.getElementById('step1').style.display = 'block';
+      document.getElementById('uploadError').classList.remove('show');
+      ['cardUsuarios','cardMaterias','cardCursos'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.style.display = ''; el.classList.add('active'); }
+      });
+      ['chkUsuarios','chkMaterias','chkCursos'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.checked = true;
+      });
+      document.getElementById('warningsBox').style.display = 'none';
+      restoreUploadZone();
+    }
+  </script>
+  <style>@keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }</style>
+</body>
+</html>

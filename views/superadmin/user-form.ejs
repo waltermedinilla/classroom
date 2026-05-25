@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nuevo usuario - Superadmin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%239334e6'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>S</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content" style="max-width:600px">
+    <a href="/superadmin/users" class="btn btn-outline" style="margin-bottom:24px">
+      <span class="material-symbols-outlined">arrow_back</span>
+      Volver a usuarios
+    </a>
+
+    <div class="modal" style="box-shadow:none;border:1px solid var(--border);animation:none">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">person_add</span>
+          <h3>Nuevo usuario</h3>
+        </div>
+      </div>
+      <div class="modal-body">
+        <form id="createUserForm">
+
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">badge</span>
+            <input type="text" id="name" placeholder="Nombre completo" required>
+          </div>
+
+          <div class="input-group" style="margin-top:16px">
+            <span class="material-symbols-outlined input-icon">fingerprint</span>
+            <input type="text" id="dni" placeholder="DNI (opcional)">
+          </div>
+
+          <div class="input-group" style="margin-top:16px">
+            <span class="material-symbols-outlined input-icon">email</span>
+            <input type="email" id="email" placeholder="Correo electrónico" required>
+          </div>
+
+          <div class="input-group" style="margin-top:16px">
+            <span class="material-symbols-outlined input-icon">lock</span>
+            <input type="password" id="password" placeholder="Contraseña (mín. 5 caracteres)" required>
+          </div>
+
+          <div class="input-group" style="margin-top:16px">
+            <span class="material-symbols-outlined input-icon">badge</span>
+            <select id="role" class="select-input">
+              <option value="student">Alumno</option>
+              <option value="teacher">Docente</option>
+              <option value="preceptor">Preceptor</option>
+              <option value="soe">SOE</option>
+              <option value="directivo">Directivo</option>
+              <option value="admin">Administrador</option>
+              <option value="superadmin">Superadministrador</option>
+            </select>
+          </div>
+
+          <div class="input-group" style="margin-top:16px">
+            <span class="material-symbols-outlined input-icon">domain</span>
+            <select id="school" class="select-input">
+              <option value="">Sin escuela asignada</option>
+              <% schools.forEach(s => { %>
+                <option value="<%= s._id %>"><%= s.name %></option>
+              <% }) %>
+            </select>
+          </div>
+
+          <div class="form-error" id="formError" style="margin-top:16px"></div>
+
+          <button type="submit" class="btn btn-primary btn-full" style="margin-top:24px">
+            <span class="material-symbols-outlined">check</span>
+            Crear usuario
+          </button>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <%- include('../partials/footer') %>
+  <script>
+    document.getElementById('createUserForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById('formError');
+      errorEl.classList.remove('show');
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Creando...';
+
+      const res = await fetch('/superadmin/users/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name:     document.getElementById('name').value,
+          dni:      document.getElementById('dni').value.trim() || undefined,
+          email:    document.getElementById('email').value,
+          password: document.getElementById('password').value,
+          role:     document.getElementById('role').value,
+          school:   document.getElementById('school').value || null,
+        }),
+      });
+      const data = await res.json();
+      btn.disabled = false;
+      btn.innerHTML = '<span class="material-symbols-outlined">check</span> Crear usuario';
+
+      if (!res.ok) {
+        errorEl.textContent = data.error;
+        errorEl.classList.add('show');
+        return;
+      }
+      window.location.href = '/superadmin/users';
+    });
+  </script>
+</body>
+</html>
