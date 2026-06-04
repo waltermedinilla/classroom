@@ -18,8 +18,14 @@
       <div>
         <h2>Importar desde Excel</h2>
         <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
-          Soporta <strong>Reporte de Alumnos</strong> y <strong>Cargos</strong> — el tipo se detecta automáticamente
+          Soporta <strong>Plantilla del Sistema</strong>, <strong>Reporte de Alumnos</strong> y <strong>Cargos</strong> — el tipo se detecta automáticamente
         </p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/admin/import/template" class="btn btn-outline">
+          <span class="material-symbols-outlined">download</span>
+          Descargar plantilla
+        </a>
       </div>
     </div>
 
@@ -37,7 +43,14 @@
       </div>
       <div class="form-error" id="uploadError" style="margin-top:12px"></div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-top:20px">
+        <div style="background:var(--surface);border-radius:var(--radius);padding:20px 24px;box-shadow:var(--shadow-sm);border-left:4px solid #9334e6">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <span class="material-symbols-outlined" style="color:#9334e6">table_chart</span>
+            <strong>Plantilla del Sistema</strong>
+          </div>
+          <p style="font-size:13px;color:var(--text-secondary)">Formato propio con 4 hojas: Cursos, Docentes, Alumnos, Materias. Importa todo en un solo paso.</p>
+        </div>
         <div style="background:var(--surface);border-radius:var(--radius);padding:20px 24px;box-shadow:var(--shadow-sm);border-left:4px solid #1a73e8">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
             <span class="material-symbols-outlined" style="color:#1a73e8">group</span>
@@ -58,6 +71,71 @@
     <!-- PASO 2: Configurar importación -->
     <div id="step2" style="display:none">
       <div class="import-file-info" id="fileInfo"></div>
+
+      <!-- === CARDS PARA SISTEMA === -->
+      <div id="sistemaCards" style="display:none">
+        <div class="import-card active" id="cardSistemaDivisiones">
+          <label class="import-card-header">
+            <input type="checkbox" id="chkSistemaDivisiones" checked onchange="toggleCard('cardSistemaDivisiones',this.checked)">
+            <span class="material-symbols-outlined" style="color:#ea4335">class</span>
+            <div><h3>Crear Divisiones</h3><p id="lblSistemaDivisiones"></p></div>
+          </label>
+          <div class="import-card-body">
+            <p style="font-size:14px;color:var(--text-secondary)">
+              Se crearán las divisiones (ej: 1°1°, 2°3°) que no existan aún en la institución.
+            </p>
+          </div>
+        </div>
+
+        <div class="import-card active" id="cardSistemaDocentes">
+          <label class="import-card-header">
+            <input type="checkbox" id="chkSistemaDocentes" checked onchange="toggleCard('cardSistemaDocentes',this.checked)">
+            <span class="material-symbols-outlined" style="color:#1a73e8">badge</span>
+            <div><h3>Crear Docentes</h3><p id="lblSistemaDocentes"></p></div>
+          </label>
+          <div class="import-card-body">
+            <p style="font-size:14px;color:var(--text-secondary)">
+              Se crearán cuentas con rol <strong>Profesor</strong>. Contraseña inicial: número de DNI.
+            </p>
+          </div>
+        </div>
+
+        <div class="import-card active" id="cardSistemaAlumnos">
+          <label class="import-card-header">
+            <input type="checkbox" id="chkSistemaAlumnos" checked onchange="toggleCard('cardSistemaAlumnos',this.checked)">
+            <span class="material-symbols-outlined" style="color:#34a853">group</span>
+            <div><h3>Crear Alumnos</h3><p id="lblSistemaAlumnos"></p></div>
+          </label>
+          <div class="import-card-body">
+            <div class="warning-banner" id="warnSkippedSistema" style="display:none">
+              <span class="material-symbols-outlined warning-icon">warning</span>
+              <span id="txtSkippedSistema"></span>
+            </div>
+            <p style="font-size:14px;color:var(--text-secondary)">
+              Se crearán cuentas con rol <strong>Alumno</strong>. Contraseña inicial: número de DNI.
+            </p>
+          </div>
+        </div>
+
+        <div class="import-card active" id="cardSistemaMaterias">
+          <label class="import-card-header">
+            <input type="checkbox" id="chkSistemaMaterias" checked onchange="toggleCard('cardSistemaMaterias',this.checked)">
+            <span class="material-symbols-outlined" style="color:#9334e6">menu_book</span>
+            <div><h3>Crear Materias de Clase</h3><p id="lblSistemaMaterias"></p></div>
+          </label>
+          <div class="import-card-body">
+            <p style="font-size:14px;color:var(--text-secondary)">
+              Se crea un curso por cada par <strong>Materia + División</strong> y se inscriben automáticamente los alumnos de esa división.
+            </p>
+            <div style="overflow-x:auto;max-height:300px;overflow-y:auto;margin-top:8px">
+              <table class="users-table" style="min-width:500px">
+                <thead><tr><th>Materia</th><th>División</th><th>DNI Docente</th></tr></thead>
+                <tbody id="sistemaMateriasBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- === CARDS PARA ALUMNOS === -->
       <div id="alumnosCards" style="display:none">
@@ -250,14 +328,38 @@
     function showStep2(data, fileName) {
       document.getElementById('step1').style.display = 'none';
       document.getElementById('step2').style.display = 'block';
-      const total = data.total ?? data.entries?.length ?? (data.teachers?.length || 0) + (data.entries?.length || 0);
+      const typeLabel = data.type === 'cargos' ? 'Cargos docentes'
+                      : data.type === 'sistema' ? 'Plantilla del Sistema'
+                      : 'Reporte de Alumnos';
       document.getElementById('fileInfo').innerHTML = `
         <span class="material-symbols-outlined">table_view</span>
         <strong>${fileName}</strong> &mdash; Hoja: <em>${data.sheetName}</em> &mdash;
-        Tipo detectado: <strong>${data.type === 'cargos' ? 'Cargos docentes' : 'Reporte de Alumnos'}</strong>
+        Tipo detectado: <strong>${typeLabel}</strong>
       `;
       if (data.type === 'cargos') showCargosCards(data);
+      else if (data.type === 'sistema') showSistemaCards(data);
       else showAlumnosCards(data);
+    }
+
+    /* ── SISTEMA ── */
+    function showSistemaCards(data) {
+      document.getElementById('sistemaCards').style.display = 'block';
+      document.getElementById('lblSistemaDivisiones').textContent = `${data.cursos.length} división(es)`;
+      document.getElementById('lblSistemaDocentes').textContent   = `${data.docentes.length} docente(s)`;
+      document.getElementById('lblSistemaAlumnos').textContent    = `${data.alumnos.length} alumno(s) con email válido`;
+      document.getElementById('lblSistemaMaterias').textContent   = `${data.materias.length} materia(s) a crear`;
+      if (data.skippedAlumnos > 0) {
+        document.getElementById('warnSkippedSistema').style.display = 'flex';
+        document.getElementById('txtSkippedSistema').textContent = `${data.skippedAlumnos} alumno(s) sin email serán omitidos`;
+      }
+      const tbody = document.getElementById('sistemaMateriasBody');
+      tbody.innerHTML = data.materias.map(m => `
+        <tr>
+          <td><strong>${m.materia}</strong></td>
+          <td><span style="background:#fce8e6;color:#ea4335;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:600">${m.curso}</span></td>
+          <td><code style="font-size:12px">${m.dniDocente || '—'}</code></td>
+        </tr>
+      `).join('');
     }
 
     /* ── ALUMNOS ── */
@@ -355,6 +457,14 @@
           entries: parsedData.entries,
           teachers: parsedData.teachers,
         };
+      } else if (parsedData.type === 'sistema') {
+        body = {
+          type: 'sistema',
+          cursos:   document.getElementById('chkSistemaDivisiones').checked ? parsedData.cursos   : [],
+          docentes: document.getElementById('chkSistemaDocentes').checked   ? parsedData.docentes : [],
+          alumnos:  document.getElementById('chkSistemaAlumnos').checked    ? parsedData.alumnos  : [],
+          materias: document.getElementById('chkSistemaMaterias').checked   ? parsedData.materias : [],
+        };
       } else {
         const cursosConfig = [...document.querySelectorAll('#cursosTableBody tr')].map(row => ({
           name: row.dataset.curso,
@@ -398,7 +508,40 @@
       document.getElementById('step3').style.display = 'block';
 
       let cards = '';
-      if (type === 'cargos') {
+      if (type === 'sistema') {
+        const total = r.divisiones.created + r.docentes.created + r.alumnos.created + r.cursos.created;
+        document.getElementById('resultsBanner').innerHTML = `
+          <span class="material-symbols-outlined">check_circle</span>
+          Importación completada — <strong>${total}</strong> elemento(s) creados
+        `;
+        cards = `
+          <div class="import-result-card" style="--stat-color:#ea4335">
+            <div class="import-result-number">${r.divisiones.created}</div>
+            <div class="import-result-label">Divisiones creadas</div>
+            <div class="import-result-detail">${r.divisiones.skipped} ya existían</div>
+          </div>
+          <div class="import-result-card" style="--stat-color:#1a73e8">
+            <div class="import-result-number">${r.docentes.created}</div>
+            <div class="import-result-label">Docentes creados</div>
+            <div class="import-result-detail">${r.docentes.skipped} ya existían</div>
+          </div>
+          <div class="import-result-card" style="--stat-color:#34a853">
+            <div class="import-result-number">${r.alumnos.created}</div>
+            <div class="import-result-label">Alumnos creados</div>
+            <div class="import-result-detail">${r.alumnos.skipped} ya existían</div>
+          </div>
+          <div class="import-result-card" style="--stat-color:#9334e6">
+            <div class="import-result-number">${r.cursos.created}</div>
+            <div class="import-result-label">Materias creadas</div>
+            <div class="import-result-detail">${r.cursos.skipped} omitidas</div>
+          </div>
+          <div class="import-result-card" style="--stat-color:#ea8600">
+            <div class="import-result-number">${r.inscriptos}</div>
+            <div class="import-result-label">Inscripciones</div>
+            <div class="import-result-detail">alumnos en materias</div>
+          </div>
+        `;
+      } else if (type === 'cargos') {
         const total = r.docentes.created + r.cursos.created + r.materias.created;
         document.getElementById('resultsBanner').innerHTML = `
           <span class="material-symbols-outlined">check_circle</span>
@@ -462,6 +605,7 @@
       parsedData = null;
       document.getElementById('step2').style.display = 'none';
       document.getElementById('step3').style.display = 'none';
+      document.getElementById('sistemaCards').style.display = 'none';
       document.getElementById('alumnosCards').style.display = 'none';
       document.getElementById('cargosCards').style.display = 'none';
       document.getElementById('step1').style.display = 'block';

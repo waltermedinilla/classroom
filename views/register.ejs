@@ -17,8 +17,42 @@
           <text x="20" y="27" text-anchor="middle" fill="white" font-size="22" font-family="Arial" font-weight="bold">C</text>
         </svg>
         <h1>Classroom</h1>
-        <p class="auth-subtitle">Crea tu cuenta</p>
+        <p class="auth-subtitle">Encontrá tu cuenta</p>
       </div>
+
+      <!-- ── Búsqueda por DNI ── -->
+      <div style="margin-bottom:8px">
+        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;text-align:center">
+          Si tu cuenta fue creada por el administrador, ingresá tu DNI para ver tus datos de acceso.
+        </p>
+        <div style="display:flex;gap:8px;align-items:stretch">
+          <div class="input-group" style="flex:1;margin-bottom:0">
+            <span class="material-symbols-outlined input-icon">fingerprint</span>
+            <input type="text" id="dniInput" placeholder="Número de DNI" maxlength="10"
+              inputmode="numeric" pattern="[0-9]*"
+              onkeydown="if(event.key==='Enter'){buscarPorDni();}"
+              style="flex:1">
+          </div>
+          <button type="button" class="btn btn-primary" id="buscarBtn" onclick="buscarPorDni()"
+            style="white-space:nowrap;padding:0 20px">
+            <span class="material-symbols-outlined">search</span>
+            Buscar
+          </button>
+        </div>
+        <div class="form-error" id="dniError" style="margin-top:8px"></div>
+
+        <!-- Resultado de la búsqueda -->
+        <div id="dniResult" style="display:none;margin-top:16px"></div>
+      </div>
+
+      <!-- Divider -->
+      <div style="display:flex;align-items:center;gap:12px;margin:20px 0">
+        <div style="flex:1;height:1px;background:var(--border)"></div>
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap">o creá una cuenta nueva</span>
+        <div style="flex:1;height:1px;background:var(--border)"></div>
+      </div>
+
+      <!-- ── Formulario de registro ── -->
       <form class="auth-form" id="registerForm">
         <div class="input-group">
           <span class="material-symbols-outlined input-icon">badge</span>
@@ -48,9 +82,133 @@
           Registrarse
         </button>
       </form>
+
       <p class="auth-link">¿Ya tienes cuenta? <a href="/login">Inicia sesión</a></p>
     </div>
   </div>
+
   <script src="/js/register.js"></script>
+  <script>
+    async function buscarPorDni() {
+      const input   = document.getElementById('dniInput');
+      const errorEl = document.getElementById('dniError');
+      const resultEl = document.getElementById('dniResult');
+      const btn     = document.getElementById('buscarBtn');
+
+      const dni = input.value.replace(/\D/g, '').trim();
+      errorEl.classList.remove('show');
+      errorEl.textContent = '';
+      resultEl.style.display = 'none';
+      resultEl.innerHTML = '';
+
+      if (dni.length < 6) {
+        errorEl.textContent = 'Ingresá un DNI válido (mínimo 6 dígitos).';
+        errorEl.classList.add('show');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined" style="animation:spin 1s linear infinite">progress_activity</span>';
+
+      try {
+        const res  = await fetch(`/register/lookup?dni=${encodeURIComponent(dni)}`);
+        const data = await res.json();
+
+        if (!res.ok) {
+          errorEl.textContent = data.error || 'No se encontró ningún usuario con ese DNI.';
+          errorEl.classList.add('show');
+          return;
+        }
+
+        resultEl.innerHTML = data.users.map(u => `
+          <div style="
+            border:1.5px solid #1a73e8;
+            border-radius:var(--radius);
+            padding:18px 20px;
+            background:#f0f6ff;
+            margin-bottom:10px;
+          ">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+              <span class="material-symbols-outlined" style="color:#1a73e8;font-size:20px">check_circle</span>
+              <strong style="color:#1a73e8;font-size:14px">Cuenta encontrada</strong>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:14px">
+              <tr>
+                <td style="padding:5px 0;color:var(--text-secondary);width:120px">DNI</td>
+                <td style="padding:5px 0;font-weight:600">${u.dni}</td>
+              </tr>
+              <tr>
+                <td style="padding:5px 0;color:var(--text-secondary)">Nombre</td>
+                <td style="padding:5px 0;font-weight:600">${u.name}</td>
+              </tr>
+              <tr>
+                <td style="padding:5px 0;color:var(--text-secondary)">Correo</td>
+                <td style="padding:5px 0">${u.email}</td>
+              </tr>
+              <tr>
+                <td style="padding:5px 0;color:var(--text-secondary);vertical-align:top">Contraseña</td>
+                <td style="padding:5px 0">
+                  <span style="
+                    display:inline-block;
+                    background:#fff3cd;
+                    border:1px solid #f0c040;
+                    border-radius:6px;
+                    padding:3px 10px;
+                    font-weight:700;
+                    font-family:monospace;
+                    letter-spacing:1px;
+                    color:#856404;
+                  ">${u.dni}</span>
+                  <span style="font-size:12px;color:var(--text-secondary);display:block;margin-top:3px">Tu contraseña inicial es tu número de DNI</span>
+                </td>
+              </tr>
+            </table>
+            <a href="/login" class="btn btn-primary btn-full" style="margin-top:14px;text-decoration:none;display:flex;justify-content:center;align-items:center;gap:6px">
+              <span class="material-symbols-outlined">login</span>
+              Ir a iniciar sesión
+            </a>
+          </div>
+        `).join('');
+
+        resultEl.style.display = 'block';
+      } catch {
+        errorEl.textContent = 'Error de conexión. Intentá de nuevo.';
+        errorEl.classList.add('show');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="material-symbols-outlined">search</span> Buscar';
+      }
+    }
+  </script>
+  <style>
+    @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+
+    /* Permite scroll cuando el contenido no entra en la pantalla */
+    body.auth-body {
+      overflow-y: auto !important;
+      align-items: flex-start !important;
+    }
+    .auth-container {
+      margin: auto;
+      padding: 20px 16px;
+    }
+
+    /* Pantallas medianas */
+    @media (max-width: 480px) {
+      .auth-card { padding: 28px 20px !important; }
+    }
+
+    /* Landscape / pantallas de poca altura */
+    @media (max-height: 600px) {
+      .auth-card { padding: 20px 24px !important; }
+      .auth-logo { margin-bottom: 14px !important; }
+      .auth-logo svg { width: 40px !important; height: 40px !important; }
+      .auth-logo h1 { font-size: 20px !important; margin-top: 6px !important; }
+    }
+    @media (max-height: 420px) {
+      .auth-logo { display: none !important; }
+      .auth-card { padding: 16px 20px !important; }
+    }
+  </style>
 </body>
 </html>

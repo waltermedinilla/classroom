@@ -523,10 +523,106 @@ router.get('/import', async (req, res) => {
   res.render('admin/import', { teachers, subjects });
 });
 
+// GET /admin/import/template — Genera y descarga la plantilla Excel del sistema
+router.get('/import/template', (req, res) => {
+  const wb = XLSX.utils.book_new();
+
+  const makeSheet = (rows, widths) => {
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = widths.map(w => ({ wch: w }));
+    return ws;
+  };
+
+  XLSX.utils.book_append_sheet(wb, makeSheet([
+    ['Nombre'],
+    ['1°1°'],
+    ['1°2°'],
+    ['2°1°'],
+    ['2°2°'],
+    ['3°1°'],
+  ], [14]), 'Cursos');
+
+  XLSX.utils.book_append_sheet(wb, makeSheet([
+    ['Apellido y Nombre', 'DNI',       'Email'],
+    ['García Juan',       '12345678',  'garcia@escuela.edu.ar'],
+    ['López María',       '23456789',  'lopez@escuela.edu.ar'],
+  ], [30, 12, 34]), 'Docentes');
+
+  XLSX.utils.book_append_sheet(wb, makeSheet([
+    ['Apellido y Nombre', 'DNI',       'Email',                       'Curso'],
+    ['Rodríguez Ana',     '34567890',  'rodriguez@escuela.edu.ar',    '1°1°'],
+    ['Pérez Carlos',      '45678901',  'perez@escuela.edu.ar',        '1°1°'],
+    ['Gómez Laura',       '56789012',  'gomez@escuela.edu.ar',        '1°2°'],
+  ], [30, 12, 34, 10]), 'Alumnos');
+
+  XLSX.utils.book_append_sheet(wb, makeSheet([
+    ['Materia',      'Curso', 'DNI Docente'],
+    ['Matemática',   '1°1°',  '12345678'],
+    ['Historia',     '1°1°',  '23456789'],
+    ['Matemática',   '1°2°',  '12345678'],
+    ['Lengua',       '1°2°',  '23456789'],
+  ], [20, 10, 14]), 'Materias');
+
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Disposition', 'attachment; filename="plantilla_importacion_classroom.xlsx"');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.send(buf);
+});
+
 router.post('/import/upload', xlsUpload.single('file'), (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No se recibió ningún archivo' });
-    const wb    = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+
+    // ── Detección formato "sistema" (plantilla propia): hojas Cursos/Docentes/Alumnos/Materias
+    const sheetNames = wb.SheetNames.map(s => s.toLowerCase().trim());
+    const isSistema  = ['cursos','docentes','alumnos','materias'].some(n => sheetNames.includes(n));
+
+    if (isSistema) {
+      const getSheet = (name) => {
+        const key = wb.SheetNames.find(s => s.toLowerCase().trim() === name);
+        return key ? XLSX.utils.sheet_to_json(wb.Sheets[key], { header: 1, defval: '' }) : [];
+      };
+      const cursosRaw   = getSheet('cursos');
+      const docentesRaw = getSheet('docentes');
+      const alumnosRaw  = getSheet('alumnos');
+      const materiasRaw = getSheet('materias');
+
+      const cursos = cursosRaw.slice(1).map(r => r[0]?.toString().trim()).filter(Boolean);
+
+      const docentes = docentesRaw.slice(1).filter(r => r[0]).map(r => ({
+        nombre: r[0].toString().trim(),
+        dni:    r[1]?.toString().replace(/\D/g,'').trim() || '',
+        email:  r[2]?.toString().trim() || '',
+      })).filter(d => d.nombre && (d.email || d.dni));
+
+      let skippedAlumnos = 0;
+      const alumnos = [];
+      alumnosRaw.slice(1).filter(r => r[0]).forEach(r => {
+        const email = r[2]?.toString().trim() || '';
+        if (!email || !email.includes('@')) { skippedAlumnos++; return; }
+        alumnos.push({
+          nombre: r[0].toString().trim(),
+          dni:    r[1]?.toString().replace(/\D/g,'').trim() || '',
+          email,
+          curso:  r[3]?.toString().trim() || '',
+        });
+      });
+
+      const materias = materiasRaw.slice(1).filter(r => r[0] && r[1]).map(r => ({
+        materia:    r[0].toString().trim(),
+        curso:      r[1].toString().trim(),
+        dniDocente: r[2]?.toString().replace(/\D/g,'').trim() || '',
+      }));
+
+      return res.json({
+        type: 'sistema',
+        cursos, docentes, alumnos, materias,
+        skippedAlumnos,
+        sheetName: 'Plantilla del Sistema',
+      });
+    }
+
     const ws    = wb.Sheets[wb.SheetNames[0]];
     const rawData   = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
     const sheetName = wb.SheetNames[0];
@@ -673,6 +769,92 @@ router.post('/import/execute', async (req, res) => {
     return res.json({ results });
   }
 
+  /* ── Flujo Sistema (plantilla propia) ── */
+  if (req.body.type === 'sistema') {
+    const { cursos, docentes, alumnos, materias } = req.body;
+    const results = {
+      divisiones: { created: 0, skipped: 0 },
+      docentes:   { created: 0, skipped: 0 },
+      alumnos:    { created: 0, skipped: 0 },
+      cursos:     { created: 0, skipped: 0 },
+      inscriptos: 0,
+    };
+
+    // 1. Divisiones
+    const divisionMap = {};
+    if (cursos?.length) {
+      for (const name of cursos) {
+        try {
+          const div = await findOrCreateDivision(name, school);
+          if (div) { divisionMap[name] = div._id; results.divisiones.created++; }
+          else results.divisiones.skipped++;
+        } catch { results.divisiones.skipped++; }
+      }
+    }
+
+    // 2. Docentes
+    const teacherByDni = {};
+    if (docentes?.length) {
+      for (const d of docentes) {
+        const emailToUse = d.email || `doc.${d.dni}@esc4039.edu.ar`;
+        try {
+          const user = await User.create({ name: d.nombre, email: emailToUse, password: d.dni || 'changeme', role: 'teacher', school, dni: d.dni });
+          if (d.dni) teacherByDni[d.dni] = user._id;
+          results.docentes.created++;
+        } catch {
+          let existing = null;
+          if (d.dni && school) existing = await User.findOne({ school, dni: d.dni }).select('_id');
+          if (!existing && emailToUse) existing = await User.findOne({ email: emailToUse }).select('_id');
+          if (existing && d.dni) teacherByDni[d.dni] = existing._id;
+          results.docentes.skipped++;
+        }
+      }
+    }
+
+    // 3. Alumnos
+    const studentByCurso = {};
+    if (alumnos?.length) {
+      for (const a of alumnos) {
+        try {
+          const user = await User.create({ name: a.nombre, email: a.email, password: a.dni || 'changeme', role: 'student', school, dni: a.dni });
+          if (!studentByCurso[a.curso]) studentByCurso[a.curso] = [];
+          studentByCurso[a.curso].push(user._id);
+          results.alumnos.created++;
+        } catch {
+          let existing = null;
+          if (a.dni && school) existing = await User.findOne({ school, dni: a.dni }).select('_id');
+          if (!existing) existing = await User.findOne({ email: a.email }).select('_id');
+          if (existing) {
+            if (!studentByCurso[a.curso]) studentByCurso[a.curso] = [];
+            studentByCurso[a.curso].push(existing._id);
+          }
+          results.alumnos.skipped++;
+        }
+      }
+    }
+
+    // 4. Materias (Course instances)
+    if (materias?.length) {
+      for (const m of materias) {
+        const divId     = divisionMap[m.curso];
+        const teacherId = m.dniDocente ? teacherByDni[m.dniDocente] : null;
+        if (!divId || !teacherId) { results.cursos.skipped++; continue; }
+        try {
+          const course = await Course.create({ name: m.materia, division: divId, owner: teacherId, school });
+          results.cursos.created++;
+          // enroll students from the same division
+          const divStudents = studentByCurso[m.curso] || [];
+          if (divStudents.length) {
+            await Course.findByIdAndUpdate(course._id, { $addToSet: { students: { $each: divStudents } } });
+            results.inscriptos += divStudents.length;
+          }
+        } catch { results.cursos.skipped++; }
+      }
+    }
+
+    return res.json({ results });
+  }
+
   /* ── Flujo de Alumnos ── */
   const { importAlumnos, importCursos, importMaterias, students, cursosConfig } = req.body;
   const results = { alumnos: { created: 0, skipped: 0 }, cursos: { created: 0, skipped: 0 }, materias: { created: 0, skipped: 0 }, inscriptos: 0 };
@@ -700,7 +882,7 @@ router.post('/import/execute', async (req, res) => {
       if (!c.teacherId) { results.cursos.skipped++; continue; }
       try {
         // c.section es el nombre de la división (ej: "1A", "2°1°")
-        const divDoc = await findOrCreateDivision(c.section, school);
+        const divDoc = await findOrCreateDivision(c.section || c.name, school);
         if (!divDoc) { results.cursos.skipped++; continue; }
         const course = await Course.create({ name: c.name, division: divDoc._id, owner: c.teacherId, school });
         courseNameToId[c.name] = course._id;

@@ -34,9 +34,222 @@
           Iniciar sesión
         </button>
       </form>
-      <p class="auth-link">¿No tienes cuenta? <a href="/register">Regístrate</a></p>
+      <p class="auth-link">¿No tienes cuenta? <a href="#" onclick="abrirModalDni(event)">Regístrate</a></p>
     </div>
   </div>
+
+  <!-- ── Modal búsqueda por DNI ── -->
+  <div id="dniModalBackdrop" style="
+    display:none;position:fixed;inset:0;
+    background:rgba(0,0,0,.55);z-index:1000;
+    align-items:flex-start;justify-content:center;
+    overflow-y:auto;padding:16px;
+  ">
+    <div style="
+      background:#fff;border-radius:16px;
+      width:100%;max-width:440px;
+      box-shadow:0 8px 40px rgba(0,0,0,.25);
+      margin:auto;
+      display:flex;flex-direction:column;
+    ">
+      <!-- Cabecera fija -->
+      <div style="
+        background:#1a73e8;color:#fff;
+        padding:16px 20px;border-radius:16px 16px 0 0;
+        display:flex;align-items:center;gap:10px;flex-shrink:0;
+      ">
+        <span class="material-symbols-outlined" style="font-size:24px">manage_accounts</span>
+        <div style="min-width:0">
+          <div style="font-size:16px;font-weight:700;line-height:1.2">Buscar mi cuenta</div>
+          <div style="font-size:12px;opacity:.85;margin-top:2px">Ingresá tu DNI para ver tus datos de acceso</div>
+        </div>
+        <button onclick="cerrarModal()" style="
+          margin-left:auto;flex-shrink:0;
+          background:rgba(255,255,255,.2);border:none;
+          color:#fff;border-radius:50%;width:30px;height:30px;
+          cursor:pointer;display:flex;align-items:center;justify-content:center;
+        ">
+          <span class="material-symbols-outlined" style="font-size:18px">close</span>
+        </button>
+      </div>
+
+      <!-- Cuerpo con scroll propio si el contenido crece -->
+      <div style="padding:20px;flex:1">
+        <!-- Input DNI + Buscar -->
+        <div style="display:flex;gap:8px;align-items:stretch">
+          <div class="input-group" style="flex:1;margin-bottom:0">
+            <span class="material-symbols-outlined input-icon">fingerprint</span>
+            <input type="text" id="modalDniInput" placeholder="Número de DNI"
+              maxlength="10" inputmode="numeric" pattern="[0-9]*"
+              onkeydown="if(event.key==='Enter') buscarDni()">
+          </div>
+          <button type="button" class="btn btn-primary" id="modalBuscarBtn"
+            onclick="buscarDni()" style="white-space:nowrap;padding:0 16px;flex-shrink:0">
+            <span class="material-symbols-outlined">search</span>
+            Buscar
+          </button>
+        </div>
+
+        <div class="form-error" id="modalDniError" style="margin-top:10px"></div>
+
+        <!-- Resultado -->
+        <div id="modalDniResult" style="margin-top:14px"></div>
+
+        <!-- Pie -->
+        <div style="margin-top:16px;text-align:center;padding-top:14px;border-top:1px solid #e0e0e0">
+          <span style="font-size:13px;color:#666">
+            ¿No encontrás tu cuenta?
+            <a href="/register" style="color:#1a73e8;font-weight:600">Crear cuenta nueva</a>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="/js/login.js"></script>
+  <script>
+    function abrirModalDni(e) {
+      e.preventDefault();
+      document.body.style.overflow = 'visible';
+      document.getElementById('dniModalBackdrop').style.display = 'flex';
+      document.getElementById('modalDniInput').focus();
+    }
+
+    function cerrarModal() {
+      document.body.style.overflow = '';
+      document.getElementById('dniModalBackdrop').style.display = 'none';
+      document.getElementById('modalDniInput').value = '';
+      document.getElementById('modalDniError').classList.remove('show');
+      document.getElementById('modalDniError').textContent = '';
+      document.getElementById('modalDniResult').innerHTML = '';
+    }
+
+    // Cerrar al hacer clic en el fondo
+    document.getElementById('dniModalBackdrop').addEventListener('click', function(e) {
+      if (e.target === this) cerrarModal();
+    });
+
+    // Cerrar con Escape
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') cerrarModal();
+    });
+
+    async function buscarDni() {
+      const input   = document.getElementById('modalDniInput');
+      const errorEl = document.getElementById('modalDniError');
+      const resultEl = document.getElementById('modalDniResult');
+      const btn     = document.getElementById('modalBuscarBtn');
+
+      const dni = input.value.replace(/\D/g, '').trim();
+      errorEl.classList.remove('show');
+      errorEl.textContent = '';
+      resultEl.innerHTML = '';
+
+      if (dni.length < 6) {
+        errorEl.textContent = 'Ingresá un DNI válido (mínimo 6 dígitos).';
+        errorEl.classList.add('show');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined" style="animation:spin 1s linear infinite;font-size:18px">progress_activity</span>';
+
+      try {
+        const res  = await fetch(`/register/lookup?dni=${encodeURIComponent(dni)}`);
+        const data = await res.json();
+
+        if (!res.ok) {
+          errorEl.textContent = data.error || 'No se encontró ningún usuario con ese DNI.';
+          errorEl.classList.add('show');
+          return;
+        }
+
+        resultEl.innerHTML = data.users.map(u => `
+          <div style="
+            border:1.5px solid #1a73e8;border-radius:12px;
+            padding:16px 18px;background:#f0f6ff;margin-bottom:10px;
+          ">
+            <div style="display:flex;align-items:center;gap:7px;margin-bottom:12px">
+              <span class="material-symbols-outlined" style="color:#1a73e8;font-size:18px">check_circle</span>
+              <strong style="color:#1a73e8;font-size:13px">Cuenta encontrada</strong>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:13.5px">
+              <tr>
+                <td style="padding:4px 0;color:#666;width:110px">DNI</td>
+                <td style="padding:4px 0;font-weight:700">${u.dni}</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 0;color:#666">Nombre</td>
+                <td style="padding:4px 0;font-weight:600">${u.name}</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 0;color:#666">Correo</td>
+                <td style="padding:4px 0">${u.email}</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 0;color:#666;vertical-align:top">Contraseña</td>
+                <td style="padding:4px 0">
+                  <span style="
+                    display:inline-block;background:#fff3cd;
+                    border:1px solid #f0c040;border-radius:6px;
+                    padding:2px 10px;font-weight:700;
+                    font-family:monospace;letter-spacing:1px;color:#856404;
+                  ">${u.dni}</span>
+                  <span style="font-size:11px;color:#666;display:block;margin-top:2px">
+                    Tu contraseña inicial es tu número de DNI
+                  </span>
+                </td>
+              </tr>
+            </table>
+            <a href="/login" onclick="cerrarModal()" class="btn btn-primary btn-full"
+              style="margin-top:14px;text-decoration:none;display:flex;justify-content:center;align-items:center;gap:6px;font-size:14px">
+              <span class="material-symbols-outlined">login</span>
+              Ir a iniciar sesión
+            </a>
+          </div>
+        `).join('');
+
+      } catch {
+        errorEl.textContent = 'Error de conexión. Intentá de nuevo.';
+        errorEl.classList.add('show');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="material-symbols-outlined">search</span> Buscar';
+      }
+    }
+  </script>
+  <style>
+    @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+
+    /* Permite scroll en landscape / pantallas pequeñas */
+    body.auth-body {
+      overflow-y: auto !important;
+      align-items: flex-start !important;
+    }
+    .auth-container {
+      margin: auto;
+      padding: 20px 16px;
+    }
+
+    /* El backdrop del modal ocupa toda la pantalla y tiene su propio scroll */
+    #dniModalBackdrop {
+      align-items: flex-start !important;
+    }
+
+    @media (max-width: 480px) {
+      .auth-card { padding: 28px 20px !important; }
+    }
+
+    @media (max-height: 600px) {
+      .auth-card { padding: 20px 24px !important; }
+      .auth-logo { margin-bottom: 14px !important; }
+      .auth-logo svg { width: 40px !important; height: 40px !important; }
+      .auth-logo h1 { font-size: 20px !important; margin-top: 6px !important; }
+    }
+    @media (max-height: 420px) {
+      .auth-logo { display: none !important; }
+      .auth-card { padding: 14px 20px !important; }
+    }
+  </style>
 </body>
 </html>

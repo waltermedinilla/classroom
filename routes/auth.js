@@ -132,6 +132,27 @@ router.post('/register/invite/:token', async (req, res) => {
   }
 });
 
+// GET /register/lookup?dni= — busca un usuario pre-registrado por DNI (sin autenticación)
+// Devuelve nombre, email y DNI para que el usuario sepa cómo iniciar sesión.
+// Solo usuarios activos; rate-limited por authLimiter en server.js (15 req / 15 min).
+router.get('/register/lookup', async (req, res) => {
+  const dni = (req.query.dni || '').replace(/\D/g, '').trim();
+  if (dni.length < 6) {
+    return res.status(400).json({ error: 'Ingresá un DNI válido (mínimo 6 dígitos)' });
+  }
+  try {
+    const users = await User.find({ dni, active: true })
+      .select('name email dni')
+      .lean();
+    if (!users.length) {
+      return res.status(404).json({ error: 'No se encontró ningún usuario con ese DNI' });
+    }
+    res.json({ users });
+  } catch {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // POST /logout — cierra la sesión borrando las cookies
 // Limpia también adminToken por si estaba en modo suplantación
 router.post('/logout', (req, res) => {
