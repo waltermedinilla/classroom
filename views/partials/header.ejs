@@ -27,14 +27,15 @@
   <% } %>
   <% if (tc.flags !== false) { %>
   body.theme-active .arg-flag {
-    position: fixed; font-size: 28px; pointer-events: none; z-index: 50; opacity: .7;
+    position: fixed; font-size: 30px; pointer-events: none; z-index: 50; opacity: .8;
     animation: flagFloat 4s ease-in-out infinite;
   }
-  body.theme-active .arg-flag:nth-child(1) { bottom: 90px; right: 100px; animation-delay: 0s; }
-  body.theme-active .arg-flag:nth-child(2) { bottom: 90px; left:  24px;  animation-delay: 1s; }
+  body.theme-active .arg-flag-1 { bottom: 90px; right: 80px;  animation-delay: 0s; }
+  body.theme-active .arg-flag-2 { bottom: 90px; left:  24px;  animation-delay: 1.5s; }
+  body.theme-active .arg-flag-3 { bottom: 180px; right: 50px; animation-delay: 0.8s; }
   @keyframes flagFloat {
-    0%,100% { transform: translateY(0) rotate(-5deg); }
-    50%      { transform: translateY(-10px) rotate(5deg); }
+    0%,100% { transform: translateY(0) rotate(-6deg); }
+    50%      { transform: translateY(-12px) rotate(6deg); }
   }
   <% } %>
   <% if (tc.confetti !== false) { %>
@@ -49,8 +50,9 @@
   }
   <% } %>
 </style>
-<div class="arg-flag">🇦🇷</div>
-<div class="arg-flag">🇦🇷</div>
+<div class="arg-flag arg-flag-1">🇦🇷</div>
+<div class="arg-flag arg-flag-2">🇦🇷</div>
+<div class="arg-flag arg-flag-3">🎽</div>
 <script>
   // Inicializa el tema según preferencia del usuario (localStorage)
   // Por defecto activo si no hay preferencia guardada
