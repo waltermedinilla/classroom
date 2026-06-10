@@ -165,26 +165,27 @@
           <div style="
             border:1.5px solid #1a73e8;border-radius:12px;
             padding:16px 18px;background:#f0f6ff;margin-bottom:10px;
+            overflow:hidden;box-sizing:border-box;
           ">
             <div style="display:flex;align-items:center;gap:7px;margin-bottom:12px">
               <span class="material-symbols-outlined" style="color:#1a73e8;font-size:18px">check_circle</span>
               <strong style="color:#1a73e8;font-size:13px">Cuenta encontrada</strong>
             </div>
-            <table style="width:100%;border-collapse:collapse;font-size:13.5px">
+            <table style="width:100%;border-collapse:collapse;font-size:13.5px;table-layout:fixed">
               <tr>
-                <td style="padding:4px 0;color:#666;width:110px">DNI</td>
-                <td style="padding:4px 0;font-weight:700">${u.dni}</td>
+                <td style="padding:4px 0;color:#666;width:90px;white-space:nowrap">DNI</td>
+                <td style="padding:4px 0;font-weight:700;word-break:break-all">${u.dni}</td>
               </tr>
               <tr>
-                <td style="padding:4px 0;color:#666">Nombre</td>
-                <td style="padding:4px 0;font-weight:600">${u.name}</td>
+                <td style="padding:4px 0;color:#666;white-space:nowrap">Nombre</td>
+                <td style="padding:4px 0;font-weight:600;word-break:break-word">${u.name}</td>
               </tr>
               <tr>
-                <td style="padding:4px 0;color:#666">Correo</td>
-                <td style="padding:4px 0">${u.email}</td>
+                <td style="padding:4px 0;color:#666;white-space:nowrap">Correo</td>
+                <td style="padding:4px 0;word-break:break-all">${u.email}</td>
               </tr>
               <tr>
-                <td style="padding:4px 0;color:#666;vertical-align:top">Contraseña</td>
+                <td style="padding:4px 0;color:#666;vertical-align:top;white-space:nowrap">Contraseña</td>
                 <td style="padding:4px 0">
                   <span style="
                     display:inline-block;background:#fff3cd;
@@ -199,7 +200,7 @@
               </tr>
             </table>
             <a href="/login" onclick="cerrarModal()" class="btn btn-primary btn-full"
-              style="margin-top:14px;text-decoration:none;display:flex;justify-content:center;align-items:center;gap:6px;font-size:14px">
+              style="margin-top:14px;text-decoration:none;display:flex;justify-content:center;align-items:center;gap:6px;font-size:14px;box-sizing:border-box">
               <span class="material-symbols-outlined">login</span>
               Ir a iniciar sesión
             </a>
