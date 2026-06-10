@@ -3,9 +3,11 @@ require('dotenv').config();
 const express      = require('express');
 const cookieParser = require('cookie-parser');
 const path         = require('path');
-const compression  = require('compression');   // Gzip de respuestas HTTP
-const helmet       = require('helmet');        // Encabezados de seguridad HTTP
+const compression  = require('compression');
+const helmet       = require('helmet');
 const rateLimit    = require('express-rate-limit');
+const crypto       = require('crypto');
+const { exec }     = require('child_process');
 const connectDB    = require('./config/db');
 const { checkUser } = require('./middleware/auth');
 const School = require('./models/School');
@@ -81,10 +83,36 @@ const uploadLimiter = rateLimit({
 app.use(generalLimiter);
 
 // ── Body parsers y cookies ───────────────────────────────────────────────────
-// Sirve archivos estáticos antes de cualquier middleware dinámico para máximo rendimiento
 app.use(express.static('public'));
 app.use(express.urlencoded({ extended: true }));
-app.use(express.json({ limit: '2mb' })); // Limita el tamaño del body JSON
+
+// ── Webhook de deploy automático ─────────────────────────────────────────────
+// Debe ir ANTES de express.json() para recibir el body como Buffer (necesario para HMAC)
+app.post('/deploy', express.raw({ type: 'application/json' }), (req, res) => {
+  const secret = process.env.DEPLOY_SECRET;
+  const sig    = req.headers['x-hub-signature-256'];
+
+  if (!secret || !sig) return res.status(403).json({ error: 'Forbidden' });
+
+  const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(req.body).digest('hex');
+  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
+    return res.status(403).json({ error: 'Firma inválida' });
+  }
+
+  const payload = JSON.parse(req.body.toString());
+  if (payload.ref !== 'refs/heads/main') {
+    return res.status(200).json({ message: 'No es main, omitido' });
+  }
+
+  res.status(200).json({ message: 'Deploy iniciado' });
+
+  exec('git -C /home/walter/classroom pull && pm2 reload classroom', (err, stdout, stderr) => {
+    if (err) console.error('[deploy] Error:', err.message, stderr);
+    else     console.log('[deploy] OK\n', stdout);
+  });
+});
+
+app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 
 // ── Middlewares globales de usuario y escuela ────────────────────────────────
