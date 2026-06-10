@@ -48,6 +48,7 @@
       box-shadow:0 8px 40px rgba(0,0,0,.25);
       margin:auto;
       display:flex;flex-direction:column;
+      overflow:hidden;box-sizing:border-box;
     ">
       <!-- Cabecera fija -->
       <div style="
@@ -71,7 +72,7 @@
       </div>
 
       <!-- Cuerpo con scroll propio si el contenido crece -->
-      <div style="padding:20px;flex:1">
+      <div style="padding:20px;flex:1;overflow-x:hidden;min-width:0">
         <!-- Input DNI + Buscar -->
         <div style="display:flex;gap:8px;align-items:stretch">
           <div class="input-group" style="flex:1;margin-bottom:0">
