@@ -950,30 +950,18 @@ router.post('/import/execute', async (req, res) => {
 router.get('/theme', requireAuth, requireAdmin, async (req, res) => {
   const school = await School.findById(res.locals.user.school);
   if (!school) return res.status(404).send('Escuela no encontrada');
-  const themeInfo = school.theme?.slug ? THEMES[school.theme.slug] : null;
-  res.render('admin/theme', { school, themeInfo, THEMES, activePage: 'theme' });
+  res.render('admin/theme', { school, THEMES, activePage: 'theme' });
 });
 
+// Aceptar o rechazar un tema ofrecido
 router.post('/theme/respond', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { action } = req.body; // 'accept' | 'reject'
+    const { slug, action } = req.body;
     const status = action === 'accept' ? 'accepted' : 'rejected';
-    await School.findByIdAndUpdate(res.locals.user.school, { 'theme.status': status });
-    res.json({ ok: true });
-  } catch {
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-});
-
-router.post('/theme/config', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const { confetti, buttonBorder, navColors, flags } = req.body;
-    await School.findByIdAndUpdate(res.locals.user.school, {
-      'theme.config.confetti':     confetti     === 'true',
-      'theme.config.buttonBorder': buttonBorder === 'true',
-      'theme.config.navColors':    navColors    === 'true',
-      'theme.config.flags':        flags        === 'true',
-    });
+    await School.findOneAndUpdate(
+      { _id: res.locals.user.school, 'themes.slug': slug },
+      { $set: { 'themes.$.status': status } }
+    );
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'Error del servidor' });

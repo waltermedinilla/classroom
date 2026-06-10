@@ -3,115 +3,150 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tema - Admin</title>
+  <title>Temas - Administración</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
   <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .theme-card { border:1px solid var(--border); border-radius:12px; overflow:hidden; margin-bottom:16px; }
+    .theme-card-header { padding:16px 20px; display:flex; align-items:center; gap:14px; }
+    .theme-card.offered  { border-color:#ea8600; }
+    .theme-card.accepted { border-color:#137333; }
+    .theme-card.rejected { opacity:.6; }
+    .status-badge { font-size:11px; font-weight:700; padding:3px 10px; border-radius:12px; }
+    .status-offered  { background:#fef3e2; color:#ea8600; }
+    .status-accepted { background:#e6f4ea; color:#137333; }
+    .status-rejected { background:#fce8e6; color:#ea4335; }
+    .feature-chip { font-size:11px; background:var(--surface-variant,#f1f3f4); padding:3px 10px; border-radius:12px; display:inline-flex; align-items:center; gap:4px; }
+    .feature-chip.disabled { opacity:.4; text-decoration:line-through; }
+    .empty-state { text-align:center; padding:60px 20px; color:var(--text-secondary); }
+  </style>
 </head>
 <body>
   <%- include('../partials/header') %>
   <main class="main-content">
-    <%- include('../partials/admin-nav', { activePage: 'theme' }) %>
+    <%- include('../partials/admin-nav') %>
 
-    <div class="section-header" style="margin-bottom:28px">
+    <div class="section-header" style="margin-bottom:24px">
       <span class="material-symbols-outlined section-icon" style="color:#9334e6">palette</span>
-      <h2 style="margin:0">Tema visual</h2>
+      <h2 style="margin:0">Configuración Anual de Temas</h2>
     </div>
 
-    <% if (!school.theme?.slug) { %>
-      <div class="empty-state">
-        <div class="empty-icon"><span class="material-symbols-outlined">palette</span></div>
-        <p>No hay ningún tema disponible para tu escuela en este momento.</p>
-        <p style="font-size:13px;color:var(--text-hint)">El superadministrador puede ofrecerte un tema desde el panel global.</p>
-      </div>
+    <%
+      const offered  = school.themes?.filter(t => t.status === 'offered')  || [];
+      const accepted = school.themes?.filter(t => t.status === 'accepted') || [];
+      const rejected = school.themes?.filter(t => t.status === 'rejected') || [];
+    %>
 
-    <% } else if (school.theme.status === 'rejected') { %>
-      <div style="background:var(--surface);border-radius:var(--radius);padding:32px;box-shadow:var(--shadow-sm);text-align:center">
-        <span class="material-symbols-outlined" style="font-size:48px;color:var(--text-hint)">palette_off</span>
-        <p style="margin:12px 0 4px;font-size:16px;font-weight:500">Tema rechazado</p>
-        <p style="color:var(--text-secondary);font-size:14px">Rechazaste el tema <strong><%= themeInfo?.name %></strong>. Podés activarlo de nuevo si cambiás de opinión.</p>
-        <button class="btn btn-primary" style="margin-top:20px" onclick="respond('accept')">Activar tema</button>
-      </div>
-
-    <% } else if (school.theme.status === 'offered') { %>
-      <!-- Invitación pendiente -->
-      <div style="background:linear-gradient(135deg,#74acdf 0%,#fff 50%,#74acdf 100%);border-radius:var(--radius);padding:32px;box-shadow:var(--shadow-sm);text-align:center;margin-bottom:24px">
-        <div style="font-size:56px;margin-bottom:8px"><%= themeInfo?.preview %></div>
-        <h3 style="margin:0 0 8px;font-size:22px">¡Tenés un tema nuevo!</h3>
-        <p style="margin:0 0 24px;font-size:15px;color:#333"><strong><%= themeInfo?.name %></strong> — <%= themeInfo?.description %></p>
-        <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
-          <button class="btn btn-primary" onclick="respond('accept')" style="padding:10px 28px">
-            <span class="material-symbols-outlined">check_circle</span>
-            Activar tema
-          </button>
-          <button class="btn btn-outline" onclick="respond('reject')" style="padding:10px 28px;border-color:#ea4335;color:#ea4335">
-            <span class="material-symbols-outlined">cancel</span>
-            Rechazar
-          </button>
-        </div>
-      </div>
-
-    <% } else if (school.theme.status === 'accepted') { %>
-      <!-- Configuración del tema activo -->
-      <div style="background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow-sm);overflow:hidden">
-        <div style="padding:20px 28px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px">
-          <span style="font-size:36px"><%= themeInfo?.preview %></span>
-          <div style="flex:1">
-            <h3 style="margin:0;font-size:16px"><%= themeInfo?.name %></h3>
-            <span style="font-size:12px;background:#e6f4ea;color:#137333;padding:2px 10px;border-radius:12px;font-weight:600">ACTIVO</span>
-          </div>
-          <button class="btn btn-outline" style="font-size:12px;border-color:#ea4335;color:#ea4335" onclick="respond('reject')">Desactivar</button>
-        </div>
-
-        <div style="padding:24px 28px">
-          <h4 style="margin:0 0 20px;font-size:14px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px">Funcionalidades</h4>
-          <div style="display:flex;flex-direction:column;gap:16px" id="configForm">
-            <% Object.entries(themeInfo.features).forEach(([key, feat]) => { %>
-              <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border:1px solid var(--border);border-radius:10px">
-                <div>
-                  <div style="font-size:14px;font-weight:500"><%= feat.label %></div>
-                  <div style="font-size:12px;color:var(--text-secondary);margin-top:2px"><%= feat.description %></div>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" data-key="<%= key %>" <%= school.theme.config?.[key] !== false ? 'checked' : '' %> onchange="saveConfig()">
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-            <% }) %>
-          </div>
-          <div id="configStatus" style="margin-top:14px;font-size:13px;color:var(--text-hint);text-align:right"></div>
-        </div>
-      </div>
+    <% if (!school.themes?.length) { %>
+    <div class="empty-state">
+      <span class="material-symbols-outlined" style="font-size:56px;color:var(--border)">palette</span>
+      <p style="margin:12px 0 0;font-size:15px">No hay temas asignados a esta escuela aún.</p>
+      <p style="margin:4px 0 0;font-size:13px">El superadministrador puede ofrecer temas desde su panel.</p>
+    </div>
     <% } %>
-  </main>
 
+    <% if (offered.length) { %>
+    <h3 style="font-size:14px;color:#ea8600;margin:0 0 10px;display:flex;align-items:center;gap:6px">
+      <span class="material-symbols-outlined" style="font-size:18px">notifications_active</span>
+      Temas pendientes (<%= offered.length %>)
+    </h3>
+    <% offered.forEach(t => { const themeInfo = THEMES[t.slug]; if (!themeInfo) return; %>
+    <div class="theme-card offered">
+      <div class="theme-card-header">
+        <span style="font-size:32px"><%= themeInfo.preview %></span>
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <strong style="font-size:15px"><%= themeInfo.name %></strong>
+            <span class="status-badge status-offered">Ofrecido</span>
+          </div>
+          <p style="margin:2px 0;font-size:12px;color:var(--text-secondary)"><%= themeInfo.description %></p>
+          <span style="font-size:11px;color:var(--text-secondary)">📅 <%= t.startDate || themeInfo.defaultStart %> → <%= t.endDate || themeInfo.defaultEnd %></span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;flex-shrink:0">
+          <button class="btn btn-primary" style="font-size:13px" onclick="respond('<%= t.slug %>','accept')">
+            <span class="material-symbols-outlined" style="font-size:16px">check</span> Aceptar
+          </button>
+          <button class="btn btn-outline" style="font-size:13px;border-color:#ea4335;color:#ea4335" onclick="respond('<%= t.slug %>','reject')">
+            <span class="material-symbols-outlined" style="font-size:16px">close</span> Rechazar
+          </button>
+        </div>
+      </div>
+      <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap">
+        <% Object.entries(themeInfo.features).forEach(([fkey, feat]) => { %>
+          <% const enabled = t.config?.[fkey]?.enabled !== false; %>
+          <span class="feature-chip <%= enabled ? '' : 'disabled' %>">
+            <%= enabled ? '✓' : '✗' %> <%= feat.label %>
+          </span>
+        <% }) %>
+      </div>
+    </div>
+    <% }) %>
+    <% } %>
+
+    <% if (accepted.length) { %>
+    <h3 style="font-size:14px;color:#137333;margin:16px 0 10px;display:flex;align-items:center;gap:6px">
+      <span class="material-symbols-outlined" style="font-size:18px">check_circle</span>
+      Temas activos (<%= accepted.length %>)
+    </h3>
+    <% accepted.forEach(t => { const themeInfo = THEMES[t.slug]; if (!themeInfo) return; %>
+    <div class="theme-card accepted">
+      <div class="theme-card-header">
+        <span style="font-size:32px"><%= themeInfo.preview %></span>
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <strong style="font-size:15px"><%= themeInfo.name %></strong>
+            <span class="status-badge status-accepted">Activo</span>
+          </div>
+          <p style="margin:2px 0;font-size:12px;color:var(--text-secondary)"><%= themeInfo.description %></p>
+          <span style="font-size:11px;color:var(--text-secondary)">📅 <%= t.startDate || themeInfo.defaultStart %> → <%= t.endDate || themeInfo.defaultEnd %></span>
+        </div>
+      </div>
+      <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap">
+        <% Object.entries(themeInfo.features).forEach(([fkey, feat]) => { %>
+          <% const enabled = t.config?.[fkey]?.enabled !== false; %>
+          <span class="feature-chip <%= enabled ? '' : 'disabled' %>">
+            <%= enabled ? '✓' : '✗' %> <%= feat.label %>
+          </span>
+        <% }) %>
+      </div>
+      <div style="padding:10px 20px;border-top:1px solid var(--border);font-size:12px;color:var(--text-secondary)">
+        Los usuarios ven este tema automáticamente cuando la fecha está en el rango indicado. El superadmin ajusta la configuración.
+      </div>
+    </div>
+    <% }) %>
+    <% } %>
+
+    <% if (rejected.length) { %>
+    <h3 style="font-size:14px;color:#999;margin:16px 0 10px">Temas rechazados</h3>
+    <% rejected.forEach(t => { const themeInfo = THEMES[t.slug]; if (!themeInfo) return; %>
+    <div class="theme-card rejected">
+      <div class="theme-card-header">
+        <span style="font-size:28px"><%= themeInfo.preview %></span>
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:8px">
+            <strong style="font-size:14px"><%= themeInfo.name %></strong>
+            <span class="status-badge status-rejected">Rechazado</span>
+          </div>
+        </div>
+        <button class="btn btn-outline" style="font-size:12px" onclick="respond('<%= t.slug %>','accept')">Reactivar</button>
+      </div>
+    </div>
+    <% }) %>
+    <% } %>
+
+  </main>
   <%- include('../partials/footer') %>
   <script>
-    async function respond(action) {
-      const msg = action === 'accept' ? '¿Activar el tema?' : '¿Desactivar/rechazar el tema?';
-      if (!confirm(msg)) return;
+    async function respond(slug, action) {
+      if (!confirm('¿Querés ' + (action === 'accept' ? 'aceptar' : 'rechazar') + ' este tema?')) return;
       const res = await fetch('/admin/theme/respond', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ slug, action }),
       });
       if (res.ok) location.reload();
-      else alert('Error al actualizar el tema');
-    }
-
-    async function saveConfig() {
-      const checks = document.querySelectorAll('#configForm input[type=checkbox]');
-      const body   = {};
-      checks.forEach(c => { body[c.dataset.key] = String(c.checked); });
-      const status = document.getElementById('configStatus');
-      status.textContent = 'Guardando…';
-      const res = await fetch('/admin/theme/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      status.textContent = res.ok ? 'Guardado ✓' : 'Error al guardar';
-      if (res.ok) setTimeout(() => location.reload(), 600);
+      else alert('Error al procesar la respuesta');
     }
   </script>
 </body>

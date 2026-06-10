@@ -7,83 +7,75 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
   <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .theme-card { background:var(--surface); border-radius:var(--radius); box-shadow:var(--shadow-sm); overflow:hidden; margin-bottom:28px; }
+    .theme-header { padding:20px 24px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:14px; }
+    .school-row { display:flex; align-items:center; gap:10px; padding:10px 14px; border:1px solid var(--border); border-radius:10px; flex-wrap:wrap; }
+    .school-row + .theme-config-panel { margin-top:6px; }
+    .theme-config-panel { background:var(--surface-variant,#f8f9fa); border-radius:8px; padding:16px; }
+    .config-section { margin-bottom:14px; }
+    .config-section:last-child { margin-bottom:0; }
+    .param-row { display:flex; align-items:center; gap:10px; margin-top:6px; flex-wrap:wrap; }
+    .param-label { font-size:12px; color:var(--text-secondary); min-width:80px; }
+    .toggle-chip { display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-size:13px; }
+    .status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+  </style>
 </head>
 <body>
   <%- include('../partials/header') %>
   <main class="main-content">
     <%- include('../partials/superadmin-nav') %>
 
-    <div class="section-header" style="margin-bottom:28px">
+    <div class="section-header" style="margin-bottom:24px">
       <span class="material-symbols-outlined section-icon" style="color:#9334e6">palette</span>
-      <h2 style="margin:0">Temas visuales</h2>
+      <h2 style="margin:0">Configuración de Temas</h2>
     </div>
 
     <% Object.entries(THEMES).forEach(([slug, theme]) => { %>
-    <div style="background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow-sm);overflow:hidden;margin-bottom:32px">
-      <!-- Header del tema -->
-      <div style="padding:24px 28px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:16px">
-        <span style="font-size:40px"><%= theme.preview %></span>
-        <div>
-          <h3 style="margin:0;font-size:18px"><%= theme.name %></h3>
-          <p style="margin:4px 0 0;font-size:13px;color:var(--text-secondary)"><%= theme.description %></p>
+    <div class="theme-card">
+      <div class="theme-header">
+        <span style="font-size:36px"><%= theme.preview %></span>
+        <div style="flex:1">
+          <h3 style="margin:0;font-size:17px"><%= theme.name %></h3>
+          <p style="margin:2px 0 0;font-size:12px;color:var(--text-secondary)"><%= theme.description %></p>
+          <span style="font-size:11px;color:var(--text-secondary)">📅 <%= theme.dateHint %> &nbsp;·&nbsp; Por defecto: <%= theme.defaultStart %> → <%= theme.defaultEnd %></span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <% Object.values(theme.features).forEach(f => { %>
+            <span style="font-size:11px;background:var(--surface-variant,#f1f3f4);padding:3px 10px;border-radius:12px"><%= f.label %></span>
+          <% }) %>
         </div>
       </div>
 
-      <!-- Features del tema -->
-      <div style="padding:20px 28px;border-bottom:1px solid var(--border);display:flex;gap:12px;flex-wrap:wrap">
-        <% Object.values(theme.features).forEach(f => { %>
-          <div style="background:var(--surface-variant,#f1f3f4);border-radius:20px;padding:6px 14px;font-size:13px;display:flex;align-items:center;gap:6px">
-            <span class="material-symbols-outlined" style="font-size:16px;color:var(--primary)">check_circle</span>
-            <%= f.label %>
-          </div>
-        <% }) %>
-      </div>
-
-      <!-- Escuelas -->
-      <div style="padding:20px 28px">
-        <h4 style="margin:0 0 16px;font-size:14px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px">Escuelas</h4>
-        <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="padding:16px 24px">
+        <h4 style="margin:0 0 12px;font-size:12px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px">Escuelas</h4>
+        <div style="display:flex;flex-direction:column;gap:8px">
           <% schools.forEach(s => { %>
-            <% const hasTheme = s.theme?.slug === slug; %>
-            <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border:1px solid var(--border);border-radius:10px">
-              <span style="width:10px;height:10px;border-radius:50%;background:<%= s.color %>;flex-shrink:0"></span>
-              <span style="flex:1;font-size:14px"><%= s.name %></span>
-              <% if (hasTheme) { %>
-                <% const statusLabel = s.theme.status === 'offered' ? 'Ofrecido' : s.theme.status === 'accepted' ? 'Aceptado' : 'Rechazado'; %>
-                <% const statusColor = s.theme.status === 'accepted' ? '#137333' : s.theme.status === 'offered' ? '#ea8600' : '#ea4335'; %>
-                <span style="font-size:12px;font-weight:600;color:<%= statusColor %>"><%= statusLabel %></span>
-                <button class="btn btn-outline" style="font-size:12px;padding:4px 12px;border-color:#ea4335;color:#ea4335"
-                  onclick="revokeTheme('<%= s._id %>')">Revocar</button>
-              <% } else { %>
-                <button class="btn btn-primary" style="font-size:12px;padding:4px 14px"
-                  onclick="offerTheme('<%= s._id %>', '<%= slug %>')">
-                  <span class="material-symbols-outlined" style="font-size:15px">send</span>
-                  Ofrecer
-                </button>
-              <% } %>
-            </div>
-            <% if (hasTheme && s.theme.status === 'accepted') { %>
-            <div style="margin-top:10px;padding:12px 16px;background:var(--surface-variant,#f8f9fa);border-radius:8px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-              <span class="material-symbols-outlined" style="font-size:18px;color:#74acdf">celebration</span>
-              <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:180px">
-                <label style="font-size:12px;color:var(--text-secondary);white-space:nowrap">Papelitos:</label>
-                <input type="range" id="count-<%= s._id %>" min="5" max="80" value="<%= s.theme.config?.confettiCount || 30 %>"
-                  style="flex:1" oninput="document.getElementById('countVal-<%= s._id %>').textContent=this.value">
-                <span id="countVal-<%= s._id %>" style="font-size:12px;font-weight:600;min-width:24px"><%= s.theme.config?.confettiCount || 30 %></span>
+            <%
+              const sTheme = s.themes?.find(t => t.slug === slug);
+              const statusColor = !sTheme ? '#999' : sTheme.status === 'accepted' ? '#137333' : sTheme.status === 'offered' ? '#ea8600' : '#ea4335';
+              const statusLabel = !sTheme ? 'Sin ofrecer' : sTheme.status === 'accepted' ? 'Aceptado' : sTheme.status === 'offered' ? 'Ofrecido' : 'Rechazado';
+            %>
+            <div>
+              <div class="school-row">
+                <span class="status-dot" style="background:<%= statusColor %>"></span>
+                <span style="width:10px;height:10px;border-radius:50%;background:<%= s.color %>;flex-shrink:0"></span>
+                <span style="flex:1;font-size:14px;font-weight:500"><%= s.name %></span>
+                <span style="font-size:11px;font-weight:600;color:<%= statusColor %>"><%= statusLabel %></span>
+                <% if (sTheme) { %>
+                  <span style="font-size:11px;color:var(--text-secondary)"><%= sTheme.startDate || theme.defaultStart %> → <%= sTheme.endDate || theme.defaultEnd %></span>
+                  <button class="btn btn-outline" style="font-size:11px;padding:3px 10px"
+                    onclick="openConfig('<%= s._id %>','<%= slug %>')">Configurar</button>
+                  <button class="btn btn-outline" style="font-size:11px;padding:3px 10px;border-color:#ea4335;color:#ea4335"
+                    onclick="revokeTheme('<%= s._id %>','<%= slug %>')">Revocar</button>
+                <% } else { %>
+                  <button class="btn btn-primary" style="font-size:11px;padding:3px 12px"
+                    onclick="openConfig('<%= s._id %>','<%= slug %>')">
+                    <span class="material-symbols-outlined" style="font-size:14px">send</span> Ofrecer
+                  </button>
+                <% } %>
               </div>
-              <div style="display:flex;align-items:center;gap:8px">
-                <label style="font-size:12px;color:var(--text-secondary)">Velocidad:</label>
-                <select id="speed-<%= s._id %>" style="font-size:12px;padding:3px 8px;border-radius:6px;border:1px solid var(--border)">
-                  <option value="slow"   <%= (s.theme.config?.confettiSpeed || 'normal') === 'slow'   ? 'selected' : '' %>>Lenta</option>
-                  <option value="normal" <%= (s.theme.config?.confettiSpeed || 'normal') === 'normal' ? 'selected' : '' %>>Normal</option>
-                  <option value="fast"   <%= (s.theme.config?.confettiSpeed || 'normal') === 'fast'   ? 'selected' : '' %>>Rápida</option>
-                </select>
-              </div>
-              <button class="btn btn-outline" style="font-size:12px;padding:4px 12px" onclick="saveConfetti('<%= s._id %>')">
-                Guardar
-              </button>
             </div>
-            <% } %>
           <% }) %>
         </div>
       </div>
@@ -91,49 +83,145 @@
     <% }) %>
   </main>
 
+  <!-- Modal de configuración -->
+  <div id="configModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
+    <div style="background:var(--surface);border-radius:var(--radius);width:min(560px,96vw);max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.2)">
+      <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <h3 id="modalTitle" style="margin:0;font-size:16px">Configurar tema</h3>
+        <button class="icon-btn" onclick="closeModal()"><span class="material-symbols-outlined">close</span></button>
+      </div>
+      <div id="modalBody" style="padding:20px 24px"></div>
+      <div style="padding:16px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px">
+        <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" id="saveBtn" onclick="saveConfig()">
+          <span class="material-symbols-outlined" style="font-size:16px">save</span> Guardar y Ofrecer
+        </button>
+      </div>
+    </div>
+  </div>
+
   <%- include('../partials/footer') %>
   <script>
-    async function offerTheme(schoolId, slug) {
-      if (!confirm('¿Ofrecer este tema a la escuela seleccionada?')) return;
+    const THEMES_DATA = <%- JSON.stringify(
+      Object.fromEntries(Object.entries(THEMES).map(([k,v]) => [k, {
+        name: v.name, preview: v.preview,
+        defaultStart: v.defaultStart, defaultEnd: v.defaultEnd,
+        features: v.features
+      }]))
+    ) %>;
+
+    const SCHOOLS_DATA = <%- JSON.stringify(schools.map(s => ({
+      _id: s._id,
+      themes: s.themes || []
+    }))) %>;
+
+    let _modalSchoolId = null, _modalSlug = null;
+
+    function openConfig(schoolId, slug) {
+      _modalSchoolId = schoolId;
+      _modalSlug     = slug;
+      const theme    = THEMES_DATA[slug];
+      const school   = SCHOOLS_DATA.find(s => String(s._id) === String(schoolId));
+      const existing = school?.themes?.find(t => t.slug === slug);
+
+      document.getElementById('modalTitle').textContent =
+        (existing ? 'Configurar' : 'Ofrecer') + ': ' + theme.name;
+      document.getElementById('saveBtn').textContent =
+        existing ? '💾 Guardar cambios' : '📤 Ofrecer tema';
+
+      let html = `
+        <div style="margin-bottom:16px">
+          <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">📅 Período de activación</label>
+          <div style="display:flex;gap:12px;flex-wrap:wrap">
+            <div>
+              <label style="font-size:11px;color:var(--text-secondary)">Desde (MM-DD)</label>
+              <input type="text" id="startDate" value="${existing?.startDate || theme.defaultStart || ''}"
+                placeholder="MM-DD" style="display:block;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:90px">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-secondary)">Hasta (MM-DD)</label>
+              <input type="text" id="endDate" value="${existing?.endDate || theme.defaultEnd || ''}"
+                placeholder="MM-DD" style="display:block;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:90px">
+            </div>
+          </div>
+        </div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:10px">⚙️ Características</div>`;
+
+      Object.entries(theme.features).forEach(([fkey, feat]) => {
+        const fCfg = existing?.config?.[fkey] || {};
+        const enabled = fCfg.enabled !== false;
+        html += `<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:8px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:${Object.keys(feat.params||{}).length ? '10px':'0'}">
+            <input type="checkbox" id="feat_${fkey}" ${enabled?'checked':''} style="width:16px;height:16px">
+            <span style="font-size:13px;font-weight:500">${feat.label}</span>
+          </label>`;
+
+        Object.entries(feat.params || {}).forEach(([pkey, pdef]) => {
+          const val = fCfg[pkey] !== undefined ? fCfg[pkey] : pdef.default;
+          if (pdef.type === 'range') {
+            html += `<div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+              <label style="font-size:12px;color:var(--text-secondary);min-width:80px">${pdef.label}</label>
+              <input type="range" id="param_${fkey}_${pkey}" min="${pdef.min}" max="${pdef.max}" value="${val}"
+                style="flex:1" oninput="document.getElementById('pval_${fkey}_${pkey}').textContent=this.value">
+              <span id="pval_${fkey}_${pkey}" style="font-size:12px;font-weight:600;min-width:24px">${val}</span>
+            </div>`;
+          } else if (pdef.type === 'select') {
+            html += `<div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+              <label style="font-size:12px;color:var(--text-secondary);min-width:80px">${pdef.label}</label>
+              <select id="param_${fkey}_${pkey}" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border)">
+                ${pdef.options.map((o,i) => `<option value="${o}" ${val===o?'selected':''}>${pdef.labels?.[i]||o}</option>`).join('')}
+              </select>
+            </div>`;
+          }
+        });
+        html += `</div>`;
+      });
+
+      document.getElementById('modalBody').innerHTML = html;
+      document.getElementById('configModal').style.display = 'flex';
+    }
+
+    function closeModal() {
+      document.getElementById('configModal').style.display = 'none';
+    }
+
+    async function saveConfig() {
+      const theme  = THEMES_DATA[_modalSlug];
+      const config = {};
+      Object.entries(theme.features).forEach(([fkey, feat]) => {
+        config[fkey] = { enabled: document.getElementById('feat_'+fkey)?.checked !== false };
+        Object.keys(feat.params || {}).forEach(pkey => {
+          const el = document.getElementById('param_'+fkey+'_'+pkey);
+          if (el) config[fkey][pkey] = el.value;
+        });
+      });
+      const btn = document.getElementById('saveBtn');
+      btn.disabled = true; btn.textContent = '...';
       const res = await fetch('/superadmin/themes/offer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          schoolId:  _modalSchoolId,
+          slug:      _modalSlug,
+          startDate: document.getElementById('startDate').value,
+          endDate:   document.getElementById('endDate').value,
+          config,
+        }),
+      });
+      btn.disabled = false;
+      if (res.ok) location.reload();
+      else { btn.textContent = 'Error'; setTimeout(()=>{ btn.textContent='Guardar'; }, 2000); }
+    }
+
+    async function revokeTheme(schoolId, slug) {
+      if (!confirm('¿Quitar este tema de la escuela?')) return;
+      const res = await fetch('/superadmin/themes/revoke', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ schoolId, slug }),
       });
       if (res.ok) location.reload();
-      else alert('Error al ofrecer el tema');
-    }
-
-    async function revokeTheme(schoolId) {
-      if (!confirm('¿Revocar el tema de esta escuela?')) return;
-      const res = await fetch('/superadmin/themes/revoke', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ schoolId }),
-      });
-      if (res.ok) location.reload();
       else alert('Error al revocar el tema');
-    }
-
-    async function saveConfetti(schoolId) {
-      const confettiCount = document.getElementById('count-' + schoolId).value;
-      const confettiSpeed = document.getElementById('speed-' + schoolId).value;
-      const btn = event.target;
-      btn.disabled = true;
-      btn.textContent = '...';
-      const res = await fetch('/superadmin/themes/confetti-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ schoolId, confettiCount, confettiSpeed }),
-      });
-      btn.disabled = false;
-      btn.textContent = 'Guardar';
-      if (res.ok) {
-        btn.textContent = '✓ Guardado';
-        setTimeout(() => { btn.textContent = 'Guardar'; }, 2000);
-      } else {
-        alert('Error al guardar configuración');
-      }
     }
   </script>
 </body>

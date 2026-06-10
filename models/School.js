@@ -22,20 +22,15 @@ const schoolSchema = new Schema({
   color:       { type: String, default: '#1a73e8', enum: { values: COLORS, message: 'Color no válido' } },
   // Token aleatorio de 48 hex chars; null = sin enlace activo
   inviteToken: { type: String, default: null },
-  // Tema visual ofrecido por el superadmin; aceptado/rechazado/configurado por el admin
-  theme: {
-    slug:      { type: String, default: null },
-    status:    { type: String, enum: ['offered', 'accepted', 'rejected'], default: null },
-    offeredBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
-    config: {
-      confetti:       { type: Boolean, default: true },
-      buttonBorder:   { type: Boolean, default: true },
-      navColors:      { type: Boolean, default: true },
-      flags:          { type: Boolean, default: true },
-      confettiCount:  { type: Number,  default: 30 },
-      confettiSpeed:  { type: String,  default: 'normal' },
-    },
-  },
+  // Temas visuales ofrecidos por el superadmin; cada uno aceptado/rechazado por el admin
+  themes: [{
+    slug:       { type: String },
+    status:     { type: String, enum: ['offered', 'accepted', 'rejected'], default: 'offered' },
+    offeredBy:  { type: Schema.Types.ObjectId, ref: 'User' },
+    startDate:  { type: String, default: null }, // "MM-DD"
+    endDate:    { type: String, default: null }, // "MM-DD"
+    config:     { type: Schema.Types.Mixed, default: {} },
+  }],
 }, { timestamps: true });
 
 // Índice único sparse: solo indexa escuelas que tienen token activo (null no se indexa)

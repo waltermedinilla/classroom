@@ -4,41 +4,43 @@
     document.documentElement.setAttribute('data-theme', t);
   })();
 </script>
-<% if (school?.theme?.status === 'accepted' && school?.theme?.slug === 'mundial-argentina') { %>
-<% const tc = school.theme.config || {}; %>
-<% const confettiCount = tc.confettiCount || 30; %>
-<% const speedMap = { slow: [7, 13], normal: [3, 7], fast: [1, 3] }; %>
-<% const [sMin, sMax] = speedMap[tc.confettiSpeed] || speedMap.normal; %>
+<%
+// ── Detectar tema activo por fecha ──────────────────────────────────────────
+const _activeTheme = (function() {
+  if (!school?.themes?.length) return null;
+  const now  = new Date();
+  const mmdd = String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+  function inRange(s, e) {
+    if (!s || !e) return false;
+    return s > e ? (mmdd >= s || mmdd <= e) : (mmdd >= s && mmdd <= e);
+  }
+  return school.themes.find(t => t.status === 'accepted' && inRange(t.startDate, t.endDate)) || null;
+})();
+%>
+<% if (_activeTheme) { %>
+<%
+  const _slug = _activeTheme.slug;
+  const _cfg  = _activeTheme.config || {};
+  const _speedMap = { slow:[7,13], normal:[3,7], fast:[1,3] };
+  // Paleta de confetti según tema
+  const _confettiPalettes = {
+    'mundial-argentina': ['#75aadb','#ffffff','#5b9dc9'],
+    'halloween':         ['#ff6600','#cc3300','#ff8800','#440066'],
+    'navidad':           ['#ffffff','#d4edda','#f8d7da','#c8f0c8'],
+    'dia-bandera':       ['#75aadb','#ffffff','#5b9dc9'],
+    'independencia':     ['#75aadb','#ffffff','#ffd700'],
+    'dia-maestro':       ['#4CAF50','#2196F3','#FF9800','#9C27B0'],
+    'primavera':         ['#ff69b4','#90ee90','#ff1493','#98fb98','#fffacd'],
+    'carnaval':          ['#ff0000','#00cc00','#0000ff','#ffff00','#ff00ff','#00ffff'],
+  };
+  const _colors = _confettiPalettes[_slug] || ['#74acdf','#ffffff'];
+  const _confettiCfg = _cfg.confetti || {};
+  const _count = Math.min(80, Math.max(5, parseInt(_confettiCfg.confettiCount) || 30));
+  const [_sMin, _sMax] = _speedMap[_confettiCfg.confettiSpeed] || _speedMap.normal;
+%>
 <style>
-  <% if (tc.buttonBorder !== false) { %>
-  body.theme-active .btn-primary {
-    box-shadow: 0 0 0 2px #74acdf, 0 0 0 4px #fff, 0 0 0 5px #74acdf, 0 2px 8px rgba(26,115,232,.3);
-  }
-  <% } %>
-  <% if (tc.navColors !== false) { %>
-  body.theme-active .header-school-name {
-    background: linear-gradient(90deg, #74acdf 0%, #fff 45%, #74acdf 100%);
-    color: #1a3a6b !important;
-    padding: 4px 16px;
-    border-radius: 20px;
-    font-weight: 600;
-    border: 1.5px solid #74acdf;
-  }
-  <% } %>
-  <% if (tc.flags !== false) { %>
-  body.theme-active .arg-flag {
-    position: fixed; font-size: 30px; pointer-events: none; z-index: 50; opacity: .8;
-    animation: flagFloat 4s ease-in-out infinite;
-  }
-  body.theme-active .arg-flag-1 { bottom: 90px; right: 80px;  animation-delay: 0s; }
-  body.theme-active .arg-flag-2 { bottom: 90px; left:  24px;  animation-delay: 1.5s; }
-  body.theme-active .arg-flag-3 { bottom: 180px; right: 50px; animation-delay: 0.8s; }
-  @keyframes flagFloat {
-    0%,100% { transform: translateY(0) rotate(-6deg); }
-    50%      { transform: translateY(-12px) rotate(6deg); }
-  }
-  <% } %>
-  <% if (tc.confetti !== false) { %>
+  <%- /* ── Confetti ── */ %>
+  <% if (_confettiCfg.enabled !== false) { %>
   @keyframes confettiFall {
     0%   { transform: translateY(-10px) rotate(0deg);   opacity: 1; }
     100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
@@ -49,35 +51,122 @@
     animation: confettiFall linear infinite;
   }
   <% } %>
-</style>
-<div class="arg-flag arg-flag-1">🇦🇷</div>
-<div class="arg-flag arg-flag-2">🇦🇷</div>
-<div class="arg-flag arg-flag-3">🎽</div>
-<script>
-  // Inicializa el tema según preferencia del usuario (localStorage)
-  // Por defecto activo si no hay preferencia guardada
-  (function () {
-    var key  = 'themeActive_<%= school._id %>';
-    var pref = localStorage.getItem(key);
-    if (pref !== 'false') document.body.classList.add('theme-active');
-  })();
 
-  <% if (tc.confetti !== false) { %>
+  <%- /* ── Borde en botones (mundial / independencia) ── */ %>
+  <% if (_cfg.buttonBorder?.enabled !== false && (_slug === 'mundial-argentina' || _slug === 'independencia')) { %>
+  body.theme-active .btn-primary {
+    box-shadow: 0 0 0 2px #74acdf, 0 0 0 4px #fff, 0 0 0 5px #74acdf, 0 2px 8px rgba(26,115,232,.3);
+  }
+  <% } %>
+
+  <%- /* ── Colores nav ── */ %>
+  <% if (_cfg.navColors?.enabled !== false) { %>
+    <% if (_slug === 'mundial-argentina' || _slug === 'dia-bandera' || _slug === 'independencia') { %>
+    body.theme-active .header-school-name {
+      background: linear-gradient(90deg,#74acdf 0%,#fff 45%,#74acdf 100%);
+      color:#1a3a6b!important; padding:4px 16px; border-radius:20px;
+      font-weight:600; border:1.5px solid #74acdf;
+    }
+    <% } else if (_slug === 'halloween') { %>
+    body.theme-active .header-school-name {
+      background: linear-gradient(90deg,#ff6600,#220033);
+      color:#fff!important; padding:4px 16px; border-radius:20px; font-weight:600;
+    }
+    body.theme-active .header { background: #1a0a2e!important; }
+    <% } else if (_slug === 'navidad') { %>
+    body.theme-active .header-school-name {
+      background: linear-gradient(90deg,#c0392b,#27ae60);
+      color:#fff!important; padding:4px 16px; border-radius:20px; font-weight:600;
+    }
+    <% } else if (_slug === 'primavera') { %>
+    body.theme-active .header-school-name {
+      background: linear-gradient(90deg,#ff69b4,#90ee90);
+      color:#fff!important; padding:4px 16px; border-radius:20px; font-weight:600;
+    }
+    <% } else if (_slug === 'carnaval') { %>
+    body.theme-active .header-school-name {
+      background: linear-gradient(90deg,#ff0080,#7700ff,#0055ff);
+      color:#fff!important; padding:4px 16px; border-radius:20px; font-weight:600;
+    }
+    <% } %>
+  <% } %>
+
+  <%- /* ── Banderitas flotantes ── */ %>
+  <% if (_cfg.flags?.enabled !== false && (_slug === 'mundial-argentina' || _slug === 'dia-bandera' || _slug === 'independencia')) { %>
+  body.theme-active .th-flag {
+    position:fixed; font-size:30px; pointer-events:none; z-index:50; opacity:.8;
+    animation:flagFloat 4s ease-in-out infinite;
+  }
+  body.theme-active .th-flag-1 { bottom:90px;  right:80px; animation-delay:0s; }
+  body.theme-active .th-flag-2 { bottom:90px;  left:24px;  animation-delay:1.5s; }
+  body.theme-active .th-flag-3 { bottom:180px; right:50px; animation-delay:.8s; }
+  @keyframes flagFloat {
+    0%,100%{ transform:translateY(0) rotate(-6deg); }
+    50%    { transform:translateY(-12px) rotate(6deg); }
+  }
+  <% } %>
+
+  <%- /* ── Arañas Halloween ── */ %>
+  <% if (_cfg.spiders?.enabled !== false && _slug === 'halloween') { %>
+  body.theme-active .th-spider {
+    position:fixed; font-size:28px; pointer-events:none; z-index:50; opacity:.8;
+    animation:spiderDrop 6s ease-in-out infinite;
+  }
+  body.theme-active .th-spider-1 { top:60px; right:60px;  animation-delay:0s; }
+  body.theme-active .th-spider-2 { top:60px; left:40px;   animation-delay:2s; }
+  body.theme-active .th-spider-3 { top:100px; right:200px; animation-delay:4s; }
+  @keyframes spiderDrop {
+    0%,100%{ transform:translateY(0); } 50%{ transform:translateY(30px); }
+  }
+  <% } %>
+
+  <%- /* ── Luces navideñas ── */ %>
+  <% if (_cfg.lights?.enabled !== false && _slug === 'navidad') { %>
+  body.theme-active .header::after {
+    content:'🎄🎅🤶⭐🎁🔔🕯️🎄';
+    position:absolute; bottom:-20px; left:0; width:100%;
+    font-size:18px; letter-spacing:12px; pointer-events:none;
+    animation:lightsBlink 2s ease-in-out infinite;
+  }
+  @keyframes lightsBlink {
+    0%,100%{ opacity:1; } 50%{ opacity:.4; }
+  }
+  body.theme-active .header { position:relative; overflow:visible; }
+  <% } %>
+</style>
+
+<% if (_cfg.flags?.enabled !== false && (_slug === 'mundial-argentina' || _slug === 'dia-bandera' || _slug === 'independencia')) { %>
+<div class="th-flag th-flag-1">🇦🇷</div>
+<div class="th-flag th-flag-2">🇦🇷</div>
+<div class="th-flag th-flag-3">🎽</div>
+<% } %>
+<% if (_cfg.spiders?.enabled !== false && _slug === 'halloween') { %>
+<div class="th-spider th-spider-1">🕷️</div>
+<div class="th-spider th-spider-2">🕸️</div>
+<div class="th-spider th-spider-3">🕷️</div>
+<% } %>
+
+<script>
   (function () {
     var key = 'themeActive_<%= school._id %>';
-    if (localStorage.getItem(key) === 'false') return;
-    var colors = ['#75aadb','#ffffff','#75aadb','#ffffff','#5b9dc9'];
-    var count  = <%= confettiCount %>;
-    var sMin   = <%= sMin %>, sMax = <%= sMax %>;
+    if (localStorage.getItem(key) !== 'false') document.body.classList.add('theme-active');
+  })();
+
+  <% if (_confettiCfg.enabled !== false) { %>
+  (function () {
+    if (localStorage.getItem('themeActive_<%= school._id %>') === 'false') return;
+    var colors = <%- JSON.stringify(_colors) %>;
+    var count = <%= _count %>, sMin = <%= _sMin %>, sMax = <%= _sMax %>;
     for (var i = 0; i < count; i++) {
       var el = document.createElement('div');
       el.className = 'confetti-piece';
-      el.style.left               = Math.random() * 100 + 'vw';
-      el.style.background         = colors[Math.floor(Math.random() * colors.length)];
-      el.style.animationDuration  = (Math.random() * (sMax - sMin) + sMin) + 's';
-      el.style.animationDelay     = (Math.random() * 6) + 's';
-      el.style.width              = (Math.random() * 6 + 5) + 'px';
-      el.style.height             = (Math.random() * 6 + 5) + 'px';
+      el.style.left              = Math.random() * 100 + 'vw';
+      el.style.background        = colors[Math.floor(Math.random() * colors.length)];
+      el.style.animationDuration = (Math.random() * (sMax - sMin) + sMin) + 's';
+      el.style.animationDelay    = (Math.random() * 6) + 's';
+      el.style.width             = (Math.random() * 6 + 5) + 'px';
+      el.style.height            = (Math.random() * 6 + 5) + 'px';
+      <% if (_slug === 'navidad') { %>el.style.borderRadius = '50%';<% } %>
       document.body.appendChild(el);
     }
   })();
@@ -87,10 +176,7 @@
     var key    = 'themeActive_<%= school._id %>';
     var active = document.body.classList.toggle('theme-active');
     localStorage.setItem(key, active ? 'true' : 'false');
-    // Confetti: recargar para aplicar/quitar (simple y sin estado complejo)
-    <% if (tc.confetti !== false) { %>
     location.reload();
-    <% } %>
   }
 </script>
 <% } %>
@@ -130,10 +216,14 @@
   </div>
   <div class="header-right">
     <% if (typeof user !== 'undefined' && user) { %>
-      <% if (school?.theme?.status === 'accepted') { %>
-      <button id="themeModeBtn" onclick="toggleTheme()" title="Activar/Desactivar Temática Argentina"
+      <% if (_activeTheme) { %>
+      <button id="themeModeBtn" onclick="toggleTheme()" title="Activar/Desactivar Temática"
         style="display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;border:2.5px solid #74acdf;background:#fff;cursor:pointer;font-size:20px;line-height:1;padding:0;box-shadow:0 1px 4px rgba(116,172,223,.5)">
-        🇦🇷
+        <%= ({
+          'mundial-argentina':'🇦🇷','halloween':'🎃','navidad':'🎄',
+          'dia-bandera':'🏳️','independencia':'🎆','dia-maestro':'📚',
+          'primavera':'🌸','carnaval':'🎭'
+        })[_activeTheme.slug] || '🎨' %>
       </button>
       <% } %>
       <button class="icon-btn" id="darkModeBtn" onclick="toggleDarkMode()" title="Cambiar tema">

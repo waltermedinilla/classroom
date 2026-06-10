@@ -554,35 +554,67 @@ router.post('/import/execute', async (req, res) => {
 
 /* ─── Temas ─── */
 router.get('/themes', async (req, res) => {
-  const schools = await School.find().sort({ name: 1 }).select('name color theme');
+  const schools = await School.find().sort({ name: 1 }).select('name color themes');
   res.render('superadmin/themes', { THEMES, schools, activePage: 'themes' });
 });
 
-// Ofrecer un tema a una escuela
+// Ofrecer o actualizar un tema para una escuela (con config completa y fechas)
 router.post('/themes/offer', async (req, res) => {
   try {
-    const { schoolId, slug } = req.body;
+    const { schoolId, slug, startDate, endDate, config } = req.body;
     if (!THEMES[slug]) return res.status(400).json({ error: 'Tema no válido' });
-    await School.findByIdAndUpdate(schoolId, {
-      'theme.slug':      slug,
-      'theme.status':    'offered',
-      'theme.offeredBy': req.userId,
-      'theme.config':    { confetti: true, buttonBorder: true, navColors: true, flags: true },
-    });
+    const school = await School.findById(schoolId);
+    if (!school) return res.status(404).json({ error: 'Escuela no encontrada' });
+
+    const existing = school.themes.find(t => t.slug === slug);
+    if (existing) {
+      // Actualizar el tema existente (puede estar offered/accepted/rejected)
+      existing.status    = 'offered';
+      existing.offeredBy = res.locals.user._id;
+      existing.startDate = startDate || THEMES[slug].defaultStart || null;
+      existing.endDate   = endDate   || THEMES[slug].defaultEnd   || null;
+      existing.config    = buildConfig(slug, config);
+    } else {
+      school.themes.push({
+        slug,
+        status:    'offered',
+        offeredBy: res.locals.user._id,
+        startDate: startDate || THEMES[slug].defaultStart || null,
+        endDate:   endDate   || THEMES[slug].defaultEnd   || null,
+        config:    buildConfig(slug, config),
+      });
+    }
+    await school.save();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Actualizar configuración de un tema ya ofrecido/aceptado
+router.post('/themes/config', async (req, res) => {
+  try {
+    const { schoolId, slug, startDate, endDate, config } = req.body;
+    const school = await School.findById(schoolId);
+    if (!school) return res.status(404).json({ error: 'Escuela no encontrada' });
+    const t = school.themes.find(t => t.slug === slug);
+    if (!t) return res.status(404).json({ error: 'Tema no encontrado en esta escuela' });
+    if (startDate) t.startDate = startDate;
+    if (endDate)   t.endDate   = endDate;
+    t.config = buildConfig(slug, config);
+    await school.save();
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
 
-// Revocar tema de una escuela
+// Revocar (eliminar) un tema de una escuela
 router.post('/themes/revoke', async (req, res) => {
   try {
-    const { schoolId } = req.body;
+    const { schoolId, slug } = req.body;
     await School.findByIdAndUpdate(schoolId, {
-      'theme.slug':      null,
-      'theme.status':    null,
-      'theme.offeredBy': null,
+      $pull: { themes: { slug } },
     });
     res.json({ ok: true });
   } catch {
@@ -590,21 +622,22 @@ router.post('/themes/revoke', async (req, res) => {
   }
 });
 
-// Configurar confetti de una escuela
-router.post('/themes/confetti-config', async (req, res) => {
-  try {
-    const { schoolId, confettiCount, confettiSpeed } = req.body;
-    const count = Math.min(80, Math.max(5, parseInt(confettiCount) || 30));
-    const speed = ['slow', 'normal', 'fast'].includes(confettiSpeed) ? confettiSpeed : 'normal';
-    await School.findByIdAndUpdate(schoolId, {
-      'theme.config.confettiCount': count,
-      'theme.config.confettiSpeed': speed,
+// Construye el objeto config a partir del body, usando defaults del catálogo
+function buildConfig(slug, rawConfig = {}) {
+  const theme = THEMES[slug];
+  const cfg = {};
+  Object.entries(theme.features).forEach(([key, feat]) => {
+    cfg[key] = { enabled: rawConfig[key]?.enabled !== false };
+    Object.entries(feat.params || {}).forEach(([p, def]) => {
+      let val = rawConfig[key]?.[p];
+      if (val === undefined || val === '') val = def.default;
+      if (def.type === 'range') val = Math.min(def.max, Math.max(def.min, parseInt(val) || def.default));
+      if (def.type === 'select') val = def.options.includes(val) ? val : def.default;
+      cfg[key][p] = val;
     });
-    res.json({ ok: true });
-  } catch {
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-});
+  });
+  return cfg;
+}
 
 /* ─── Sugerencias ─── */
 router.get('/suggestions', async (req, res) => {
