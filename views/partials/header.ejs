@@ -132,8 +132,8 @@
     <% if (typeof user !== 'undefined' && user) { %>
       <% if (school?.theme?.status === 'accepted') { %>
       <button id="themeModeBtn" onclick="toggleTheme()" title="Activar/Desactivar Temática Argentina"
-        style="display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;border:2px solid #74acdf;background:linear-gradient(135deg,#74acdf 0%,#4a8fc4 100%);color:#fff;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;letter-spacing:.3px;line-height:1">
-        🇦🇷 <span>Temática Argentina</span>
+        style="display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;border:2px solid #74acdf;background:linear-gradient(135deg,#74acdf 0%,#4a8fc4 100%);cursor:pointer;font-size:18px;line-height:1;padding:0">
+        🇦🇷
       </button>
       <% } %>
       <button class="icon-btn" id="darkModeBtn" onclick="toggleDarkMode()" title="Cambiar tema">
