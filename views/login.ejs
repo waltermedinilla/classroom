@@ -12,8 +12,25 @@
   <div class="auth-container">
     <div class="auth-card">
       <div class="auth-logo">
-        <img src="/Logo.jpg" alt="Logo" style="width:110px;height:110px;object-fit:contain;border-radius:16px;margin-bottom:8px">
-        <h1>San José Conecta</h1>
+        <svg width="260" height="90" viewBox="0 0 260 90" xmlns="http://www.w3.org/2000/svg" style="margin-bottom:4px">
+          <defs>
+            <clipPath id="lc"><circle cx="45" cy="45" r="40"/></clipPath>
+            <linearGradient id="tg" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" style="stop-color:#1a3a6b"/>
+              <stop offset="100%" style="stop-color:#74acdf"/>
+            </linearGradient>
+          </defs>
+          <!-- Aro celeste -->
+          <circle cx="45" cy="45" r="43" fill="#74acdf" opacity="0.25"/>
+          <circle cx="45" cy="45" r="40" fill="none" stroke="#74acdf" stroke-width="2.5"/>
+          <!-- Logo circular -->
+          <image href="/Logo.jpg" x="5" y="5" width="80" height="80" clip-path="url(#lc)" preserveAspectRatio="xMidYMid slice"/>
+          <!-- Texto -->
+          <text x="100" y="36" font-family="'Segoe UI',Arial,sans-serif" font-size="23" font-weight="800" fill="url(#tg)">San José</text>
+          <text x="100" y="64" font-family="'Segoe UI',Arial,sans-serif" font-size="23" font-weight="800" fill="url(#tg)">Conecta</text>
+          <!-- Línea de acento -->
+          <line x1="100" y1="72" x2="252" y2="72" stroke="#74acdf" stroke-width="2" stroke-linecap="round" opacity="0.6"/>
+        </svg>
         <p class="auth-subtitle">Inicia sesión para continuar</p>
       </div>
       <form class="auth-form" id="loginForm">
