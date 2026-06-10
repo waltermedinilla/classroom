@@ -106,7 +106,7 @@ app.post('/deploy', express.raw({ type: 'application/json' }), (req, res) => {
 
   res.status(200).json({ message: 'Deploy iniciado' });
 
-  exec('git -C /home/walter/classroom pull && pm2 reload classroom', (err, stdout, stderr) => {
+  exec('git -C /home/walter/classroom pull && /usr/local/bin/pm2 reload classroom', (err, stdout, stderr) => {
     if (err) console.error('[deploy] Error:', err.message, stderr);
     else     console.log('[deploy] OK\n', stdout);
   });
