@@ -83,7 +83,7 @@
           <button type="button" class="btn btn-primary" id="modalBuscarBtn"
             onclick="buscarDni()" style="white-space:nowrap;padding:0 16px;flex-shrink:0">
             <span class="material-symbols-outlined">search</span>
-            Buscar
+            <span class="buscar-text">Buscar</span>
           </button>
         </div>
 
@@ -241,6 +241,8 @@
 
     @media (max-width: 480px) {
       .auth-card { padding: 28px 20px !important; }
+      .buscar-text { display: none; }
+      #modalBuscarBtn { padding: 0 12px; }
     }
 
     @media (max-height: 600px) {
