@@ -8,6 +8,7 @@ const helmet       = require('helmet');
 const rateLimit    = require('express-rate-limit');
 const crypto       = require('crypto');
 const { exec }     = require('child_process');
+const logger       = require('./config/logger');
 const connectDB    = require('./config/db');
 const { checkUser } = require('./middleware/auth');
 const School = require('./models/School');
@@ -107,8 +108,8 @@ app.post('/deploy', express.raw({ type: 'application/json' }), (req, res) => {
   res.status(200).json({ message: 'Deploy iniciado' });
 
   exec('git -C /home/walter/classroom pull && /usr/local/bin/pm2 reload classroom', (err, stdout, stderr) => {
-    if (err) console.error('[deploy] Error:', err.message, stderr);
-    else     console.log('[deploy] OK\n', stdout);
+    if (err) logger.error('Deploy fallido', { error: err.message, stderr });
+    else     logger.info('Deploy exitoso', { stdout: stdout.trim() });
   });
 });
 
@@ -171,8 +172,14 @@ app.use('/superadmin', superadminRoutes);
 // Captura cualquier error no manejado en los middlewares/rutas.
 // Sin esto, un error inesperado puede colgar la request sin responder al cliente.
 app.use((err, req, res, next) => {
-  console.error(`[ERROR] ${req.method} ${req.path}:`, err.message);
   const status = err.status || err.statusCode || 500;
+  logger.error(`${req.method} ${req.path}`, {
+    status,
+    error:  err.message,
+    stack:  err.stack,
+    user:   res.locals.user?._id,
+    ip:     req.ip,
+  });
   if (req.accepts('json') && !req.accepts('html')) {
     return res.status(status).json({ error: err.message || 'Error del servidor' });
   }
@@ -181,23 +188,23 @@ app.use((err, req, res, next) => {
 
 // ── Captura de errores no manejados ─────────────────────────────────────────
 process.on('unhandledRejection', (reason) => {
-  console.error('[unhandledRejection]', reason);
+  logger.error('unhandledRejection', { reason: String(reason) });
 });
 process.on('uncaughtException', (err) => {
-  console.error('[uncaughtException]', err.message);
+  logger.error('uncaughtException', { error: err.message, stack: err.stack });
   process.exit(1);
 });
 
 // ── Inicio del servidor (espera a que MongoDB esté listo) ────────────────────
 connectDB().then(() => {
   const server = app.listen(PORT, () => {
-    console.log(`[${new Date().toISOString()}] Servidor en http://100.112.13.31:${PORT} (PID ${process.pid})`);
+    logger.info(`Servidor iniciado en puerto ${PORT} (PID ${process.pid})`);
   });
 
   const shutdown = (signal) => {
-    console.log(`[${signal}] Cerrando servidor (PID ${process.pid})...`);
+    logger.info(`Cerrando servidor por ${signal} (PID ${process.pid})`);
     server.close(() => {
-      console.log('Servidor cerrado correctamente.');
+      logger.info('Servidor cerrado correctamente.');
       process.exit(0);
     });
     setTimeout(() => process.exit(0), 10_000);
