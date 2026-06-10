@@ -218,10 +218,16 @@
   <style>
     @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
 
-    /* Permite scroll en landscape / pantallas pequeñas */
+    /* Fondo Argentina */
     body.auth-body {
       overflow-y: auto !important;
       align-items: flex-start !important;
+      background: linear-gradient(180deg,
+        #74acdf 0%, #74acdf 33%,
+        #ffffff 33%, #ffffff 67%,
+        #74acdf 67%, #74acdf 100%
+      ) !important;
+      min-height: 100vh;
     }
     .auth-container {
       margin: auto;
