@@ -54,6 +54,30 @@
         <% } %>
         <p class="profile-date">Miembro desde <%= new Date(user.createdAt).toLocaleDateString('es-ES', { day:'numeric', month:'long', year:'numeric' }) %></p>
       </div>
+      <div class="profile-actions">
+        <button class="btn btn-outline" onclick="document.getElementById('changePwdModal').style.display='flex'">
+          <span class="material-symbols-outlined" style="font-size:18px">lock</span>
+          Cambiar contraseña
+        </button>
+      </div>
+    </div>
+
+    <!-- Modal cambiar contraseña -->
+    <div id="changePwdModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center">
+      <div style="background:#fff;border-radius:12px;padding:32px;width:100%;max-width:400px;margin:16px;box-shadow:0 8px 32px rgba(0,0,0,.2)">
+        <h3 style="margin:0 0 20px;font-size:18px">Cambiar contraseña</h3>
+        <div id="changePwdError" style="display:none;background:#fce8e6;color:#c5221f;padding:10px 14px;border-radius:8px;font-size:14px;margin-bottom:16px"></div>
+        <div id="changePwdOk" style="display:none;background:#e6f4ea;color:#137333;padding:10px 14px;border-radius:8px;font-size:14px;margin-bottom:16px"></div>
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <input type="password" id="currentPwd" placeholder="Contraseña actual" style="padding:10px 14px;border:1px solid #dadce0;border-radius:8px;font-size:14px;outline:none">
+          <input type="password" id="newPwd" placeholder="Nueva contraseña (mín. 6 caracteres)" style="padding:10px 14px;border:1px solid #dadce0;border-radius:8px;font-size:14px;outline:none">
+          <input type="password" id="confirmPwd" placeholder="Confirmar nueva contraseña" style="padding:10px 14px;border:1px solid #dadce0;border-radius:8px;font-size:14px;outline:none">
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:24px">
+          <button class="btn btn-outline" onclick="closePwdModal()">Cancelar</button>
+          <button class="btn btn-primary" onclick="submitChangePwd()">Guardar</button>
+        </div>
+      </div>
     </div>
 
     <!-- Stats -->
@@ -240,6 +264,51 @@
       const res = await fetch('/courses/profile/avatar', { method: 'DELETE' });
       if (res.ok) location.reload();
       else alert('No se pudo quitar el avatar');
+    }
+
+    function closePwdModal() {
+      document.getElementById('changePwdModal').style.display = 'none';
+      document.getElementById('currentPwd').value = '';
+      document.getElementById('newPwd').value = '';
+      document.getElementById('confirmPwd').value = '';
+      document.getElementById('changePwdError').style.display = 'none';
+      document.getElementById('changePwdOk').style.display = 'none';
+    }
+
+    async function submitChangePwd() {
+      const errBox = document.getElementById('changePwdError');
+      const okBox  = document.getElementById('changePwdOk');
+      errBox.style.display = 'none';
+      okBox.style.display  = 'none';
+
+      const currentPassword = document.getElementById('currentPwd').value;
+      const newPassword     = document.getElementById('newPwd').value;
+      const confirmPassword = document.getElementById('confirmPwd').value;
+
+      if (newPassword !== confirmPassword) {
+        errBox.textContent = 'Las contraseñas nuevas no coinciden';
+        errBox.style.display = 'block';
+        return;
+      }
+
+      const res  = await fetch('/courses/profile/change-password', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ currentPassword, newPassword }),
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        okBox.textContent = 'Contraseña actualizada correctamente';
+        okBox.style.display = 'block';
+        document.getElementById('currentPwd').value = '';
+        document.getElementById('newPwd').value = '';
+        document.getElementById('confirmPwd').value = '';
+        setTimeout(closePwdModal, 1500);
+      } else {
+        errBox.textContent = data.error || 'Error al cambiar la contraseña';
+        errBox.style.display = 'block';
+      }
     }
   </script>
 </body>

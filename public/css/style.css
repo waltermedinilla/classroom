@@ -1259,6 +1259,7 @@ select, .select-input {
 /* ─── Profile ─── */
 .profile-header { display: flex; align-items: center; gap: 32px; background: var(--surface); border-radius: var(--radius); padding: 40px; box-shadow: var(--shadow-sm); }
 .profile-avatar { flex-shrink: 0; }
+.profile-actions { margin-left: auto; display: flex; flex-direction: column; gap: 8px; align-self: flex-start; flex-shrink: 0; }
 .profile-info h2 { font-size: 28px; font-weight: 500; color: var(--text); margin-bottom: 4px; }
 .profile-email { font-size: 14px; color: var(--text-secondary); margin-bottom: 12px; }
 .profile-date { font-size: 13px; color: var(--text-hint); margin-top: 12px; }

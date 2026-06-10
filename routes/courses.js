@@ -238,6 +238,29 @@ router.delete('/profile/avatar', requireAuth, async (req, res) => {
   }
 });
 
+// POST /courses/profile/change-password
+router.post('/profile/change-password', requireAuth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Completá todos los campos' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 6 caracteres' });
+    }
+    const user = await User.findById(req.userId).select('+password');
+    const isMatch = await user.comparePassword(currentPassword);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'La contraseña actual es incorrecta' });
+    }
+    user.password = newPassword;
+    await user.save();
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // GET /courses/:id
 router.get('/:id', requireAuth, async (req, res) => {
   try {
