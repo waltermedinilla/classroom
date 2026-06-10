@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Temas - Superadmin</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/superadmin-nav') %>
+
+    <div class="section-header" style="margin-bottom:28px">
+      <span class="material-symbols-outlined section-icon" style="color:#9334e6">palette</span>
+      <h2 style="margin:0">Temas visuales</h2>
+    </div>
+
+    <% Object.entries(THEMES).forEach(([slug, theme]) => { %>
+    <div style="background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow-sm);overflow:hidden;margin-bottom:32px">
+      <!-- Header del tema -->
+      <div style="padding:24px 28px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:16px">
+        <span style="font-size:40px"><%= theme.preview %></span>
+        <div>
+          <h3 style="margin:0;font-size:18px"><%= theme.name %></h3>
+          <p style="margin:4px 0 0;font-size:13px;color:var(--text-secondary)"><%= theme.description %></p>
+        </div>
+      </div>
+
+      <!-- Features del tema -->
+      <div style="padding:20px 28px;border-bottom:1px solid var(--border);display:flex;gap:12px;flex-wrap:wrap">
+        <% Object.values(theme.features).forEach(f => { %>
+          <div style="background:var(--surface-variant,#f1f3f4);border-radius:20px;padding:6px 14px;font-size:13px;display:flex;align-items:center;gap:6px">
+            <span class="material-symbols-outlined" style="font-size:16px;color:var(--primary)">check_circle</span>
+            <%= f.label %>
+          </div>
+        <% }) %>
+      </div>
+
+      <!-- Escuelas -->
+      <div style="padding:20px 28px">
+        <h4 style="margin:0 0 16px;font-size:14px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px">Escuelas</h4>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <% schools.forEach(s => { %>
+            <% const hasTheme = s.theme?.slug === slug; %>
+            <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border:1px solid var(--border);border-radius:10px">
+              <span style="width:10px;height:10px;border-radius:50%;background:<%= s.color %>;flex-shrink:0"></span>
+              <span style="flex:1;font-size:14px"><%= s.name %></span>
+              <% if (hasTheme) { %>
+                <% const statusLabel = s.theme.status === 'offered' ? 'Ofrecido' : s.theme.status === 'accepted' ? 'Aceptado' : 'Rechazado'; %>
+                <% const statusColor = s.theme.status === 'accepted' ? '#137333' : s.theme.status === 'offered' ? '#ea8600' : '#ea4335'; %>
+                <span style="font-size:12px;font-weight:600;color:<%= statusColor %>"><%= statusLabel %></span>
+                <button class="btn btn-outline" style="font-size:12px;padding:4px 12px;border-color:#ea4335;color:#ea4335"
+                  onclick="revokeTheme('<%= s._id %>')">Revocar</button>
+              <% } else { %>
+                <button class="btn btn-primary" style="font-size:12px;padding:4px 14px"
+                  onclick="offerTheme('<%= s._id %>', '<%= slug %>')">
+                  <span class="material-symbols-outlined" style="font-size:15px">send</span>
+                  Ofrecer
+                </button>
+              <% } %>
+            </div>
+            <% if (hasTheme && s.theme.status === 'accepted') { %>
+            <div style="margin-top:10px;padding:12px 16px;background:var(--surface-variant,#f8f9fa);border-radius:8px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+              <span class="material-symbols-outlined" style="font-size:18px;color:#74acdf">celebration</span>
+              <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:180px">
+                <label style="font-size:12px;color:var(--text-secondary);white-space:nowrap">Papelitos:</label>
+                <input type="range" id="count-<%= s._id %>" min="5" max="80" value="<%= s.theme.config?.confettiCount || 30 %>"
+                  style="flex:1" oninput="document.getElementById('countVal-<%= s._id %>').textContent=this.value">
+                <span id="countVal-<%= s._id %>" style="font-size:12px;font-weight:600;min-width:24px"><%= s.theme.config?.confettiCount || 30 %></span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <label style="font-size:12px;color:var(--text-secondary)">Velocidad:</label>
+                <select id="speed-<%= s._id %>" style="font-size:12px;padding:3px 8px;border-radius:6px;border:1px solid var(--border)">
+                  <option value="slow"   <%= (s.theme.config?.confettiSpeed || 'normal') === 'slow'   ? 'selected' : '' %>>Lenta</option>
+                  <option value="normal" <%= (s.theme.config?.confettiSpeed || 'normal') === 'normal' ? 'selected' : '' %>>Normal</option>
+                  <option value="fast"   <%= (s.theme.config?.confettiSpeed || 'normal') === 'fast'   ? 'selected' : '' %>>Rápida</option>
+                </select>
+              </div>
+              <button class="btn btn-outline" style="font-size:12px;padding:4px 12px" onclick="saveConfetti('<%= s._id %>')">
+                Guardar
+              </button>
+            </div>
+            <% } %>
+          <% }) %>
+        </div>
+      </div>
+    </div>
+    <% }) %>
+  </main>
+
+  <%- include('../partials/footer') %>
+  <script>
+    async function offerTheme(schoolId, slug) {
+      if (!confirm('¿Ofrecer este tema a la escuela seleccionada?')) return;
+      const res = await fetch('/superadmin/themes/offer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schoolId, slug }),
+      });
+      if (res.ok) location.reload();
+      else alert('Error al ofrecer el tema');
+    }
+
+    async function revokeTheme(schoolId) {
+      if (!confirm('¿Revocar el tema de esta escuela?')) return;
+      const res = await fetch('/superadmin/themes/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schoolId }),
+      });
+      if (res.ok) location.reload();
+      else alert('Error al revocar el tema');
+    }
+
+    async function saveConfetti(schoolId) {
+      const confettiCount = document.getElementById('count-' + schoolId).value;
+      const confettiSpeed = document.getElementById('speed-' + schoolId).value;
+      const btn = event.target;
+      btn.disabled = true;
+      btn.textContent = '...';
+      const res = await fetch('/superadmin/themes/confetti-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schoolId, confettiCount, confettiSpeed }),
+      });
+      btn.disabled = false;
+      btn.textContent = 'Guardar';
+      if (res.ok) {
+        btn.textContent = '✓ Guardado';
+        setTimeout(() => { btn.textContent = 'Guardar'; }, 2000);
+      } else {
+        alert('Error al guardar configuración');
+      }
+    }
+  </script>
+</body>
+</html>

@@ -8,6 +8,8 @@ const Subject  = require('../models/Subject');
 const Division = require('../models/Division');
 const { requireAuth }  = require('../middleware/auth');
 const { requireAdmin } = require('../middleware/admin');
+const School   = require('../models/School');
+const THEMES   = require('../config/themes');
 
 const xlsUpload = multer({
   storage: multer.memoryStorage(),
@@ -942,6 +944,40 @@ router.post('/import/execute', async (req, res) => {
   }
 
   res.json({ results });
+});
+
+/* ─── Tema ─── */
+router.get('/theme', requireAuth, requireAdmin, async (req, res) => {
+  const school = await School.findById(res.locals.user.school);
+  if (!school) return res.status(404).send('Escuela no encontrada');
+  const themeInfo = school.theme?.slug ? THEMES[school.theme.slug] : null;
+  res.render('admin/theme', { school, themeInfo, THEMES, activePage: 'theme' });
+});
+
+router.post('/theme/respond', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { action } = req.body; // 'accept' | 'reject'
+    const status = action === 'accept' ? 'accepted' : 'rejected';
+    await School.findByIdAndUpdate(res.locals.user.school, { 'theme.status': status });
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+router.post('/theme/config', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { confetti, buttonBorder, navColors, flags } = req.body;
+    await School.findByIdAndUpdate(res.locals.user.school, {
+      'theme.config.confetti':     confetti     === 'true',
+      'theme.config.buttonBorder': buttonBorder === 'true',
+      'theme.config.navColors':    navColors    === 'true',
+      'theme.config.flags':        flags        === 'true',
+    });
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
 });
 
 module.exports = router;

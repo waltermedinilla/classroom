@@ -6,6 +6,7 @@ const User    = require('../models/User');
 const Course  = require('../models/Course');
 const Subject    = require('../models/Subject');
 const Suggestion = require('../models/Suggestion');
+const THEMES     = require('../config/themes');
 const { requireAuth }      = require('../middleware/auth');
 const { requireSuperAdmin } = require('../middleware/superadmin');
 
@@ -548,6 +549,60 @@ router.post('/import/execute', async (req, res) => {
     res.json({ results });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor: ' + err.message });
+  }
+});
+
+/* ─── Temas ─── */
+router.get('/themes', async (req, res) => {
+  const schools = await School.find().sort({ name: 1 }).select('name color theme');
+  res.render('superadmin/themes', { THEMES, schools, activePage: 'themes' });
+});
+
+// Ofrecer un tema a una escuela
+router.post('/themes/offer', async (req, res) => {
+  try {
+    const { schoolId, slug } = req.body;
+    if (!THEMES[slug]) return res.status(400).json({ error: 'Tema no válido' });
+    await School.findByIdAndUpdate(schoolId, {
+      'theme.slug':      slug,
+      'theme.status':    'offered',
+      'theme.offeredBy': req.userId,
+      'theme.config':    { confetti: true, buttonBorder: true, navColors: true, flags: true },
+    });
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Revocar tema de una escuela
+router.post('/themes/revoke', async (req, res) => {
+  try {
+    const { schoolId } = req.body;
+    await School.findByIdAndUpdate(schoolId, {
+      'theme.slug':      null,
+      'theme.status':    null,
+      'theme.offeredBy': null,
+    });
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Configurar confetti de una escuela
+router.post('/themes/confetti-config', async (req, res) => {
+  try {
+    const { schoolId, confettiCount, confettiSpeed } = req.body;
+    const count = Math.min(80, Math.max(5, parseInt(confettiCount) || 30));
+    const speed = ['slow', 'normal', 'fast'].includes(confettiSpeed) ? confettiSpeed : 'normal';
+    await School.findByIdAndUpdate(schoolId, {
+      'theme.config.confettiCount': count,
+      'theme.config.confettiSpeed': speed,
+    });
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: 'Error del servidor' });
   }
 });
 

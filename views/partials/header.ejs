@@ -4,6 +4,94 @@
     document.documentElement.setAttribute('data-theme', t);
   })();
 </script>
+<% if (school?.theme?.status === 'accepted' && school?.theme?.slug === 'mundial-argentina') { %>
+<% const tc = school.theme.config || {}; %>
+<% const confettiCount = tc.confettiCount || 30; %>
+<% const speedMap = { slow: [7, 13], normal: [3, 7], fast: [1, 3] }; %>
+<% const [sMin, sMax] = speedMap[tc.confettiSpeed] || speedMap.normal; %>
+<style>
+  <% if (tc.buttonBorder !== false) { %>
+  body.theme-active .btn-primary {
+    box-shadow: 0 0 0 2px #74acdf, 0 0 0 4px #fff, 0 0 0 5px #74acdf, 0 2px 8px rgba(26,115,232,.3);
+  }
+  <% } %>
+  <% if (tc.navColors !== false) { %>
+  body.theme-active .header-school-name {
+    background: linear-gradient(90deg, #74acdf 0%, #fff 45%, #74acdf 100%);
+    color: #1a3a6b !important;
+    padding: 4px 16px;
+    border-radius: 20px;
+    font-weight: 600;
+    border: 1.5px solid #74acdf;
+  }
+  <% } %>
+  <% if (tc.flags !== false) { %>
+  body.theme-active .arg-flag {
+    position: fixed; font-size: 28px; pointer-events: none; z-index: 50; opacity: .7;
+    animation: flagFloat 4s ease-in-out infinite;
+  }
+  body.theme-active .arg-flag:nth-child(1) { bottom: 90px; right: 100px; animation-delay: 0s; }
+  body.theme-active .arg-flag:nth-child(2) { bottom: 90px; left:  24px;  animation-delay: 1s; }
+  @keyframes flagFloat {
+    0%,100% { transform: translateY(0) rotate(-5deg); }
+    50%      { transform: translateY(-10px) rotate(5deg); }
+  }
+  <% } %>
+  <% if (tc.confetti !== false) { %>
+  @keyframes confettiFall {
+    0%   { transform: translateY(-10px) rotate(0deg);   opacity: 1; }
+    100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+  }
+  .confetti-piece {
+    position: fixed; top: -10px; border-radius: 2px;
+    pointer-events: none; z-index: 9999;
+    animation: confettiFall linear infinite;
+  }
+  <% } %>
+</style>
+<div class="arg-flag">🇦🇷</div>
+<div class="arg-flag">🇦🇷</div>
+<script>
+  // Inicializa el tema según preferencia del usuario (localStorage)
+  // Por defecto activo si no hay preferencia guardada
+  (function () {
+    var key  = 'themeActive_<%= school._id %>';
+    var pref = localStorage.getItem(key);
+    if (pref !== 'false') document.body.classList.add('theme-active');
+  })();
+
+  <% if (tc.confetti !== false) { %>
+  (function () {
+    var key = 'themeActive_<%= school._id %>';
+    if (localStorage.getItem(key) === 'false') return;
+    var colors = ['#74acdf','#ffffff','#74acdf','#f6b40e','#ffffff'];
+    var count  = <%= confettiCount %>;
+    var sMin   = <%= sMin %>, sMax = <%= sMax %>;
+    for (var i = 0; i < count; i++) {
+      var el = document.createElement('div');
+      el.className = 'confetti-piece';
+      el.style.left               = Math.random() * 100 + 'vw';
+      el.style.background         = colors[Math.floor(Math.random() * colors.length)];
+      el.style.animationDuration  = (Math.random() * (sMax - sMin) + sMin) + 's';
+      el.style.animationDelay     = (Math.random() * 6) + 's';
+      el.style.width              = (Math.random() * 6 + 5) + 'px';
+      el.style.height             = (Math.random() * 6 + 5) + 'px';
+      document.body.appendChild(el);
+    }
+  })();
+  <% } %>
+
+  function toggleTheme() {
+    var key    = 'themeActive_<%= school._id %>';
+    var active = document.body.classList.toggle('theme-active');
+    localStorage.setItem(key, active ? 'true' : 'false');
+    // Confetti: recargar para aplicar/quitar (simple y sin estado complejo)
+    <% if (tc.confetti !== false) { %>
+    location.reload();
+    <% } %>
+  }
+</script>
+<% } %>
 <% if (impersonating) { %>
 <style>
   .header { top: 44px; }
@@ -40,6 +128,11 @@
   </div>
   <div class="header-right">
     <% if (typeof user !== 'undefined' && user) { %>
+      <% if (school?.theme?.status === 'accepted') { %>
+      <button class="icon-btn" id="themeModeBtn" onclick="toggleTheme()" title="Activar/desactivar tema" style="font-size:20px;line-height:1">
+        🇦🇷
+      </button>
+      <% } %>
       <button class="icon-btn" id="darkModeBtn" onclick="toggleDarkMode()" title="Cambiar tema">
         <span class="material-symbols-outlined">dark_mode</span>
       </button>

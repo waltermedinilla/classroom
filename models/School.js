@@ -21,8 +21,21 @@ const schoolSchema = new Schema({
   // Color de la escuela (restringido a la paleta COLORS); se muestra en badges y encabezados del panel
   color:       { type: String, default: '#1a73e8', enum: { values: COLORS, message: 'Color no válido' } },
   // Token aleatorio de 48 hex chars; null = sin enlace activo
-  // El superadmin lo genera/revoca desde el panel. Se usa en GET/POST /register/invite/:token
   inviteToken: { type: String, default: null },
+  // Tema visual ofrecido por el superadmin; aceptado/rechazado/configurado por el admin
+  theme: {
+    slug:      { type: String, default: null },
+    status:    { type: String, enum: ['offered', 'accepted', 'rejected'], default: null },
+    offeredBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    config: {
+      confetti:       { type: Boolean, default: true },
+      buttonBorder:   { type: Boolean, default: true },
+      navColors:      { type: Boolean, default: true },
+      flags:          { type: Boolean, default: true },
+      confettiCount:  { type: Number,  default: 30 },
+      confettiSpeed:  { type: String,  default: 'normal' },
+    },
+  },
 }, { timestamps: true });
 
 // Índice único sparse: solo indexa escuelas que tienen token activo (null no se indexa)

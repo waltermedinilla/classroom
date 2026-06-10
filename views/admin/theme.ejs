@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tema - Admin</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/admin-nav', { activePage: 'theme' }) %>
+
+    <div class="section-header" style="margin-bottom:28px">
+      <span class="material-symbols-outlined section-icon" style="color:#9334e6">palette</span>
+      <h2 style="margin:0">Tema visual</h2>
+    </div>
+
+    <% if (!school.theme?.slug) { %>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">palette</span></div>
+        <p>No hay ningún tema disponible para tu escuela en este momento.</p>
+        <p style="font-size:13px;color:var(--text-hint)">El superadministrador puede ofrecerte un tema desde el panel global.</p>
+      </div>
+
+    <% } else if (school.theme.status === 'rejected') { %>
+      <div style="background:var(--surface);border-radius:var(--radius);padding:32px;box-shadow:var(--shadow-sm);text-align:center">
+        <span class="material-symbols-outlined" style="font-size:48px;color:var(--text-hint)">palette_off</span>
+        <p style="margin:12px 0 4px;font-size:16px;font-weight:500">Tema rechazado</p>
+        <p style="color:var(--text-secondary);font-size:14px">Rechazaste el tema <strong><%= themeInfo?.name %></strong>. Podés activarlo de nuevo si cambiás de opinión.</p>
+        <button class="btn btn-primary" style="margin-top:20px" onclick="respond('accept')">Activar tema</button>
+      </div>
+
+    <% } else if (school.theme.status === 'offered') { %>
+      <!-- Invitación pendiente -->
+      <div style="background:linear-gradient(135deg,#74acdf 0%,#fff 50%,#74acdf 100%);border-radius:var(--radius);padding:32px;box-shadow:var(--shadow-sm);text-align:center;margin-bottom:24px">
+        <div style="font-size:56px;margin-bottom:8px"><%= themeInfo?.preview %></div>
+        <h3 style="margin:0 0 8px;font-size:22px">¡Tenés un tema nuevo!</h3>
+        <p style="margin:0 0 24px;font-size:15px;color:#333"><strong><%= themeInfo?.name %></strong> — <%= themeInfo?.description %></p>
+        <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="respond('accept')" style="padding:10px 28px">
+            <span class="material-symbols-outlined">check_circle</span>
+            Activar tema
+          </button>
+          <button class="btn btn-outline" onclick="respond('reject')" style="padding:10px 28px;border-color:#ea4335;color:#ea4335">
+            <span class="material-symbols-outlined">cancel</span>
+            Rechazar
+          </button>
+        </div>
+      </div>
+
+    <% } else if (school.theme.status === 'accepted') { %>
+      <!-- Configuración del tema activo -->
+      <div style="background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow-sm);overflow:hidden">
+        <div style="padding:20px 28px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px">
+          <span style="font-size:36px"><%= themeInfo?.preview %></span>
+          <div style="flex:1">
+            <h3 style="margin:0;font-size:16px"><%= themeInfo?.name %></h3>
+            <span style="font-size:12px;background:#e6f4ea;color:#137333;padding:2px 10px;border-radius:12px;font-weight:600">ACTIVO</span>
+          </div>
+          <button class="btn btn-outline" style="font-size:12px;border-color:#ea4335;color:#ea4335" onclick="respond('reject')">Desactivar</button>
+        </div>
+
+        <div style="padding:24px 28px">
+          <h4 style="margin:0 0 20px;font-size:14px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px">Funcionalidades</h4>
+          <div style="display:flex;flex-direction:column;gap:16px" id="configForm">
+            <% Object.entries(themeInfo.features).forEach(([key, feat]) => { %>
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border:1px solid var(--border);border-radius:10px">
+                <div>
+                  <div style="font-size:14px;font-weight:500"><%= feat.label %></div>
+                  <div style="font-size:12px;color:var(--text-secondary);margin-top:2px"><%= feat.description %></div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" data-key="<%= key %>" <%= school.theme.config?.[key] !== false ? 'checked' : '' %> onchange="saveConfig()">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            <% }) %>
+          </div>
+          <div id="configStatus" style="margin-top:14px;font-size:13px;color:var(--text-hint);text-align:right"></div>
+        </div>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+  <script>
+    async function respond(action) {
+      const msg = action === 'accept' ? '¿Activar el tema?' : '¿Desactivar/rechazar el tema?';
+      if (!confirm(msg)) return;
+      const res = await fetch('/admin/theme/respond', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      if (res.ok) location.reload();
+      else alert('Error al actualizar el tema');
+    }
+
+    async function saveConfig() {
+      const checks = document.querySelectorAll('#configForm input[type=checkbox]');
+      const body   = {};
+      checks.forEach(c => { body[c.dataset.key] = String(c.checked); });
+      const status = document.getElementById('configStatus');
+      status.textContent = 'Guardando…';
+      const res = await fetch('/admin/theme/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      status.textContent = res.ok ? 'Guardado ✓' : 'Error al guardar';
+      if (res.ok) setTimeout(() => location.reload(), 600);
+    }
+  </script>
+</body>
+</html>
