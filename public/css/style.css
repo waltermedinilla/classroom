@@ -1256,6 +1256,11 @@ select, .select-input {
 .role-soe { background: #e0f7fa; color: #0d7377; }
 .role-student { background: #e6f4ea; color: #137333; }
 
+/* ─── Suggestions ─── */
+.suggestion-card { background: var(--surface); border-radius: var(--radius); padding: 20px 24px; box-shadow: var(--shadow-sm); }
+.suggestion-header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.suggestion-text { font-size: 14px; color: var(--text); line-height: 1.6; margin: 0; white-space: pre-wrap; }
+
 /* ─── Profile ─── */
 .profile-header { display: flex; align-items: center; gap: 32px; background: var(--surface); border-radius: var(--radius); padding: 40px; box-shadow: var(--shadow-sm); }
 .profile-avatar { flex-shrink: 0; }

@@ -1,3 +1,88 @@
+  <% const _canSuggest = user && ['superadmin','admin','directivo','preceptor','soe'].includes(user.role); %>
+  <% if (_canSuggest) { %>
+  <button class="fab" id="fabSuggest" onclick="document.getElementById('suggestionModal').style.display='flex'" title="Enviar sugerencia">
+    <span class="material-symbols-outlined">lightbulb</span>
+  </button>
+
+  <div id="suggestionModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2000;align-items:center;justify-content:center">
+    <div style="background:var(--surface);border-radius:12px;padding:32px;width:100%;max-width:460px;margin:16px;box-shadow:0 8px 32px rgba(0,0,0,.2)">
+      <h3 style="margin:0 0 6px;font-size:18px;display:flex;align-items:center;gap:8px">
+        <span class="material-symbols-outlined" style="color:#fbbc04">lightbulb</span>
+        Enviar sugerencia
+      </h3>
+      <p style="font-size:13px;color:var(--text-secondary);margin:0 0 20px">Tu sugerencia será revisada por el equipo.</p>
+      <div id="suggestError" style="display:none;background:#fce8e6;color:#c5221f;padding:10px 14px;border-radius:8px;font-size:14px;margin-bottom:14px"></div>
+      <div id="suggestOk" style="display:none;background:#e6f4ea;color:#137333;padding:10px 14px;border-radius:8px;font-size:14px;margin-bottom:14px"></div>
+      <textarea id="suggestionText" rows="4" placeholder="Describí tu sugerencia…" maxlength="1000"
+        style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;resize:vertical;font-family:inherit;background:var(--surface);color:var(--text);box-sizing:border-box;outline:none"></textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;margin-bottom:20px">
+        <span id="suggestCount" style="font-size:12px;color:var(--text-hint)">0 / 1000</span>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn btn-outline" onclick="closeSuggestModal()">Cancelar</button>
+        <button class="btn btn-primary" id="saveSuggestBtn" onclick="submitSuggestion()">Enviar</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('suggestionText').addEventListener('input', function () {
+      document.getElementById('suggestCount').textContent = this.value.length + ' / 1000';
+    });
+
+    function closeSuggestModal() {
+      document.getElementById('suggestionModal').style.display = 'none';
+      document.getElementById('suggestionText').value = '';
+      document.getElementById('suggestCount').textContent = '0 / 1000';
+      document.getElementById('suggestError').style.display = 'none';
+      document.getElementById('suggestOk').style.display = 'none';
+    }
+
+    async function submitSuggestion() {
+      const errBox  = document.getElementById('suggestError');
+      const okBox   = document.getElementById('suggestOk');
+      const btn     = document.getElementById('saveSuggestBtn');
+      const text    = document.getElementById('suggestionText').value.trim();
+      errBox.style.display = 'none';
+      okBox.style.display  = 'none';
+
+      if (!text) {
+        errBox.textContent = 'Escribí tu sugerencia antes de enviar';
+        errBox.style.display = 'block';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="upload-spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Enviando…';
+
+      try {
+        const res  = await fetch('/suggestions', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ text }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          okBox.textContent = '¡Sugerencia enviada! Gracias.';
+          okBox.style.display = 'block';
+          document.getElementById('suggestionText').value = '';
+          document.getElementById('suggestCount').textContent = '0 / 1000';
+          setTimeout(closeSuggestModal, 1500);
+        } else {
+          errBox.textContent = data.error || 'Error al enviar';
+          errBox.style.display = 'block';
+        }
+      } catch {
+        errBox.textContent = 'Error de conexión. Intentá de nuevo.';
+        errBox.style.display = 'block';
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = 'Enviar';
+      }
+    }
+  </script>
+  <% } %>
+
   <script>
     function toggleDrawer() {
       document.getElementById('drawer').classList.toggle('open');

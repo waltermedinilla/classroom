@@ -19,6 +19,7 @@ const announcementRoutes = require('./routes/announcements');
 const activityRoutes     = require('./routes/activities');
 const adminRoutes        = require('./routes/admin');
 const superadminRoutes   = require('./routes/superadmin');
+const suggestionRoutes   = require('./routes/suggestions');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -166,7 +167,8 @@ app.use('/courses',    courseRoutes);
 app.use('/announcements', announcementRoutes);
 app.use('/activities', activityRoutes);
 app.use('/admin',      adminRoutes);
-app.use('/superadmin', superadminRoutes);
+app.use('/superadmin',  superadminRoutes);
+app.use('/suggestions', suggestionRoutes);
 
 // ── Manejador de errores global ──────────────────────────────────────────────
 // Captura cualquier error no manejado en los middlewares/rutas.

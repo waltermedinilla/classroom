@@ -1,0 +1,36 @@
+<%
+// Builds query string preserving existing params, replacing page
+function pageUrl(p) {
+  const params = new URLSearchParams(queryParams);
+  params.set('page', p);
+  return '?' + params.toString();
+}
+const delta = 2;
+const rangeStart = Math.max(2, page - delta);
+const rangeEnd   = Math.min(totalPages - 1, page + delta);
+%>
+<% if (totalPages > 1) { %>
+<div class="pagination">
+  <a href="<%= pageUrl(page - 1) %>" class="page-btn <%= page <= 1 ? 'disabled' : '' %>">
+    <span class="material-symbols-outlined">chevron_left</span>
+  </a>
+
+  <a href="<%= pageUrl(1) %>" class="page-btn <%= page === 1 ? 'active' : '' %>">1</a>
+
+  <% if (rangeStart > 2) { %><span class="page-ellipsis">…</span><% } %>
+
+  <% for (let i = rangeStart; i <= rangeEnd; i++) { %>
+    <a href="<%= pageUrl(i) %>" class="page-btn <%= page === i ? 'active' : '' %>"><%= i %></a>
+  <% } %>
+
+  <% if (rangeEnd < totalPages - 1) { %><span class="page-ellipsis">…</span><% } %>
+
+  <% if (totalPages > 1) { %>
+    <a href="<%= pageUrl(totalPages) %>" class="page-btn <%= page === totalPages ? 'active' : '' %>"><%= totalPages %></a>
+  <% } %>
+
+  <a href="<%= pageUrl(page + 1) %>" class="page-btn <%= page >= totalPages ? 'disabled' : '' %>">
+    <span class="material-symbols-outlined">chevron_right</span>
+  </a>
+</div>
+<% } %>

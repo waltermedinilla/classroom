@@ -43,7 +43,7 @@
           </div>
         </div>
       </div>
-      <div style="margin-left:auto;display:flex;flex-direction:column;gap:10px;align-items:flex-end">
+      <div style="margin-left:auto;display:flex;flex-direction:column;gap:10px;align-items:stretch;min-width:200px">
         <% const isProtected = target.email === PROTECTED_ADMIN_EMAIL || target.role === 'superadmin'; %>
         <% if (target.active === false) { %>
           <span style="display:inline-flex;align-items:center;gap:6px;background:#fce8e6;color:#ea4335;font-size:12px;font-weight:700;padding:5px 14px;border-radius:20px;letter-spacing:.3px">

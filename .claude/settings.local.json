@@ -5,7 +5,16 @@
       "Bash(Select-Object FullName)",
       "Bash(Format-Table -AutoSize)",
       "Bash(node -e \"require\\('./server.js'\\)\")",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(npm run *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/login)",
+      "Bash(mongod --version)",
+      "Bash(mongosh --version)",
+      "Bash(mongodump --version)",
+      "Bash(winget *)",
+      "PowerShell(mongod *)",
+      "PowerShell(winget install *)",
+      "PowerShell(node -e \"const {MongoClient}=require\\('mongodb'\\); const c=new MongoClient\\('mongodb://localhost:27017'\\); c.connect\\(\\).then\\(\\(\\)=>c.db\\(\\).admin\\(\\).listDatabases\\(\\)\\).then\\(r=>{console.log\\(r.databases.map\\(d=>d.name+': '+Math.round\\(d.sizeOnDisk/1024\\)+'KB'\\).join\\('\\\\n'\\)\\); c.close\\(\\)}\\)\" 2>&1)"
     ]
   }
 }

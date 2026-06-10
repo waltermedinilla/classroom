@@ -68,20 +68,31 @@ router.get('/', async (req, res) => {
 router.get('/users', async (req, res) => {
   const school = res.locals.user.school;
   const { role, search } = req.query;
+  const LIMIT = 25;
+  const page  = Math.max(1, parseInt(req.query.page) || 1);
+
   const filter = school ? { school } : {};
-  if (role) filter.role = role;
-  if (search) filter.$or = [
+  if (role)   filter.role = role;
+  if (search) filter.$or  = [
     { name:  { $regex: search, $options: 'i' } },
     { email: { $regex: search, $options: 'i' } },
   ];
-  const users = await User.find(filter).sort({ createdAt: -1 });
+
+  const [users, total] = await Promise.all([
+    User.find(filter).sort({ createdAt: -1 }).skip((page - 1) * LIMIT).limit(LIMIT),
+    User.countDocuments(filter),
+  ]);
+
   const studentIds = users.filter(u => u.role === 'student').map(u => u._id);
   const enrolledMap = {};
   if (studentIds.length) {
     const courses = await Course.find({ students: { $in: studentIds } }).select('students');
     courses.forEach(c => c.students.forEach(sid => { enrolledMap[sid.toString()] = true; }));
   }
-  res.render('admin/users', { users, enrolledMap, currentRole: role || '', search: search || '' });
+
+  const totalPages  = Math.ceil(total / LIMIT);
+  const queryParams = { ...(role && { role }), ...(search && { search }) };
+  res.render('admin/users', { users, enrolledMap, currentRole: role || '', search: search || '', page, totalPages, total, queryParams });
 });
 
 router.get('/users/create', (req, res) => {
@@ -234,20 +245,28 @@ router.get('/courses', async (req, res) => {
   const school = res.locals.user.school;
   const sf     = school ? { school } : {};
   const { division: divisionFilter, search } = req.query;
+  const LIMIT = 25;
+  const page  = Math.max(1, parseInt(req.query.page) || 1);
 
   const filter = { ...sf };
   if (divisionFilter) filter.division = divisionFilter;
   if (search) filter.name = { $regex: search, $options: 'i' };
 
-  const [courses, divisions, teachers] = await Promise.all([
+  const [courses, total, divisions, teachers] = await Promise.all([
     Course.find(filter)
       .populate('division', 'name')
       .populate('owner', 'name email')
-      .sort({ name: 1 }),
+      .sort({ name: 1 })
+      .skip((page - 1) * LIMIT)
+      .limit(LIMIT),
+    Course.countDocuments(filter),
     Division.find(sf).sort({ name: 1 }),
     User.find({ ...sf, role: { $in: ['teacher', 'admin'] } }).sort({ name: 1 }).select('_id name email'),
   ]);
-  res.render('admin/courses', { courses, divisions, teachers, search: search || '', divisionFilter: divisionFilter || '' });
+
+  const totalPages  = Math.ceil(total / LIMIT);
+  const queryParams = { ...(divisionFilter && { division: divisionFilter }), ...(search && { search }) };
+  res.render('admin/courses', { courses, divisions, teachers, search: search || '', divisionFilter: divisionFilter || '', page, totalPages, total, queryParams });
 });
 
 router.get('/courses/create', async (req, res) => {
@@ -426,18 +445,27 @@ router.get('/subjects', async (req, res) => {
   const school = res.locals.user.school;
   const sf = school ? { school } : {};
   const { search } = req.query;
+  const LIMIT = 20;
+  const page  = Math.max(1, parseInt(req.query.page) || 1);
+
   const filter = { ...sf };
   if (search) filter.name = { $regex: search, $options: 'i' };
-  const subjects = await Subject.find(filter).sort({ name: 1 });
 
-  // Cuenta materias usando Course.name (ya no existe Course.subject)
+  const [subjects, total] = await Promise.all([
+    Subject.find(filter).sort({ name: 1 }).skip((page - 1) * LIMIT).limit(LIMIT),
+    Subject.countDocuments(filter),
+  ]);
+
   const subjectsWithCount = await Promise.all(
     subjects.map(async (s) => {
       const courseCount = await Course.countDocuments({ name: s.name, ...sf });
       return { ...s.toObject(), courseCount };
     })
   );
-  res.render('admin/subjects', { subjects: subjectsWithCount, search: search || '' });
+
+  const totalPages  = Math.ceil(total / LIMIT);
+  const queryParams = { ...(search && { search }) };
+  res.render('admin/subjects', { subjects: subjectsWithCount, search: search || '', page, totalPages, total, queryParams });
 });
 
 router.get('/subjects/create', (req, res) => {

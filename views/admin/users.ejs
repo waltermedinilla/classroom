@@ -17,7 +17,7 @@
     <div class="dashboard-topbar">
       <div>
         <h2>Usuarios</h2>
-        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px"><%= users.length %> usuario(s) encontrado(s)</p>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px"><%= total %> usuario(s) encontrado(s)</p>
       </div>
       <div class="dashboard-actions">
         <a href="/admin/users/create" class="btn btn-primary">
@@ -99,6 +99,7 @@
         </table>
       <% } %>
     </div>
+    <%- include('../partials/pagination') %>
   </main>
 
   <%- include('../partials/footer') %>

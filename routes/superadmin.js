@@ -4,7 +4,8 @@ const XLSX    = require('xlsx');
 const School  = require('../models/School');
 const User    = require('../models/User');
 const Course  = require('../models/Course');
-const Subject = require('../models/Subject');
+const Subject    = require('../models/Subject');
+const Suggestion = require('../models/Suggestion');
 const { requireAuth }      = require('../middleware/auth');
 const { requireSuperAdmin } = require('../middleware/superadmin');
 
@@ -547,6 +548,42 @@ router.post('/import/execute', async (req, res) => {
     res.json({ results });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor: ' + err.message });
+  }
+});
+
+/* ─── Sugerencias ─── */
+router.get('/suggestions', async (req, res) => {
+  try {
+    const status = req.query.status || 'all';
+    const filter = status !== 'all' ? { status } : {};
+    const [suggestions, pendingCount] = await Promise.all([
+      Suggestion.find(filter)
+        .populate('user', 'name email role')
+        .populate('school', 'name color')
+        .sort({ createdAt: -1 }),
+      Suggestion.countDocuments({ status: 'pending' }),
+    ]);
+    res.render('superadmin/suggestions', { suggestions, pendingCount, status, activePage: 'suggestions' });
+  } catch {
+    res.status(500).send('Error del servidor');
+  }
+});
+
+router.post('/suggestions/:id/reviewed', async (req, res) => {
+  try {
+    await Suggestion.findByIdAndUpdate(req.params.id, { status: 'reviewed' });
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+router.delete('/suggestions/:id', async (req, res) => {
+  try {
+    await Suggestion.findByIdAndDelete(req.params.id);
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: 'Error del servidor' });
   }
 });
 

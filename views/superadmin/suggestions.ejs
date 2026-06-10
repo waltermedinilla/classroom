@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sugerencias - Superadmin</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect width='40' height='40' rx='8' fill='%231a73e8'/><text x='20' y='28' text-anchor='middle' fill='white' font-size='24' font-family='Arial' font-weight='bold'>C</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/superadmin-nav') %>
+
+    <div class="section-header" style="margin-bottom:24px">
+      <span class="material-symbols-outlined section-icon" style="color:#fbbc04">lightbulb</span>
+      <h2 style="margin:0">Sugerencias</h2>
+      <% if (pendingCount > 0) { %>
+        <span class="badge-count" style="background:#ea4335;color:#fff;font-size:12px;padding:2px 10px;border-radius:12px;font-weight:600;margin-left:8px"><%= pendingCount %> pendiente<%= pendingCount !== 1 ? 's' : '' %></span>
+      <% } %>
+    </div>
+
+    <!-- Filtros -->
+    <div style="display:flex;gap:8px;margin-bottom:24px">
+      <a href="/superadmin/suggestions?status=all"
+        class="btn <%= status === 'all' ? 'btn-primary' : 'btn-outline' %>">Todas</a>
+      <a href="/superadmin/suggestions?status=pending"
+        class="btn <%= status === 'pending' ? 'btn-primary' : 'btn-outline' %>">Pendientes</a>
+      <a href="/superadmin/suggestions?status=reviewed"
+        class="btn <%= status === 'reviewed' ? 'btn-primary' : 'btn-outline' %>">Revisadas</a>
+    </div>
+
+    <% if (suggestions.length === 0) { %>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">lightbulb</span></div>
+        <p>No hay sugerencias<%= status !== 'all' ? ' en esta categoría' : '' %>.</p>
+      </div>
+    <% } else { %>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <% suggestions.forEach(s => { %>
+          <div class="suggestion-card" id="scard-<%= s._id %>">
+            <div class="suggestion-header">
+              <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+                <div class="avatar" style="width:36px;height:36px;font-size:15px;flex-shrink:0;background:<%= s.user?.role === 'admin' ? '#ea4335' : s.user?.role === 'directivo' ? '#9334e6' : s.user?.role === 'preceptor' ? '#ea8600' : '#0d7377' %>">
+                  <%= s.user?.name?.charAt(0).toUpperCase() || '?' %>
+                </div>
+                <div style="min-width:0">
+                  <div style="font-weight:500;font-size:14px"><%= s.user?.name || 'Usuario eliminado' %></div>
+                  <div style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                    <span class="role-badge role-<%= s.user?.role %>" style="font-size:11px;padding:1px 8px"><%= roleNames[s.user?.role] || s.user?.role %></span>
+                    <% if (s.school) { %>
+                      <span style="display:flex;align-items:center;gap:4px">
+                        <span style="width:8px;height:8px;border-radius:50%;background:<%= s.school.color %>;display:inline-block"></span>
+                        <%= s.school.name %>
+                      </span>
+                    <% } %>
+                    <span><%= new Date(s.createdAt).toLocaleDateString('es-ES', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) %></span>
+                  </div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                <% if (s.status === 'pending') { %>
+                  <span style="background:#fff3e0;color:#ea8600;font-size:11px;padding:3px 10px;border-radius:12px;font-weight:600">PENDIENTE</span>
+                  <button class="btn btn-outline" style="font-size:12px;padding:4px 12px" onclick="markReviewed('<%= s._id %>')">
+                    <span class="material-symbols-outlined" style="font-size:15px">check_circle</span>
+                    Marcar revisada
+                  </button>
+                <% } else { %>
+                  <span style="background:#e6f4ea;color:#137333;font-size:11px;padding:3px 10px;border-radius:12px;font-weight:600">REVISADA</span>
+                <% } %>
+                <button class="icon-btn" title="Eliminar" onclick="deleteSuggestion('<%= s._id %>')">
+                  <span class="material-symbols-outlined" style="font-size:18px;color:var(--text-hint)">delete</span>
+                </button>
+              </div>
+            </div>
+            <p class="suggestion-text"><%= s.text %></p>
+          </div>
+        <% }) %>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+  <script>
+    async function markReviewed(id) {
+      const res = await fetch(`/superadmin/suggestions/${id}/reviewed`, { method: 'POST' });
+      if (res.ok) {
+        const card = document.getElementById('scard-' + id);
+        card.querySelector('.btn.btn-outline').remove();
+        card.querySelector('[style*="PENDIENTE"]').outerHTML =
+          '<span style="background:#e6f4ea;color:#137333;font-size:11px;padding:3px 10px;border-radius:12px;font-weight:600">REVISADA</span>';
+      }
+    }
+
+    async function deleteSuggestion(id) {
+      if (!confirm('¿Eliminar esta sugerencia?')) return;
+      const res = await fetch(`/superadmin/suggestions/${id}`, { method: 'DELETE' });
+      if (res.ok) document.getElementById('scard-' + id).remove();
+    }
+  </script>
+</body>
+</html>
