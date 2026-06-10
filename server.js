@@ -126,7 +126,7 @@ app.use('*', async (req, res, next) => {
   try {
     const schoolId = res.locals.user?.school;
     res.locals.school = schoolId
-      ? await School.findById(schoolId).select('name color slug _id')
+      ? await School.findById(schoolId).select('name color slug _id theme')
       : null;
   } catch {
     res.locals.school = null;
