@@ -75,7 +75,7 @@
         </div>
         <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:24px">
           <button class="btn btn-outline" onclick="closePwdModal()">Cancelar</button>
-          <button class="btn btn-primary" onclick="submitChangePwd()">Guardar</button>
+          <button class="btn btn-primary" id="savePwdBtn" onclick="submitChangePwd()">Guardar</button>
         </div>
       </div>
     </div>
@@ -276,8 +276,9 @@
     }
 
     async function submitChangePwd() {
-      const errBox = document.getElementById('changePwdError');
-      const okBox  = document.getElementById('changePwdOk');
+      const errBox  = document.getElementById('changePwdError');
+      const okBox   = document.getElementById('changePwdOk');
+      const saveBtn = document.getElementById('savePwdBtn');
       errBox.style.display = 'none';
       okBox.style.display  = 'none';
 
@@ -291,23 +292,34 @@
         return;
       }
 
-      const res  = await fetch('/courses/profile/change-password', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ currentPassword, newPassword }),
-      });
-      const data = await res.json();
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<span class="upload-spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Guardando…';
 
-      if (res.ok) {
-        okBox.textContent = 'Contraseña actualizada correctamente';
-        okBox.style.display = 'block';
-        document.getElementById('currentPwd').value = '';
-        document.getElementById('newPwd').value = '';
-        document.getElementById('confirmPwd').value = '';
-        setTimeout(closePwdModal, 1500);
-      } else {
-        errBox.textContent = data.error || 'Error al cambiar la contraseña';
+      try {
+        const res  = await fetch('/courses/profile/change-password', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ currentPassword, newPassword }),
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          okBox.textContent = 'Contraseña actualizada correctamente';
+          okBox.style.display = 'block';
+          document.getElementById('currentPwd').value = '';
+          document.getElementById('newPwd').value = '';
+          document.getElementById('confirmPwd').value = '';
+          setTimeout(closePwdModal, 1500);
+        } else {
+          errBox.textContent = data.error || 'Error al cambiar la contraseña';
+          errBox.style.display = 'block';
+        }
+      } catch (e) {
+        errBox.textContent = 'Error de conexión. Intentá de nuevo.';
         errBox.style.display = 'block';
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = 'Guardar';
       }
     }
   </script>
