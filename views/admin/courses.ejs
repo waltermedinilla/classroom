@@ -81,7 +81,16 @@
                 <% } %>
               </td>
               <td>
-                <a href="/admin/users/<%= c.owner._id %>" style="color:var(--primary)"><%= c.owner.name %></a>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <a href="/admin/users/<%= c.owner._id %>" style="color:var(--primary)" id="teacher-name-<%= c._id %>"><%= c.owner.name %></a>
+                  <button class="btn-assign-teacher" title="Cambiar docente"
+                    data-course-id="<%= c._id %>"
+                    data-teacher-id="<%= c.owner._id %>"
+                    data-course-name="<%- c.name.replace(/"/g, '&quot;') %>"
+                    style="background:none;border:none;cursor:pointer;padding:2px;color:var(--text-secondary);line-height:1;display:flex;align-items:center">
+                    <span class="material-symbols-outlined" style="font-size:15px">edit</span>
+                  </button>
+                </div>
               </td>
               <td><%= c.students.length %></td>
               <td><code style="background:#f0f4f8;padding:2px 8px;border-radius:4px;font-size:12px;letter-spacing:1px"><%= c.code %></code></td>
@@ -108,6 +117,41 @@
   </main>
 
   <%- include('../partials/footer') %>
+  <!-- Modal: asignar docente -->
+  <div id="assignModalBackdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center">
+    <div style="background:var(--surface);border-radius:var(--radius);width:100%;max-width:420px;box-shadow:0 8px 32px rgba(0,0,0,.2);margin:16px">
+      <div style="background:var(--primary);color:#fff;padding:16px 20px;border-radius:var(--radius) var(--radius) 0 0;display:flex;align-items:center;gap:10px">
+        <span class="material-symbols-outlined">badge</span>
+        <div>
+          <div style="font-weight:700;font-size:15px">Asignar docente</div>
+          <div id="assignModalSubtitle" style="font-size:12px;opacity:.85;margin-top:2px"></div>
+        </div>
+        <button onclick="closeAssignModal()" style="margin-left:auto;background:rgba(255,255,255,.2);border:none;color:#fff;border-radius:50%;width:28px;height:28px;cursor:pointer;display:flex;align-items:center;justify-content:center">
+          <span class="material-symbols-outlined" style="font-size:16px">close</span>
+        </button>
+      </div>
+      <div style="padding:20px">
+        <label style="display:block;font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:8px">Docente</label>
+        <div class="input-group" style="margin-bottom:4px">
+          <span class="material-symbols-outlined input-icon">person</span>
+          <select id="assignTeacherSelect" style="flex:1;border:none;background:transparent;font-size:14px;color:var(--text-primary);outline:none;padding:0">
+            <% teachers.forEach(t => { %>
+              <option value="<%= t._id %>"><%= t.name %></option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="form-error" id="assignError" style="margin-top:10px"></div>
+        <div style="display:flex;gap:10px;margin-top:20px">
+          <button class="btn btn-outline" onclick="closeAssignModal()" style="flex:1">Cancelar</button>
+          <button class="btn btn-primary" id="assignSaveBtn" onclick="saveAssign()" style="flex:1">
+            <span class="material-symbols-outlined">check</span>
+            Guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     async function deleteCourse(id, name) {
       if (!confirm(`¿Eliminar la materia "${name}"? Se perderán las actividades y novedades asociadas.`)) return;
@@ -116,6 +160,71 @@
       if (res.ok) location.reload();
       else alert(data.error || 'Error al eliminar');
     }
+
+    let _assignCourseId = null;
+
+    document.addEventListener('click', function(e) {
+      const btn = e.target.closest('.btn-assign-teacher');
+      if (!btn) return;
+      openAssignModal(btn.dataset.courseId, btn.dataset.teacherId, btn.dataset.courseName);
+    });
+
+    function openAssignModal(courseId, currentTeacherId, courseName) {
+      _assignCourseId = courseId;
+      document.getElementById('assignModalSubtitle').textContent = courseName;
+      document.getElementById('assignTeacherSelect').value = currentTeacherId;
+      document.getElementById('assignError').classList.remove('show');
+      document.getElementById('assignError').textContent = '';
+      document.getElementById('assignModalBackdrop').style.display = 'flex';
+    }
+
+    function closeAssignModal() {
+      document.getElementById('assignModalBackdrop').style.display = 'none';
+      _assignCourseId = null;
+    }
+
+    document.getElementById('assignModalBackdrop').addEventListener('click', function(e) {
+      if (e.target === this) closeAssignModal();
+    });
+
+    async function saveAssign() {
+      const teacherId = document.getElementById('assignTeacherSelect').value;
+      const errorEl   = document.getElementById('assignError');
+      const btn       = document.getElementById('assignSaveBtn');
+      errorEl.classList.remove('show');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined" style="animation:spin 1s linear infinite;font-size:18px">progress_activity</span>';
+
+      try {
+        const res  = await fetch(`/admin/courses/${_assignCourseId}/assign-teacher`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ teacherId }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errorEl.textContent = data.error || 'Error al guardar';
+          errorEl.classList.add('show');
+          return;
+        }
+        // Actualiza el nombre del docente en la tabla sin recargar
+        const nameEl = document.getElementById('teacher-name-' + _assignCourseId);
+        if (nameEl) {
+          nameEl.textContent = data.teacherName;
+          nameEl.href = '/admin/users/' + data.teacherId;
+        }
+        closeAssignModal();
+      } catch {
+        errorEl.textContent = 'Error de conexión.';
+        errorEl.classList.add('show');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="material-symbols-outlined">check</span> Guardar';
+      }
+    }
   </script>
+  <style>
+    @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+  </style>
 </body>
 </html>

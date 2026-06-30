@@ -348,6 +348,26 @@ router.post('/courses/:id/edit', async (req, res) => {
   }
 });
 
+router.post('/courses/:id/assign-teacher', async (req, res) => {
+  try {
+    const school = res.locals.user.school;
+    const course = await Course.findById(req.params.id);
+    if (!course) return res.status(404).json({ error: 'Materia no encontrada' });
+    if (school && course.school?.toString() !== school.toString()) {
+      return res.status(403).json({ error: 'Sin acceso' });
+    }
+    const { teacherId } = req.body;
+    if (!teacherId) return res.status(400).json({ error: 'Falta el docente' });
+    const teacher = await User.findOne({ _id: teacherId, school: school || course.school });
+    if (!teacher) return res.status(400).json({ error: 'Docente no válido' });
+    course.owner = teacher._id;
+    await course.save({ validateModifiedOnly: true });
+    res.json({ teacherName: teacher.name, teacherId: teacher._id });
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 router.post('/courses/:id/delete', async (req, res) => {
   try {
     const school = res.locals.user.school;
