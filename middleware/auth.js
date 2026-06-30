@@ -43,6 +43,15 @@ const checkUser = async (req, res, next) => {
     // Busca el usuario en la BD; excluye el campo password por seguridad
     res.locals.user = await User.findById(decoded.userId).select('-password');
 
+    // Actualiza lastSeen como máximo cada 5 minutos (fire-and-forget, no bloquea la respuesta)
+    if (res.locals.user) {
+      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
+      User.updateOne(
+        { _id: decoded.userId, $or: [{ lastSeen: { $lt: fiveMinAgo } }, { lastSeen: null }] },
+        { $set: { lastSeen: new Date() } }
+      ).catch(() => {});
+    }
+
     // Si la cuenta está deshabilitada: borra ambas cookies y marca req.userDisabled
     // requireAuth revisa este flag antes de verificar el JWT
     if (res.locals.user && res.locals.user.active === false) {

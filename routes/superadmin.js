@@ -1,6 +1,7 @@
 const express = require('express');
 const multer  = require('multer');
 const XLSX    = require('xlsx');
+const os      = require('os');
 const School  = require('../models/School');
 const User    = require('../models/User');
 const Course  = require('../models/Course');
@@ -638,6 +639,58 @@ function buildConfig(slug, rawConfig = {}) {
   });
   return cfg;
 }
+
+/* ─── Monitor del sistema ─── */
+router.get('/monitor', (req, res) => {
+  res.render('superadmin/monitor', { activePage: 'monitor' });
+});
+
+router.get('/monitor/stats', async (req, res) => {
+  try {
+    const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000);
+    const [activeUsers, totalUsers, totalSchools] = await Promise.all([
+      User.countDocuments({ lastSeen: { $gte: fifteenMinAgo } }),
+      User.countDocuments(),
+      School.countDocuments(),
+    ]);
+
+    const totalMem = os.totalmem();
+    const freeMem  = os.freemem();
+    const heap     = process.memoryUsage();
+    const loadavg  = os.loadavg();
+    const cpuCount = os.cpus().length;
+
+    res.json({
+      users:   { active: activeUsers, total: totalUsers },
+      schools: totalSchools,
+      memory: {
+        used:    Math.round((totalMem - freeMem) / 1024 / 1024),
+        total:   Math.round(totalMem / 1024 / 1024),
+        free:    Math.round(freeMem / 1024 / 1024),
+        percent: Math.round((totalMem - freeMem) / totalMem * 100),
+      },
+      heap: {
+        used:  Math.round(heap.heapUsed / 1024 / 1024),
+        total: Math.round(heap.heapTotal / 1024 / 1024),
+        rss:   Math.round(heap.rss / 1024 / 1024),
+      },
+      load: {
+        avg1:    Math.round(loadavg[0] * 100) / 100,
+        avg5:    Math.round(loadavg[1] * 100) / 100,
+        avg15:   Math.round(loadavg[2] * 100) / 100,
+        cpus:    cpuCount,
+        percent: Math.min(100, Math.round((loadavg[0] / cpuCount) * 100)),
+      },
+      uptime: {
+        process: Math.round(process.uptime()),
+        system:  Math.round(os.uptime()),
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 /* ─── Sugerencias ─── */
 router.get('/suggestions', async (req, res) => {

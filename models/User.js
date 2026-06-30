@@ -46,6 +46,10 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null,      // URL pública del avatar; null = usar inicial del nombre
   },
+  lastSeen: {
+    type: Date,
+    default: null,
+  },
 }, { timestamps: true }); // Agrega createdAt y updatedAt automáticamente
 
 // Índice único compuesto school+dni: evita DNI duplicados dentro de la misma escuela
