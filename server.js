@@ -108,7 +108,7 @@ app.post('/deploy', express.raw({ type: 'application/json' }), (req, res) => {
 
   res.status(200).json({ message: 'Deploy iniciado' });
 
-  exec('git -C /home/walter/classroom pull && /usr/local/bin/pm2 reload classroom', (err, stdout, stderr) => {
+  exec('git -C /home/walter/classroom pull && /usr/local/bin/pm2 restart classroom --update-env', (err, stdout, stderr) => {
     if (err) logger.error('Deploy fallido', { error: err.message, stderr });
     else     logger.info('Deploy exitoso', { stdout: stdout.trim() });
   });
