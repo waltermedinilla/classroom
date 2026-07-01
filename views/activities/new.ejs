@@ -143,12 +143,26 @@
     </aside>
   </div>
 
+  <!-- Modal de error de adjunto -->
+  <div id="uploadErrModal" class="upl-modal-overlay" style="display:none" onclick="if(event.target===this)closeUploadErrModal()">
+    <div class="upl-modal">
+      <div class="upl-modal-icon">
+        <span class="material-symbols-outlined">error</span>
+      </div>
+      <p class="upl-modal-title" id="uplModalTitle"></p>
+      <p class="upl-modal-msg"   id="uplModalMsg"></p>
+      <button class="btn btn-primary" onclick="closeUploadErrModal()">Entendido</button>
+    </div>
+  </div>
+
   <script>
     const COURSE_ID = '<%= course._id %>';
     const EXT_COLOR = { PDF: '#ea4335', DOC: '#1a73e8', DOCX: '#1a73e8', XLS: '#34a853', XLSX: '#34a853' };
 
-    let actFiles = [];
+    // { uid: { url, name, mime } } — solo archivos ya subidos al servidor
+    const actUploadedFiles = {};
     let actLinks = [];
+    let pendingUploads = 0;
 
     /* ─── Rich text ─── */
     function fmt(cmd) {
@@ -156,15 +170,144 @@
       document.execCommand(cmd, false, null);
     }
 
-    /* ─── Adjuntos: archivos ─── */
-    document.getElementById('fileInput').addEventListener('change', function () {
-      Array.from(this.files).forEach(f => actFiles.push(f));
-      this.value = '';
-      renderPreviews();
+    /* ─── Botón crear: refleja si hay subidas en curso ─── */
+    function syncCreateBtn() {
+      const btn = document.getElementById('createBtn');
+      if (pendingUploads > 0) {
+        btn.disabled = true;
+        btn.textContent = pendingUploads === 1 ? 'Subiendo archivo...' : `Subiendo ${pendingUploads} archivos...`;
+      } else {
+        btn.disabled = false;
+        btn.textContent = 'Crear tarea';
+      }
+    }
+
+    /* ─── Modal de error ─── */
+    function showUploadErrModal(title, msg) {
+      document.getElementById('uplModalTitle').textContent = title;
+      document.getElementById('uplModalMsg').textContent   = msg;
+      document.getElementById('uploadErrModal').style.display = 'flex';
+    }
+    function closeUploadErrModal() {
+      document.getElementById('uploadErrModal').style.display = 'none';
+    }
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeUploadErrModal();
     });
 
-    function removeFile(i) { actFiles.splice(i, 1); renderPreviews(); }
-    function removeLink(i) { actLinks.splice(i, 1); renderPreviews(); }
+    /* ─── Adjuntos: archivos — sube de inmediato al seleccionar ─── */
+    const ALLOWED_EXTS   = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
+    const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
+
+    document.getElementById('fileInput').addEventListener('change', function () {
+      Array.from(this.files).forEach(uploadFile);
+      this.value = '';
+    });
+
+    function uploadFile(file) {
+      // Validación cliente: tipo de archivo
+      const extRaw = file.name.split('.').pop().toLowerCase();
+      if (!ALLOWED_EXTS.includes(extRaw)) {
+        showUploadErrModal(
+          'Tipo de archivo no permitido',
+          `"${file.name}" no es un formato aceptado.\nPodés subir archivos PDF, Word (.doc, .docx) o Excel (.xls, .xlsx).`
+        );
+        return;
+      }
+      // Validación cliente: tamaño
+      if (file.size > MAX_SIZE_BYTES) {
+        const mb = (file.size / 1024 / 1024).toFixed(1);
+        showUploadErrModal(
+          'Archivo demasiado grande',
+          `"${file.name}" pesa ${mb} MB. El máximo permitido es 50 MB.`
+        );
+        return;
+      }
+
+      const uid   = Date.now() + '-' + Math.random().toString(36).slice(2);
+      const ext   = extRaw.toUpperCase();
+      const color = EXT_COLOR[ext] || '#5f6368';
+
+      // Agrega la tarjeta con barra de progreso
+      const grid = document.getElementById('attPreviews');
+      const card = document.createElement('div');
+      card.className = 'att-preview-card';
+      card.id = 'ucard-' + uid;
+      card.innerHTML = `
+        <div class="att-preview-thumb" style="background:${color}">
+          <span class="att-preview-ext">${ext}</span>
+        </div>
+        <div class="att-upload-progress-wrap">
+          <div class="att-upload-bar" style="width:0%"></div>
+        </div>
+        <div class="att-upload-status">0%</div>`;
+      grid.appendChild(card);
+
+      pendingUploads++;
+      syncCreateBtn();
+
+      const fd = new FormData();
+      fd.append('file', file);
+
+      const xhr = new XMLHttpRequest();
+
+      xhr.upload.onprogress = (e) => {
+        if (!e.lengthComputable) return;
+        const pct = Math.round((e.loaded / e.total) * 100);
+        const c = document.getElementById('ucard-' + uid);
+        if (!c) return;
+        c.querySelector('.att-upload-bar').style.width = pct + '%';
+        c.querySelector('.att-upload-status').textContent = pct < 100 ? pct + '%' : 'Procesando...';
+      };
+
+      xhr.onload = () => {
+        pendingUploads--;
+        const c = document.getElementById('ucard-' + uid);
+        if (!c) { syncCreateBtn(); return; }
+
+        let data = null;
+        try { data = JSON.parse(xhr.responseText); } catch {}
+
+        if ((xhr.status === 200 || xhr.status === 201) && data?.url) {
+          actUploadedFiles[uid] = { url: data.url, name: data.name, mime: data.mime };
+          c.innerHTML = `
+            <div class="att-preview-thumb" style="background:${color}">
+              <span class="att-preview-ext">${ext}</span>
+            </div>
+            <div class="att-preview-name" title="${escHtml(file.name)}">${escHtml(file.name)}</div>
+            <button class="att-preview-remove" onclick="removeUploadedFile('${uid}')" title="Quitar">
+              <span class="material-symbols-outlined">close</span>
+            </button>`;
+        } else {
+          if (c) c.remove();
+          const msg = data?.error || `Error inesperado (${xhr.status})`;
+          showUploadErrModal('No se pudo subir el archivo', msg);
+        }
+        syncCreateBtn();
+      };
+
+      xhr.onerror = () => {
+        pendingUploads--;
+        const c = document.getElementById('ucard-' + uid);
+        if (c) c.remove();
+        showUploadErrModal('Error de conexión', 'No se pudo conectar con el servidor. Verificá tu conexión e intentá de nuevo.');
+        syncCreateBtn();
+      };
+
+      xhr.open('POST', '/activities/upload-attachment?courseId=' + encodeURIComponent(COURSE_ID));
+      xhr.setRequestHeader('Accept', 'application/json');
+      xhr.send(fd);
+    }
+
+    function removeUploadedFile(uid) {
+      delete actUploadedFiles[uid];
+      const c = document.getElementById('ucard-' + uid);
+      if (c) c.remove();
+    }
+
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
 
     /* ─── Adjuntos: enlace ─── */
     function openLinkDialog() {
@@ -187,42 +330,27 @@
       try { domain = new URL(url).hostname; } catch {}
       actLinks.push({ name: domain, url });
       closeLinkDialog();
-      renderPreviews();
+      renderLinks();
     }
+    function removeLink(i) { actLinks.splice(i, 1); renderLinks(); }
 
-    /* ─── Previsualización ─── */
-    function renderPreviews() {
+    function renderLinks() {
+      // Solo re-renderiza los chips de links; las tarjetas de archivo las maneja el DOM directamente
+      const existing = document.querySelectorAll('.att-link-card');
+      existing.forEach(el => el.remove());
       const grid = document.getElementById('attPreviews');
-      grid.innerHTML = '';
-
-      actFiles.forEach((f, i) => {
-        const ext = f.name.split('.').pop().toUpperCase();
-        const color = EXT_COLOR[ext] || '#5f6368';
-        const card = document.createElement('div');
-        card.className = 'att-preview-card';
-        card.innerHTML = `
-          <div class="att-preview-thumb" style="background:${color}">
-            <span class="att-preview-ext">${ext}</span>
-          </div>
-          <div class="att-preview-name" title="${f.name}">${f.name}</div>
-          <button class="att-preview-remove" onclick="removeFile(${i})">
-            <span class="material-symbols-outlined">close</span>
-          </button>`;
-        grid.appendChild(card);
-      });
-
       actLinks.forEach((l, i) => {
         const domain = l.name || l.url;
         const card = document.createElement('div');
-        card.className = 'att-preview-card';
+        card.className = 'att-preview-card att-link-card';
         card.innerHTML = `
           <div class="att-preview-thumb link-thumb">
-            <img src="https://www.google.com/s2/favicons?domain=${domain}&sz=64" width="36" height="36"
+            <img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64" width="36" height="36"
               style="border-radius:6px"
               onerror="this.outerHTML='<span class=\\'material-symbols-outlined\\' style=\\'font-size:36px;color:var(--primary)\\'>language</span>'">
           </div>
-          <div class="att-preview-name" title="${l.url}">${domain}</div>
-          <button class="att-preview-remove" onclick="removeLink(${i})">
+          <div class="att-preview-name" title="${escHtml(l.url)}">${escHtml(domain)}</div>
+          <button class="att-preview-remove" onclick="removeLink(${i})" title="Quitar">
             <span class="material-symbols-outlined">close</span>
           </button>`;
         grid.appendChild(card);
@@ -240,6 +368,11 @@
         document.getElementById('actTitle').focus();
         return;
       }
+      if (pendingUploads > 0) {
+        errEl.textContent = 'Esperá a que terminen de subirse los archivos';
+        errEl.style.display = 'block';
+        return;
+      }
       errEl.style.display = 'none';
 
       const btn = document.getElementById('createBtn');
@@ -253,7 +386,7 @@
       fd.append('points', document.getElementById('sPoints').value || '');
       fd.append('dueDate', document.getElementById('sDueDate').value || '');
       fd.append('availableFrom', document.getElementById('sAvailableFrom').value || '');
-      actFiles.forEach(f => fd.append('files', f));
+      fd.append('uploadedFiles', JSON.stringify(Object.values(actUploadedFiles)));
       fd.append('links', JSON.stringify(actLinks));
 
       const res = await fetch('/activities/create', { method: 'POST', body: fd });

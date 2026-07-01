@@ -43,7 +43,7 @@ const upload = multer({
     },
     filename: (req, file, cb) => cb(null, uniqueFilename(file.originalname)),
   }),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB por archivo
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB por archivo
   fileFilter: (req, file, cb) => {
     cb(null, EXT_ALLOWED.includes(path.extname(file.originalname).toLowerCase()));
   },
@@ -154,7 +154,14 @@ router.post('/create', requireAuth, upload.array('files', 10), async (req, res) 
     const schoolId    = res.locals.user.school?.toString() || 'general';
     const attachments = [];
 
-    // Construye los adjuntos de tipo 'file' con la URL pública relativa
+    // Archivos pre-subidos vía /upload-attachment (URL ya guardada en disco)
+    if (req.body.uploadedFiles) {
+      JSON.parse(req.body.uploadedFiles).forEach(f => {
+        if (f.url) attachments.push({ type: 'file', name: f.name, url: f.url, mime: f.mime || '' });
+      });
+    }
+
+    // Archivos enviados directamente en el FormData (compatibilidad)
     (req.files || []).forEach(f => {
       attachments.push({
         type: 'file',
@@ -187,6 +194,62 @@ router.post('/create', requireAuth, upload.array('files', 10), async (req, res) 
     res.status(201).json({ activity });
   } catch (e) {
     res.status(400).json({ error: e.message || 'Error al crear actividad' });
+  }
+});
+
+// Multer exclusivo para pre-subida: lee courseId desde req.query para evitar problemas
+// de timing con el stream multipart (los text fields del body llegan junto con el archivo)
+const uploadSingle = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const schoolId = req.res?.locals?.user?.school?.toString() || 'general';
+      const courseId = req.query.courseId || 'general';
+      const dir = path.join(ARCHIVOS_BASE, schoolId, 'actividades', courseId);
+      fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => cb(null, uniqueFilename(file.originalname)),
+  }),
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB para PDFs escolares grandes
+  fileFilter: (req, file, cb) => {
+    cb(null, EXT_ALLOWED.includes(path.extname(file.originalname).toLowerCase()));
+  },
+});
+
+// POST /activities/upload-attachment?courseId=...
+// Pre-sube un adjunto antes de crear la actividad; courseId viene en la query string.
+// Body multipart: { file }
+// Retorna: { url, name, mime }
+router.post('/upload-attachment', requireAuth, (req, res, next) => {
+  // Intercepta errores de multer para devolver JSON en español en lugar del mensaje en inglés
+  uploadSingle.single('file')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'El archivo es demasiado grande (máximo 50 MB)' });
+      }
+      return res.status(400).json({ error: err.message || 'Error al procesar el archivo' });
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Tipo de archivo no permitido (PDF, Word, Excel)' });
+    const courseId = req.query.courseId;
+    const course = await Course.findById(courseId);
+    if (!course) {
+      fs.unlinkSync(req.file.path);
+      return res.status(404).json({ error: 'Curso no encontrado' });
+    }
+    if (course.owner.toString() !== res.locals.user._id.toString()) {
+      fs.unlinkSync(req.file.path);
+      return res.status(403).json({ error: 'Sin acceso al curso' });
+    }
+    const schoolId = res.locals.user.school?.toString() || 'general';
+    const url = `/archivos/${schoolId}/actividades/${courseId}/${req.file.filename}`;
+    res.json({ url, name: req.file.originalname, mime: req.file.mimetype });
+  } catch (err) {
+    if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }
+    res.status(500).json({ error: err.message || 'Error al subir el archivo' });
   }
 });
 

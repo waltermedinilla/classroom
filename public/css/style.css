@@ -656,6 +656,47 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
 .att-preview-remove .material-symbols-outlined { font-size: 14px; }
 .att-preview-remove:hover { background: rgba(0,0,0,0.7); }
 
+/* Modal de error de subida de archivos */
+.upl-modal-overlay {
+  position: fixed; inset: 0; z-index: 9000;
+  background: rgba(0,0,0,0.45);
+  display: flex; align-items: center; justify-content: center;
+  animation: fadeIn .15s ease;
+}
+.upl-modal {
+  background: var(--surface); border-radius: var(--radius);
+  padding: 36px 28px 28px; max-width: 400px; width: 90%;
+  text-align: center; box-shadow: 0 12px 40px rgba(0,0,0,0.22);
+}
+.upl-modal-icon .material-symbols-outlined {
+  font-size: 52px; color: #d93025;
+}
+.upl-modal-title {
+  font-size: 17px; font-weight: 600; color: var(--text);
+  margin: 14px 0 8px;
+}
+.upl-modal-msg {
+  font-size: 14px; color: var(--text-secondary);
+  line-height: 1.6; margin-bottom: 24px;
+  white-space: pre-line;
+}
+
+/* Barra de progreso de subida */
+.att-upload-progress-wrap {
+  height: 4px; background: var(--border); overflow: hidden;
+}
+.att-upload-bar {
+  height: 100%; background: var(--primary, #1a73e8);
+  transition: width 0.2s ease;
+}
+.att-upload-status {
+  padding: 4px 8px; font-size: 10px; color: var(--text-hint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-top: 1px solid var(--border); text-align: center;
+}
+.att-preview-card.att-error .att-preview-thumb { background: #d93025 !important; }
+.att-preview-card.att-error .att-upload-status { color: #d93025; }
+
 /* ─── Attachments — Lista en detalle y cards ─── */
 .att-list { display: flex; flex-direction: column; gap: 6px; }
 .att-item {
