@@ -125,19 +125,19 @@
       </div>
 
       <div class="sidebar-card">
+        <div class="sidebar-label">Disponible desde</div>
+        <div class="sidebar-input-wrap">
+          <input type="datetime-local" id="sAvailableFrom" class="sidebar-input">
+        </div>
+        <div class="sidebar-hint">Por defecto: ahora mismo</div>
+      </div>
+
+      <div class="sidebar-card">
         <div class="sidebar-label">Fecha de entrega</div>
         <div class="sidebar-input-wrap">
           <input type="datetime-local" id="sDueDate" class="sidebar-input">
         </div>
         <div class="sidebar-hint">Vacío = sin fecha límite</div>
-      </div>
-
-      <div class="sidebar-card">
-        <div class="sidebar-label">Disponible desde</div>
-        <div class="sidebar-input-wrap">
-          <input type="datetime-local" id="sAvailableFrom" class="sidebar-input">
-        </div>
-        <div class="sidebar-hint">Vacío = publicación inmediata</div>
       </div>
 
     </aside>
@@ -158,6 +158,20 @@
   <script>
     const COURSE_ID = '<%= course._id %>';
     const EXT_COLOR = { PDF: '#ea4335', DOC: '#1a73e8', DOCX: '#1a73e8', XLS: '#34a853', XLSX: '#34a853' };
+
+    // Precarga "Disponible desde" con ahora y "Fecha de entrega" con una semana después
+    (function () {
+      const toLocal = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+        .toISOString().slice(0, 16);
+
+      const now = new Date();
+      now.setSeconds(0, 0);
+      document.getElementById('sAvailableFrom').value = toLocal(now);
+
+      const nextWeek = new Date(now);
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      document.getElementById('sDueDate').value = toLocal(nextWeek);
+    })();
 
     // { uid: { url, name, mime } } — solo archivos ya subidos al servidor
     const actUploadedFiles = {};
