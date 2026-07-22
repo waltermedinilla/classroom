@@ -17,4 +17,8 @@ module.exports = {
   schoolCache,
   invalidateUser:   (id) => id && userCache.delete(id.toString()),
   invalidateSchool: (id) => id && schoolCache.delete(id.toString()),
+  // Después de restaurar un backup completo, los _id cacheados pueden ya no existir
+  // (o corresponder a datos completamente distintos) en la BD reemplazada. Solo limpia
+  // el worker que atendió la restauración — mismo caveat de siempre en cluster.
+  invalidateAll: () => { userCache.clear(); schoolCache.clear(); },
 };

@@ -499,6 +499,101 @@ const specs = [
       await client.get('superadmin', '/superadmin/suggestions?page=999', { expectStatus: 200 });
     },
   },
+
+  // ── Backup / Restore ──────────────────────────────────────────────────────
+  // No hay spec de /restore acá a propósito: aunque restaurar el mismo backup recién
+  // generado es seguro (se verificó manualmente — conteos y _id idénticos antes/después),
+  // cada corrida generaría un backup de seguridad de ~20 MB en disco (backups/) sin
+  // límite de retención. Se prueba manualmente antes de cada release, no en cada smoke run.
+  {
+    id: 'backup-access-denied-for-regular-admin',
+    title: 'Un admin de escuela (no waltermedinilla) NO puede acceder al backup (403)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      // Cubre la capa requireSuperAdmin (rol). La capa extra de email específico
+      // (requireBackupAccess) se verifica manualmente antes de cada release — crear un
+      // superadmin de prueba desechable para este check no vale el riesgo de dejarlo
+      // huérfano (no existe DELETE /superadmin/users/:id).
+      await client.get('admin', '/superadmin/backup', { expectStatus: [403, 302] });
+      await client.get('admin', '/superadmin/backup/download', { expectStatus: [403, 302] });
+    },
+  },
+  {
+    id: 'backup-stats',
+    title: 'El endpoint de stats devuelve contadores de todas las colecciones',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('superadmin', '/superadmin/backup/stats', { expectStatus: 200 });
+      const expected = ['schools', 'users', 'courses', 'activities', 'submissions', 'announcements', 'suggestions', 'divisions', 'subjects'];
+      expected.forEach(name => assert(typeof res.json.collections[name] === 'number', `falta el contador de ${name}`));
+      assert(typeof res.json.files.archivos.sizeBytes === 'number', 'falta el tamaño de archivos/');
+    },
+  },
+  {
+    id: 'backup-download-produces-valid-tarball',
+    title: 'La descarga de backup genera un .tar.gz con Content-Disposition correcto',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('superadmin', '/superadmin/backup/download', { expectStatus: 200 });
+      const disposition = res.headers.get('content-disposition') || '';
+      assert(/classroom-backup-.*\.tar\.gz/.test(disposition), `Content-Disposition inesperado: ${disposition}`);
+      assert(res.byteLength > 1000, `el archivo descargado parece demasiado chico (${res.byteLength} bytes)`);
+    },
+  },
+  {
+    id: 'backup-preview-rejects-invalid-file',
+    title: 'El preview de restore rechaza un archivo que no es un backup válido (400)',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client }) {
+      const fd = new FormData();
+      fd.append('file', new Blob(['esto no es un tar.gz'], { type: 'application/gzip' }), 'fake.tar.gz');
+      await client.post('superadmin', '/superadmin/backup/preview', { form: fd, expectStatus: 400 });
+    },
+  },
+
+  // ── Modo mantenimiento ────────────────────────────────────────────────────
+  {
+    id: 'maintenance-access-denied-for-regular-admin',
+    title: 'Un admin de escuela NO puede activar/consultar mantenimiento (403)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      await client.get('admin', '/superadmin/backup/maintenance-status', { expectStatus: 403 });
+      await client.post('admin', '/superadmin/backup/maintenance/on', { body: {}, expectStatus: 403 });
+    },
+  },
+  {
+    id: 'maintenance-toggle-blocks-and-restores',
+    title: 'Activar mantenimiento bloquea a otros usuarios; el dueño tiene bypass; desactivar restaura el acceso',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // try/finally: SIEMPRE desactiva el mantenimiento al salir, incluso si un assert
+      // falla a mitad de camino — sino los specs de limpieza que corren después (que usan
+      // el actor 'admin') quedarían bloqueados por el 503 y el ambiente de test roto.
+      try {
+        await client.post('superadmin', '/superadmin/backup/maintenance/on', {
+          body: { message: 'Smoke test de mantenimiento', eta: '1 minuto' },
+          expectStatus: 200,
+        });
+
+        const blocked = await client.get('scopedTeacher', '/courses', { expectStatus: 503 });
+        assert(blocked.text.includes('Estamos en mantenimiento'), 'debería mostrar la página de mantenimiento');
+
+        const blockedJson = await client.get('admin', '/courses', {
+          headers: { Accept: 'application/json' }, expectStatus: 503,
+        });
+        assert(blockedJson.json?.maintenance === true, 'la respuesta JSON debería indicar maintenance:true');
+
+        // El dueño (mismo actor que activó) tiene bypass total — sigue viendo la app real
+        await client.get('superadmin', '/courses', { expectStatus: 200 });
+      } finally {
+        await client.post('superadmin', '/superadmin/backup/maintenance/off', { body: {} });
+      }
+
+      // Fuera del finally: confirma que el acceso normal quedó restablecido
+      await client.get('scopedTeacher', '/courses', { expectStatus: 200 });
+    },
+  },
+
   // ── Limpieza (Nivel 2): borra todo lo que creó esta corrida ───────────────
   {
     id: 'cleanup-course',

@@ -287,6 +287,90 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ## Historial de Cambios (Changelog)
 
+### 2026-07-22 — Modo Mantenimiento (Caso A: la app sigue viva, se bloquea a propósito)
+
+Nueva pieza en `/superadmin/backup` (misma pantalla del backup, sección nueva arriba de todo). Solo `waltermedinilla@gmail.com` puede activarlo/desactivarlo — reutiliza `requireBackupAccess`.
+
+**Diseño**: `config/maintenance.js` — estado persistido en `maintenance.json` en la raíz del proyecto (gitignored), NO en memoria. Mismo motivo que el `previewToken` del restore: en PM2 cluster (2 workers) el disco se comparte, la memoria no. Además, leerlo directo del disco en cada request (sin cache) garantiza que desactivar el modo tenga efecto inmediato en ambos workers — acá la instantaneidad importa más que ahorrarse una lectura de archivo de pocos bytes.
+
+**Middleware global** en `server.js` (después de `checkUser`/`school`/`roleNames`, antes de montar las rutas):
+- Si `maintenance.json` no existe → sigue de largo, cero overhead.
+- Si existe y el usuario es `waltermedinilla@gmail.com` → bypass total (sigue viendo la app real, no la pantalla de aviso).
+- Si existe y es cualquier otro (o nadie logueado) → **503** con `views/maintenance.ejs` (HTML) o `{ maintenance: true, message, eta }` (si el request pide JSON). `Retry-After: 300` en el header.
+- Excepciones aunque no seas el dueño: `/login`, `/logout`, estáticos (`/css/`, `/js/`, `/favicon.png`, `/Logo.jpg`) y `/deploy` (este último redundante en la práctica porque el webhook responde más arriba en el archivo, antes de este middleware — se deja como documentación/defensa en profundidad).
+
+**`views/maintenance.ejs`**: página 100% autónoma, sin `include` de `header`/`footer` ni ninguna dependencia de BD — a propósito, para que se pueda renderizar aunque Mongo esté teniendo problemas. Reusa el logo SVG + `Logo.jpg` + clases CSS (`auth-body`, `auth-card`) que ya usa `login.ejs`.
+
+**Activación automática durante `/restore`**: antes de tocar cualquier dato, se activa mantenimiento (salvo que ya estuviera activo manualmente — en ese caso no se toca ni al empezar ni al terminar, para no apagar algo que no prendimos nosotros). Se desactiva en el `finally`, así se apaga incluso si el restore falla a mitad de camino.
+
+**Consolidación de código**: el email `waltermedinilla@gmail.com` estaba duplicado como constante local en `routes/backup.js` (`BACKUP_ALLOWED_EMAIL`). Se centralizó en `config/maintenance.js` como `SYSTEM_OWNER_EMAIL`, y `routes/backup.js` ahora lo importa de ahí — un solo lugar para cambiar si alguna vez cambia el dueño del sistema.
+
+**Hallazgo durante las pruebas — nodemon se auto-reiniciaba en cada toggle**: `maintenance.json` vive en la raíz del proyecto con extensión `.json`, y nodemon (sin config de ignore) vigila esa extensión por defecto. Cada activar/desactivar disparaba un restart completo del server en desarrollo (no pasa en producción: PM2 corre con `watch: false`). Se agregó `.nodemonignore` (nuevo archivo) excluyendo `maintenance.json`, `backups/`, `logs/`, `public/archivos/`, `archivos/entregas/`, `sin-commitear/`. **Importante**: nodemon solo relee su config de ignore al arrancar el proceso completo (`npm run dev` desde cero) — un simple auto-restart de su hijo NO alcanza para tomar un `.nodemonignore` nuevo.
+
+**Smoke tests**: 2 specs nuevos. El de toggle usa `try/finally` DENTRO del `run()` del spec (no solo el manejo de errores genérico de `run.js`) para garantizar que el modo se desactive incluso si una aserción falla a mitad de camino — crítico porque los specs de limpieza que corren después usan el actor `admin`, que quedaría bloqueado con 503 si el mantenimiento se quedara pegado. **48/48 pasando.**
+
+**Verificado real, no con mocks**: ciclo completo activar → admin normal bloqueado (503 HTML y JSON) → dueño con bypass (200) → desactivar → acceso restablecido. Visualmente confirmado en el navegador, incluyendo tildes/caracteres especiales en el mensaje custom (un primer intento con `curl -d` en git-bash corrompió la tilde por un problema de encoding del propio comando de prueba, no del servidor — se confirmó pasando el body como archivo UTF-8 explícito).
+
+**Caso B (app completamente caída) queda fuera de alcance a propósito** — si el proceso Node no arranca o crashea, ningún middleware nuestro puede responder; eso requeriría configurar el reverse proxy (Tailscale Funnel) con una página de fallback, que es infraestructura, no código, y no se abordó en esta sesión.
+
+### 2026-07-22 — Backup y Restauración (Nivel 1) — panel superadmin
+
+Nueva sección `/superadmin/backup`, solo accesible para `waltermedinilla@gmail.com` (doble capa: `requireSuperAdmin` + chequeo de email exacto — ver `middleware/superadmin.js` + `requireBackupAccess` local en `routes/backup.js`).
+
+**Generar backup** (`GET /superadmin/backup/download`):
+- Vuelca las 9 colecciones (schools, users, courses, activities, submissions, announcements, suggestions, divisions, subjects) a JSON + copia completa de `public/archivos/` y `archivos/entregas/`, todo empaquetado en un único `.tar.gz` con `manifest.json` (fecha, versión, contadores).
+- Se genera en `os.tmpdir()`, se streamea al navegador, y se borra del server inmediatamente después — nunca queda un backup de descarga persistido server-side.
+- Probado contra la BD real: **21.7 MB comprimidos** (32 MB de archivos + ~1.1 MB de BD).
+
+**Restaurar backup** (`POST /superadmin/backup/preview` → `POST /superadmin/backup/restore`):
+- Flujo en dos pasos: primero se sube el `.tar.gz` y se lee SOLO el `manifest.json` (sin descomprimir `db/` ni `files/`) para mostrar un diff "actual vs backup" por colección — instantáneo aunque el backup pese cientos de MB.
+- El upload queda en disco (no en memoria) bajo un `previewToken` — importante en PM2 cluster: el disco SÍ se comparte entre los 2 workers (a diferencia de un `Map` en memoria), así que el `POST /restore` puede caer en un worker distinto al que atendió el `/preview` sin perder el archivo.
+- Antes de tocar cualquier dato, `POST /restore` genera automáticamente un backup de seguridad del estado actual, persistido en `backups/` (gitignored) — nunca se restaura sin poder volver atrás.
+- Requiere escribir literalmente `"RESTAURAR"` + 3 checkboxes tildados en la UI antes de habilitar el botón.
+- `insertMany` reconstruye los `_id` (ObjectId) y fechas automáticamente vía el casting de schema de Mongoose al recibirlos como strings/ISO desde el JSON — verificado con un round-trip real.
+- Después de restaurar se invalida todo el cache de usuario/escuela (`invalidateAll()`, nuevo método en `config/cache.js` + `middleware/cache.js`) porque los `_id` cacheados pueden ya no corresponder a la BD reemplazada.
+- Rate limit dedicado: 3 intentos de restore por hora (protege contra doble-click/bugs, no contra abuso — es una operación rara a propósito).
+
+**Verificado end-to-end contra el mirror local de producción** (no solo con mocks):
+- Descarga real de 21.7 MB, tar.gz válido (verificado con la librería `tar`, no con el `tar` de shell — en Windows/git-bash falla con paths que tienen `:`).
+- Preview real: diff correcto contra las 1276 users / 485 courses / etc. existentes.
+- **Restore real ejecutado**: se restauró el mismo backup recién generado (por seguridad, sin pérdida de datos posible) — conteos idénticos antes/después, mismo `_id` y mismo hash de contraseña del superadmin, sesión del navegador siguió viva post-restore (confirma que `invalidateAll()` no rompe la sesión activa).
+- Acceso denegado (403) confirmado para un admin de escuela normal.
+- Manejo de archivo corrupto/inválido: al principio devolvía 500 con el error crudo de la librería `tar` — se arregló para devolver 400 con mensaje claro.
+
+**Smoke tests**: 4 specs nuevos (acceso denegado, stats, download produce tar.gz válido, preview rechaza archivo inválido). Deliberadamente **sin spec de `/restore`** en la suite automática — restaurar es seguro pero pesado (genera ~20 MB en `backups/` cada vez); se prueba manualmente antes de cada release, no en cada corrida de `npm run test:smoke`. **46/46 pasando.**
+
+**Dependencia nueva**: `tar` (^7.5.21) — sin shell-out a binarios del sistema, funciona igual en Windows dev y Linux prod.
+
+**Nivel 2 y 3 quedan pendientes** (no implementados a propósito, ver especificación original): backup automático por cron, retención con límite, subida a almacenamiento externo (S3/Backblaze/OneDrive), restore parcial (solo una colección), progreso en vivo del restore vía streaming (hoy es un solo request bloqueante con un log final).
+
+### 2026-07-22 — Performance: `font-display: swap` en Material Symbols
+
+Lighthouse contra producción (`/courses`) reportó 97/100 en Performance, con una única mejora significativa: la fuente `Material Symbols Outlined` bloqueaba el render ~620 ms hasta descargar.
+
+Fix: se agregó `&display=swap` al querystring del `<link>` de Google Fonts en las **40 vistas EJS** que la cargan. Impacto:
+- El texto se ve inmediatamente al abrir la página (antes: pantalla en blanco hasta cargar la fuente).
+- Los íconos aparecen cuando la fuente termina de descargar (unos ms después) sin bloquear el resto.
+- Elimina la mayor parte del CLS (Cumulative Layout Shift) que Lighthouse reportaba en 0.1.
+
+Cambio idempotente, sin efecto en el backend. Smoke test: 42/42 sigue pasando.
+
+### 2026-07-21 — Panel Directivo: 2 correcciones detectadas en revisión
+
+Cambios contenidos íntegramente a `routes/directivo.js`. Ninguna otra pieza del sistema afectada.
+
+**Fix 1 — Tardías correctas cuando el alumno reenvía**: el cálculo de "¿esta entrega fue tardía?" comparaba `submission.createdAt` contra `activity.dueDate`. Como el `POST /:id/submit` hace upsert, `createdAt` queda fijo en la primera entrega — si un alumno entregaba a tiempo y después reenviaba tarde, aparecía como "no tardía" pese a que la entrega vigente (la que va a corregir el docente) llegó fuera de plazo. Ahora se usa `updatedAt`, que el propio schema Submission documenta como "el último reenvío". Impacta:
+- Aggregate M2 en `GET /directivo/students` (columna "Tardías" del listado + chip "Muchas tardías")
+- Cálculo en `GET /directivo/students/:id` (perfil, badge "Tardía" por entrega + total)
+
+**Fix 2 — Admins que dictan cursos ahora visibles al directivo**: `Course.owner` puede ser un admin (ver `routes/admin.js`, dropdown de docente al crear/editar curso), pero el panel directivo asumía en 4 lugares que todos los docentes tienen `role: 'teacher'`. Verificado contra prod: hay 1 admin dictando 1 curso (Vallejo). Ese curso y sus métricas quedaban invisibles. Impacto:
+- Dashboard: "Materias con docente deshabilitado" ahora considera admins deshabilitados también.
+- M1 `/directivo/grades`: la columna "Docente" ya no queda vacía para cursos con owner admin.
+- M3 `/directivo/teachers`: total pasó de 350 → 353 al incluir a los admins. Ordenado y paginado como el resto.
+- `/directivo/teachers/:id`: la validación `teacher.role !== 'teacher'` devolvía 404 para admins. Ahora acepta `['teacher', 'admin']` para no romper el link desde el listado.
+
+Smoke test: 42/42 sigue pasando.
+
 ### 2026-07-21 — Paginación en las 3 vistas del Panel Directivo
 
 Materias, Alumnos y Docentes ahora paginan de a 25 (mismo `views/partials/pagination.ejs` que reusa el admin). Se agregó línea de contexto "Mostrando 26–50 de 485" arriba de cada tabla.

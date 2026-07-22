@@ -1,0 +1,8 @@
+# Archivos de estado runtime que no deben disparar un reinicio de nodemon en dev.
+# En producción no aplica (PM2 corre con watch:false, ver ecosystem.config.js).
+maintenance.json
+backups/*
+logs/*
+public/archivos/*
+archivos/entregas/*
+sin-commitear/*

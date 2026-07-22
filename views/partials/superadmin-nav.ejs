@@ -27,4 +27,10 @@
     <span class="material-symbols-outlined">monitor_heart</span>
     Monitor
   </a>
+  <% if (typeof user !== 'undefined' && user?.email === 'waltermedinilla@gmail.com') { %>
+  <a href="/superadmin/backup" class="admin-nav-item <%= activePage === 'backup' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">backup</span>
+    Backup
+  </a>
+  <% } %>
 </nav>

@@ -54,12 +54,16 @@ class SmokeClient {
     });
     this._storeCookies(actor, res);
 
-    let json = null, text = null;
+    let json = null, text = null, byteLength = null;
     const ct = res.headers.get('content-type') || '';
     if (ct.includes('application/json')) {
       try { json = await res.json(); } catch {}
-    } else {
+    } else if (ct.includes('text') || ct === '' || ct.includes('html')) {
       try { text = await res.text(); } catch {}
+    } else {
+      // Binario (ej. el .tar.gz del backup) — leer como texto rompería/sería carísimo
+      // con archivos grandes. Solo se necesita saber cuánto pesó la respuesta.
+      try { byteLength = (await res.arrayBuffer()).byteLength; } catch {}
     }
 
     if (expectStatus !== undefined) {
@@ -69,7 +73,7 @@ class SmokeClient {
         throw new Error(`${method} ${path} → esperaba ${expectStatus}, recibió ${res.status}${detail ? ' — ' + detail : ''}`);
       }
     }
-    return { status: res.status, json, text, headers: res.headers };
+    return { status: res.status, json, text, byteLength, headers: res.headers };
   }
 
   get(actor, path, opts)    { return this.request(actor, 'GET', path, opts); }

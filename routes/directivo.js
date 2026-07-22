@@ -43,7 +43,10 @@ router.get('/', async (req, res) => {
     // "Cursos sin docente" — en el schema el owner es requerido, así que interpretamos
     // como "cursos cuyo docente está deshabilitado" (owner válido pero inactivo).
     // Se hace en dos pasos para evitar populate con match que puede ser costoso.
-    const inactiveTeacherIds = await User.find({ school, role: 'teacher', active: false }).distinct('_id');
+    // Incluye admins porque el schema Course permite que un admin sea dueño (ver routes/admin.js).
+    const inactiveTeacherIds = await User.find({
+      school, role: { $in: ['teacher', 'admin'] }, active: false,
+    }).distinct('_id');
     const orphanedCourses = inactiveTeacherIds.length
       ? await Course.countDocuments({ school, owner: { $in: inactiveTeacherIds } })
       : 0;
@@ -309,10 +312,12 @@ router.get('/grades', async (req, res) => {
       addBucket(d.buckets, r.normalized);
     });
 
-    // Enriquecemos con nombre de división y docente en un solo populate manual
+    // Enriquecemos con nombre de división y docente en un solo populate manual.
+    // Los admins también pueden ser owner de un curso (ver routes/admin.js), sin incluirlos
+    // acá la columna "Docente" quedaba en "—" para esos cursos.
     const [divisions, teachers] = await Promise.all([
       Division.find({ school }).select('_id name').lean(),
-      User.find({ school, role: 'teacher' }).select('_id name').lean(),
+      User.find({ school, role: { $in: ['teacher', 'admin'] } }).select('_id name').lean(),
     ]);
     const divisionName = Object.fromEntries(divisions.map(d => [d._id.toString(), d.name]));
     const teacherName  = Object.fromEntries(teachers.map(t  => [t._id.toString(),  t.name]));
@@ -385,7 +390,10 @@ router.get('/students', async (req, res) => {
     const monthlyCountByStudent = Object.fromEntries(monthlySubs.map(s => [s._id.toString(), s.count]));
 
     // Aggregate 2: entregas totales por alumno + cuántas fueron tardías
-    // Se hace lookup con Activity para comparar submission.createdAt vs activity.dueDate.
+    // Se compara `updatedAt` (última modificación de la entrega, o sea el último reenvío)
+    // contra `activity.dueDate`. Usar `createdAt` fallaría cuando un alumno entrega a tiempo
+    // y después reenvía tarde: `createdAt` queda fijo en la primera entrega y no captura
+    // esa tardanza. El schema Submission documenta que `updatedAt` refleja el último reenvío.
     const allSubs = await Submission.aggregate([
       { $match: { student: { $in: studentIds } } },
       { $lookup: { from: 'activities', localField: 'activity', foreignField: '_id', as: 'act' } },
@@ -395,7 +403,7 @@ router.get('/students', async (req, res) => {
           isLate: {
             $and: [
               { $ne: ['$act.dueDate', null] },
-              { $gt: ['$createdAt', '$act.dueDate'] },
+              { $gt: ['$updatedAt', '$act.dueDate'] },
             ],
           },
       } },
@@ -506,9 +514,10 @@ router.get('/students/:id', async (req, res) => {
                   populate: { path: 'course', select: 'name' } })
       .sort({ createdAt: -1 });
 
-    // Para cada entrega calculamos si fue tardía y la nota (buscándola en activity.grades)
+    // Para cada entrega calculamos si fue tardía y la nota (buscándola en activity.grades).
+    // Usa `updatedAt` (último reenvío) — ver comentario en `/directivo/students` aggregate 2.
     const entries = submissions.filter(s => s.activity).map(sub => {
-      const late = sub.activity.dueDate && sub.createdAt > sub.activity.dueDate;
+      const late = sub.activity.dueDate && sub.updatedAt > sub.activity.dueDate;
       const g = sub.activity.grades.find(g => g.student.toString() === student._id.toString());
       const normalized = g && sub.activity.points > 0
         ? Math.round(((g.points / sub.activity.points) * 10) * 10) / 10
@@ -559,8 +568,10 @@ router.get('/teachers', async (req, res) => {
   const page  = Math.max(1, parseInt(req.query.page) || 1);
 
   try {
-    const teachers = await User.find({ school, role: 'teacher' })
-      .select('_id name email active').lean();
+    // Incluye admins: el schema Course permite que un admin sea dueño (ver routes/admin.js),
+    // y sin ellos se perdían filas de docentes activos dictando cursos.
+    const teachers = await User.find({ school, role: { $in: ['teacher', 'admin'] } })
+      .select('_id name email role active').lean();
 
     // Cursos por docente (owner) para saber a cuántos alumnos y cursos "atiende" cada uno
     const courses = await Course.find({ school }).select('_id owner students').lean();
@@ -663,7 +674,9 @@ router.get('/teachers/:id', async (req, res) => {
   try {
     const teacher = await User.findById(req.params.id).select('_id name email active role school createdAt');
     if (!teacher) return res.status(404).send('Docente no encontrado');
-    if (teacher.role !== 'teacher') return res.status(404).send('El usuario no es docente');
+    // Admins también pueden ser owner de un curso; el listado /directivo/teachers los incluye
+    // así que este perfil debe aceptarlos, sino los links caerían en 404.
+    if (!['teacher', 'admin'].includes(teacher.role)) return res.status(404).send('El usuario no es docente');
     if (school && teacher.school?.toString() !== school.toString()) return res.status(403).send('Acceso denegado');
 
     const courses = await Course.find({ owner: teacher._id })

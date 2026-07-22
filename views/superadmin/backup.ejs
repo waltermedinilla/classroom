@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Backup y Restauración — Superadmin</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .backup-warning {
+      background: #fff3e0; border: 1px solid #ea8600; border-radius: var(--radius);
+      padding: 14px 18px; font-size: 13px; color: #7a4a00; margin-bottom: 20px;
+      display: flex; gap: 10px; align-items: flex-start;
+    }
+    .backup-section {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 24px; margin-bottom: 24px;
+    }
+    .backup-section h3 {
+      margin: 0 0 14px; font-size: 16px; display: flex; align-items: center; gap: 8px;
+    }
+    .stats-mini-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px; margin-bottom: 16px;
+    }
+    .stats-mini-card {
+      background: var(--background); border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .stats-mini-value { font-size: 20px; font-weight: 700; line-height: 1; }
+    .stats-mini-label { font-size: 11px; color: var(--text-secondary); margin-top: 2px; text-transform: uppercase; letter-spacing: .3px; }
+    .last-backup-note {
+      font-size: 12px; color: var(--text-secondary); margin-bottom: 14px;
+    }
+    .drop-zone {
+      border: 2px dashed var(--border); border-radius: var(--radius); padding: 30px;
+      text-align: center; color: var(--text-secondary); cursor: pointer;
+      transition: border-color .15s ease, background .15s ease;
+    }
+    .drop-zone:hover, .drop-zone.dragover { border-color: var(--primary); background: var(--background); }
+    .diff-table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13px; }
+    .diff-table th, .diff-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+    .diff-table th { font-size: 11px; text-transform: uppercase; color: var(--text-secondary); }
+    .diff-up   { color: #137333; font-weight: 600; }
+    .diff-down { color: #c5221f; font-weight: 600; }
+    .diff-same { color: var(--text-hint); }
+    .confirm-box {
+      background: #fce8e6; border: 1px solid #ea4335; border-radius: var(--radius);
+      padding: 18px; margin-top: 16px;
+    }
+    .confirm-checks label { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin-bottom: 8px; cursor: pointer; }
+    .confirm-checks input[type="checkbox"] { margin-top: 2px; }
+    .confirm-input {
+      width: 100%; max-width: 260px; padding: 8px 12px; border: 1px solid var(--border);
+      border-radius: 8px; font-size: 14px; margin: 10px 0; box-sizing: border-box;
+      background: var(--surface); color: var(--text-primary);
+    }
+    .restore-log { font-size: 12px; font-family: monospace; color: var(--text-secondary); margin-top: 10px; }
+    .restore-log div { padding: 2px 0; }
+    .backup-result-ok  { background: #e6f4ea; border: 1px solid #34a853; border-radius: var(--radius); padding: 16px; margin-top: 16px; }
+    .backup-result-err { background: #fce8e6; border: 1px solid #ea4335; border-radius: var(--radius); padding: 16px; margin-top: 16px; }
+    .spinner-inline {
+      display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(0,0,0,.15);
+      border-top-color: var(--primary); border-radius: 50%; animation: spin .7s linear infinite;
+      vertical-align: -2px; margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/superadmin-nav', { activePage: 'backup' }) %>
+
+    <div class="section-header" style="margin-bottom:16px">
+      <span class="material-symbols-outlined section-icon" style="color:#1a73e8">backup</span>
+      <h2 style="margin:0">Backup y Restauración</h2>
+    </div>
+
+    <div class="backup-warning">
+      <span class="material-symbols-outlined" style="color:#ea8600">shield</span>
+      <div>Solo <strong>waltermedinilla@gmail.com</strong> puede generar o restaurar backups. El archivo generado contiene datos sensibles (contraseñas hasheadas, DNIs, emails) — guardalo en un lugar privado, nunca lo compartas.</div>
+    </div>
+
+    <!-- ─── Modo mantenimiento ─── -->
+    <div class="backup-section" id="maintenanceSection">
+      <h3><span class="material-symbols-outlined" style="color:#ea8600">build</span>Modo mantenimiento</h3>
+      <div id="maintenanceLoading" style="font-size:13px;color:var(--text-hint)">Consultando estado...</div>
+      <div id="maintenanceContent" style="display:none"></div>
+    </div>
+
+    <!-- ─── Generar backup ─── -->
+    <div class="backup-section">
+      <h3><span class="material-symbols-outlined" style="color:#1a73e8">download</span>Generar backup completo</h3>
+
+      <div id="statsLoading" style="font-size:13px;color:var(--text-hint)">Calculando qué se va a incluir...</div>
+      <div id="statsGrid" class="stats-mini-grid" style="display:none"></div>
+
+      <div id="lastBackupNote" class="last-backup-note" style="display:none"></div>
+
+      <button class="btn btn-primary" id="downloadBtn" onclick="downloadBackup()">
+        <span class="material-symbols-outlined">download</span>
+        Generar y descargar backup
+      </button>
+      <div id="downloadStatus" style="margin-top:10px;font-size:13px;display:none"></div>
+    </div>
+
+    <!-- ─── Restaurar ─── -->
+    <div class="backup-section">
+      <h3><span class="material-symbols-outlined" style="color:#ea4335">upload</span>Restaurar desde backup</h3>
+
+      <div class="backup-warning" style="margin-bottom:16px">
+        <span class="material-symbols-outlined" style="color:#ea8600">warning</span>
+        <div>
+          Al restaurar, la base de datos actual queda <strong>reemplazada por completo</strong> con el contenido del backup.
+          Todo lo creado después de la fecha del backup se pierde. El sistema genera automáticamente un backup del
+          estado actual antes de aplicar cualquier cambio, como red de seguridad.
+        </div>
+      </div>
+
+      <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+        <span class="material-symbols-outlined" style="font-size:32px;color:var(--text-hint)">upload_file</span>
+        <p style="margin:8px 0 0">Elegí un archivo .tar.gz o arrastralo acá</p>
+        <input type="file" id="fileInput" accept=".tar.gz,.tgz" style="display:none">
+      </div>
+
+      <div id="previewArea" style="display:none"></div>
+    </div>
+
+  </main>
+  <%- include('../partials/footer') %>
+
+  <script>
+    const LAST_BACKUP_KEY = 'classroom_last_backup';
+
+    function formatBytes(bytes) {
+      if (bytes >= 1024 * 1024 * 1024) return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+      if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+      if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return bytes + ' B';
+    }
+
+    function renderLastBackupNote() {
+      const raw = localStorage.getItem(LAST_BACKUP_KEY);
+      const el = document.getElementById('lastBackupNote');
+      if (!raw) return;
+      try {
+        const info = JSON.parse(raw);
+        const date = new Date(info.date);
+        el.textContent = `Último backup generado desde este navegador: ${date.toLocaleString('es-AR')} (${formatBytes(info.size)})`;
+        el.style.display = 'block';
+      } catch {}
+    }
+
+    async function loadStats() {
+      try {
+        const res  = await fetch('/superadmin/backup/stats');
+        const data = await res.json();
+        const c = data.collections, f = data.files;
+
+        const cards = [
+          ['schools',       'Escuelas'],
+          ['users',         'Usuarios'],
+          ['courses',       'Materias'],
+          ['divisions',     'Divisiones'],
+          ['activities',    'Actividades'],
+          ['submissions',   'Entregas'],
+          ['announcements', 'Novedades'],
+          ['suggestions',   'Sugerencias'],
+          ['subjects',      'Catálogo materias'],
+        ];
+        let html = cards.map(([key, label]) => `
+          <div class="stats-mini-card">
+            <div class="stats-mini-value">${c[key] ?? 0}</div>
+            <div class="stats-mini-label">${label}</div>
+          </div>`).join('');
+
+        const totalFileBytes = f.archivos.sizeBytes + f.entregas.sizeBytes;
+        const totalFileCount = f.archivos.count + f.entregas.count;
+        html += `
+          <div class="stats-mini-card" style="grid-column:span 2">
+            <div class="stats-mini-value">${formatBytes(totalFileBytes)}</div>
+            <div class="stats-mini-label">${totalFileCount} archivo(s) subidos (adjuntos, novedades, avatares, entregas)</div>
+          </div>`;
+
+        document.getElementById('statsGrid').innerHTML = html;
+        document.getElementById('statsGrid').style.display = 'grid';
+        document.getElementById('statsLoading').style.display = 'none';
+      } catch {
+        document.getElementById('statsLoading').textContent = 'No se pudo calcular (revisá la consola)';
+      }
+    }
+
+    async function downloadBackup() {
+      const btn    = document.getElementById('downloadBtn');
+      const status = document.getElementById('downloadStatus');
+      btn.disabled = true;
+      status.style.display = 'block';
+      status.innerHTML = '<span class="spinner-inline"></span>Generando backup, puede tardar varios segundos...';
+
+      try {
+        const res = await fetch('/superadmin/backup/download');
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Error al generar el backup');
+        }
+        const blob = await res.blob();
+        const disposition = res.headers.get('content-disposition') || '';
+        const nameMatch = disposition.match(/filename="?([^"]+)"?/);
+        const filename  = nameMatch ? nameMatch[1] : 'classroom-backup.tar.gz';
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+
+        localStorage.setItem(LAST_BACKUP_KEY, JSON.stringify({ date: new Date().toISOString(), size: blob.size }));
+        renderLastBackupNote();
+
+        status.innerHTML = `<span style="color:#137333">✔ Backup descargado: ${filename} (${formatBytes(blob.size)})</span>`;
+      } catch (err) {
+        status.innerHTML = `<span style="color:#c5221f">✗ ${err.message}</span>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // ─── Restore ───
+    let currentPreviewToken = null;
+
+    const fileInput = document.getElementById('fileInput');
+    const dropZone  = document.getElementById('dropZone');
+    fileInput.addEventListener('change', () => { if (fileInput.files[0]) uploadForPreview(fileInput.files[0]); });
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      if (e.dataTransfer.files[0]) uploadForPreview(e.dataTransfer.files[0]);
+    });
+
+    async function uploadForPreview(file) {
+      const area = document.getElementById('previewArea');
+      area.style.display = 'block';
+      area.innerHTML = '<div style="padding:16px"><span class="spinner-inline"></span>Leyendo el backup...</div>';
+
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const res  = await fetch('/superadmin/backup/preview', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) {
+          area.innerHTML = `<div class="backup-result-err">✗ ${data.error || 'Error al leer el backup'}</div>`;
+          return;
+        }
+        currentPreviewToken = data.previewToken;
+        renderPreview(data.manifest, data.diff);
+      } catch (err) {
+        area.innerHTML = `<div class="backup-result-err">✗ Error de conexión: ${err.message}</div>`;
+      }
+    }
+
+    function renderPreview(manifest, diff) {
+      const area = document.getElementById('previewArea');
+      const date = new Date(manifest.createdAt);
+
+      const rows = Object.entries(diff).map(([name, { current, backup }]) => {
+        const delta = backup - current;
+        const cls = delta > 0 ? 'diff-up' : delta < 0 ? 'diff-down' : 'diff-same';
+        const sign = delta > 0 ? '+' : '';
+        return `<tr><td>${name}</td><td>${current}</td><td>${backup}</td><td class="${cls}">${sign}${delta}</td></tr>`;
+      }).join('');
+
+      const totalFiles = manifest.files.archivos.count + manifest.files.entregas.count;
+      const totalBytes = manifest.files.archivos.sizeBytes + manifest.files.entregas.sizeBytes;
+
+      area.innerHTML = `
+        <div style="margin-top:16px;padding:16px;background:var(--background);border-radius:var(--radius)">
+          <div style="font-size:13px;margin-bottom:10px">
+            <strong>Fecha del backup:</strong> ${date.toLocaleString('es-AR')} ·
+            <strong>Generado por:</strong> ${manifest.generatedBy || '—'}
+          </div>
+          <table class="diff-table">
+            <thead><tr><th>Colección</th><th>Actual</th><th>Backup</th><th>Cambio</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div style="font-size:13px;color:var(--text-secondary)">
+            Archivos incluidos: ${formatBytes(totalBytes)} en ${totalFiles} archivo(s)
+          </div>
+
+          <div class="confirm-box">
+            <strong style="color:#c5221f">🔴 Confirmación requerida</strong>
+            <div class="confirm-checks" style="margin-top:10px">
+              <label><input type="checkbox" class="confirm-check"> Entiendo que esto reemplaza TODA la base de datos actual</label>
+              <label><input type="checkbox" class="confirm-check"> Entiendo que se pierden los cambios posteriores a ${date.toLocaleString('es-AR')}</label>
+              <label><input type="checkbox" class="confirm-check"> Entiendo que la app puede tardar unos segundos en volver a responder normalmente</label>
+            </div>
+            <label style="font-size:13px;display:block;margin-top:8px">Escribí <strong>RESTAURAR</strong> para habilitar el botón:</label>
+            <input type="text" id="confirmText" class="confirm-input" autocomplete="off">
+            <div style="display:flex;gap:10px;margin-top:6px">
+              <button class="btn btn-outline" onclick="cancelPreview()">Cancelar</button>
+              <button class="btn btn-primary" id="restoreBtn" disabled style="background:#c5221f;border-color:#c5221f" onclick="doRestore()">
+                <span class="material-symbols-outlined">warning</span>
+                Restaurar ahora
+              </button>
+            </div>
+            <div id="restoreResult"></div>
+          </div>
+        </div>`;
+
+      const checks = area.querySelectorAll('.confirm-check');
+      const confirmText = document.getElementById('confirmText');
+      const restoreBtn  = document.getElementById('restoreBtn');
+      const syncBtn = () => {
+        const allChecked = [...checks].every(c => c.checked);
+        restoreBtn.disabled = !(allChecked && confirmText.value === 'RESTAURAR');
+      };
+      checks.forEach(c => c.addEventListener('change', syncBtn));
+      confirmText.addEventListener('input', syncBtn);
+    }
+
+    function cancelPreview() {
+      document.getElementById('previewArea').style.display = 'none';
+      document.getElementById('previewArea').innerHTML = '';
+      fileInput.value = '';
+      currentPreviewToken = null;
+    }
+
+    async function doRestore() {
+      const restoreBtn = document.getElementById('restoreBtn');
+      const resultEl   = document.getElementById('restoreResult');
+      restoreBtn.disabled = true;
+      resultEl.innerHTML = '<div style="margin-top:12px"><span class="spinner-inline"></span>Restaurando... no cierres esta pestaña ni recargues.</div>';
+
+      try {
+        const res  = await fetch('/superadmin/backup/restore', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ previewToken: currentPreviewToken, confirmedText: document.getElementById('confirmText').value }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          resultEl.innerHTML = `<div class="backup-result-err">✗ ${data.error || 'Error durante la restauración'}
+            ${data.log?.length ? '<div class="restore-log">' + data.log.map(l => `<div>• ${l}</div>`).join('') + '</div>' : ''}
+          </div>`;
+          restoreBtn.disabled = false;
+          return;
+        }
+        resultEl.innerHTML = `<div class="backup-result-ok">
+          ✅ Restauración completa
+          <div class="restore-log">${data.log.map(l => `<div>✔ ${l}</div>`).join('')}</div>
+          <div style="margin-top:8px;font-size:12px">Backup de seguridad del estado anterior: <strong>${data.safetyBackup}</strong></div>
+        </div>`;
+      } catch (err) {
+        resultEl.innerHTML = `<div class="backup-result-err">✗ Error de conexión: ${err.message}</div>`;
+        restoreBtn.disabled = false;
+      }
+    }
+
+    // ─── Modo mantenimiento ───
+    async function loadMaintenanceStatus() {
+      try {
+        const res  = await fetch('/superadmin/backup/maintenance-status');
+        const data = await res.json();
+        renderMaintenanceSection(data.state);
+      } catch {
+        document.getElementById('maintenanceLoading').textContent = 'No se pudo consultar el estado';
+      }
+    }
+
+    function renderMaintenanceSection(state) {
+      document.getElementById('maintenanceLoading').style.display = 'none';
+      const content = document.getElementById('maintenanceContent');
+      content.style.display = 'block';
+
+      if (state) {
+        const date = new Date(state.activatedAt);
+        content.innerHTML = `
+          <div class="backup-warning" style="border-color:#ea4335;background:#fce8e6;color:#7a1a1a">
+            <span class="material-symbols-outlined" style="color:#c5221f">error</span>
+            <div>
+              <strong>El sitio está EN MANTENIMIENTO ahora mismo.</strong> Todos los usuarios (excepto vos) ven la
+              página de aviso en vez de la app.<br>
+              <span style="font-size:12px">Activado ${date.toLocaleString('es-AR')} por ${state.activatedBy}
+              ${state.reason === 'restore' ? '(automático, durante una restauración)' : '(manual)'}</span><br>
+              <span style="font-size:12px">Mensaje mostrado: "${state.message}"${state.eta ? ' · ETA: ' + state.eta : ''}</span>
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="toggleMaintenance(false)">
+            <span class="material-symbols-outlined">check_circle</span>
+            Desactivar mantenimiento
+          </button>
+          <div id="maintenanceActionStatus" style="margin-top:10px;font-size:13px"></div>`;
+      } else {
+        content.innerHTML = `
+          <p style="font-size:13px;color:var(--text-secondary);margin:0 0 12px">
+            El sitio está funcionando normalmente. Activar este modo bloquea el acceso a todos los usuarios
+            excepto vos, mostrándoles una página de aviso.
+          </p>
+          <div style="display:flex;flex-direction:column;gap:8px;max-width:420px">
+            <input type="text" id="maintMessage" placeholder="Mensaje (opcional, ej: Estamos actualizando el sistema)"
+              style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--surface);color:var(--text-primary)">
+            <input type="text" id="maintEta" placeholder="Tiempo estimado (opcional, ej: 10-15 minutos)"
+              style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--surface);color:var(--text-primary)">
+          </div>
+          <button class="btn btn-outline" style="margin-top:10px;border-color:#ea8600;color:#ea8600" onclick="toggleMaintenance(true)">
+            <span class="material-symbols-outlined">build</span>
+            Activar mantenimiento
+          </button>
+          <div id="maintenanceActionStatus" style="margin-top:10px;font-size:13px"></div>`;
+      }
+    }
+
+    async function toggleMaintenance(activate) {
+      const statusEl = document.getElementById('maintenanceActionStatus');
+      statusEl.innerHTML = '<span class="spinner-inline"></span>Aplicando...';
+      try {
+        const path = activate ? '/superadmin/backup/maintenance/on' : '/superadmin/backup/maintenance/off';
+        const body = activate
+          ? { message: document.getElementById('maintMessage').value.trim(), eta: document.getElementById('maintEta').value.trim() }
+          : {};
+        const res  = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error al aplicar el cambio');
+        renderMaintenanceSection(activate ? data.state : null);
+      } catch (err) {
+        statusEl.innerHTML = `<span style="color:#c5221f">✗ ${err.message}</span>`;
+      }
+    }
+
+    loadStats();
+    renderLastBackupNote();
+    loadMaintenanceStatus();
+  </script>
+</body>
+</html>

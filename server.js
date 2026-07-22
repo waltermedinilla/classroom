@@ -12,6 +12,7 @@ const logger       = require('./config/logger');
 const connectDB    = require('./config/db');
 const { checkUser } = require('./middleware/auth');
 const { schoolCache } = require('./middleware/cache');
+const { getMaintenanceState, SYSTEM_OWNER_EMAIL } = require('./config/maintenance');
 const School = require('./models/School');
 
 const authRoutes         = require('./routes/auth');
@@ -21,6 +22,7 @@ const activityRoutes     = require('./routes/activities');
 const adminRoutes        = require('./routes/admin');
 const superadminRoutes   = require('./routes/superadmin');
 const directivoRoutes    = require('./routes/directivo');
+const backupRoutes       = require('./routes/backup');
 const suggestionRoutes   = require('./routes/suggestions');
 
 const app  = express();
@@ -66,10 +68,16 @@ const generalLimiter = rateLimit({
   skip: (req) => req.path.startsWith('/css/') || req.path.startsWith('/js/'), // No limita estáticos
 });
 
-// Límite para login/registro: 15 intentos cada 15 minutos por IP (previene fuerza bruta)
+// Límite para login/registro: 1000 intentos cada 15 minutos por IP.
+// La escuela tiene ~300 personas conectadas al mismo WiFi al mismo tiempo (arranque de clase),
+// y cada login normal consume ~2-3 requests (GET /login + POST /login + posibles reintentos).
+// Con 300 usuarios * 3 = 900 requests esperadas, 1000 deja holgura sin romper la
+// protección anti-brute-force: un atacante que intenta 1000 contraseñas en 15 min sigue
+// siendo detectable y desalentado. Subimos desde 15 (valor previo, que rompía con >5 usuarios
+// detrás de la misma IP pública NAT).
 const authLimiter = rateLimit({
   windowMs:        15 * 60 * 1000,
-  max:             15,
+  max:             1000,
   standardHeaders: true,
   legacyHeaders:   false,
   message:         { error: 'Demasiados intentos. Esperá 15 minutos antes de intentar nuevamente.' },
@@ -161,6 +169,29 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Modo mantenimiento ───────────────────────────────────────────────────────
+// Se activa manualmente desde /superadmin/backup o automáticamente durante un
+// restore (ver routes/backup.js). El dueño del sistema tiene bypass total (puede
+// seguir usando la app normalmente para verificar que todo esté bien); cualquier
+// otro usuario ve la página de mantenimiento en TODO menos login/logout/estáticos
+// (para poder autenticarse y para que la propia página de mantenimiento se vea bien)
+// y el webhook de deploy (para no bloquear un despliegue en curso).
+app.use((req, res, next) => {
+  const state = getMaintenanceState();
+  if (!state) return next();
+  if (res.locals.user?.email === SYSTEM_OWNER_EMAIL) return next();
+
+  const exempt = ['/login', '/logout', '/favicon.png', '/Logo.jpg', '/deploy'].includes(req.path)
+    || req.path.startsWith('/css/') || req.path.startsWith('/js/');
+  if (exempt) return next();
+
+  res.set('Retry-After', '300');
+  if (req.accepts('json') && !req.accepts('html')) {
+    return res.status(503).json({ maintenance: true, message: state.message, eta: state.eta });
+  }
+  res.status(503).render('maintenance', { message: state.message, eta: state.eta });
+});
+
 // ── Rutas ────────────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
   if (!res.locals.user) return res.redirect('/login');
@@ -183,6 +214,9 @@ app.use('/courses',    courseRoutes);
 app.use('/announcements', announcementRoutes);
 app.use('/activities', activityRoutes);
 app.use('/admin',      adminRoutes);
+// Montado ANTES de /superadmin para que Express lo intercepte primero sin ambigüedad
+// (aunque hoy superadmin.js no tiene rutas que choquen con /backup/*).
+app.use('/superadmin/backup', backupRoutes);
 app.use('/superadmin',  superadminRoutes);
 app.use('/directivo',   directivoRoutes);
 app.use('/suggestions', suggestionRoutes);

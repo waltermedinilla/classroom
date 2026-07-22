@@ -25,6 +25,12 @@ class TTLCache {
   delete(key) {
     this.store.delete(key);
   }
+
+  // Vacía todo el cache. Se usa después de un restore de backup: los _id de usuarios/
+  // escuelas cacheados pueden ya no corresponder a la BD reemplazada.
+  clear() {
+    this.store.clear();
+  }
 }
 
 module.exports = TTLCache;
