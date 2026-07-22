@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= teacher.name %> — Panel Directivo</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .back-link {
+      display: inline-flex; align-items: center; gap: 4px;
+      color: var(--primary); text-decoration: none; font-size: 13px; margin-bottom: 12px;
+    }
+    .back-link:hover { text-decoration: underline; }
+    .profile-header {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px; margin-bottom: 20px;
+      display: flex; align-items: center; gap: 20px;
+    }
+    .avatar-lg {
+      width: 72px; height: 72px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: #1a73e8; color: #fff; font-size: 28px; font-weight: 700;
+    }
+    .profile-meta { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+    .profile-stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px; margin-bottom: 20px;
+    }
+    .mini-stat {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 14px 18px;
+    }
+    .mini-stat-value { font-size: 22px; font-weight: 700; line-height: 1; }
+    .mini-stat-label { font-size: 12px; color: var(--text-secondary); margin-top: 4px; text-transform: uppercase; letter-spacing: .3px; }
+    .section-h {
+      font-size: 15px; font-weight: 600; margin: 24px 0 10px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .simple-table {
+      width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+    }
+    .simple-table th, .simple-table td {
+      padding: 10px 14px; text-align: left; font-size: 13px;
+      border-bottom: 1px solid var(--border);
+    }
+    .simple-table th {
+      background: var(--background); font-weight: 600; font-size: 11px;
+      text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary);
+    }
+    .simple-table tr:last-child td { border-bottom: none; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; }
+    .badge-red    { background: #fce8e6; color: #c5221f; }
+    .badge-warn   { background: #fef4e5; color: #e67e00; }
+    .badge-ok     { background: #e6f4ea; color: #137333; }
+    .badge-muted  { background: var(--border); color: var(--text-secondary); }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/directivo-nav', { activePage: 'teachers' }) %>
+
+    <a href="/directivo/teachers" class="back-link">
+      <span class="material-symbols-outlined" style="font-size:16px">chevron_left</span>
+      Volver al listado
+    </a>
+
+    <div class="profile-header">
+      <div class="avatar-lg"><%= teacher.name.charAt(0).toUpperCase() %></div>
+      <div style="flex:1">
+        <h2 style="margin:0 0 4px"><%= teacher.name %></h2>
+        <div class="profile-meta">
+          <strong>Email:</strong> <%= teacher.email %>
+          <% if (teacher.active === false) { %><span class="badge badge-red" style="margin-left:8px">Deshabilitado</span><% } %>
+        </div>
+        <div class="profile-meta">
+          Alta: <%= new Date(teacher.createdAt).toLocaleDateString('es-AR', {day:'numeric', month:'long', year:'numeric'}) %>
+        </div>
+      </div>
+    </div>
+
+    <div class="profile-stats">
+      <div class="mini-stat">
+        <div class="mini-stat-value"><%= stats.totalCourses %></div>
+        <div class="mini-stat-label">Materias que dicta</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value"><%= stats.totalStudents %></div>
+        <div class="mini-stat-label">Alumnos únicos</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value"><%= stats.totalActivities %></div>
+        <div class="mini-stat-label">Actividades publicadas</div>
+      </div>
+    </div>
+
+    <div class="section-h">
+      <span class="material-symbols-outlined" style="color:#1a73e8">menu_book</span>
+      Materias que dicta
+    </div>
+    <% if (!courses.length) { %>
+      <div style="padding:20px;text-align:center;color:var(--text-secondary);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)">
+        No dicta ninguna materia todavía.
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="simple-table">
+          <thead>
+            <tr>
+              <th>Materia</th>
+              <th>División</th>
+              <th style="text-align:center">Alumnos</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% courses.forEach(c => { %>
+              <tr>
+                <td><a href="/directivo/courses/<%= c._id %>" style="color:var(--text-primary);text-decoration:none;font-weight:500"><%= c.name %></a></td>
+                <td><%= c.division %></td>
+                <td style="text-align:center"><%= c.studentCount %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+
+    <div class="section-h">
+      <span class="material-symbols-outlined" style="color:#ea8600">assignment</span>
+      Actividades publicadas (más recientes primero)
+    </div>
+    <% if (!activities.length) { %>
+      <div style="padding:20px;text-align:center;color:var(--text-secondary);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)">
+        Todavía no publicó actividades.
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="simple-table">
+          <thead>
+            <tr>
+              <th>Actividad</th>
+              <th>Materia</th>
+              <th>Vencía</th>
+              <th style="text-align:center">Entregas</th>
+              <th style="text-align:center">Calificadas</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% activities.forEach(a => {
+              let badge;
+              if (a.submitted > 0 && a.graded === 0 && a.overdue) {
+                badge = '<span class="badge badge-warn">Sin calificar</span>';
+              } else if (a.overdue && a.graded < a.submitted) {
+                badge = '<span class="badge badge-warn">Parcial</span>';
+              } else if (a.overdue) {
+                badge = '<span class="badge badge-muted">Vencida</span>';
+              } else {
+                badge = '<span class="badge badge-ok">En curso</span>';
+              }
+            %>
+              <tr>
+                <td><%= a.title %></td>
+                <td style="color:var(--text-secondary)"><%= a.courseName %></td>
+                <td style="color:var(--text-secondary)">
+                  <% if (a.dueDate) { %>
+                    <%= new Date(a.dueDate).toLocaleDateString('es-AR', {day:'2-digit', month:'short'}) %>
+                  <% } else { %>
+                    <span style="color:var(--text-hint)">Sin fecha</span>
+                  <% } %>
+                </td>
+                <td style="text-align:center"><%= a.submitted %></td>
+                <td style="text-align:center"><%= a.graded %></td>
+                <td><%- badge %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

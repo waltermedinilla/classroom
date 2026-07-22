@@ -20,6 +20,7 @@ const announcementRoutes = require('./routes/announcements');
 const activityRoutes     = require('./routes/activities');
 const adminRoutes        = require('./routes/admin');
 const superadminRoutes   = require('./routes/superadmin');
+const directivoRoutes    = require('./routes/directivo');
 const suggestionRoutes   = require('./routes/suggestions');
 
 const app  = express();
@@ -163,6 +164,9 @@ app.use((req, res, next) => {
 // ── Rutas ────────────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
   if (!res.locals.user) return res.redirect('/login');
+  // El directivo cae directo en su panel institucional (no en /courses, donde
+  // solo vería los cursos donde alguien lo haya inscripto explícitamente).
+  if (res.locals.user.role === 'directivo') return res.redirect('/directivo');
   res.redirect('/courses');
 });
 
@@ -180,6 +184,7 @@ app.use('/announcements', announcementRoutes);
 app.use('/activities', activityRoutes);
 app.use('/admin',      adminRoutes);
 app.use('/superadmin',  superadminRoutes);
+app.use('/directivo',   directivoRoutes);
 app.use('/suggestions', suggestionRoutes);
 
 // ── Manejador de errores global ──────────────────────────────────────────────

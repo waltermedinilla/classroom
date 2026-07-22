@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= course.name %> — Panel Directivo</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .detail-header {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px; margin-bottom: 20px;
+    }
+    .detail-title { font-size: 22px; font-weight: 700; margin: 0 0 6px; }
+    .detail-meta { color: var(--text-secondary); font-size: 14px; }
+    .detail-meta strong { color: var(--text-primary); }
+    .section-h {
+      font-size: 15px; font-weight: 600; margin: 24px 0 10px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .simple-table {
+      width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+    }
+    .simple-table th, .simple-table td {
+      padding: 10px 14px; text-align: left; font-size: 13px;
+      border-bottom: 1px solid var(--border);
+    }
+    .simple-table th {
+      background: var(--background); font-weight: 600; font-size: 11px;
+      text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary);
+    }
+    .simple-table tr:last-child td { border-bottom: none; }
+    .badge-pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+    .badge-ok { background: #e6f4ea; color: #137333; }
+    .badge-warn { background: #fce8e6; color: #c5221f; }
+    .badge-muted { background: var(--border); color: var(--text-secondary); }
+    .badge-partial { background: #fff4e5; color: #ea8600; }
+    .back-link {
+      display: inline-flex; align-items: center; gap: 4px;
+      color: var(--primary); text-decoration: none; font-size: 13px;
+      margin-bottom: 12px;
+    }
+    .back-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/directivo-nav', { activePage: 'courses' }) %>
+
+    <a href="/directivo/courses" class="back-link">
+      <span class="material-symbols-outlined" style="font-size:16px">chevron_left</span>
+      Volver al listado
+    </a>
+
+    <div class="detail-header">
+      <h2 class="detail-title"><%= course.name %></h2>
+      <div class="detail-meta">
+        <strong>División:</strong> <%= course.division?.name || '—' %> ·
+        <strong>Docente:</strong> <%= course.owner?.name || 'Sin docente' %>
+        <% if (course.owner && course.owner.active === false) { %>
+          <span class="badge-pill badge-warn" style="margin-left:6px">Deshabilitado</span>
+        <% } %>
+        · <strong>Alumnos:</strong> <%= students.length %>
+        · <strong>Actividades:</strong> <%= activities.length %>
+      </div>
+    </div>
+
+    <div class="section-h">
+      <span class="material-symbols-outlined" style="color:#1a73e8">assignment</span>
+      Actividades
+    </div>
+    <% if (!activities.length) { %>
+      <div style="padding:20px;text-align:center;color:var(--text-secondary);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)">
+        No hay actividades cargadas todavía.
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="simple-table">
+          <thead>
+            <tr>
+              <th>Título</th>
+              <th>Tipo</th>
+              <th>Fecha de entrega</th>
+              <th style="text-align:center">Entregas</th>
+              <th style="text-align:center">Calificadas</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% activities.forEach(a => {
+              const gradedRatio = a.submitted > 0 ? (a.graded / a.submitted) : 0;
+              let badge;
+              if (a.graded === 0 && a.overdue && a.submitted > 0) {
+                badge = '<span class="badge-pill badge-warn">Sin calificar</span>';
+              } else if (a.overdue && gradedRatio < 1 && a.submitted > 0) {
+                badge = '<span class="badge-pill badge-partial">Parcial</span>';
+              } else if (a.overdue) {
+                badge = '<span class="badge-pill badge-muted">Vencida</span>';
+              } else {
+                badge = '<span class="badge-pill badge-ok">En curso</span>';
+              }
+            %>
+              <tr>
+                <td><%= a.title %></td>
+                <td style="text-transform:capitalize"><%= a.type %></td>
+                <td>
+                  <% if (a.dueDate) { %>
+                    <%= new Date(a.dueDate).toLocaleDateString('es-AR', { day:'2-digit', month:'short', year:'numeric' }) %>
+                  <% } else { %>
+                    <span style="color:var(--text-hint)">Sin fecha</span>
+                  <% } %>
+                </td>
+                <td style="text-align:center"><%= a.submitted %> / <%= a.totalStudents %></td>
+                <td style="text-align:center"><%= a.graded %></td>
+                <td><%- badge %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+
+    <div class="section-h">
+      <span class="material-symbols-outlined" style="color:#9334e6">group</span>
+      Alumnos (tasa de entrega individual)
+    </div>
+    <% if (!students.length) { %>
+      <div style="padding:20px;text-align:center;color:var(--text-secondary);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)">
+        No hay alumnos inscriptos todavía.
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="simple-table">
+          <thead>
+            <tr>
+              <th>Alumno</th>
+              <th>DNI</th>
+              <th>Email</th>
+              <th style="text-align:center">Entregas</th>
+              <th>Tasa</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% students.forEach(s => {
+              let rateColor = '#5f6368';
+              if (s.deliveryRate !== null) {
+                if (s.deliveryRate >= 80) rateColor = '#34a853';
+                else if (s.deliveryRate >= 50) rateColor = '#ea8600';
+                else rateColor = '#ea4335';
+              }
+            %>
+              <tr>
+                <td>
+                  <%= s.name %>
+                  <% if (s.active === false) { %>
+                    <span class="badge-pill badge-warn" style="margin-left:6px">Deshabilitado</span>
+                  <% } %>
+                </td>
+                <td><%= s.dni || '—' %></td>
+                <td style="color:var(--text-secondary)"><%= s.email %></td>
+                <td style="text-align:center"><%= s.submitted %> / <%= s.totalActivities %></td>
+                <td>
+                  <% if (s.deliveryRate === null) { %>
+                    <span style="color:var(--text-hint)">—</span>
+                  <% } else { %>
+                    <strong style="color:<%= rateColor %>"><%= s.deliveryRate %>%</strong>
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

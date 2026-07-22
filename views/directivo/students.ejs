@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alumnos — Panel Directivo</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .filter-chips {
+      display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;
+    }
+    .chip {
+      padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 500;
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--text-secondary); text-decoration: none;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .chip:hover { border-color: var(--primary); color: var(--primary); }
+    .chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .chip .count {
+      background: rgba(255,255,255,.3); padding: 1px 8px; border-radius: 10px;
+      font-size: 11px; font-weight: 600;
+    }
+    .chip:not(.active) .count { background: var(--border); color: var(--text-primary); }
+    .students-table {
+      width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+    }
+    .students-table th, .students-table td {
+      padding: 10px 14px; text-align: left; font-size: 13px;
+      border-bottom: 1px solid var(--border);
+    }
+    .students-table th {
+      background: var(--background); font-weight: 600; font-size: 11px;
+      text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary);
+    }
+    .students-table tr:last-child td { border-bottom: none; }
+    .students-table tr:hover td { background: var(--background); }
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 10px; font-weight: 700; letter-spacing: .3px;
+      margin-right: 4px;
+    }
+    .badge-red    { background: #fce8e6; color: #c5221f; }
+    .badge-orange { background: #fef4e5; color: #e67e00; }
+    .badge-yellow { background: #fff8e0; color: #b28800; }
+    .badge-green  { background: #e6f4ea; color: #137333; }
+    a.name-link { color: var(--text-primary); text-decoration: none; font-weight: 500; }
+    a.name-link:hover { color: var(--primary); text-decoration: underline; }
+    .empty-state {
+      text-align: center; padding: 40px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-secondary);
+    }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/directivo-nav', { activePage: 'students' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Alumnos</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Foco en quienes necesitan atención: bajo rendimiento, silenciosos o con entregas tardías
+        </p>
+      </div>
+    </div>
+
+    <div class="filter-chips">
+      <a href="/directivo/students" class="chip <%= filter === '' ? 'active' : '' %>">
+        Todos <span class="count"><%= counts.total %></span>
+      </a>
+      <a href="/directivo/students?estado=bajo" class="chip <%= filter === 'bajo' ? 'active' : '' %>">
+        <span class="material-symbols-outlined" style="font-size:16px">trending_down</span>
+        Bajo rendimiento <span class="count"><%= counts.bajo %></span>
+      </a>
+      <a href="/directivo/students?estado=silencioso" class="chip <%= filter === 'silencioso' ? 'active' : '' %>">
+        <span class="material-symbols-outlined" style="font-size:16px">notifications_off</span>
+        Silenciosos <span class="count"><%= counts.silencioso %></span>
+      </a>
+      <a href="/directivo/students?estado=tardias" class="chip <%= filter === 'tardias' ? 'active' : '' %>">
+        <span class="material-symbols-outlined" style="font-size:16px">schedule</span>
+        Muchas tardías <span class="count"><%= counts.tardias %></span>
+      </a>
+    </div>
+
+    <div style="font-size:12px;color:var(--text-hint);margin-bottom:8px">
+      <% if (total === 0) { %>
+        Sin resultados
+      <% } else { %>
+        Mostrando <%= (page - 1) * 25 + 1 %>–<%= Math.min(page * 25, total) %> de <strong><%= total %></strong> alumno<%= total === 1 ? '' : 's' %>
+      <% } %>
+    </div>
+
+    <% if (!students.length) { %>
+      <div class="empty-state">
+        <span class="material-symbols-outlined" style="font-size:36px;color:var(--text-hint)">group</span>
+        <p>No hay alumnos que coincidan con el filtro.</p>
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="students-table">
+          <thead>
+            <tr>
+              <th>Alumno</th>
+              <th>DNI</th>
+              <th style="text-align:center">Entregas (último mes)</th>
+              <th style="text-align:center">Tardías</th>
+              <th style="text-align:center">Promedio</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% students.forEach(s => { %>
+              <tr>
+                <td>
+                  <a href="/directivo/students/<%= s._id %>" class="name-link"><%= s.name %></a>
+                  <div style="font-size:11px;color:var(--text-hint)"><%= s.email %></div>
+                </td>
+                <td><%= s.dni || '—' %></td>
+                <td style="text-align:center"><strong><%= s.monthlyCount %></strong></td>
+                <td style="text-align:center">
+                  <% if (s.totalSubs === 0) { %>
+                    <span style="color:var(--text-hint)">—</span>
+                  <% } else { %>
+                    <%= s.lateSubs %> / <%= s.totalSubs %>
+                    <span style="color:var(--text-hint);font-size:11px">(<%= s.latePct %>%)</span>
+                  <% } %>
+                </td>
+                <td style="text-align:center">
+                  <% if (s.avg === null) { %>
+                    <span style="color:var(--text-hint)">—</span>
+                  <% } else { %>
+                    <strong style="color:<%= s.avg < 6 ? '#ea4335' : s.avg < 8 ? '#ea8600' : '#34a853' %>"><%= s.avg %></strong>
+                  <% } %>
+                </td>
+                <td>
+                  <% if (s.flags.bajo) { %>       <span class="badge badge-red">Bajo</span> <% } %>
+                  <% if (s.flags.silencioso) { %> <span class="badge badge-orange">Silencioso</span> <% } %>
+                  <% if (s.flags.tardias) { %>    <span class="badge badge-yellow">Tardías</span> <% } %>
+                  <% if (!s.flags.bajo && !s.flags.silencioso && !s.flags.tardias) { %>
+                    <span class="badge badge-green">OK</span>
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <%- include('../partials/pagination') %>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

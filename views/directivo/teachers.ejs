@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Docentes — Panel Directivo</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .teachers-table {
+      width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+    }
+    .teachers-table th, .teachers-table td {
+      padding: 10px 14px; text-align: left; font-size: 13px;
+      border-bottom: 1px solid var(--border);
+    }
+    .teachers-table th {
+      background: var(--background); font-weight: 600; font-size: 11px;
+      text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary);
+    }
+    .teachers-table tr:last-child td { border-bottom: none; }
+    .teachers-table tr:hover td { background: var(--background); }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; }
+    .badge-red { background: #fce8e6; color: #c5221f; }
+    .badge-warn { background: #fef4e5; color: #e67e00; }
+    .badge-ok { background: #e6f4ea; color: #137333; }
+    a.name-link { color: var(--text-primary); text-decoration: none; font-weight: 500; }
+    a.name-link:hover { color: var(--primary); text-decoration: underline; }
+    .empty-state {
+      text-align: center; padding: 40px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-secondary);
+    }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/directivo-nav', { activePage: 'teachers' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Docentes</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Actividad publicada, entregas pendientes de calificación y promedio de sus cursos
+        </p>
+      </div>
+    </div>
+
+    <div style="font-size:12px;color:var(--text-hint);margin-bottom:8px">
+      <% if (total === 0) { %>
+        Sin resultados
+      <% } else { %>
+        Mostrando <%= (page - 1) * 25 + 1 %>–<%= Math.min(page * 25, total) %> de <strong><%= total %></strong> docente<%= total === 1 ? '' : 's' %>
+      <% } %>
+    </div>
+
+    <% if (!teachers.length) { %>
+      <div class="empty-state">
+        <span class="material-symbols-outlined" style="font-size:36px;color:var(--text-hint)">badge</span>
+        <p>No hay docentes registrados en esta escuela.</p>
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="teachers-table">
+          <thead>
+            <tr>
+              <th>Docente</th>
+              <th style="text-align:center">Cursos</th>
+              <th style="text-align:center">Alumnos</th>
+              <th style="text-align:center">Actividades últ. mes</th>
+              <th style="text-align:center">Sin calificar (&gt;15d)</th>
+              <th style="text-align:center">Promedio de notas</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% teachers.forEach(t => { %>
+              <tr>
+                <td>
+                  <a href="/directivo/teachers/<%= t._id %>" class="name-link"><%= t.name %></a>
+                  <% if (t.active === false) { %><span class="badge badge-red" style="margin-left:4px">Deshabilitado</span><% } %>
+                  <div style="font-size:11px;color:var(--text-hint)"><%= t.email %></div>
+                </td>
+                <td style="text-align:center"><%= t.courseCount %></td>
+                <td style="text-align:center"><%= t.studentCount %></td>
+                <td style="text-align:center"><strong><%= t.monthlyActs %></strong></td>
+                <td style="text-align:center">
+                  <% if (t.overdueActs > 0) { %>
+                    <span class="badge badge-warn"><%= t.overdueActs %></span>
+                  <% } else { %>
+                    <span class="badge badge-ok">0</span>
+                  <% } %>
+                </td>
+                <td style="text-align:center">
+                  <% if (t.avg === null) { %>
+                    <span style="color:var(--text-hint)">—</span>
+                  <% } else { %>
+                    <strong style="color:<%= t.avg < 6 ? '#ea4335' : t.avg < 8 ? '#ea8600' : '#34a853' %>"><%= t.avg %></strong>
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <%- include('../partials/pagination') %>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

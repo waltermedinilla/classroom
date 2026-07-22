@@ -39,4 +39,9 @@ const activitySchema = new mongoose.Schema({
   allowLateSubmissions: { type: Boolean, default: false },
 }, { timestamps: true });
 
+// Índices usados por el panel directivo (tasa de entrega, actividades vencidas sin calificar)
+// y por las queries frecuentes de listado en /activities/course/:id
+activitySchema.index({ course: 1, availableFrom: 1 });
+activitySchema.index({ course: 1, dueDate: 1 });
+
 module.exports = mongoose.model('Activity', activitySchema);

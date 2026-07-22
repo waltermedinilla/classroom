@@ -293,6 +293,12 @@ const _activeTheme = (function() {
           <span>Mis pendientes</span>
         </a>
       <% } %>
+      <% if (typeof user !== 'undefined' && user && user.role === 'directivo' && !impersonating) { %>
+        <a href="/directivo" class="drawer-item">
+          <span class="material-symbols-outlined">supervisor_account</span>
+          <span>Panel Directivo</span>
+        </a>
+      <% } %>
       <% if (typeof user !== 'undefined' && user && user.role === 'admin' && !impersonating) { %>
         <a href="/admin" class="drawer-item">
           <span class="material-symbols-outlined">admin_panel_settings</span>

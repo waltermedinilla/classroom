@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Promedios — Panel Directivo</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .school-avg-card {
+      background: linear-gradient(135deg, #1a73e8 0%, #6200ea 100%);
+      color: #fff; border-radius: var(--radius); padding: 24px 28px;
+      display: flex; align-items: center; gap: 24px; margin-bottom: 20px;
+    }
+    .school-avg-value { font-size: 46px; font-weight: 800; line-height: 1; }
+    .school-avg-label { font-size: 13px; opacity: .9; letter-spacing: .4px; text-transform: uppercase; }
+    .school-avg-meta { font-size: 13px; opacity: .85; margin-top: 4px; }
+    .grades-table {
+      width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+    }
+    .grades-table th, .grades-table td {
+      padding: 10px 14px; text-align: left; font-size: 13px;
+      border-bottom: 1px solid var(--border);
+    }
+    .grades-table th {
+      background: var(--background); font-weight: 600; font-size: 11px;
+      text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary);
+    }
+    .grades-table tr:last-child td { border-bottom: none; }
+    .avg-strong { font-weight: 700; font-size: 15px; }
+    .bucket-bar {
+      display: flex; height: 12px; border-radius: 6px; overflow: hidden;
+      background: var(--border); min-width: 120px;
+    }
+    .bucket-seg { transition: flex .3s ease; }
+    .bucket-legend {
+      display: flex; gap: 12px; font-size: 11px; color: var(--text-secondary);
+      margin: 6px 0 20px;
+    }
+    .bucket-legend .dot {
+      display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px;
+      vertical-align: middle;
+    }
+    .section-h {
+      font-size: 15px; font-weight: 600; margin: 24px 0 10px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .empty-state {
+      text-align: center; padding: 40px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-secondary);
+    }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/directivo-nav', { activePage: 'grades' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Promedios</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Todas las notas se normalizan a escala 0-10 para poder comparar entre materias con distinto puntaje máximo
+        </p>
+      </div>
+    </div>
+
+    <% if (schoolAvg === null) { %>
+      <div class="empty-state">
+        <span class="material-symbols-outlined" style="font-size:36px;color:var(--text-hint)">grade</span>
+        <p>Todavía no hay calificaciones cargadas en esta escuela.</p>
+      </div>
+    <% } else { %>
+
+      <div class="school-avg-card">
+        <span class="material-symbols-outlined" style="font-size:52px;opacity:.6">school</span>
+        <div>
+          <div class="school-avg-value"><%= schoolAvg %></div>
+          <div class="school-avg-label">Promedio institucional</div>
+          <div class="school-avg-meta"><%= totalCount %> calificacion<%= totalCount === 1 ? '' : 'es' %> considerada<%= totalCount === 1 ? '' : 's' %></div>
+        </div>
+      </div>
+
+      <div class="bucket-legend">
+        <span><span class="dot" style="background:#ea4335"></span>0 - 4</span>
+        <span><span class="dot" style="background:#ea8600"></span>4 - 6</span>
+        <span><span class="dot" style="background:#1a73e8"></span>6 - 8</span>
+        <span><span class="dot" style="background:#34a853"></span>8 - 10</span>
+      </div>
+
+      <div class="section-h">
+        <span class="material-symbols-outlined" style="color:#ea4335">class</span>
+        Por división
+      </div>
+      <% if (!divisionsByAvg.length) { %>
+        <div class="empty-state">Sin datos por división todavía.</div>
+      <% } else { %>
+        <div style="overflow-x:auto">
+          <table class="grades-table">
+            <thead>
+              <tr>
+                <th>División</th>
+                <th style="text-align:center">Calificaciones</th>
+                <th style="text-align:center">Promedio</th>
+                <th>Distribución</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% divisionsByAvg.forEach(d => {
+                const total = d.count;
+                const pct = (n) => (n/total)*100;
+              %>
+                <tr>
+                  <td><strong><%= d.name %></strong></td>
+                  <td style="text-align:center"><%= d.count %></td>
+                  <td style="text-align:center">
+                    <span class="avg-strong" style="color:<%= d.avg < 6 ? '#ea4335' : d.avg < 8 ? '#ea8600' : '#34a853' %>"><%= d.avg %></span>
+                  </td>
+                  <td>
+                    <div class="bucket-bar" title="Distribución de calificaciones">
+                      <div class="bucket-seg" style="flex:<%= pct(d.buckets.b0) %>;background:#ea4335" title="< 4: <%= d.buckets.b0 %>"></div>
+                      <div class="bucket-seg" style="flex:<%= pct(d.buckets.b1) %>;background:#ea8600" title="4-6: <%= d.buckets.b1 %>"></div>
+                      <div class="bucket-seg" style="flex:<%= pct(d.buckets.b2) %>;background:#1a73e8" title="6-8: <%= d.buckets.b2 %>"></div>
+                      <div class="bucket-seg" style="flex:<%= pct(d.buckets.b3) %>;background:#34a853" title="8-10: <%= d.buckets.b3 %>"></div>
+                    </div>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+
+      <div class="section-h">
+        <span class="material-symbols-outlined" style="color:#1a73e8">menu_book</span>
+        Por materia (peores promedios primero)
+      </div>
+      <div style="overflow-x:auto">
+        <table class="grades-table">
+          <thead>
+            <tr>
+              <th>Materia</th>
+              <th>División</th>
+              <th>Docente</th>
+              <th style="text-align:center">Notas</th>
+              <th style="text-align:center">Promedio</th>
+              <th>Distribución</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% coursesByAvg.forEach(c => {
+              const total = c.count;
+              const pct = (n) => (n/total)*100;
+            %>
+              <tr>
+                <td><a href="/directivo/courses/<%= c.courseId %>" style="color:var(--text-primary);text-decoration:none;font-weight:500"><%= c.name %></a></td>
+                <td><%= c.division %></td>
+                <td style="color:var(--text-secondary)"><%= c.teacher %></td>
+                <td style="text-align:center"><%= c.count %></td>
+                <td style="text-align:center">
+                  <span class="avg-strong" style="color:<%= c.avg < 6 ? '#ea4335' : c.avg < 8 ? '#ea8600' : '#34a853' %>"><%= c.avg %></span>
+                </td>
+                <td>
+                  <div class="bucket-bar">
+                    <div class="bucket-seg" style="flex:<%= pct(c.buckets.b0) %>;background:#ea4335" title="< 4: <%= c.buckets.b0 %>"></div>
+                    <div class="bucket-seg" style="flex:<%= pct(c.buckets.b1) %>;background:#ea8600" title="4-6: <%= c.buckets.b1 %>"></div>
+                    <div class="bucket-seg" style="flex:<%= pct(c.buckets.b2) %>;background:#1a73e8" title="6-8: <%= c.buckets.b2 %>"></div>
+                    <div class="bucket-seg" style="flex:<%= pct(c.buckets.b3) %>;background:#34a853" title="8-10: <%= c.buckets.b3 %>"></div>
+                  </div>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

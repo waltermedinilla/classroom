@@ -1,0 +1,22 @@
+<nav class="admin-nav">
+  <a href="/directivo" class="admin-nav-item <%= activePage === 'dashboard' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">dashboard</span>
+    Resumen
+  </a>
+  <a href="/directivo/courses" class="admin-nav-item <%= activePage === 'courses' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">menu_book</span>
+    Materias
+  </a>
+  <a href="/directivo/students" class="admin-nav-item <%= activePage === 'students' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">group</span>
+    Alumnos
+  </a>
+  <a href="/directivo/teachers" class="admin-nav-item <%= activePage === 'teachers' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">badge</span>
+    Docentes
+  </a>
+  <a href="/directivo/grades" class="admin-nav-item <%= activePage === 'grades' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">grade</span>
+    Promedios
+  </a>
+</nav>

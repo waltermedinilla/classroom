@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Materias — Panel Directivo</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .filters-bar {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+      margin-bottom: 16px;
+    }
+    .filters-bar input, .filters-bar select {
+      padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px;
+      font-size: 14px; background: var(--surface); color: var(--text-primary);
+    }
+    .courses-table {
+      width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+    }
+    .courses-table th, .courses-table td {
+      padding: 12px 14px; text-align: left; font-size: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .courses-table th {
+      background: var(--background); font-weight: 600; font-size: 12px;
+      text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary);
+    }
+    .courses-table tr:last-child td { border-bottom: none; }
+    .courses-table tr:hover td { background: var(--background); }
+    .rate-cell { min-width: 140px; }
+    .rate-bar-track {
+      background: var(--border); height: 6px; border-radius: 3px; overflow: hidden;
+      margin-top: 3px;
+    }
+    .rate-bar-fill { height: 100%; transition: width .3s ease; }
+    .badge-pill {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 11px; font-weight: 600; letter-spacing: .3px;
+    }
+    .badge-warn { background: #fce8e6; color: #c5221f; }
+    .badge-ok   { background: #e6f4ea; color: #137333; }
+    .badge-muted { background: var(--border); color: var(--text-secondary); }
+    .warn-inline {
+      display: inline-flex; align-items: center; gap: 3px;
+      color: #ea8600; font-size: 12px; margin-left: 6px;
+    }
+    a.course-name-link {
+      color: var(--text-primary); text-decoration: none; font-weight: 500;
+    }
+    a.course-name-link:hover { color: var(--primary); text-decoration: underline; }
+    .empty-state {
+      text-align: center; padding: 60px 20px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      color: var(--text-secondary);
+    }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/directivo-nav', { activePage: 'courses' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Seguimiento de Materias</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Tasa de entrega y actividades pendientes de calificación
+        </p>
+      </div>
+    </div>
+
+    <form method="GET" class="filters-bar">
+      <input type="search" name="search" placeholder="Buscar por nombre..." value="<%= search %>">
+      <select name="division">
+        <option value="">Todas las divisiones</option>
+        <% divisions.forEach(d => { %>
+          <option value="<%= d._id %>" <%= divisionFilter === d._id.toString() ? 'selected' : '' %>><%= d.name %></option>
+        <% }) %>
+      </select>
+      <select name="sort">
+        <option value="rate-asc"  <%= sort === 'rate-asc'  ? 'selected' : '' %>>Peor tasa de entrega primero</option>
+        <option value="rate-desc" <%= sort === 'rate-desc' ? 'selected' : '' %>>Mejor tasa de entrega primero</option>
+        <option value="name"      <%= sort === 'name'      ? 'selected' : '' %>>Nombre (A→Z)</option>
+      </select>
+      <button type="submit" class="btn btn-outline">
+        <span class="material-symbols-outlined">filter_alt</span>
+        Aplicar
+      </button>
+    </form>
+
+    <div style="font-size:12px;color:var(--text-hint);margin-bottom:8px">
+      <% if (total === 0) { %>
+        Sin resultados
+      <% } else { %>
+        Mostrando <%= (page - 1) * 25 + 1 %>–<%= Math.min(page * 25, total) %> de <strong><%= total %></strong> materia<%= total === 1 ? '' : 's' %>
+      <% } %>
+    </div>
+
+    <% if (!courses.length) { %>
+      <div class="empty-state">
+        <span class="material-symbols-outlined" style="font-size:36px;color:var(--text-hint)">search_off</span>
+        <p>No hay materias que coincidan con los filtros.</p>
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="courses-table">
+          <thead>
+            <tr>
+              <th>Materia</th>
+              <th>División</th>
+              <th>Docente</th>
+              <th style="text-align:center">Alumnos</th>
+              <th style="text-align:center">Actividades</th>
+              <th style="text-align:center">Entregas</th>
+              <th>Tasa de entrega</th>
+              <th style="text-align:center">Sin calificar</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% courses.forEach(c => {
+              let rateColor = '#5f6368';
+              if (c.deliveryRate !== null) {
+                if (c.deliveryRate >= 80) rateColor = '#34a853';
+                else if (c.deliveryRate >= 50) rateColor = '#ea8600';
+                else rateColor = '#ea4335';
+              }
+            %>
+              <tr>
+                <td>
+                  <a href="/directivo/courses/<%= c._id %>" class="course-name-link"><%= c.name %></a>
+                </td>
+                <td><%= c.division?.name || '—' %></td>
+                <td>
+                  <%= c.owner?.name || 'Sin docente' %>
+                  <% if (c.owner && c.owner.active === false) { %>
+                    <span class="warn-inline" title="Docente deshabilitado">
+                      <span class="material-symbols-outlined" style="font-size:14px">warning</span>
+                      Deshabilitado
+                    </span>
+                  <% } %>
+                </td>
+                <td style="text-align:center"><%= c.studentCount %></td>
+                <td style="text-align:center"><%= c.activityCount %></td>
+                <td style="text-align:center">
+                  <%= c.submissionCount %>
+                  <span style="color:var(--text-hint)">/ <%= c.expectedSubmissions %></span>
+                </td>
+                <td class="rate-cell">
+                  <% if (c.deliveryRate === null) { %>
+                    <span class="badge-pill badge-muted">Sin actividades</span>
+                  <% } else { %>
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <strong style="color:<%= rateColor %>"><%= c.deliveryRate %>%</strong>
+                    </div>
+                    <div class="rate-bar-track">
+                      <div class="rate-bar-fill" style="width:<%= c.deliveryRate %>%;background:<%= rateColor %>"></div>
+                    </div>
+                  <% } %>
+                </td>
+                <td style="text-align:center">
+                  <% if (c.overdueUngraded > 0) { %>
+                    <span class="badge-pill badge-warn" title="Actividades vencidas sin calificar"><%= c.overdueUngraded %></span>
+                  <% } else { %>
+                    <span class="badge-pill badge-ok">0</span>
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <%- include('../partials/pagination') %>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

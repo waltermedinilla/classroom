@@ -29,4 +29,7 @@ const submissionSchema = new mongoose.Schema({
 // Si reenvía, se hace upsert (findOneAndUpdate con { upsert: true }) sobre este índice
 submissionSchema.index({ activity: 1, student: 1 }, { unique: true });
 
+// Panel directivo: "alumnos silenciosos" (sin entregas en los últimos 30 días)
+submissionSchema.index({ student: 1, createdAt: -1 });
+
 module.exports = mongoose.model('Submission', submissionSchema);

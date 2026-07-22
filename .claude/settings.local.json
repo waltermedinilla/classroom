@@ -80,7 +80,17 @@
       "Bash(node -c routes/activities.js)",
       "Bash(node -c public/js/course.js)",
       "Bash(curl -s http://localhost:3000/js/course.js)",
-      "Bash(curl -s http://localhost:3000/login)"
+      "Bash(curl -s http://localhost:3000/login)",
+      "Bash(node -c routes/directivo.js)",
+      "Bash(node -c middleware/directivo.js)",
+      "Bash(curl -s -o /dev/null -w \"status: %{http_code}\\\\n\" --max-time 3 http://localhost:3000/login)",
+      "Bash(node -e \"require\\('dotenv'\\).config\\(\\); require\\('./routes/directivo'\\); console.log\\('routes/directivo OK'\\);\")",
+      "Bash(node -e \"require\\('dotenv'\\).config\\(\\); require\\('./server.js'\\);\")",
+      "Bash(curl -s -o /dev/null -w \"server standalone status: %{http_code}\\\\n\" http://localhost:3000/login)",
+      "Read(//tmp/**)",
+      "Bash(rm -f /tmp/server-check.log)",
+      "Bash(curl -s -o /dev/null -w \"puerto 3000 libre: %{http_code}\\\\n\" --max-time 2 http://localhost:3000/login)",
+      "Bash(curl -s -o /dev/null -w \"server local: %{http_code}\\\\n\" --max-time 3 http://localhost:3000/login)"
     ]
   }
 }

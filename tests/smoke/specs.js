@@ -351,6 +351,133 @@ const specs = [
     },
   },
 
+  // ── Panel Directivo (A1 + A2) ─────────────────────────────────────────────
+  {
+    id: 'directivo-create-user',
+    title: 'El admin da de alta un directivo de prueba',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const email = `smoke.directivo.${state.courseId || Date.now()}@example.com`;
+      const res = await client.post('admin', '/admin/users/create', {
+        body: { name: 'Smoke Directivo', email, password: 'SmokeTest1234', role: 'directivo' },
+        expectStatus: 201,
+      });
+      state.directivoId    = res.json.user._id;
+      state.directivoEmail = email;
+    },
+  },
+  {
+    id: 'directivo-login-and-dashboard',
+    title: 'El directivo inicia sesión y ve su dashboard',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.post('directivo', '/login', {
+        body: { email: state.directivoEmail, password: 'SmokeTest1234' },
+        expectStatus: 200,
+      });
+      // "/" debe redirigir al directivo a /directivo (no a /courses)
+      const rootRes = await client.get('directivo', '/', { expectStatus: 302 });
+      assert(rootRes.headers.get('location') === '/directivo',
+        `esperaba redirect a /directivo, recibí ${rootRes.headers.get('location')}`);
+
+      const dashRes = await client.get('directivo', '/directivo', { expectStatus: 200 });
+      assert(dashRes.text.includes('Panel Directivo'), 'la vista debería contener "Panel Directivo"');
+    },
+  },
+  {
+    id: 'directivo-sees-courses-with-metrics',
+    title: 'El directivo ve el listado de materias con tasa de entrega',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('directivo', '/directivo/courses', { expectStatus: 200 });
+      // El curso de smoke debería aparecer (con 1 alumno y 1 actividad y 1 entrega = 100%)
+      assert(res.text.includes(`Materia Smoke`), 'el listado debería incluir el curso de smoke');
+    },
+  },
+  {
+    id: 'directivo-course-detail',
+    title: 'El directivo puede abrir el detalle read-only de una materia',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('directivo', `/directivo/courses/${state.courseId}`, { expectStatus: 200 });
+      assert(res.text.includes('Actividades') && res.text.includes('Alumnos'),
+        'el detalle debería tener secciones de Actividades y Alumnos');
+    },
+  },
+  {
+    id: 'directivo-cannot-edit-course',
+    title: 'El directivo NO puede borrar cursos (403)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // Solo admins/superadmin pueden llegar a las rutas de mutación. Un directivo debe rebotar.
+      await client.post('directivo', `/admin/courses/${state.courseId}/delete`, {
+        expectStatus: [403, 302],
+      });
+    },
+  },
+  {
+    id: 'directivo-grades',
+    title: 'El directivo ve la vista de promedios (M1)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('directivo', '/directivo/grades', { expectStatus: 200 });
+      assert(res.text.includes('Promedios') || res.text.includes('promedio'),
+        'la vista debería mencionar "Promedios"');
+    },
+  },
+  {
+    id: 'directivo-students',
+    title: 'El directivo ve el listado de alumnos con chips de filtro (M2)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('directivo', '/directivo/students', { expectStatus: 200 });
+      assert(res.text.includes('Bajo rendimiento') && res.text.includes('Silencioso'),
+        'la vista debería tener los chips de filtro Bajo rendimiento y Silencioso');
+      // Y probar los filtros
+      await client.get('directivo', '/directivo/students?estado=bajo',       { expectStatus: 200 });
+      await client.get('directivo', '/directivo/students?estado=silencioso', { expectStatus: 200 });
+      await client.get('directivo', '/directivo/students?estado=tardias',    { expectStatus: 200 });
+    },
+  },
+  {
+    id: 'directivo-student-detail',
+    title: 'El directivo puede abrir el perfil read-only de un alumno (M4)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('directivo', `/directivo/students/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(res.text.includes('Historial de entregas'),
+        'el perfil debería tener "Historial de entregas"');
+    },
+  },
+  {
+    id: 'directivo-teachers',
+    title: 'El directivo ve el listado de docentes con métricas (M3)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('directivo', '/directivo/teachers', { expectStatus: 200 });
+      assert(res.text.includes('Actividades últ. mes') || res.text.includes('Sin calificar'),
+        'la vista debería incluir métricas de actividad docente');
+    },
+  },
+  {
+    id: 'directivo-teacher-detail',
+    title: 'El directivo puede abrir el perfil read-only de un docente (M4)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('directivo', `/directivo/teachers/${state.scopedTeacherId}`, { expectStatus: 200 });
+      assert(res.text.includes('Materias que dicta'),
+        'el perfil debería tener "Materias que dicta"');
+    },
+  },
+  {
+    id: 'directivo-cleanup',
+    title: 'Limpieza: el admin borra el directivo de prueba',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      if (state.directivoId) await client.post('admin', `/admin/users/${state.directivoId}/delete`, { expectStatus: 200 });
+    },
+  },
+
   // ── Nivel 3 (opcional): superadmin ────────────────────────────────────────
   {
     id: 'superadmin-login',

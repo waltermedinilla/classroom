@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Directivo - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .attention-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      margin-top: 12px;
+    }
+    .attention-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 4px solid #ea8600;
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      text-decoration: none;
+      color: inherit;
+      transition: box-shadow .15s ease, transform .15s ease;
+    }
+    .attention-card:hover {
+      box-shadow: var(--shadow-sm);
+      transform: translateY(-1px);
+    }
+    .attention-card.ok { border-left-color: #34a853; opacity: .85; }
+    .attention-icon {
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      background: #fff4e5; color: #ea8600;
+      flex-shrink: 0;
+    }
+    .attention-card.ok .attention-icon { background: #e6f4ea; color: #34a853; }
+    .attention-value {
+      font-size: 28px; font-weight: 700; line-height: 1;
+    }
+    .attention-label {
+      font-size: 13px; color: var(--text-secondary); margin-top: 4px;
+    }
+    .section-title-h {
+      font-size: 15px; font-weight: 600;
+      margin: 28px 0 8px; color: var(--text-primary);
+    }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/directivo-nav', { activePage: 'dashboard' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Panel Directivo</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          <%= school ? school.name : 'Vista institucional (solo lectura)' %>
+        </p>
+      </div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card" style="--stat-color:#9334e6">
+        <div class="stat-icon"><span class="material-symbols-outlined">group</span></div>
+        <div class="stat-info">
+          <span class="stat-value"><%= stats.studentCount %></span>
+          <span class="stat-label">Alumnos</span>
+        </div>
+      </div>
+      <div class="stat-card" style="--stat-color:#ea8600">
+        <div class="stat-icon"><span class="material-symbols-outlined">badge</span></div>
+        <div class="stat-info">
+          <span class="stat-value"><%= stats.teacherCount %></span>
+          <span class="stat-label">Docentes</span>
+        </div>
+      </div>
+      <div class="stat-card" style="--stat-color:#34a853">
+        <div class="stat-icon"><span class="material-symbols-outlined">menu_book</span></div>
+        <div class="stat-info">
+          <span class="stat-value"><%= stats.courseCount %></span>
+          <span class="stat-label">Materias abiertas</span>
+        </div>
+      </div>
+      <div class="stat-card" style="--stat-color:#ea4335">
+        <div class="stat-icon"><span class="material-symbols-outlined">class</span></div>
+        <div class="stat-info">
+          <span class="stat-value"><%= stats.divisionCount %></span>
+          <span class="stat-label">Cursos / Divisiones</span>
+        </div>
+      </div>
+      <div class="stat-card" style="--stat-color:#34a853">
+        <div class="stat-icon"><span class="material-symbols-outlined">sensors</span></div>
+        <div class="stat-info">
+          <span class="stat-value"><%= stats.connectedNow %></span>
+          <span class="stat-label">Activos (últ. 15 min)</span>
+        </div>
+      </div>
+      <div class="stat-card" style="--stat-color:#1a73e8">
+        <div class="stat-icon"><span class="material-symbols-outlined">person_add</span></div>
+        <div class="stat-info">
+          <span class="stat-value"><%= stats.newLastMonth %></span>
+          <span class="stat-label">Nuevas altas (último mes)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title-h">Requiere atención</div>
+    <div class="attention-grid">
+      <a href="/directivo/courses" class="attention-card <%= attention.orphanedCourses === 0 ? 'ok' : '' %>">
+        <div class="attention-icon"><span class="material-symbols-outlined">person_off</span></div>
+        <div>
+          <div class="attention-value"><%= attention.orphanedCourses %></div>
+          <div class="attention-label">Materias con docente deshabilitado</div>
+        </div>
+      </a>
+      <a href="/directivo/courses?sort=rate-asc" class="attention-card <%= attention.overdueUngradedCount === 0 ? 'ok' : '' %>">
+        <div class="attention-icon"><span class="material-symbols-outlined">grading</span></div>
+        <div>
+          <div class="attention-value"><%= attention.overdueUngradedCount %></div>
+          <div class="attention-label">Actividades vencidas sin calificar hace más de 15 días</div>
+        </div>
+      </a>
+      <div class="attention-card <%= attention.unenrolledCount === 0 ? 'ok' : '' %>" style="cursor:default">
+        <div class="attention-icon"><span class="material-symbols-outlined">person_search</span></div>
+        <div>
+          <div class="attention-value"><%= attention.unenrolledCount %></div>
+          <div class="attention-label">Alumnos sin matricular en ningún curso</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

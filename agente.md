@@ -287,6 +287,50 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ## Historial de Cambios (Changelog)
 
+### 2026-07-21 — Paginación en las 3 vistas del Panel Directivo
+
+Materias, Alumnos y Docentes ahora paginan de a 25 (mismo `views/partials/pagination.ejs` que reusa el admin). Se agregó línea de contexto "Mostrando 26–50 de 485" arriba de cada tabla.
+
+**Decisión de diseño**: la paginación se aplica en JS después de calcular todas las métricas y ordenar por prioridad (más flags primero en alumnos, peor tasa primero en materias, más sin calificar primero en docentes). Alternativa `.skip().limit()` en Mongo pierde ese orden — se descartó. Con los índices agregados, calcular las métricas de toda la escuela sub-segundo hasta ~1000 alumnos.
+
+**Contadores globales**: los chips de "Bajo rendimiento: 12 / Silencioso: 34 / Tardías: 8" en `/directivo/students` siguen mostrando totales de escuela — no dependen de la página actual.
+
+**Preservación de filtros**: los links de páginas mantienen `?search=`, `?division=`, `?sort=`, `?estado=` intactos vía `queryParams` que se pasa al partial.
+
+**Clamp de página fuera de rango**: `?page=999` cuando solo hay 20 páginas cae limpio en la última (vía `Math.min(page, totalPages)` en el server), evitando el "Mostrando 24951–485" que aparecería si `slice()` recibiera un `pageStart` inválido.
+
+### 2026-07-21 — Panel Directivo (M1 + M2 + M3 + M4)
+
+**Completa el bloque directivo con la parte pedagógica.** Con esto el rol tiene panel operativo completo (todo lo del roadmap Alta+Media hecho; Baja — export Excel, notificaciones — descartada por decisión del usuario).
+
+- **M1 · Promedios** (`GET /directivo/grades`) — promedios normalizados a 0-10 (cada `points/activity.points × 10`), por curso y por división, más el promedio institucional. Tabla ordenada por peor promedio primero. Distribución en 4 buckets (<4, 4-6, 6-8, 8-10) con barra apilada. Excluye actividades con `points: null`.
+- **M2 · Alumnos con foco** (`GET /directivo/students`) — cada alumno con: entregas último mes, cantidad de tardías (`submission.createdAt > activity.dueDate`), promedio normalizado. Etiquetas: Bajo rendimiento (`avg < 6`), Silencioso (0 entregas último mes), Tardías (`≥3 entregas y >30% fuera de plazo`). Chips de filtro por estado. Orden: los que tienen más flags activos primero.
+- **M3 · Actividad docente** (`GET /directivo/teachers`) — por docente: cursos, alumnos únicos, actividades publicadas último mes, actividades vencidas sin calificar hace > 15 días, promedio general de sus cursos. Orden: los que tienen más "sin calificar" primero.
+- **M4 · Perfiles read-only** (`GET /directivo/students/:id` y `/directivo/teachers/:id`) — datos personales + mini-stats + historial. Alumno: cursos inscripto + historial completo de entregas (con tardía, nota, feedback). Docente: materias que dicta + actividades publicadas con estado (En curso / Parcial / Sin calificar / Vencida).
+- **Nav actualizado** (`views/partials/directivo-nav.ejs`): Resumen · Materias · Alumnos · Docentes · Promedios.
+- **Smoke tests**: 5 specs nuevos. **42/42 pasando**.
+
+### 2026-07-21 — Panel Directivo (A1 + A2)
+
+**Nuevo rol operativo con panel propio de solo lectura.** Antes el `directivo` existía como enum pero al loguearse veía lo mismo que un docente. Ahora `/directivo` es su landing por defecto (redirect en `server.js` según el rol).
+
+- **Middleware** `middleware/directivo.js` — acepta `directivo`, `admin`, `superadmin` (mismo patrón que `requireAdmin`).
+- **Rutas nuevas** (`routes/directivo.js`, montada en `/directivo`, todas scoped por `res.locals.user.school`):
+  - `GET /directivo` — dashboard institucional: 6 tarjetas (alumnos / docentes / materias / divisiones / conectados últ. 15 min / nuevas altas último mes) + 3 alertas "requiere atención" (materias con docente deshabilitado, actividades vencidas sin calificar hace > 15 días, alumnos sin matricular).
+  - `GET /directivo/courses` — listado con métricas por curso: alumnos, actividades, entregas, **tasa de entrega %** (verde >80, ámbar 50-80, rojo <50), **cantidad de actividades vencidas sin calificar**. Filtros: búsqueda, división, orden (peor/mejor tasa primero, o nombre). Aggregate único con `$lookup` para evitar N+3 queries por curso.
+  - `GET /directivo/courses/:id` — detalle read-only del curso: actividades con estado (En curso / Parcial / Sin calificar / Vencida) + alumnos con tasa individual.
+- **Vistas** en `views/directivo/`: `dashboard.ejs`, `courses.ejs`, `course-detail.ejs`, `no-school.ejs` (pantalla amigable si el directivo no tiene escuela). Nav horizontal en `views/partials/directivo-nav.ejs`. Link en el drawer (`views/partials/header.ejs`).
+- **Índices nuevos** en `Activity` (`{course, availableFrom}`, `{course, dueDate}`) y `Submission` (`{student, createdAt}`) para que las agregaciones escalen.
+- **Smoke tests**: 6 specs nuevos (crear directivo, login + dashboard, listado con métricas, detalle, 403 al intentar mutar cursos, cleanup). **37/37 pasando** contra la BD real (896 alumnos, 351 docentes, 485 materias).
+
+**Pendiente del roadmap directivo** (ver [Plan de Futuras Actualizaciones]):
+- **M1** — Promedios por curso / división / escuela (con normalización a escala 0-10).
+- **M2** — Alumnos con bajo rendimiento + silenciosos + con tardías.
+- **M3** — Actividad docente (publicaciones, calificaciones atrasadas, promedio de sus cursos).
+- **M4** — Perfiles read-only de alumno / docente / curso.
+
+**Detalle a corregir eventualmente** — `POST /admin/users/create` en `routes/admin.js:161` siempre asigna la escuela del admin que crea al nuevo usuario. Si un superadmin (que tiene `school: null`) crea un directivo, este queda con `school: null` y su panel aparece vacío. La creación de directivos debería hacerla el admin de la escuela específica, o bien el endpoint debería permitir elegir la escuela cuando lo llama un superadmin.
+
 ### 2026-07-21 — Sugerencias abiertas, cache, monitor con bandwidth, entregas del alumno con progreso, smoke tests
 
 **Sugerencias — abiertas a todos los roles**
