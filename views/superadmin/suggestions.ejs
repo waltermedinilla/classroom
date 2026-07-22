@@ -78,6 +78,46 @@
           </div>
         <% }) %>
       </div>
+
+      <%
+        function buildUrl(overrides) {
+          const p = {};
+          if (status && status !== 'all') p.status = status;
+          Object.assign(p, overrides);
+          return '/superadmin/suggestions?' + Object.entries(p).map(([k,v]) => k+'='+encodeURIComponent(v)).join('&');
+        }
+        let pagesToShow = [];
+        if (totalPages <= 7) {
+          for (let i = 1; i <= totalPages; i++) pagesToShow.push(i);
+        } else {
+          pagesToShow.push(1);
+          if (page > 3) pagesToShow.push('...');
+          for (let i = Math.max(2, page-2); i <= Math.min(totalPages-1, page+2); i++) pagesToShow.push(i);
+          if (page < totalPages-2) pagesToShow.push('...');
+          pagesToShow.push(totalPages);
+        }
+      %>
+      <% if (totalPages > 1) { %>
+        <div class="pagination">
+          <% if (page > 1) { %>
+            <a href="<%= buildUrl({page: page-1}) %>" class="page-btn" title="Anterior">
+              <span class="material-symbols-outlined" style="font-size:18px">chevron_left</span>
+            </a>
+          <% } %>
+          <% pagesToShow.forEach(p => { %>
+            <% if (p === '...') { %>
+              <span class="page-ellipsis">…</span>
+            <% } else { %>
+              <a href="<%= buildUrl({page: p}) %>" class="page-btn <%= p === page ? 'active' : '' %>"><%= p %></a>
+            <% } %>
+          <% }) %>
+          <% if (page < totalPages) { %>
+            <a href="<%= buildUrl({page: page+1}) %>" class="page-btn" title="Siguiente">
+              <span class="material-symbols-outlined" style="font-size:18px">chevron_right</span>
+            </a>
+          <% } %>
+        </div>
+      <% } %>
     <% } %>
   </main>
 

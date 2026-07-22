@@ -5,11 +5,14 @@ const os      = require('os');
 const School  = require('../models/School');
 const User    = require('../models/User');
 const Course  = require('../models/Course');
+const Division   = require('../models/Division');
 const Subject    = require('../models/Subject');
 const Suggestion = require('../models/Suggestion');
 const THEMES     = require('../config/themes');
+const { getNetworkStats } = require('../config/network');
 const { requireAuth }      = require('../middleware/auth');
 const { requireSuperAdmin } = require('../middleware/superadmin');
+const { invalidateUser, invalidateSchool } = require('../middleware/cache');
 
 // Multer en memoria para importación Excel (no necesita guardarse en disco)
 const xlsUpload = multer({
@@ -136,6 +139,7 @@ router.post('/schools/:id/edit', async (req, res) => {
       { new: true, runValidators: true }
     );
     if (!school) return res.status(404).json({ error: 'Escuela no encontrada' });
+    invalidateSchool(req.params.id);
     res.json({ school });
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ error: 'Ya existe una escuela con ese nombre' });
@@ -149,6 +153,7 @@ router.post('/schools/:id/edit', async (req, res) => {
 router.post('/schools/:id/delete', async (req, res) => {
   try {
     await School.findByIdAndDelete(req.params.id);
+    invalidateSchool(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -273,6 +278,7 @@ router.post('/users/bulk-school', async (req, res) => {
     if (!Array.isArray(userIds) || !userIds.length)
       return res.status(400).json({ error: 'No se especificaron usuarios' });
     await User.updateMany({ _id: { $in: userIds } }, { school: schoolId || null });
+    userIds.forEach(invalidateUser);
     res.json({ ok: true, updated: userIds.length });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -294,6 +300,7 @@ router.post('/users/bulk-role', async (req, res) => {
     if (!filtered.length) return res.status(400).json({ error: 'No podés cambiar tu propio rol en lote' });
 
     await User.updateMany({ _id: { $in: filtered } }, { role });
+    filtered.forEach(invalidateUser);
     res.json({ ok: true, updated: filtered.length });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -313,6 +320,7 @@ router.post('/users/:id/school', async (req, res) => {
       { new: true }
     );
     if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+    invalidateUser(req.params.id);
     res.json({ user });
   } catch (err) {
     if (err.code === 11000) {
@@ -335,6 +343,7 @@ router.post('/users/:id/role', async (req, res) => {
       return res.status(400).json({ error: 'No puedes cambiar tu propio rol' });
     }
     const user = await User.findByIdAndUpdate(req.params.id, { role }, { new: true, runValidators: true });
+    invalidateUser(req.params.id);
     res.json({ user });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -536,12 +545,31 @@ router.post('/import/execute', async (req, res) => {
     }
 
     // 3. Crear cursos (el docente debe estar en userEmailMap para asignarlo como owner)
+    // El campo "seccion" del Excel se resuelve a una Division (requerida por el schema Course).
+    // Los campos "section" y "subject" NO existen en el modelo Course: la sección se guarda
+    // como Division y la materia se refleja en Course.name (que ya es el nombre del curso).
     if (importCursos && cursos?.length) {
+      // Cache de divisiones por nombre para no crear la misma varias veces
+      const divisionCache = {};
+      const resolveDivision = async (name) => {
+        if (!name) return null;
+        if (divisionCache[name]) return divisionCache[name];
+        const div = await Division.findOneAndUpdate(
+          { name, school: schoolId },
+          { name, school: schoolId },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+        divisionCache[name] = div._id;
+        return div._id;
+      };
+
       for (const c of cursos) {
         const teacherId = userEmailMap[c.email_docente];
         if (!teacherId) { results.cursos.skipped++; continue; } // Sin docente: no se puede crear
         try {
-          await Course.create({ name: c.nombre, section: c.seccion, subject: c.materia, room: c.aula, owner: teacherId, school: schoolId });
+          const divisionId = await resolveDivision(c.seccion);
+          if (!divisionId) { results.cursos.skipped++; continue; } // Sin sección: no se puede crear
+          await Course.create({ name: c.nombre, room: c.aula, division: divisionId, owner: teacherId, school: schoolId });
           results.cursos.created++;
         } catch { results.cursos.skipped++; }
       }
@@ -586,6 +614,7 @@ router.post('/themes/offer', async (req, res) => {
       });
     }
     await school.save();
+    invalidateSchool(schoolId);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -604,6 +633,7 @@ router.post('/themes/config', async (req, res) => {
     if (endDate)   t.endDate   = endDate;
     t.config = buildConfig(slug, config);
     await school.save();
+    invalidateSchool(schoolId);
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'Error del servidor' });
@@ -617,6 +647,7 @@ router.post('/themes/revoke', async (req, res) => {
     await School.findByIdAndUpdate(schoolId, {
       $pull: { themes: { slug } },
     });
+    invalidateSchool(schoolId);
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'Error del servidor' });
@@ -647,12 +678,23 @@ router.get('/monitor', (req, res) => {
 
 router.get('/monitor/stats', async (req, res) => {
   try {
-    const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000);
-    const [activeUsers, totalUsers, totalSchools] = await Promise.all([
+    // "Ahora" (2 min) es más ajustado que "activos" (15 min, métrica histórica que ya
+    // existía): con el throttle de lastSeen bajado a 1 min (ver middleware/auth.js) da
+    // un número que se siente en vivo sin escribir en cada request.
+    const nowCutoff      = new Date(Date.now() - 2  * 60 * 1000);
+    const fifteenMinAgo  = new Date(Date.now() - 15 * 60 * 1000);
+    const [connectedNow, byRoleNow, activeUsers, totalUsers, totalSchools] = await Promise.all([
+      User.countDocuments({ lastSeen: { $gte: nowCutoff } }),
+      User.aggregate([
+        { $match: { lastSeen: { $gte: nowCutoff } } },
+        { $group: { _id: '$role', count: { $sum: 1 } } },
+      ]),
       User.countDocuments({ lastSeen: { $gte: fifteenMinAgo } }),
       User.countDocuments(),
       School.countDocuments(),
     ]);
+    const byRole = {};
+    byRoleNow.forEach(r => { byRole[r._id] = r.count; });
 
     const totalMem = os.totalmem();
     const freeMem  = os.freemem();
@@ -661,8 +703,9 @@ router.get('/monitor/stats', async (req, res) => {
     const cpuCount = os.cpus().length;
 
     res.json({
-      users:   { active: activeUsers, total: totalUsers },
+      users:   { now: connectedNow, byRole, active: activeUsers, total: totalUsers },
       schools: totalSchools,
+      network: getNetworkStats(),
       memory: {
         used:    Math.round((totalMem - freeMem) / 1024 / 1024),
         total:   Math.round(totalMem / 1024 / 1024),
@@ -696,15 +739,25 @@ router.get('/monitor/stats', async (req, res) => {
 router.get('/suggestions', async (req, res) => {
   try {
     const status = req.query.status || 'all';
+    const LIMIT  = 25;
+    const page   = Math.max(1, parseInt(req.query.page) || 1);
     const filter = status !== 'all' ? { status } : {};
-    const [suggestions, pendingCount] = await Promise.all([
+
+    const [suggestions, total, pendingCount] = await Promise.all([
       Suggestion.find(filter)
         .populate('user', 'name email role')
         .populate('school', 'name color')
-        .sort({ createdAt: -1 }),
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * LIMIT)
+        .limit(LIMIT),
+      Suggestion.countDocuments(filter),
       Suggestion.countDocuments({ status: 'pending' }),
     ]);
-    res.render('superadmin/suggestions', { suggestions, pendingCount, status, activePage: 'suggestions' });
+
+    const totalPages = Math.ceil(total / LIMIT) || 1;
+    res.render('superadmin/suggestions', {
+      suggestions, pendingCount, status, page, totalPages, total, activePage: 'suggestions',
+    });
   } catch {
     res.status(500).send('Error del servidor');
   }

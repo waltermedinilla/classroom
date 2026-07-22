@@ -558,10 +558,37 @@
   </div>
   <% } %>
 
+  <!-- Modal de error de subida (compartido: adjuntos del docente, entregas del alumno) -->
+  <div id="uploadErrModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2500;align-items:center;justify-content:center">
+    <div style="background:var(--surface);border-radius:12px;padding:28px;width:100%;max-width:440px;margin:16px;box-shadow:0 8px 32px rgba(0,0,0,.2)">
+      <h3 id="uplModalTitle" style="margin:0 0 10px;font-size:17px;display:flex;align-items:center;gap:8px;color:#d93025">
+        <span class="material-symbols-outlined" style="color:#d93025">error</span>
+        Error al subir el archivo
+      </h3>
+      <p id="uplModalMsg" style="margin:0 0 20px;font-size:14px;color:var(--text-secondary);white-space:pre-line"></p>
+      <div style="display:flex;justify-content:flex-end">
+        <button class="btn btn-primary" onclick="closeUploadErrModal()">Entendido</button>
+      </div>
+    </div>
+  </div>
+
   <%- include('partials/footer') %>
   <script>
     window.COURSE_ID = '<%= course._id %>';
     window.IS_OWNER = <%= course.owner._id.toString() === user._id.toString() %>;
+
+    function showUploadErrModal(title, msg) {
+      document.getElementById('uplModalTitle').innerHTML =
+        '<span class="material-symbols-outlined" style="color:#d93025">error</span>' + title;
+      document.getElementById('uplModalMsg').textContent = msg;
+      document.getElementById('uploadErrModal').style.display = 'flex';
+    }
+    function closeUploadErrModal() {
+      document.getElementById('uploadErrModal').style.display = 'none';
+    }
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeUploadErrModal();
+    });
     window.USER_INITIAL = '<%= user.name.charAt(0).toUpperCase() %>';
     window.COURSE_COLOR = '<%= (course.header && course.header.color) ? course.header.color : "#1a73e8" %>';
     window.COURSE_COLOR2 = '<%= (course.header && course.header.color2) ? course.header.color2 : "" %>';

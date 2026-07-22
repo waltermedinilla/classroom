@@ -60,6 +60,10 @@ userSchema.index(
   { unique: true, sparse: true, partialFilterExpression: { dni: { $type: 'string' } } }
 );
 
+// Usado por el monitor de superadmin para contar usuarios "conectados ahora" (countDocuments
+// + aggregate por rol filtrando lastSeen >= cutoff, refrescado cada pocos segundos)
+userSchema.index({ lastSeen: 1 });
+
 // Hook pre-save: hashea la contraseña antes de persistir
 // Solo se ejecuta si el campo password fue modificado (evita re-hashear en otros cambios)
 userSchema.pre('save', async function (next) {

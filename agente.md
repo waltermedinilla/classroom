@@ -109,9 +109,12 @@ El admin puede "ver como" cualquier otro usuario (excepto el admin protegido):
 ### Middleware
 | Archivo | Export | Función |
 |---|---|---|
-| `middleware/auth.js` | `requireAuth` | Verifica JWT en cookie `token`, redirige a `/login` si inválido |
-| `middleware/auth.js` | `checkUser` | Global; setea `res.locals.user`, `res.locals.impersonating`, `res.locals.roleNames` |
-| `middleware/admin.js` | `requireAdmin` | Retorna 403 si no es admin |
+| `middleware/auth.js` | `requireAuth` | Verifica JWT en cookie `token`, redirige a `/login` si inválido. Setea `req.userId` |
+| `middleware/auth.js` | `checkUser` | Global; setea `res.locals.user`, `res.locals.impersonating`. Actualiza `User.lastSeen` (throttle 5 min) |
+| `middleware/admin.js` | `requireAdmin` | Retorna 403 si el rol no es `admin` **ni** `superadmin` (el superadmin también pasa) |
+| `middleware/superadmin.js` | `requireSuperAdmin` | Retorna 403 si el rol no es exactamente `superadmin` |
+
+> El mapa de traducción `res.locals.roleNames` (rol → español) se define como middleware global directamente en `server.js`, no en `middleware/auth.js`.
 
 ### Modelos (MongoDB/Mongoose)
 
@@ -130,13 +133,16 @@ El admin puede "ver como" cualquier otro usuario (excepto el admin protegido):
 #### Course
 | Campo | Tipo | Detalle |
 |---|---|---|
-| `name` | String | Requerido, trim |
-| `section` | String | Default `''` |
-| `subject` | String | Default `''` — nombre de la materia (texto libre) |
+| `name` | String | Requerido, trim — nombre de la materia (ej: "Matemática") |
 | `room` | String | Default `''` |
 | `code` | String | Único, auto-generado (UUID 6 chars uppercase) en default |
+| `division` | ObjectId (ref: Division) | **Requerido** — la división/curso (ej: "1°1°") |
+| `school` | ObjectId (ref: School) | **Requerido** — escuela dueña del curso |
 | `owner` | ObjectId (ref: User) | Requerido — docente del curso |
 | `students` | [ObjectId (ref: User)] | Alumnos inscriptos |
+| `header` | Object | `{ color, color2, image }` — personalización visual del encabezado |
+
+> ⚠️ El modelo NO tiene campos `section` ni `subject`. La "sección" se modela como un documento `Division` (referenciado por `division`). El nombre de la materia vive en `name`. Al crear un `Course` siempre hay que proveer `division`, `school` y `owner` (los tres son requeridos) o el `create` lanza ValidationError.
 
 #### Announcement
 | Campo | Tipo | Detalle |
@@ -271,8 +277,88 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ## Notas / Issues Conocidos
 1. `GET /courses/create` existe en la ruta pero usa modal en dashboard — no tiene vista propia
-2. `connect-mongo` y `express-session` en package.json pero no usados
-3. Archivos subidos a disco local (`public/uploads/`), sin cloud storage
-4. Sin recuperación de contraseña ni verificación de email
-5. Sin rate limiting ni Helmet
-6. `Course.subject` es string libre — no hay FK hacia `Subject.name`; una futura mejora sería usar ObjectId ref
+2. Archivos subidos a disco local (`public/archivos/` para adjuntos del docente y novedades; `archivos/entregas/` fuera de `public` para entregas de alumnos), sin cloud storage
+3. Sin recuperación de contraseña ni verificación de email
+4. La relación materia↔curso es por coincidencia de texto (`Subject.name` === `Course.name`), no hay FK. Renombrar una materia rompe la asociación. Mejora futura: `Course.subject` como ObjectId ref
+5. Rate limiting (`express-rate-limit`) y Helmet **ya están activos** (ver `server.js`)
+6. **Cache por-worker** de usuario y escuela (TTL 45s, ver `middleware/cache.js`): reduce load en Mongo pero no se comparte entre workers de PM2 cluster. Cambios de rol/estado/escuela pueden tardar hasta 45s en aplicar en OTRO worker. Ver mitigaciones en el changelog 2026-07-21.
+
+---
+
+## Historial de Cambios (Changelog)
+
+### 2026-07-21 — Sugerencias abiertas, cache, monitor con bandwidth, entregas del alumno con progreso, smoke tests
+
+**Sugerencias — abiertas a todos los roles**
+- Antes solo staff (superadmin/admin/directivo/preceptor/soe) podía enviar sugerencias. Ahora **cualquier usuario autenticado** ve el FAB 💡 y puede enviar (`routes/suggestions.js` + `views/partials/footer.ejs`).
+- Panel superadmin `/superadmin/suggestions` ahora **paginado** (25 por página, misma UI que el resto de listados).
+- Nuevos índices en `Suggestion` para el filtro por estado + orden: `{status:1, createdAt:-1}` y `{school:1, createdAt:-1}`.
+
+**Cache de usuario/escuela + invalidación**
+- `checkUser` + middleware de escuela corrían `User.findById` + `School.findById` en **TODAS** las requests. Ahora hay un TTL cache en memoria por-worker (`config/cache.js` + `middleware/cache.js`) que reduce ~45× las queries a Mongo en el path caliente.
+- TTL **45 segundos** (NO 5 min) a propósito: PM2 en Linux reparte round-robin entre 2 workers y cada worker tiene su propio Map — un cambio de rol/estado invalida SOLO en el worker que atendió la mutación. Con TTL de 5 min había una ventana real de inconsistencia; 45s la acota a menos de 1 min.
+- Todas las rutas que mutan usuario (`admin.js`, `superadmin.js` bulk + individual + toggle, `courses.js` avatar + toggle-active) y escuela (edit, delete, temas) llaman `invalidateUser`/`invalidateSchool` para el worker local.
+
+**Monitor del superadmin — conectados ahora + ancho de banda**
+- Tarjeta nueva **"Conectados ahora"** (últimos 2 min) con desglose por rol y punto verde pulsante. Convive con "Activos (15 min)" que era la métrica histórica.
+- Throttle de `User.lastSeen` bajado de 5 min → 1 min en `checkUser`. Índice `{lastSeen:1}` para que la consulta escale.
+- Sección **Ancho de banda** con tasa en vivo (auto-escala B/s → KB/s → MB/s), total acumulado y sparkline SVG por dirección. Lee `/proc/net/dev` (`config/network.js`). En Windows muestra "N/D"; en Ubuntu de producción son valores reales.
+- Refresh cada **5 segundos** (antes 30s).
+
+**Entregas del alumno — pre-upload con progreso (opción A)**
+- Nuevo endpoint `POST /activities/:id/upload-submission-file` que pre-sube un archivo al path final y devuelve `{ storagePath, name, filename, mime, size }`. Espeja el patrón del docente (`/upload-attachment`).
+- `POST /:id/submit` acepta ahora **JSON con `uploadedFiles`** (flujo nuevo) o **multipart con `files`** (viejo, retrocompat). Middleware multipart condicional.
+- **Defensa contra hijack**: al recibir el JSON el server filtra los `storagePath` que no arranquen con `{schoolId}/{activityId}/{userId}/` del solicitante. Un alumno no puede referenciar archivos de otro.
+- Frontend del alumno (`public/js/course.js` + modal reutilizable en `views/course.ejs`): validación cliente (extensión + 20 MB), barra de progreso en tiempo real por archivo, mismo modal de error que el docente, botón "Entregar" deshabilitado mientras haya uploads en curso.
+
+**Suite de smoke tests end-to-end**
+- Nueva carpeta `tests/smoke/` con `lib.js` (cliente HTTP con cookie jar por actor), `specs.js` (31 escenarios), `run.js` (orquestador) y `README.md`. Cero dependencias nuevas — solo `fetch` global de Node.
+- Corre con `npm run test:smoke` (más env vars opcionales `SMOKE_ADMIN_*`/`SMOKE_SUPERADMIN_*` o `.env.test`). Cubre registro, login, curso completo (crear→unirse→novedad→actividad→entrega→calificación→gradebook), sugerencias abiertas, invalidación de cache al deshabilitar, paginación del panel superadmin, y los 3 tests nuevos del flujo A de entregas (rechazo de extensión, upload+submit JSON, defensa anti-hijack).
+- Se niega a correr contra hosts no-localhost (guard de seguridad).
+- Al final borra todo lo que creó (curso, división, usuarios, sugerencias).
+
+**Herramientas de sincronización dev**
+- `pull-from-prod.js` + `sync-prod.ps1`: espejan la BD de producción hacia la local vía túnel SSH. No tocan producción; solo overwrite completo de local.
+
+### 2026-07-04 — Correcciones de bugs (revisión con Opus)
+- **[CRÍTICO] Bucle de redirección con sesión vencida**: `GET /login`, `/register` y `/register/invite` chequeaban `req.cookies.token` en vez de `res.locals.user`. Con un JWT vencido pero cookie presente se producía un bucle infinito `/login → / → /login` (ERR_TOO_MANY_REDIRECTS). Ahora chequean el usuario validado.
+- **[CRÍTICO] Import de cursos del superadmin roto**: creaba `Course` con campos inexistentes (`section`, `subject`) y sin `division` (requerido) → todo fallaba en silencio. Ahora resuelve/crea la `Division` desde la columna `seccion` del Excel.
+- **[MEDIA] Borrado de curso desde admin sin cascada**: `POST /admin/courses/:id/delete` ahora usa `cascadeDeleteCourse()` que elimina actividades, entregas, novedades y archivos físicos asociados.
+- **[BAJA] Selector de tipo de actividad**: el creador full-page (`/activities/new`) ahora tiene selector Tarea/Evaluación/TP/Examen (antes todo quedaba como `tarea`).
+- **[MENOR] `connectDB()` duplicado** en `server.js` eliminado.
+
+### 2026-06/07 — Subida de adjuntos y fechas por defecto
+- Pre-subida de adjuntos de actividad con barra de progreso y modal de error (endpoint `POST /activities/upload-attachment?courseId=`). Límite de archivo subido a **50 MB**. Validación cliente de tipo y tamaño.
+- "Disponible desde" precargado con la fecha/hora actual; "Fecha de entrega" precargada a +7 días.
+- Webhook de deploy (`POST /deploy`) cambiado de `pm2 reload` a `pm2 restart --update-env` (garantiza que todos los workers tomen el código nuevo).
+
+---
+
+## Plan de Futuras Actualizaciones (Roadmap)
+
+> Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`). Resumen de lo pendiente:
+
+### Correcciones / deuda técnica pendiente
+- Limpieza de archivos huérfanos cuando se cancela el creador full-page sin guardar (los adjuntos ya subidos quedan en disco).
+- Relación `Subject` ↔ `Course` por texto (frágil ante renombrados). Migrar a ObjectId ref.
+- Eliminación de escuela sin cascada (`POST /superadmin/schools/:id/delete` deja usuarios/cursos huérfanos).
+- Terminología confusa en admin-nav ("Cursos" → Divisions, "Materias" → Courses, "Catálogo" → Subjects).
+
+### Funcionalidades faltantes — rápidas
+- Editar / eliminar novedades y comentarios (no existen `PUT`/`DELETE` en `Announcement`).
+- Agregar / quitar adjuntos de una actividad existente (`PUT /activities/:id` no toca `attachments[]`).
+- Mostrar DNI en el perfil del usuario.
+- Mostrar `gradedAt` (fecha de calificación) al alumno.
+
+### Funcionalidades faltantes — mediana complejidad
+- Export del gradebook completo (todos los alumnos × todas las actividades).
+- Deeplink directo a una actividad (URL propia por actividad).
+- Vista "Mis entregas" consolidada cross-curso para el alumno.
+- Link al perfil del alumno desde el tab Personas.
+- Impersonación desde el superadmin.
+
+### Funcionalidades faltantes — mayor complejidad
+- Notificaciones (in-app / email / push).
+- Preview de temas para el admin antes de aceptarlos.
+
+> ⚠️ **Nota de mantenimiento**: `agente.md` conserva desactualizaciones anteriores a esta revisión en las secciones de Pantallas, Rutas y Vistas (ej: no documenta los modelos School/Division/Activity/Submission/Suggestion, ni las rutas de superadmin, actividades y sugerencias). Pendiente una pasada completa de actualización del documento.

@@ -9,6 +9,7 @@ const Activity   = require('../models/Activity');
 const Submission = require('../models/Submission');
 const XLSX       = require('xlsx');
 const { requireAuth } = require('../middleware/auth');
+const { invalidateUser } = require('../middleware/cache');
 
 const router = express.Router();
 
@@ -217,6 +218,7 @@ router.post('/profile/avatar', requireAuth, avatarUpload.single('avatar'), async
     const userId   = res.locals.user._id.toString();
     const avatarUrl = `/archivos/${schoolId}/avatars/${userId}/${req.file.filename}`;
     await User.findByIdAndUpdate(userId, { avatar: avatarUrl });
+    invalidateUser(userId);
     res.json({ avatar: avatarUrl });
   } catch (err) {
     if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }
@@ -231,6 +233,7 @@ router.delete('/profile/avatar', requireAuth, async (req, res) => {
     if (user.avatar) {
       try { fs.unlinkSync(path.join(__dirname, '../public', user.avatar)); } catch {}
       await User.findByIdAndUpdate(user._id, { avatar: null });
+      invalidateUser(user._id);
     }
     res.json({ ok: true });
   } catch {
@@ -349,6 +352,7 @@ router.post('/:id/students/:studentId/toggle-active', requireAuth, async (req, r
     if (!student) return res.status(404).json({ error: 'Usuario no encontrado' });
     student.active = !(student.active !== false);
     await student.save();
+    invalidateUser(student._id);
     res.json({ active: student.active });
   } catch {
     res.status(500).json({ error: 'Error del servidor' });

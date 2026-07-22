@@ -12,7 +12,8 @@
     "prod:logs": "pm2 logs classroom",
     "prod:status": "pm2 status",
     "cleanup": "node cleanup-files.js",
-    "cleanup:dry": "node cleanup-files.js --dry-run"
+    "cleanup:dry": "node cleanup-files.js --dry-run",
+    "test:smoke": "node tests/smoke/run.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

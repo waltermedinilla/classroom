@@ -65,6 +65,36 @@
       display: inline-block;
       margin-right: 4px;
     }
+    .status-dot.live {
+      animation: pulse-dot 1.6s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: .35; }
+    }
+    .role-breakdown {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 10px;
+      margin-top: 4px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .net-rate {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+    .net-sparkline {
+      width: 100%;
+      height: 32px;
+      margin-top: 8px;
+    }
+    .net-unavailable {
+      font-size: 12px;
+      color: var(--text-hint);
+      margin-top: 4px;
+    }
     .refresh-bar {
       display: flex;
       align-items: center;
@@ -109,23 +139,57 @@
     <!-- Usuarios -->
     <div class="section-title">Usuarios</div>
     <div class="monitor-grid">
+      <div class="metric-card" style="border-top:3px solid #34a853">
+        <span class="material-symbols-outlined metric-icon" style="color:#34a853">sensors</span>
+        <div class="metric-label"><span class="status-dot live" style="background:#34a853"></span>Conectados ahora</div>
+        <div class="metric-value" id="m-now">—</div>
+        <div class="metric-sub">últimos 2 minutos</div>
+        <div class="role-breakdown" id="m-now-roles">—</div>
+      </div>
       <div class="metric-card" style="border-top:3px solid #1a73e8">
         <span class="material-symbols-outlined metric-icon" style="color:#1a73e8">group</span>
-        <div class="metric-label">Activos ahora</div>
+        <div class="metric-label">Activos (15 min)</div>
         <div class="metric-value" id="m-active">—</div>
-        <div class="metric-sub">últimos 15 minutos</div>
+        <div class="metric-sub" id="m-active-pct">—</div>
       </div>
       <div class="metric-card">
         <span class="material-symbols-outlined metric-icon">people</span>
         <div class="metric-label">Total usuarios</div>
         <div class="metric-value" id="m-total">—</div>
-        <div class="metric-sub" id="m-active-pct">—</div>
+        <div class="metric-sub">registrados</div>
       </div>
       <div class="metric-card">
         <span class="material-symbols-outlined metric-icon">domain</span>
         <div class="metric-label">Escuelas</div>
         <div class="metric-value" id="m-schools">—</div>
         <div class="metric-sub">en la plataforma</div>
+      </div>
+    </div>
+
+    <!-- Red -->
+    <div class="section-title">Ancho de banda</div>
+    <div class="monitor-grid">
+      <div class="metric-card" style="border-top:3px solid #1a73e8">
+        <span class="material-symbols-outlined metric-icon" style="color:#1a73e8">arrow_downward</span>
+        <div class="metric-label">Descarga (entrante)</div>
+        <div class="net-rate">
+          <div class="metric-value" id="m-net-rx">—</div>
+        </div>
+        <div class="metric-sub" id="m-net-rx-total">—</div>
+        <svg class="net-sparkline" viewBox="0 0 120 32" preserveAspectRatio="none">
+          <polyline id="m-net-rx-spark" points="" fill="none" stroke="#1a73e8" stroke-width="2" vector-effect="non-scaling-stroke"/>
+        </svg>
+      </div>
+      <div class="metric-card" style="border-top:3px solid #ea4335">
+        <span class="material-symbols-outlined metric-icon" style="color:#ea4335">arrow_upward</span>
+        <div class="metric-label">Subida (saliente)</div>
+        <div class="net-rate">
+          <div class="metric-value" id="m-net-tx">—</div>
+        </div>
+        <div class="metric-sub" id="m-net-tx-total">—</div>
+        <svg class="net-sparkline" viewBox="0 0 120 32" preserveAspectRatio="none">
+          <polyline id="m-net-tx-spark" points="" fill="none" stroke="#ea4335" stroke-width="2" vector-effect="non-scaling-stroke"/>
+        </svg>
       </div>
     </div>
 
@@ -214,12 +278,45 @@
   <%- include('../partials/footer') %>
 
   <script>
-    let countdown = 30;
+    const REFRESH_SECONDS = 5; // más frecuente que el resto del panel: bajo costo y da sensación de "tiempo real"
+    let countdown = REFRESH_SECONDS;
     let timer;
+
+    const ROLE_LABELS = {
+      superadmin: 'Superadmin', admin: 'Admin', directivo: 'Directivos',
+      teacher: 'Docentes', preceptor: 'Preceptores', soe: 'SOE', student: 'Alumnos',
+    };
+    const SPARK_MAX_POINTS = 30;
+    const rxHistory = [];
+    const txHistory = [];
 
     function formatBytes(mb) {
       if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
       return mb + ' MB';
+    }
+
+    function formatRate(bytesPerSec) {
+      if (bytesPerSec >= 1024 * 1024) return (bytesPerSec / 1024 / 1024).toFixed(2) + ' MB/s';
+      if (bytesPerSec >= 1024)        return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
+      return bytesPerSec + ' B/s';
+    }
+
+    function formatBytesTotal(bytes) {
+      const gb = bytes / 1024 / 1024 / 1024;
+      if (gb >= 1) return gb.toFixed(2) + ' GB acumulados';
+      return (bytes / 1024 / 1024).toFixed(1) + ' MB acumulados';
+    }
+
+    function pushHistory(arr, value) {
+      arr.push(value);
+      if (arr.length > SPARK_MAX_POINTS) arr.shift();
+    }
+
+    function sparklinePoints(history, width, height) {
+      if (history.length < 2) return '';
+      const max  = Math.max(...history, 1);
+      const step = width / (history.length - 1);
+      return history.map((v, i) => `${(i * step).toFixed(1)},${(height - (v / max) * height).toFixed(1)}`).join(' ');
     }
 
     function formatUptime(seconds) {
@@ -249,6 +346,7 @@
         const data = await res.json();
 
         // Usuarios
+        setText('m-now',    data.users.now);
         setText('m-active', data.users.active);
         setText('m-total',  data.users.total);
         const pct = data.users.total > 0
@@ -256,6 +354,28 @@
           : 0;
         setText('m-active-pct', `${pct}% del total en sesión`);
         setText('m-schools', data.schools);
+
+        const roleEntries = Object.entries(data.users.byRole || {});
+        setText('m-now-roles', roleEntries.length
+          ? roleEntries.map(([role, count]) => `${ROLE_LABELS[role] || role}: ${count}`).join(' · ')
+          : 'nadie conectado');
+
+        // Red — ancho de banda
+        if (data.network && data.network.available) {
+          pushHistory(rxHistory, data.network.rxRate);
+          pushHistory(txHistory, data.network.txRate);
+          setText('m-net-rx', formatRate(data.network.rxRate));
+          setText('m-net-tx', formatRate(data.network.txRate));
+          setText('m-net-rx-total', formatBytesTotal(data.network.rxTotal));
+          setText('m-net-tx-total', formatBytesTotal(data.network.txTotal));
+          document.getElementById('m-net-rx-spark').setAttribute('points', sparklinePoints(rxHistory, 120, 32));
+          document.getElementById('m-net-tx-spark').setAttribute('points', sparklinePoints(txHistory, 120, 32));
+        } else {
+          setText('m-net-rx', 'N/D');
+          setText('m-net-tx', 'N/D');
+          setText('m-net-rx-total', 'No disponible en este sistema (requiere Linux)');
+          setText('m-net-tx-total', 'No disponible en este sistema (requiere Linux)');
+        }
 
         // RAM
         setText('m-ram-used',  formatBytes(data.memory.used));
@@ -294,7 +414,7 @@
       }
 
       // Reinicia el contador
-      countdown = 30;
+      countdown = REFRESH_SECONDS;
     }
 
     function tick() {

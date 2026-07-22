@@ -1,4 +1,4 @@
-  <% const _canSuggest = user && ['superadmin','admin','directivo','preceptor','soe'].includes(user.role); %>
+  <% const _canSuggest = !!user; %>
   <% if (_canSuggest) { %>
   <button class="fab" id="fabSuggest" onclick="document.getElementById('suggestionModal').style.display='flex'" title="Enviar sugerencia">
     <span class="material-symbols-outlined">lightbulb</span>

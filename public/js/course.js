@@ -1559,11 +1559,18 @@ window._subFiles = [];
 // Renderiza la sección de "Mi entrega" en el modal del alumno
 // isBlocked=true → solo muestra el mensaje de plazo vencido, sin formulario
 // submission puede ser null (primera entrega) o el objeto Submission existente (reenvío)
+// Configuración compartida con el server (routes/activities.js: EXT_SUBMISSIONS + SUBMISSION_MAX_SIZE)
+const SUB_ALLOWED_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'gif', 'zip'];
+const SUB_MAX_SIZE     = 20 * 1024 * 1024; // 20 MB
+
 function renderSubmissionSection(actId, submission, isBlocked = false) {
   const container = document.getElementById('submissionSection');
   if (!container) return;
 
-  window._subFiles = []; // Limpia archivos locales al re-renderizar
+  // Archivos ya pre-subidos ({ storagePath, name, filename, mime, size }) — se mandan al enviar.
+  // Uploads en curso: se cuentan para deshabilitar el botón Entregar hasta que todos terminen.
+  window._subUploadedFiles = [];
+  window._subPendingUploads = 0;
 
   if (isBlocked) {
     container.innerHTML = `<div style="margin-top:24px;border-top:1px solid var(--divider);padding-top:20px">
@@ -1646,72 +1653,186 @@ function renderSubmissionSection(actId, submission, isBlocked = false) {
   html += '</div>';
   container.innerHTML = html;
 
-  // Listener para el input de archivos de entrega (agrega al array local)
+  // Listener para el input de archivos: valida y arranca pre-subida inmediata (uno por uno)
   document.getElementById('subFileInput').addEventListener('change', function () {
-    Array.from(this.files).forEach(f => window._subFiles.push(f));
+    Array.from(this.files).forEach(f => uploadSubFile(actId, f));
     this.value = '';
-    renderSubFilePreviews();
   });
 }
 
-// Renderiza el grid de archivos seleccionados para la entrega (antes de subir)
-function renderSubFilePreviews() {
+// Sincroniza el botón "Entregar" con la cantidad de uploads pendientes.
+// Espejo de syncCreateBtn() en views/activities/new.ejs (docente).
+function syncSubmitBtn(submission) {
+  const btn = document.querySelector('#submissionSection .btn-primary');
+  if (!btn) return;
+  const pending = window._subPendingUploads || 0;
+  if (pending > 0) {
+    btn.disabled  = true;
+    btn.innerHTML = `<span class="material-symbols-outlined">hourglass_empty</span> ${pending === 1 ? 'Subiendo archivo...' : `Subiendo ${pending} archivos...`}`;
+  } else {
+    btn.disabled  = false;
+    btn.innerHTML = `<span class="material-symbols-outlined">send</span> ${submission ? 'Reenviar' : 'Entregar'}`;
+  }
+}
+
+// Pre-sube UN archivo con XHR + barra de progreso en tiempo real.
+// Mismo patrón que uploadFile() en views/activities/new.ejs (docente).
+function uploadSubFile(actId, file) {
+  // Validación cliente: extensión
+  const extRaw = file.name.split('.').pop().toLowerCase();
+  if (!SUB_ALLOWED_EXTS.includes(extRaw)) {
+    showUploadErrModal(
+      'Tipo de archivo no permitido',
+      `"${file.name}" no es un formato aceptado.\nPodés subir PDF, Word, Excel, imágenes (jpg, png, gif) o ZIP.`
+    );
+    return;
+  }
+  // Validación cliente: tamaño
+  if (file.size > SUB_MAX_SIZE) {
+    const mb = (file.size / 1024 / 1024).toFixed(1);
+    showUploadErrModal(
+      'Archivo demasiado grande',
+      `"${file.name}" pesa ${mb} MB. El máximo permitido es ${SUB_MAX_SIZE / 1024 / 1024} MB.`
+    );
+    return;
+  }
+
+  const uid   = Date.now() + '-' + Math.random().toString(36).slice(2);
+  const ext   = extRaw.toUpperCase();
+  const color = EXT_COLOR[ext] || '#5f6368';
+
+  // Tarjeta con barra de progreso
   const grid = document.getElementById('subFilePreviews');
-  if (!grid) return;
-  grid.innerHTML = '';
-  window._subFiles.forEach((f, i) => {
-    const { ext, color } = extColor(f.name);
-    const card = document.createElement('div');
-    card.className = 'att-preview-card';
-    card.innerHTML = `
-      <div class="att-preview-thumb" style="background:${color}">
-        <span class="att-preview-ext">${ext}</span>
-      </div>
-      <div class="att-preview-name" title="${f.name}">${f.name}</div>
-      <button class="att-preview-remove" onclick="removeSubFile(${i})" title="Quitar">
-        <span class="material-symbols-outlined">close</span>
-      </button>
-    `;
-    grid.appendChild(card);
-  });
+  const card = document.createElement('div');
+  card.className = 'att-preview-card';
+  card.id = 'subucard-' + uid;
+  card.innerHTML = `
+    <div class="att-preview-thumb" style="background:${color}">
+      <span class="att-preview-ext">${ext}</span>
+    </div>
+    <div class="att-upload-progress-wrap">
+      <div class="att-upload-bar" style="width:0%"></div>
+    </div>
+    <div class="att-upload-status">0%</div>`;
+  grid.appendChild(card);
+
+  window._subPendingUploads++;
+  syncSubmitBtn();
+
+  const fd  = new FormData();
+  fd.append('file', file);
+  const xhr = new XMLHttpRequest();
+
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return;
+    const pct = Math.round((e.loaded / e.total) * 100);
+    const c = document.getElementById('subucard-' + uid);
+    if (!c) return;
+    c.querySelector('.att-upload-bar').style.width = pct + '%';
+    c.querySelector('.att-upload-status').textContent = pct < 100 ? pct + '%' : 'Procesando...';
+  };
+
+  xhr.onload = () => {
+    window._subPendingUploads--;
+    const c = document.getElementById('subucard-' + uid);
+    if (!c) { syncSubmitBtn(); return; }
+
+    let data = null;
+    try { data = JSON.parse(xhr.responseText); } catch {}
+
+    if ((xhr.status === 200 || xhr.status === 201) && data?.storagePath) {
+      window._subUploadedFiles.push({
+        uid,
+        storagePath: data.storagePath,
+        name:        data.name,
+        filename:    data.filename,
+        mime:        data.mime,
+        size:        data.size,
+      });
+      // Reemplaza la barra por el nombre + botón de quitar (mismo look que docente)
+      c.innerHTML = `
+        <div class="att-preview-thumb" style="background:${color}">
+          <span class="att-preview-ext">${ext}</span>
+        </div>
+        <div class="att-preview-name" title="${file.name}">${file.name}</div>
+        <button class="att-preview-remove" onclick="removeUploadedSubFile('${uid}')" title="Quitar">
+          <span class="material-symbols-outlined">close</span>
+        </button>`;
+    } else {
+      c.remove();
+      const msg = data?.error || `Error inesperado (${xhr.status})`;
+      showUploadErrModal('No se pudo subir el archivo', msg);
+    }
+    syncSubmitBtn();
+  };
+
+  xhr.onerror = () => {
+    window._subPendingUploads--;
+    const c = document.getElementById('subucard-' + uid);
+    if (c) c.remove();
+    showUploadErrModal('Error de conexión', 'No se pudo conectar con el servidor. Verificá tu conexión e intentá de nuevo.');
+    syncSubmitBtn();
+  };
+
+  xhr.open('POST', '/activities/' + actId + '/upload-submission-file');
+  xhr.setRequestHeader('Accept', 'application/json');
+  xhr.send(fd);
 }
 
-// Elimina un archivo de entrega de la selección local por índice
-function removeSubFile(i) {
-  window._subFiles.splice(i, 1);
-  renderSubFilePreviews();
+// Quita un archivo ya subido de la lista local (queda huérfano en disco hasta el cleanup periódico,
+// igual que el flujo del docente en /activities/new)
+function removeUploadedSubFile(uid) {
+  window._subUploadedFiles = window._subUploadedFiles.filter(f => f.uid !== uid);
+  const c = document.getElementById('subucard-' + uid);
+  if (c) c.remove();
 }
 
-// Envía la entrega del alumno (POST /activities/:id/submit como multipart/form-data)
+// Envía la entrega del alumno (POST /activities/:id/submit como JSON con archivos ya subidos)
 // Después de éxito: re-renderiza la sección de entrega con los datos actualizados
 async function submitWork(actId) {
+  if (window._subPendingUploads > 0) {
+    showUploadErrModal('Esperá un momento', 'Todavía hay archivos subiéndose. Volvé a intentar cuando termine la barra de progreso.');
+    return;
+  }
+
   const hasExisting = !!document.querySelector('#submissionSection .sub-existing');
   if (hasExisting && !confirm('¿Querés reemplazar tu entrega anterior? La nueva entrega sobrescribirá los archivos anteriores.')) return;
 
   const textEl = document.getElementById('subText');
   const btn    = document.querySelector('#submissionSection .btn-primary');
-  const msgEl  = document.getElementById('subMsg');
 
   btn.disabled  = true;
   btn.innerHTML = '<span class="material-symbols-outlined">hourglass_empty</span> Enviando...';
 
-  const fd = new FormData();
-  fd.append('text', textEl?.value?.trim() || '');
-  window._subFiles.forEach(f => fd.append('files', f)); // Archivos como campo "files"
+  // storagePath, name, filename, mime, size — el server valida que el storagePath apunte al userId del alumno
+  const body = {
+    text:          textEl?.value?.trim() || '',
+    uploadedFiles: window._subUploadedFiles.map(({ uid, ...rest }) => rest),
+  };
 
-  const res  = await fetch('/activities/' + actId + '/submit', { method: 'POST', body: fd });
-  const data = await res.json();
-
-  btn.disabled  = false;
-  btn.innerHTML = `<span class="material-symbols-outlined">send</span> Reenviar`;
-
-  if (!res.ok) {
-    alert(data.error || 'Error al enviar la entrega');
+  let data;
+  try {
+    const res = await fetch('/activities/' + actId + '/submit', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    });
+    data = await res.json();
+    if (!res.ok) {
+      showUploadErrModal('No se pudo enviar la entrega', data.error || 'Error al enviar');
+      btn.disabled = false;
+      syncSubmitBtn();
+      return;
+    }
+  } catch {
+    showUploadErrModal('Error de conexión', 'No se pudo enviar la entrega. Verificá tu conexión e intentá de nuevo.');
+    btn.disabled = false;
+    syncSubmitBtn();
     return;
   }
 
-  window._subFiles = []; // Limpia archivos locales tras éxito
-  renderSubmissionSection(actId, data.submission); // Muestra el estado actualizado
+  window._subUploadedFiles = [];
+  renderSubmissionSection(actId, data.submission);
 
   const msg = document.getElementById('subMsg');
   if (msg) { msg.style.display = 'inline-flex'; setTimeout(() => { msg.style.display = 'none'; }, 3000); }

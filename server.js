@@ -11,6 +11,7 @@ const { exec }     = require('child_process');
 const logger       = require('./config/logger');
 const connectDB    = require('./config/db');
 const { checkUser } = require('./middleware/auth');
+const { schoolCache } = require('./middleware/cache');
 const School = require('./models/School');
 
 const authRoutes         = require('./routes/auth');
@@ -24,7 +25,8 @@ const suggestionRoutes   = require('./routes/suggestions');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-connectDB();
+// La conexión a MongoDB se establece más abajo, antes de app.listen()
+// (ver connectDB().then(...) al final del archivo).
 
 // ── Vistas ──────────────────────────────────────────────────────────────────
 app.set('view engine', 'ejs');
@@ -122,12 +124,22 @@ app.use(cookieParser());
 app.use('*', checkUser);
 
 // En TODAS las rutas: inyecta res.locals.school con el doc de la escuela del usuario
+// Cache TTL 5 min (ver middleware/cache.js): evita un findById por request en toda la app.
+// Las rutas que editan una escuela (nombre, color, temas) invalidan la entrada por su _id.
 app.use('*', async (req, res, next) => {
   try {
     const schoolId = res.locals.user?.school;
-    res.locals.school = schoolId
-      ? await School.findById(schoolId).select('name color slug _id themes')
-      : null;
+    if (!schoolId) {
+      res.locals.school = null;
+      return next();
+    }
+    const key = schoolId.toString();
+    let school = schoolCache.get(key);
+    if (!school) {
+      school = await School.findById(schoolId).select('name color slug _id themes').lean();
+      if (school) schoolCache.set(key, school);
+    }
+    res.locals.school = school || null;
   } catch {
     res.locals.school = null;
   }

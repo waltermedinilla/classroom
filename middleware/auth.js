@@ -1,5 +1,18 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { userCache } = require('./cache');
+
+// Busca un usuario en cache (TTL 5 min); si no está, consulta MongoDB y lo guarda.
+// .lean() + copia superficial en el caller: evita compartir un documento Mongoose
+// mutable entre requests concurrentes que reusen la misma entrada de cache.
+async function getCachedUser(userId) {
+  let user = userCache.get(userId);
+  if (!user) {
+    user = await User.findById(userId).select('-password').lean();
+    if (user) userCache.set(userId, user);
+  }
+  return user ? { ...user } : null;
+}
 
 // requireAuth — guarda de ruta: solo pasa si hay un JWT válido en la cookie "token"
 // Si falla, redirige a /login. Setea req.userId con el ID del usuario decodificado.
@@ -40,14 +53,16 @@ const checkUser = async (req, res, next) => {
     // Decodifica el token principal para obtener el userId
     const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
 
-    // Busca el usuario en la BD; excluye el campo password por seguridad
-    res.locals.user = await User.findById(decoded.userId).select('-password');
+    // Busca el usuario (cache TTL 5 min primero, luego BD); excluye el password por seguridad
+    res.locals.user = await getCachedUser(decoded.userId);
 
-    // Actualiza lastSeen como máximo cada 5 minutos (fire-and-forget, no bloquea la respuesta)
+    // Actualiza lastSeen como máximo cada 1 minuto (fire-and-forget, no bloquea la respuesta).
+    // Throttle corto a propósito: el monitor de superadmin usa lastSeen para "conectados
+    // ahora" (ventana de 2 min) — con un throttle de 5 min ese número quedaba desactualizado.
     if (res.locals.user) {
-      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
+      const oneMinAgo = new Date(Date.now() - 60 * 1000);
       User.updateOne(
-        { _id: decoded.userId, $or: [{ lastSeen: { $lt: fiveMinAgo } }, { lastSeen: null }] },
+        { _id: decoded.userId, $or: [{ lastSeen: { $lt: oneMinAgo } }, { lastSeen: null }] },
         { $set: { lastSeen: new Date() } }
       ).catch(() => {});
     }
@@ -68,7 +83,7 @@ const checkUser = async (req, res, next) => {
     if (adminToken) {
       try {
         const adminDecoded = jwt.verify(adminToken, process.env.JWT_SECRET);
-        res.locals.impersonating = await User.findById(adminDecoded.userId).select('-password');
+        res.locals.impersonating = await getCachedUser(adminDecoded.userId);
       } catch {
         // adminToken inválido o expirado: lo ignoramos sin romper la sesión
         res.locals.impersonating = null;

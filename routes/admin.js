@@ -2,14 +2,71 @@ const express  = require('express');
 const jwt      = require('jsonwebtoken');
 const multer   = require('multer');
 const XLSX     = require('xlsx');
+const path     = require('path');
+const fs       = require('fs');
 const User     = require('../models/User');
 const Course   = require('../models/Course');
 const Subject  = require('../models/Subject');
 const Division = require('../models/Division');
+const Activity     = require('../models/Activity');
+const Submission   = require('../models/Submission');
+const Announcement = require('../models/Announcement');
 const { requireAuth }  = require('../middleware/auth');
 const { requireAdmin } = require('../middleware/admin');
+const { invalidateUser, invalidateSchool } = require('../middleware/cache');
 const School   = require('../models/School');
 const THEMES   = require('../config/themes');
+
+// Rutas base de archivos en disco (deben coincidir con las de routes/activities.js
+// y routes/announcements.js) para poder eliminar los archivos físicos en la cascada.
+const ARCHIVOS_BASE = path.join(__dirname, '../public/archivos');
+const ENTREGAS_BASE = path.join(__dirname, '../archivos/entregas');
+
+// Elimina en cascada todo lo asociado a un curso: actividades, entregas, novedades
+// y sus archivos físicos. Se usa al borrar un curso desde el panel de administración.
+async function cascadeDeleteCourse(courseId) {
+  // 1. Actividades del curso + entregas de sus alumnos
+  const activities = await Activity.find({ course: courseId });
+  const activityIds = activities.map(a => a._id);
+
+  if (activityIds.length) {
+    // 1a. Borra los archivos físicos de cada entrega
+    const submissions = await Submission.find({ activity: { $in: activityIds } });
+    submissions.forEach(sub => {
+      sub.files.forEach(f => {
+        const fp = path.join(ENTREGAS_BASE, f.storagePath);
+        if (fs.existsSync(fp)) { try { fs.unlinkSync(fp); } catch {} }
+      });
+    });
+    // 1b. Borra los documentos Submission
+    await Submission.deleteMany({ activity: { $in: activityIds } });
+
+    // 1c. Borra los adjuntos del docente de cada actividad
+    activities.forEach(act => {
+      act.attachments
+        .filter(a => a.type === 'file' && a.url.startsWith('/archivos/'))
+        .forEach(a => {
+          const fp = path.join(ARCHIVOS_BASE, a.url.replace(/^\/archivos\//, ''));
+          if (fs.existsSync(fp)) { try { fs.unlinkSync(fp); } catch {} }
+        });
+    });
+    // 1d. Borra los documentos Activity
+    await Activity.deleteMany({ course: courseId });
+  }
+
+  // 2. Novedades del curso + sus imágenes
+  const announcements = await Announcement.find({ course: courseId });
+  announcements.forEach(ann => {
+    if (ann.image && ann.image.startsWith('/archivos/')) {
+      const fp = path.join(ARCHIVOS_BASE, ann.image.replace(/^\/archivos\//, ''));
+      if (fs.existsSync(fp)) { try { fs.unlinkSync(fp); } catch {} }
+    }
+  });
+  await Announcement.deleteMany({ course: courseId });
+
+  // 3. Finalmente, el curso
+  await Course.findByIdAndDelete(courseId);
+}
 
 const xlsUpload = multer({
   storage: multer.memoryStorage(),
@@ -148,6 +205,7 @@ router.post('/users/:id/role', async (req, res) => {
     }
     if (req.body.role === 'superadmin') return res.status(403).json({ error: 'No permitido' });
     const user = await User.findByIdAndUpdate(req.params.id, { role: req.body.role }, { new: true, runValidators: true });
+    invalidateUser(req.params.id);
     res.json({ user });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -170,6 +228,7 @@ router.post('/users/:id/toggle-active', async (req, res) => {
     }
     target.active = !target.active;
     await target.save({ validateModifiedOnly: true });
+    invalidateUser(req.params.id);
     res.json({ active: target.active });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -209,6 +268,7 @@ router.post('/users/:id/delete', async (req, res) => {
     }
     if (req.params.id === req.userId) return res.status(400).json({ error: 'No puedes eliminarte a ti mismo' });
     await User.findByIdAndDelete(req.params.id);
+    invalidateUser(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -374,7 +434,7 @@ router.post('/courses/:id/delete', async (req, res) => {
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ error: 'Materia no encontrada' });
     if (school && course.school?.toString() !== school.toString()) return res.status(403).json({ error: 'Sin acceso' });
-    await Course.findByIdAndDelete(req.params.id);
+    await cascadeDeleteCourse(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -982,6 +1042,7 @@ router.post('/theme/respond', requireAuth, requireAdmin, async (req, res) => {
       { _id: res.locals.user.school, 'themes.slug': slug },
       { $set: { 'themes.$.status': status } }
     );
+    invalidateSchool(res.locals.user.school);
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'Error del servidor' });

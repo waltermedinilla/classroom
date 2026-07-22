@@ -20,16 +20,18 @@ const createToken = (userId) => {
 };
 
 // GET /login — muestra el formulario de login
-// Si ya tiene cookie válida, redirige directo al inicio
+// Si ya tiene sesión VÁLIDA (checkUser la verificó), redirige directo al inicio.
+// Se chequea res.locals.user y no la cookie: una cookie con token vencido dispararía
+// un bucle infinito /login → / → /login (el navegador muestra ERR_TOO_MANY_REDIRECTS).
 router.get('/login', (req, res) => {
-  if (req.cookies.token) return res.redirect('/');
+  if (res.locals.user) return res.redirect('/');
   res.render('login');
 });
 
 // GET /register — muestra el formulario de registro
 // Pasa los roles disponibles excluyendo 'admin' (los admins solo los crea el superadmin)
 router.get('/register', (req, res) => {
-  if (req.cookies.token) return res.redirect('/');
+  if (res.locals.user) return res.redirect('/');
   res.render('register', { roles: User.getRoles().filter(r => r !== 'admin') });
 });
 
@@ -95,7 +97,7 @@ router.post('/login', async (req, res) => {
 // GET /register/invite/:token — muestra el formulario de registro vinculado a una escuela
 // Si el token no existe en ninguna escuela → pantalla de enlace inválido
 router.get('/register/invite/:token', async (req, res) => {
-  if (req.cookies.token) return res.redirect('/');
+  if (res.locals.user) return res.redirect('/');
   try {
     const school = await School.findOne({ inviteToken: req.params.token });
     const roles = User.getRoles().filter(r => !['superadmin', 'admin'].includes(r));

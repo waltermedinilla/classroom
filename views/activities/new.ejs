@@ -118,6 +118,18 @@
       </div>
 
       <div class="sidebar-card">
+        <div class="sidebar-label">Tipo</div>
+        <div class="sidebar-input-wrap">
+          <select id="sType" class="sidebar-input">
+            <option value="tarea">Tarea</option>
+            <option value="evaluacion">Evaluación</option>
+            <option value="tp">Trabajo Práctico</option>
+            <option value="examen">Examen</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="sidebar-card">
         <div class="sidebar-label">Puntos</div>
         <div class="sidebar-input-wrap">
           <input type="number" id="sPoints" class="sidebar-input" value="10" min="0" max="10" placeholder="Sin puntos">
@@ -397,6 +409,7 @@
       fd.append('courseId', COURSE_ID);
       fd.append('title', title);
       fd.append('description', document.getElementById('actInstructions').innerText.trim());
+      fd.append('type', document.getElementById('sType').value || 'tarea');
       fd.append('points', document.getElementById('sPoints').value || '');
       fd.append('dueDate', document.getElementById('sDueDate').value || '');
       fd.append('availableFrom', document.getElementById('sAvailableFrom').value || '');

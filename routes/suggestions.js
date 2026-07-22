@@ -4,16 +4,8 @@ const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-const ALLOWED_ROLES = ['superadmin', 'admin', 'directivo', 'preceptor', 'soe'];
-
-function requireSuggestionRole(req, res, next) {
-  const role = res.locals.user?.role;
-  if (!ALLOWED_ROLES.includes(role)) return res.status(403).json({ error: 'Sin permiso' });
-  next();
-}
-
-// POST /suggestions
-router.post('/', requireAuth, requireSuggestionRole, async (req, res) => {
+// POST /suggestions — cualquier usuario autenticado (docente, alumno, etc.) puede enviar una sugerencia
+router.post('/', requireAuth, async (req, res) => {
   try {
     const { text } = req.body;
     if (!text || !text.trim()) {

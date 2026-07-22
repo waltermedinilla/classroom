@@ -49,6 +49,8 @@ const upload = multer({
   },
 });
 
+const SUBMISSION_MAX_SIZE = 20 * 1024 * 1024; // 20 MB por archivo
+
 // Multer para entregas de alumnos
 // req.params.id = activityId; req.userId = studentId (seteado por requireAuth)
 const submissionUpload = multer({
@@ -61,7 +63,7 @@ const submissionUpload = multer({
     },
     filename: (req, file, cb) => cb(null, uniqueFilename(file.originalname)),
   }),
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB por archivo (entregas pueden ser más grandes)
+  limits: { fileSize: SUBMISSION_MAX_SIZE },
   fileFilter: (req, file, cb) => {
     cb(null, EXT_SUBMISSIONS.includes(path.extname(file.originalname).toLowerCase()));
   },
@@ -486,13 +488,77 @@ router.get('/submission-file/:filename', requireAuth, async (req, res) => {
   }
 });
 
+// POST /activities/:id/upload-submission-file
+// Pre-sube UN archivo al path final de la entrega, igual que el docente hace con
+// /activities/upload-attachment. Devuelve la metadata para que el frontend la mande
+// en el JSON del submit final (ver POST /:id/submit).
+// Body multipart: { file }
+// Retorna: { storagePath, name, filename, mime, size }
+router.post('/:id/upload-submission-file', requireAuth, (req, res, next) => {
+  // Intercepta errores de multer para devolver JSON en español, como en /upload-attachment
+  submissionUpload.single('file')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: `El archivo es demasiado grande (máximo ${SUBMISSION_MAX_SIZE / 1024 / 1024} MB)` });
+      }
+      return res.status(400).json({ error: err.message || 'Error al procesar el archivo' });
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Tipo de archivo no permitido (PDF, Word, Excel, imágenes o ZIP)' });
+
+    const activity = await Activity.findById(req.params.id);
+    if (!activity) { fs.unlinkSync(req.file.path); return res.status(404).json({ error: 'Actividad no encontrada' }); }
+
+    const course = await Course.findById(activity.course);
+    const userId = res.locals.user._id.toString();
+
+    // Solo alumnos inscriptos: mismo chequeo que /submit
+    if (!course.students.map(s => s.toString()).includes(userId)) {
+      fs.unlinkSync(req.file.path);
+      return res.status(403).json({ error: 'No estás inscripto en este curso' });
+    }
+    // Bloquea si el plazo venció y no hay entregas tardías habilitadas
+    if (activity.dueDate && new Date(activity.dueDate) < new Date() && !activity.allowLateSubmissions) {
+      fs.unlinkSync(req.file.path);
+      return res.status(403).json({ error: 'El plazo de entrega ha vencido. El docente debe habilitar las entregas tardías.' });
+    }
+
+    const schoolId = res.locals.user.school?.toString() || 'general';
+    res.json({
+      storagePath: [schoolId, req.params.id, userId, req.file.filename].join('/'),
+      name:        req.file.originalname,
+      filename:    req.file.filename,
+      mime:        req.file.mimetype,
+      size:        req.file.size,
+    });
+  } catch (err) {
+    if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }
+    res.status(500).json({ error: err.message || 'Error al subir el archivo' });
+  }
+});
+
 // POST /activities/:id/submit
-// El alumno entrega o reenvía su trabajo para una actividad
-// multipart/form-data: { text?, files? }
-// Si hay nuevos archivos: reemplaza los anteriores (borra del disco + upsert en BD)
-// Si no hay archivos nuevos: mantiene los archivos anteriores, solo actualiza el texto
-// Validación de plazo: rechaza si dueDate < ahora Y allowLateSubmissions es false
-router.post('/:id/submit', requireAuth, submissionUpload.array('files', 10), async (req, res) => {
+// El alumno entrega o reenvía su trabajo para una actividad.
+// Acepta dos formatos por compatibilidad:
+//   1. JSON: { text?, uploadedFiles?: [{ storagePath, name, filename, mime, size }] }
+//      → los archivos ya se pre-subieron con /upload-submission-file (flujo nuevo, con
+//        progreso real por archivo).
+//   2. multipart/form-data: { text?, files? }  (flujo viejo — se mantiene por si algún
+//      cliente/test aún lo usa).
+// Si hay nuevos archivos: reemplaza los anteriores (borra del disco + upsert en BD).
+// Si no hay archivos nuevos: mantiene los archivos anteriores, solo actualiza el texto.
+// Middleware: solo corre el parseo multipart si el request efectivamente lo es.
+// El body-parser JSON global (server.js) ya se encarga del flujo nuevo (application/json).
+const conditionalMultipart = (req, res, next) => {
+  const ct = req.headers['content-type'] || '';
+  if (ct.startsWith('multipart/form-data')) return submissionUpload.array('files', 10)(req, res, next);
+  next();
+};
+
+router.post('/:id/submit', requireAuth, conditionalMultipart, async (req, res) => {
   try {
     const activity = await Activity.findById(req.params.id);
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
@@ -513,15 +579,33 @@ router.post('/:id/submit', requireAuth, submissionUpload.array('files', 10), asy
     const schoolId = res.locals.user.school?.toString() || 'general';
     const { text } = req.body;
 
-    // Mapea los archivos subidos a la estructura del schema de Submission
-    // storagePath es relativo a ENTREGAS_BASE para facilitar las operaciones de borrado
-    const newFiles = (req.files || []).map(f => ({
+    // Archivos pre-subidos vía /upload-submission-file (flujo nuevo)
+    // Se filtran los storagePath para asegurar que apunten al userId del solicitante:
+    // impide que un alumno referencie archivos de otro pasando storagePaths arbitrarios.
+    const preUploadedRaw = req.body.uploadedFiles
+      ? (typeof req.body.uploadedFiles === 'string' ? JSON.parse(req.body.uploadedFiles) : req.body.uploadedFiles)
+      : [];
+    const expectedPrefix = [schoolId, req.params.id, userId, ''].join('/');
+    const preUploadedFiles = preUploadedRaw
+      .filter(f => f && f.storagePath && f.storagePath.startsWith(expectedPrefix))
+      .map(f => ({
+        name:        f.name,
+        filename:    f.filename,
+        storagePath: f.storagePath,
+        mime:        f.mime || '',
+        size:        f.size || 0,
+      }));
+
+    // Archivos que llegan directo en el FormData (flujo viejo, compatibilidad)
+    const multipartFiles = (req.files || []).map(f => ({
       name:        f.originalname,
       filename:    f.filename,
       storagePath: [schoolId, req.params.id, userId, f.filename].join('/'),
       mime:        f.mimetype,
       size:        f.size,
     }));
+
+    const newFiles = [...preUploadedFiles, ...multipartFiles];
 
     const existing = await Submission.findOne({ activity: req.params.id, student: userId });
 
