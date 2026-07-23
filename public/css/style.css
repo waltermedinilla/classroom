@@ -530,11 +530,21 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
 }
 .fab .material-symbols-outlined { font-size: 28px; }
 
-/* FAB de sugerencias: se posiciona más arriba para no taparse con el FAB de acción
-   primaria del contexto (ej: el "+" para crear actividad en /courses/:id, que también
-   usa la clase .fab con bottom:32px right:32px). Ambos FABs coexisten apilados
-   verticalmente, patrón estándar de Material Design "stacked FAB". */
-#fabSuggest { bottom: 100px; }
+/* FAB de sugerencias: queda en la posición base (`.fab` → bottom:32px). Cuando aparece
+   el FAB de acción primaria (`#fabBtn`, ej: el "+" para crear actividad en /courses/:id
+   para el docente), ese se posiciona ARRIBA y el de sugerencias queda debajo. Preferencia
+   explícita del dueño: sugerencias siempre debajo del "+", incluso cuando conviven.
+   Color ámbar/anaranjado (Material amber-800) para diferenciarlo visualmente del FAB
+   azul (var(--primary)) y por asociación cromática con el ícono "lightbulb". */
+#fabSuggest {
+  background: #f9a825;
+  box-shadow: 0 4px 16px rgba(249,168,37,0.45);
+}
+#fabSuggest:hover {
+  background: #e17f00;
+  box-shadow: 0 6px 24px rgba(225,127,0,0.55);
+}
+#fabBtn { bottom: 100px; }
 
 /* ─── Activity Tab Cards ─── */
 .activities-list { display: flex; flex-direction: column; }
