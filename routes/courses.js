@@ -429,13 +429,26 @@ router.get('/:id/data', requireAuth, async (req, res) => {
 });
 
 // POST /courses/:id/customize
-router.post('/:id/customize', requireAuth, headerUpload.single('image'), async (req, res) => {
+// El chequeo de ownership va ANTES del multer a propósito: sin este middleware previo,
+// headerUpload borraría el header anterior del curso en su callback `filename()` — incluso
+// cuando la request viene de alguien que no es el owner — antes de que el handler pudiera
+// rechazarla con 403. Un docente A podría, con esa vulnerabilidad, borrar la portada del
+// curso de un docente B iterando sobre IDs. Por eso: primero validamos, después multer.
+router.post('/:id/customize', requireAuth, async (req, res, next) => {
   try {
-    const course = await Course.findById(req.params.id);
+    const course = await Course.findById(req.params.id).select('owner');
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
     if (course.owner.toString() !== req.userId) {
       return res.status(403).json({ error: 'Solo el docente puede personalizar el curso' });
     }
+    next();
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+}, headerUpload.single('image'), async (req, res) => {
+  try {
+    const course = await Course.findById(req.params.id);
+    if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
     const { mode, color, color2, removeImage } = req.body;
     const schoolId  = res.locals.user?.school?.toString() || 'general';
     const newHeader = {};

@@ -530,6 +530,12 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
 }
 .fab .material-symbols-outlined { font-size: 28px; }
 
+/* FAB de sugerencias: se posiciona más arriba para no taparse con el FAB de acción
+   primaria del contexto (ej: el "+" para crear actividad en /courses/:id, que también
+   usa la clase .fab con bottom:32px right:32px). Ambos FABs coexisten apilados
+   verticalmente, patrón estándar de Material Design "stacked FAB". */
+#fabSuggest { bottom: 100px; }
+
 /* ─── Activity Tab Cards ─── */
 .activities-list { display: flex; flex-direction: column; }
 .activity-card {

@@ -153,7 +153,9 @@
       "Bash(rm -f __TRACKED_VAR__/cookies.txt __TRACKED_VAR__/admin_cookies.txt __TRACKED_VAR__/owner_cookies.txt __TRACKED_VAR__/maint_body.json)",
       "Bash(curl -s -o /dev/null -w \"server sigue vivo para el usuario: %{http_code}\\\\n\" http://localhost:3000/login)",
       "Bash(ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new walter@100.114.77.83 \"echo '--- docker ---'; sudo docker ps --format 'table {{.Names}}\\\\t{{.Status}}'; echo ''; echo '--- pm2 ---'; pm2 status; echo ''; echo '--- tailscale funnel ---'; tailscale funnel status; echo ''; echo '--- disco ---'; df -h / 2>&1 | tail -2; echo ''; echo '--- uptime maquina ---'; uptime\")",
-      "WebFetch(domain:classroom-4118.tailc1c538.ts.net)"
+      "WebFetch(domain:classroom-4118.tailc1c538.ts.net)",
+      "Bash(cd \"C:\\\\Users\\\\Educacion\\\\OneDrive\\\\Desktop\\\\proyectos\\\\classroom-clone\" && \\\\ *)",
+      "Bash(node -c routes/courses.js)"
     ]
   }
 }

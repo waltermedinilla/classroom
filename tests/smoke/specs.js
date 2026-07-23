@@ -336,6 +336,28 @@ const specs = [
     },
   },
 
+  // ── Regresión: /courses/:id/customize rechaza al no-owner ANTES del multer ─
+  // Antes del fix, un docente A podía golpear /courses/{ID_B}/customize y — por el
+  // orden de middlewares — el multer borraba el header del curso B en su callback
+  // filename() antes de que el handler validara ownership. Ahora el chequeo de owner
+  // corre PRIMERO. Este spec no simula el ataque completo (no sube archivo real),
+  // simplemente verifica que un usuario ajeno reciba 403 antes de que multer haga nada.
+  {
+    id: 'customize-rejects-non-owner',
+    title: 'POST /courses/:id/customize rechaza a no-owner con 403 (antes del multer)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // scopedStudent NO es el owner del courseId — debería recibir 403 sin efecto colateral
+      const fd = new FormData();
+      fd.append('mode', 'gradient');
+      fd.append('color', '#000000');
+      const res = await client.post('scopedStudent', `/courses/${state.courseId}/customize`, {
+        form: fd, expectStatus: 403,
+      });
+      assert(res.json?.error, 'debería devolver un JSON con error');
+    },
+  },
+
   // ── Regresión: invalidación de cache al deshabilitar un usuario ──────────
   {
     id: 'cache-invalidation-on-disable',

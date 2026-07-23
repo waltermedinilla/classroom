@@ -287,6 +287,18 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ## Historial de Cambios (Changelog)
 
+### 2026-07-22 — 🔒 Fix seguridad: `/courses/:id/customize` validación de owner antes del multer
+
+**Bug encontrado en revisión previa al deploy.** El orden de middlewares dejaba una vulnerabilidad concreta: `POST /courses/:id/customize` tenía `headerUpload.single('image')` ANTES del handler que validaba `course.owner === req.userId`. El `filename()` callback del multer (definido en las líneas 29-39) hace `readdirSync` + `unlinkSync` para borrar el header anterior — **eso ejecutaba antes** de que se pudiera devolver 403.
+
+**Consecuencia**: cualquier docente autenticado podía mandar `POST /courses/{ID_AJENO}/customize` con una imagen y borrar la portada del curso ajeno. Iterando sobre IDs podía dejar cursos de otros docentes sin imagen. La imagen del atacante quedaba en disco pero no referenciada en la BD.
+
+**Fix**: se agregó un middleware inline entre `requireAuth` y `headerUpload` que hace un `Course.findById(...).select('owner')` y devuelve 403 si el usuario no es el owner. El multer ya no arranca en ese caso. Costo: 1 query extra por request legítima. El chequeo redundante en el handler final se dejó como defensa en profundidad.
+
+**No aplica al avatar** (`POST /courses/profile/avatar`): ahí el destino usa `res.locals.user._id` (el propio usuario), no un parámetro de URL. Cada uno solo puede tocar el suyo.
+
+Spec de regresión agregado a smoke tests: `customize-rejects-non-owner` — un alumno (no-owner) intenta customizar el curso y debe recibir 403. **49/49 pasando.**
+
 ### 2026-07-22 — Modo Mantenimiento (Caso A: la app sigue viva, se bloquea a propósito)
 
 Nueva pieza en `/superadmin/backup` (misma pantalla del backup, sección nueva arriba de todo). Solo `waltermedinilla@gmail.com` puede activarlo/desactivarlo — reutiliza `requireBackupAccess`.
