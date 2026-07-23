@@ -791,13 +791,13 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
 }
 .ann-card.expanded .ann-expand-arrow { transform: rotate(180deg); }
 .ann-expanded { padding: 4px 20px 20px 20px; border-top: 1px solid var(--border); }
-.ann-full-text { font-size: 14px; line-height: 1.75; color: var(--text); white-space: pre-wrap; padding: 14px 0 12px; }
+.ann-full-text { font-size: 14px; line-height: 1.75; color: var(--text); white-space: pre-wrap; padding: 14px 0 12px; overflow-wrap: anywhere; word-break: break-word; }
 .ann-full-img { max-width: 100%; max-height: 360px; border-radius: var(--radius-sm); display: block; margin-bottom: 16px; }
 .ann-comments { display: flex; flex-direction: column; gap: 14px; margin-bottom: 16px; padding-left: 8px; border-left: 3px solid var(--border); }
 .ann-comment { display: flex; gap: 10px; align-items: flex-start; }
 .ann-comment-body { flex: 1; }
 .ann-comment-author { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
-.ann-comment-text { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+.ann-comment-text { font-size: 13px; color: var(--text-secondary); line-height: 1.5; overflow-wrap: anywhere; word-break: break-word; }
 .ann-comment-date { font-size: 11px; color: var(--text-hint); margin-top: 3px; }
 .ann-comment-form {
   display: flex; align-items: center; gap: 10px;
@@ -860,7 +860,11 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
 }
 .upcoming-item-due { font-size: 12px; color: var(--text-secondary); }
 
-.stream-main { display: flex; flex-direction: column; gap: 12px; }
+/* min-width:0 obligatorio en columna 1fr de un CSS Grid: sin esto, contenido con líneas
+   largas sin wrap (URLs, palabras extensas) fuerza al grid a asignar más ancho del `1fr`,
+   haciendo que la columna sobresalga del contenedor `.stream-layout` (250px + 1fr + gap).
+   Ver también overflow-wrap:anywhere en .ann-full-text y .ann-comment-text. */
+.stream-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 #streamList { display: flex; flex-direction: column; gap: 20px; }
 .stream-action-row { display: flex; gap: 12px; }
 .stream-announce-btn {
