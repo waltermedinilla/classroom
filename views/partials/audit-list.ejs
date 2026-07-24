@@ -1,0 +1,268 @@
+<%
+// Helper: construye una URL preservando queryParams + overrides.
+// Definido en el partial (no en el server) para no reserializar en cada iteración.
+function buildAuditUrl(overrides) {
+  const p = { ...queryParams };
+  Object.entries(overrides || {}).forEach(([k, v]) => {
+    if (v === '' || v == null) delete p[k];
+    else p[k] = v;
+  });
+  const qs = Object.entries(p)
+    .filter(([, v]) => v !== '' && v != null)
+    .map(([k, v]) => k + '=' + encodeURIComponent(v))
+    .join('&');
+  return '?' + qs;
+}
+%>
+
+<style>
+  /* ── Panel de auditoría ─────────────────────────────────────────────────── */
+  .audit-header { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+  .audit-header .material-symbols-outlined { color: var(--text-secondary); font-size: 28px; }
+  .audit-header h2 { margin: 0; font-size: 22px; }
+  .audit-count {
+    color: var(--text-secondary); font-size: 13px; padding: 3px 10px;
+    border-radius: 999px; background: var(--bg); border: 1px solid var(--border);
+  }
+
+  /* Card contenedora del formulario de filtros */
+  .audit-filters {
+    background: var(--surface); border-radius: var(--radius); padding: 20px;
+    margin-bottom: 20px; box-shadow: var(--shadow-sm);
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 14px 16px; align-items: end;
+  }
+  .audit-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .audit-field-wide { grid-column: span 2; }
+  .audit-label {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase;
+    color: var(--text-secondary);
+  }
+
+  /* Inputs unificados (text, date, select) */
+  .audit-input {
+    width: 100%; padding: 9px 12px; font-size: 14px; font-family: inherit;
+    color: var(--text); background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    transition: border-color .15s, box-shadow .15s, background .15s;
+    appearance: none; -webkit-appearance: none;
+  }
+  .audit-input::placeholder { color: var(--text-hint); }
+  .audit-input:hover  { border-color: var(--text-hint); }
+  .audit-input:focus  {
+    outline: none; border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(26,115,232,0.15);
+  }
+  /* Chevron custom para los <select> (evita el look nativo) */
+  select.audit-input {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235f6368' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat; background-position: right 10px center;
+    padding-right: 32px; cursor: pointer;
+  }
+  /* Ícono nativo del date en dark mode: dificil de ver — se invierte */
+  [data-theme="dark"] .audit-input::-webkit-calendar-picker-indicator {
+    filter: invert(0.8);
+  }
+
+  .audit-actions { display: flex; gap: 8px; align-items: end; }
+  .audit-actions .btn { min-height: 40px; padding: 0 18px; font-weight: 500; }
+  .audit-actions .btn-primary { flex: 1; box-shadow: 0 1px 2px rgba(26,115,232,0.25); }
+
+  /* Lista de eventos */
+  .audit-list {
+    background: var(--surface); border-radius: var(--radius);
+    box-shadow: var(--shadow-sm); overflow: hidden;
+  }
+  .audit-row {
+    display: flex; gap: 14px; padding: 14px 18px; align-items: flex-start;
+    border-bottom: 1px solid var(--border); transition: background .15s;
+  }
+  .audit-row:last-child { border-bottom: none; }
+  .audit-row:hover { background: var(--bg); }
+  .audit-icon {
+    min-width: 34px; height: 34px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; background: var(--bg);
+  }
+  .audit-icon .material-symbols-outlined { font-size: 20px; }
+  .audit-body { flex: 1; min-width: 0; }
+  .audit-line { font-size: 14px; line-height: 1.55; color: var(--text); }
+  .audit-line strong { font-weight: 600; }
+  .audit-verb { color: var(--text-secondary); }
+  .audit-sep  { color: var(--text-hint); margin: 0 4px; }
+  .audit-target { font-weight: 500; }
+  .audit-meta {
+    font-size: 12px; color: var(--text-secondary); margin-top: 4px;
+    display: flex; gap: 14px; flex-wrap: wrap;
+  }
+  .audit-meta strong { color: var(--text); font-weight: 600; }
+  .audit-time {
+    text-align: right; color: var(--text-secondary); font-size: 12px;
+    white-space: nowrap; min-width: 110px; flex-shrink: 0; line-height: 1.4;
+  }
+  .audit-time-date { color: var(--text); }
+
+  /* Ajustes responsive */
+  @media (max-width: 720px) {
+    .audit-field-wide { grid-column: span 1; }
+    .audit-time { min-width: 80px; font-size: 11px; }
+    .audit-row { padding: 12px 14px; gap: 10px; }
+  }
+</style>
+
+<div class="audit-header">
+  <span class="material-symbols-outlined">history</span>
+  <h2>Auditoría</h2>
+  <span class="audit-count"><%= total.toLocaleString('es-AR') %> evento<%= total !== 1 ? 's' : '' %></span>
+</div>
+
+<!-- Filtros -->
+<form method="GET" class="audit-filters">
+  <div class="audit-field">
+    <label class="audit-label">Categoría</label>
+    <select name="category" class="audit-input">
+      <option value="">Todas</option>
+      <% Object.entries(categories).forEach(([k, v]) => { %>
+        <option value="<%= k %>" <%= filters.category === k ? 'selected' : '' %>><%= v %></option>
+      <% }) %>
+    </select>
+  </div>
+
+  <div class="audit-field">
+    <label class="audit-label">Acción</label>
+    <select name="action" class="audit-input">
+      <option value="">Todas</option>
+      <% Object.entries(actions).forEach(([k, a]) => { %>
+        <option value="<%= k %>" <%= filters.action === k ? 'selected' : '' %>><%= a.label %></option>
+      <% }) %>
+    </select>
+  </div>
+
+  <div class="audit-field">
+    <label class="audit-label">Rol del actor</label>
+    <select name="role" class="audit-input">
+      <option value="">Todos</option>
+      <% Object.entries(roleNames).forEach(([k, v]) => { %>
+        <option value="<%= k %>" <%= filters.role === k ? 'selected' : '' %>><%= v %></option>
+      <% }) %>
+    </select>
+  </div>
+
+  <div class="audit-field">
+    <label class="audit-label">Desde</label>
+    <input type="date" name="from" value="<%= filters.from %>" class="audit-input">
+  </div>
+
+  <div class="audit-field">
+    <label class="audit-label">Hasta</label>
+    <input type="date" name="to" value="<%= filters.to %>" class="audit-input">
+  </div>
+
+  <div class="audit-field audit-field-wide">
+    <label class="audit-label">Buscar (nombre, email o recurso)</label>
+    <input type="text" name="q" value="<%= filters.q %>" placeholder="Ej: Juan Pérez, TP N°3, ..." class="audit-input">
+  </div>
+
+  <% if (isSuperadmin) { %>
+    <div class="audit-field">
+      <label class="audit-label">Escuela</label>
+      <select name="schoolId" class="audit-input">
+        <option value="">Todas</option>
+        <option value="none" <%= filters.schoolId === 'none' ? 'selected' : '' %>>Sin escuela (sistema)</option>
+        <% schools.forEach(s => { %>
+          <option value="<%= s._id %>" <%= filters.schoolId === s._id.toString() ? 'selected' : '' %>><%= s.name %></option>
+        <% }) %>
+      </select>
+    </div>
+  <% } %>
+
+  <div class="audit-actions">
+    <button class="btn btn-primary">
+      <span class="material-symbols-outlined" style="font-size:18px;vertical-align:middle;margin-right:4px">filter_alt</span>
+      Filtrar
+    </button>
+    <a href="?" class="btn btn-outline">Limpiar</a>
+  </div>
+</form>
+
+<% if (entries.length === 0) { %>
+  <div class="empty-state">
+    <div class="empty-icon"><span class="material-symbols-outlined">history</span></div>
+    <p>No hay eventos que coincidan con los filtros.</p>
+  </div>
+<% } else { %>
+  <div class="audit-list">
+    <% entries.forEach(e => {
+      const a = actions[e.action] || { label: e.action, icon: 'radio_button_checked', color: '#5f6368' };
+      const dt = new Date(e.timestamp);
+      const dateStr = dt.toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' });
+      const timeStr = dt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+    %>
+    <div class="audit-row">
+      <div class="audit-icon" style="color:<%= a.color %>">
+        <span class="material-symbols-outlined"><%= a.icon %></span>
+      </div>
+      <div class="audit-body">
+        <div class="audit-line">
+          <strong><%= e.actor.name || 'Sistema' %></strong>
+          <% if (e.actor.role) { %>
+            <span class="role-badge role-<%= e.actor.role %>" style="font-size:10px;padding:1px 7px;margin-left:4px;vertical-align:middle"><%= roleNames[e.actor.role] || e.actor.role %></span>
+          <% } %>
+          <span class="audit-verb"><%= a.label %></span>
+          <% e.targets.forEach((t, i) => { %>
+            <% if (i > 0) { %><span class="audit-sep">·</span><% } %>
+            <span class="audit-target"><%= t.name || t.type %></span>
+          <% }) %>
+        </div>
+        <% const metaKeys = e.meta ? Object.keys(e.meta) : []; %>
+        <% if (metaKeys.length) { %>
+          <div class="audit-meta">
+            <% metaKeys.forEach(k => { %>
+              <span><%= k %>: <strong><%= e.meta[k] %></strong></span>
+            <% }) %>
+          </div>
+        <% } %>
+      </div>
+      <div class="audit-time">
+        <div class="audit-time-date"><%= dateStr %></div>
+        <div><%= timeStr %></div>
+      </div>
+    </div>
+    <% }) %>
+  </div>
+
+  <!-- Paginación -->
+  <%
+    let pagesToShow = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pagesToShow.push(i);
+    } else {
+      pagesToShow.push(1);
+      if (page > 3) pagesToShow.push('...');
+      for (let i = Math.max(2, page - 2); i <= Math.min(totalPages - 1, page + 2); i++) pagesToShow.push(i);
+      if (page < totalPages - 2) pagesToShow.push('...');
+      pagesToShow.push(totalPages);
+    }
+  %>
+  <% if (totalPages > 1) { %>
+    <div class="pagination" style="margin-top:20px">
+      <% if (page > 1) { %>
+        <a href="<%= buildAuditUrl({ page: page - 1 }) %>" class="page-btn" title="Anterior">
+          <span class="material-symbols-outlined" style="font-size:18px">chevron_left</span>
+        </a>
+      <% } %>
+      <% pagesToShow.forEach(p => { %>
+        <% if (p === '...') { %>
+          <span class="page-ellipsis">…</span>
+        <% } else { %>
+          <a href="<%= buildAuditUrl({ page: p }) %>" class="page-btn <%= p === page ? 'active' : '' %>"><%= p %></a>
+        <% } %>
+      <% }) %>
+      <% if (page < totalPages) { %>
+        <a href="<%= buildAuditUrl({ page: page + 1 }) %>" class="page-btn" title="Siguiente">
+          <span class="material-symbols-outlined" style="font-size:18px">chevron_right</span>
+        </a>
+      <% } %>
+    </div>
+  <% } %>
+<% } %>

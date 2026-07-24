@@ -44,7 +44,7 @@
           </div>
           <div class="input-group" style="margin-top:16px">
             <span class="material-symbols-outlined input-icon">badge</span>
-            <select id="role" class="select-input">
+            <select id="role" class="select-input" onchange="toggleDivisionField()">
               <option value="student">Alumno</option>
               <option value="teacher">Docente</option>
               <option value="preceptor">Preceptor</option>
@@ -53,7 +53,21 @@
               <option value="admin">Administrador</option>
             </select>
           </div>
+          <!-- Combobox condicional: solo visible cuando el rol es "Alumno". Si el
+               admin lo deja en "— Sin curso —", el alumno queda creado sin inscripciones
+               (mismo comportamiento que antes de esta feature). Si elige un Curso, el
+               backend lo inscribe en todas las materias con joinedAt = ahora. -->
+          <div class="input-group" id="divisionField" style="margin-top:16px<%= divisions && divisions.length ? '' : ';display:none' %>">
+            <span class="material-symbols-outlined input-icon">school</span>
+            <select id="divisionId" class="select-input">
+              <option value="">— Sin curso (opcional) —</option>
+              <% (divisions || []).forEach(d => { %>
+                <option value="<%= d._id %>"><%= d.name %></option>
+              <% }) %>
+            </select>
+          </div>
           <div class="form-error" id="formError" style="margin-top:16px"></div>
+          <div class="form-success" id="formSuccess" style="display:none;margin-top:16px;padding:10px 14px;background:#e6f4ea;color:#137333;border-radius:8px;font-size:13px"></div>
           <button type="submit" class="btn btn-primary btn-full" style="margin-top:20px">
             <span class="material-symbols-outlined">check</span>
             Crear usuario
@@ -65,10 +79,23 @@
 
   <%- include('../partials/footer') %>
   <script>
+    // Muestra el combobox de Curso solo cuando el rol es Alumno. Si no hay divisiones
+    // cargadas en la escuela del admin, queda oculto siempre (nada que elegir).
+    function toggleDivisionField() {
+      const role  = document.getElementById('role').value;
+      const field = document.getElementById('divisionField');
+      const hasDivisions = field.querySelectorAll('option').length > 1; // > 1 porque siempre está la opción vacía
+      field.style.display = (role === 'student' && hasDivisions) ? '' : 'none';
+      if (role !== 'student') document.getElementById('divisionId').value = '';
+    }
+    toggleDivisionField(); // sincronizar al cargar
+
     document.getElementById('createUserForm').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const errorEl = document.getElementById('formError');
+      const errorEl   = document.getElementById('formError');
+      const successEl = document.getElementById('formSuccess');
       errorEl.classList.remove('show');
+      successEl.style.display = 'none';
       const btn = e.target.querySelector('button[type="submit"]');
       btn.disabled = true;
       btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Creando...';
@@ -81,6 +108,7 @@
           email: document.getElementById('email').value,
           password: document.getElementById('password').value,
           role: document.getElementById('role').value,
+          divisionId: document.getElementById('divisionId').value || undefined,
         }),
       });
       const data = await res.json();
@@ -91,7 +119,14 @@
         errorEl.classList.add('show');
         return;
       }
-      window.location.href = '/admin/users/' + data.user._id;
+      // Mostrar cuántas materias quedaron inscriptas antes de redirigir al perfil
+      if (data.enrolledIn > 0) {
+        successEl.textContent = `Usuario creado e inscripto en ${data.enrolledIn} materia${data.enrolledIn === 1 ? '' : 's'} del curso.`;
+        successEl.style.display = 'block';
+        setTimeout(() => { window.location.href = '/admin/users/' + data.user._id; }, 900);
+      } else {
+        window.location.href = '/admin/users/' + data.user._id;
+      }
     });
   </script>
 </body>

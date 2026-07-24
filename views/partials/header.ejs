@@ -229,6 +229,14 @@ const _activeTheme = (function() {
       <button class="icon-btn" id="darkModeBtn" onclick="toggleDarkMode()" title="Cambiar tema">
         <span class="material-symbols-outlined">dark_mode</span>
       </button>
+      <div class="inbox-btn-wrap">
+        <button class="icon-btn" id="inboxBtn" onclick="openInboxModal()" title="Mis sugerencias">
+          <span class="material-symbols-outlined"><%= unreadSuggestionCount > 0 ? 'mark_email_unread' : 'mail' %></span>
+        </button>
+        <% if (unreadSuggestionCount > 0) { %>
+          <span class="inbox-badge" id="inboxBadge"><%= unreadSuggestionCount > 9 ? '9+' : unreadSuggestionCount %></span>
+        <% } %>
+      </div>
       <span class="user-role role-badge role-<%= user.role %>"><%= roleNames[user.role] || user.role %></span>
       <button class="icon-btn" onclick="toggleUserMenu()" title="Menú de usuario">
         <% if (user.avatar) { %>

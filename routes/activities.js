@@ -10,6 +10,7 @@ const Submission = require('../models/Submission');
 const User       = require('../models/User');
 const XLSX       = require('xlsx');
 const { requireAuth } = require('../middleware/auth');
+const { logAudit }    = require('../middleware/audit');
 
 // Adjuntos del docente: dentro de /public (acceso estático directo)
 // Estructura: public/archivos/{schoolId}/actividades/{courseId}/{filename}
@@ -97,8 +98,25 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
     const isOwner = course.owner.toString() === userId;
 
     const query = { course: req.params.courseId };
-    // Los alumnos solo ven actividades que ya fueron publicadas (availableFrom <= ahora)
-    if (!isOwner) query.availableFrom = { $lte: new Date() };
+    // Los alumnos solo ven actividades que ya fueron publicadas (availableFrom <= ahora).
+    // Además, si tienen enrollmentDate para este curso (o sea, fueron dados de alta con el
+    // flujo "Nuevo usuario → seleccionar Curso"), ocultamos las tareas cuya fecha de entrega
+    // ya venció ANTES de que se inscribieran — no las pudieron haber hecho. Se dejan visibles
+    // las que no tienen dueDate (nunca vencen) y las que el docente marcó con tardías abiertas
+    // (decisión explícita del usuario: si el docente abrió tardías, todos ven la actividad,
+    // incluso los alumnos recién llegados). Alumnos sin enrollmentDate (los que ya estaban
+    // antes de esta feature, o los que agregó el docente manualmente) ven todo — backward compat.
+    if (!isOwner) {
+      query.availableFrom = { $lte: new Date() };
+      const joinedAt = course.enrollmentDates?.get?.(userId);
+      if (joinedAt) {
+        query.$or = [
+          { dueDate: null },
+          { dueDate: { $gte: joinedAt } },
+          { allowLateSubmissions: true },
+        ];
+      }
+    }
 
     const activities = await Activity.find(query)
       .populate('author', 'name')
@@ -193,6 +211,19 @@ router.post('/create', requireAuth, upload.array('files', 10), async (req, res) 
     });
 
     await activity.populate('author', 'name');
+
+    logAudit(req, 'activity.create',
+      [
+        { type: 'activity', id: activity._id, name: activity.title },
+        { type: 'course',   id: course._id,   name: course.name },
+      ],
+      {
+        tipo:      activity.type,
+        adjuntos:  attachments.length,
+        ...(activity.points != null ? { puntos: activity.points } : {}),
+      },
+    );
+
     res.status(201).json({ activity });
   } catch (e) {
     res.status(400).json({ error: e.message || 'Error al crear actividad' });
@@ -264,8 +295,18 @@ router.get('/my-pending', requireAuth, async (req, res) => {
     if (user.role !== 'student') return res.redirect('/courses');
 
     const now = new Date();
-    const joinedCourses = await Course.find({ students: user._id }).select('name _id');
+    // Traemos también enrollmentDates para poder aplicar por curso el mismo filtro de
+    // "no mostrar actividades vencidas antes de la inscripción del alumno" que usamos en
+    // GET /activities/course/:id. Sin este filtro acá, "Mis pendientes" mostraría tareas
+    // que no le figuran al alumno cuando entra al curso — inconsistencia visible al usuario.
+    const joinedCourses = await Course.find({ students: user._id }).select('name _id enrollmentDates');
     const courseIds = joinedCourses.map(c => c._id);
+    const userIdStr = user._id.toString();
+    const joinedAtByCourse = {};
+    joinedCourses.forEach(c => {
+      const dt = c.enrollmentDates?.get?.(userIdStr);
+      if (dt) joinedAtByCourse[c._id.toString()] = dt;
+    });
 
     const activities = await Activity.find({
       course:        { $in: courseIds },
@@ -279,8 +320,14 @@ router.get('/my-pending', requireAuth, async (req, res) => {
     const submittedSet = new Set(submissions.map(s => s.activity.toString()));
 
     // Filtra las que están realmente pendientes (sin entrega y plazo aún abierto)
+    // + oculta las vencidas ANTES de la inscripción del alumno (misma regla que /course/:id)
     const pending = activities.filter(a => {
       if (submittedSet.has(a._id.toString())) return false;
+      // Regla de inscripción: solo aplica si el alumno tiene joinedAt registrado para ese curso
+      const joinedAt = joinedAtByCourse[a.course._id.toString()];
+      if (joinedAt && a.dueDate && new Date(a.dueDate) < joinedAt && !a.allowLateSubmissions) {
+        return false;
+      }
       if (!a.dueDate) return true;
       if (new Date(a.dueDate) >= now) return true;
       if (a.allowLateSubmissions) return true;
@@ -353,6 +400,21 @@ router.post('/:id/grade', requireAuth, async (req, res) => {
     }
 
     await activity.save();
+
+    // Snapshot del alumno calificado (nombre para el log). Query minimal, solo name.
+    const student = await User.findById(studentId).select('name').lean();
+    logAudit(req, 'submission.grade',
+      [
+        { type: 'activity', id: activity._id, name: activity.title },
+        { type: 'user',     id: studentId,    name: student?.name || '' },
+        { type: 'course',   id: course._id,   name: course.name },
+      ],
+      {
+        puntos: Number(points),
+        ...(activity.points != null ? { maximo: activity.points } : {}),
+      },
+    );
+
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -401,6 +463,17 @@ router.delete('/:id', requireAuth, async (req, res) => {
     // 4. Borrar el documento Activity de la BD
     await activity.deleteOne();
 
+    logAudit(req, 'activity.delete',
+      [
+        { type: 'activity', id: activity._id, name: activity.title },
+        { type: 'course',   id: course._id,   name: course.name },
+      ],
+      {
+        entregas_borradas: submissions.length,
+        adjuntos_borrados: (activity.attachments || []).filter(a => a.type === 'file').length,
+      },
+    );
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Error al eliminar: ' + err.message });
@@ -421,6 +494,15 @@ router.patch('/:id/toggle-late', requireAuth, async (req, res) => {
     }
     activity.allowLateSubmissions = !activity.allowLateSubmissions;
     await activity.save();
+
+    logAudit(req, 'activity.toggle_late',
+      [
+        { type: 'activity', id: activity._id, name: activity.title },
+        { type: 'course',   id: course._id,   name: course.name },
+      ],
+      { habilitadas: activity.allowLateSubmissions ? 'sí' : 'no' },
+    );
+
     res.json({ allowLateSubmissions: activity.allowLateSubmissions });
   } catch {
     res.status(500).json({ error: 'Error del servidor' });
@@ -449,6 +531,15 @@ router.put('/:id', requireAuth, async (req, res) => {
     activity.points        = points !== '' && points != null ? Number(points) : null;
     if (type) activity.type = type;
     await activity.save();
+
+    logAudit(req, 'activity.edit',
+      [
+        { type: 'activity', id: activity._id, name: activity.title },
+        { type: 'course',   id: course._id,   name: course.name },
+      ],
+      {},
+    );
+
     res.json({ activity });
   } catch (e) {
     res.status(400).json({ error: e.message || 'Error al editar' });
@@ -633,6 +724,22 @@ router.post('/:id/submit', requireAuth, conditionalMultipart, async (req, res) =
         $setOnInsert: { firstSubmittedAt: new Date() },
       },
       { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    // Distingue primera entrega vs reenvío usando el snapshot de `existing`
+    // capturado ANTES del upsert. La fecha de la actividad puede ser null
+    // (actividad sin plazo) — en ese caso, `tardia` no se agrega al meta.
+    const now = new Date();
+    const wasLate = activity.dueDate && now > new Date(activity.dueDate);
+    logAudit(req, existing ? 'submission.update' : 'submission.create',
+      [
+        { type: 'activity', id: activity._id, name: activity.title },
+        { type: 'course',   id: course._id,   name: course.name },
+      ],
+      {
+        archivos: filesToSave.length,
+        ...(activity.dueDate ? { tardia: wasLate ? 'sí' : 'no' } : {}),
+      },
     );
 
     res.json({ submission });

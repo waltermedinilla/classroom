@@ -9,6 +9,7 @@ const rateLimit   = require('express-rate-limit');
 const { requireAuth }       = require('../middleware/auth');
 const { requireSuperAdmin } = require('../middleware/superadmin');
 const { invalidateAll }     = require('../middleware/cache');
+const { logAudit }          = require('../middleware/audit');
 const {
   getMaintenanceState, setMaintenanceOn, setMaintenanceOff, SYSTEM_OWNER_EMAIL,
 } = require('../config/maintenance');
@@ -193,6 +194,20 @@ router.get('/download', async (req, res) => {
     tarPath = result.tarPath;
     const filename = `classroom-backup-${result.stamp}.tar.gz`;
     res.setHeader('X-Backup-Manifest', encodeURIComponent(JSON.stringify(result.manifest)));
+
+    // Log ANTES de streamear al cliente: si el download callback falla, el backup igual
+    // se generó exitosamente (existe el tar). No queremos ausencia de log por un fallo de red.
+    logAudit(req, 'system.backup_create', [],
+      {
+        archivo:  filename,
+        version:  result.manifest?.version || '',
+        ...(result.manifest?.collections ? {
+          usuarios: result.manifest.collections.users || 0,
+          cursos:   result.manifest.collections.courses || 0,
+        } : {}),
+      },
+    );
+
     res.download(tarPath, filename, (err) => {
       fs.unlink(tarPath, () => {});
       if (err && !res.headersSent) res.status(500).json({ error: 'Error al generar el backup' });
@@ -371,6 +386,10 @@ router.post('/restore', restoreLimiter, async (req, res) => {
     invalidateAll();
     log.push('Cache de usuarios/escuelas invalidado');
 
+    logAudit(req, 'system.restore', [],
+      { safety_backup: path.basename(safetyDest) },
+    );
+
     res.json({ ok: true, log, safetyBackup: path.basename(safetyDest) });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Error durante la restauración', log });
@@ -393,11 +412,19 @@ router.get('/maintenance-status', (req, res) => {
 router.post('/maintenance/on', (req, res) => {
   const { message, eta } = req.body;
   setMaintenanceOn({ message, eta, activatedBy: res.locals.user.email, reason: 'manual' });
+
+  logAudit(req, 'system.maintenance_on', [],
+    { ...(message ? { mensaje: message } : {}), ...(eta ? { eta } : {}) },
+  );
+
   res.json({ ok: true, state: getMaintenanceState() });
 });
 
 router.post('/maintenance/off', (req, res) => {
   setMaintenanceOff();
+
+  logAudit(req, 'system.maintenance_off', [], {});
+
   res.json({ ok: true });
 });
 

@@ -14,6 +14,7 @@ const Announcement = require('../models/Announcement');
 const { requireAuth }  = require('../middleware/auth');
 const { requireAdmin } = require('../middleware/admin');
 const { invalidateUser, invalidateSchool } = require('../middleware/cache');
+const { logAudit } = require('../middleware/audit');
 const School   = require('../models/School');
 const THEMES   = require('../config/themes');
 
@@ -154,18 +155,61 @@ router.get('/users', async (req, res) => {
   res.render('admin/users', { users, enrolledMap, currentRole: role || '', search: search || '', page, totalPages, total, queryParams });
 });
 
-router.get('/users/create', (req, res) => {
-  res.render('admin/user-form', { user: null });
+router.get('/users/create', async (req, res) => {
+  // Cargamos las divisiones (Cursos) de la escuela del admin para el combobox
+  // condicional del formulario — solo se muestra al elegir rol Alumno.
+  const school = res.locals.user.school;
+  const divisions = school
+    ? await Division.find({ school }).sort({ name: 1 }).select('_id name').lean()
+    : [];
+  res.render('admin/user-form', { user: null, divisions });
 });
 
 router.post('/users/create', async (req, res) => {
   try {
-    const { name, email, password, role, dni } = req.body;
+    const { name, email, password, role, dni, divisionId } = req.body;
     if (role === 'superadmin') return res.status(403).json({ error: 'No permitido' });
     const userData = { name, email, password, role, school: res.locals.user.school };
     if (dni) userData.dni = dni;
     const user = await User.create(userData);
-    res.status(201).json({ user });
+
+    logAudit(req, 'user.create',
+      [{ type: 'user', id: user._id, name: user.name }],
+      { rol: user.role, ...(user.email ? { email: user.email } : {}) },
+    );
+
+    // Si es alumno y el admin eligió un Curso: lo inscribimos en TODAS las materias
+    // de ese Curso, guardando joinedAt = ahora en Course.enrollmentDates para que las
+    // tareas vencidas ANTES de esta fecha no le figuren (ver filtro en routes/activities.js).
+    let enrolledIn = 0;
+    if (role === 'student' && divisionId && res.locals.user.school) {
+      // Validar que la división pertenezca a la misma escuela (defensa en profundidad,
+      // aunque el select solo muestra las de la escuela del admin).
+      const division = await Division.findOne({ _id: divisionId, school: res.locals.user.school }).select('_id name');
+      if (division) {
+        const courses = await Course.find({ division: division._id, school: res.locals.user.school }).select('_id name students enrollmentDates');
+        const now = new Date();
+        for (const c of courses) {
+          if (c.students.some(s => s.toString() === user._id.toString())) continue; // ya inscripto: no duplicar
+          c.students.push(user._id);
+          c.enrollmentDates.set(user._id.toString(), now);
+          await c.save({ validateModifiedOnly: true });
+          enrolledIn++;
+        }
+
+        if (enrolledIn > 0) {
+          logAudit(req, 'course.add_student',
+            [
+              { type: 'division', id: division._id, name: division.name },
+              { type: 'user',     id: user._id,     name: user.name },
+            ],
+            { materias: enrolledIn, via: 'alta-alumno-con-curso' },
+          );
+        }
+      }
+    }
+
+    res.status(201).json({ user, enrolledIn });
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ error: 'El correo ya está registrado' });
     if (err.name === 'ValidationError') {
@@ -204,8 +248,16 @@ router.post('/users/:id/role', async (req, res) => {
       return res.status(400).json({ error: 'No puedes cambiar tu propio rol de admin' });
     }
     if (req.body.role === 'superadmin') return res.status(403).json({ error: 'No permitido' });
+    const oldRole = target.role;
     const user = await User.findByIdAndUpdate(req.params.id, { role: req.body.role }, { new: true, runValidators: true });
     invalidateUser(req.params.id);
+
+    logAudit(req, 'user.role_change',
+      [{ type: 'user', id: user._id, name: user.name }],
+      { de: oldRole, a: user.role },
+      { schoolId: target.school || null },
+    );
+
     res.json({ user });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -229,6 +281,13 @@ router.post('/users/:id/toggle-active', async (req, res) => {
     target.active = !target.active;
     await target.save({ validateModifiedOnly: true });
     invalidateUser(req.params.id);
+
+    logAudit(req, 'user.toggle_active',
+      [{ type: 'user', id: target._id, name: target.name }],
+      { estado: target.active ? 'habilitado' : 'deshabilitado' },
+      { schoolId: target.school || null },
+    );
+
     res.json({ active: target.active });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -249,6 +308,13 @@ router.post('/users/:id/reset-password', async (req, res) => {
     const newPassword = target.dni || 'Classroom1234';
     target.password = newPassword;
     await target.save();
+
+    logAudit(req, 'user.reset_password',
+      [{ type: 'user', id: target._id, name: target.name }],
+      { origen: target.dni ? 'DNI' : 'default' },
+      { schoolId: target.school || null },
+    );
+
     res.json({ ok: true, hint: target.dni ? 'DNI del usuario' : 'Classroom1234' });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -269,6 +335,13 @@ router.post('/users/:id/delete', async (req, res) => {
     if (req.params.id === req.userId) return res.status(400).json({ error: 'No puedes eliminarte a ti mismo' });
     await User.findByIdAndDelete(req.params.id);
     invalidateUser(req.params.id);
+
+    logAudit(req, 'user.delete',
+      [{ type: 'user', id: target._id, name: target.name }],
+      { rol: target.role, ...(target.email ? { email: target.email } : {}) },
+      { schoolId: target.school || null },
+    );
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -296,6 +369,13 @@ router.post('/users/:id/impersonate', async (req, res) => {
     res.cookie('adminToken', req.cookies.token, impersonateOpts);
     const targetToken = jwt.sign({ userId: target._id }, process.env.JWT_SECRET, { expiresIn: '2h' });
     res.cookie('token', targetToken, impersonateOpts);
+
+    logAudit(req, 'user.impersonate',
+      [{ type: 'user', id: target._id, name: target.name }],
+      { rol_destino: target.role },
+      { schoolId: target.school || null },
+    );
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -354,6 +434,16 @@ router.post('/courses/create', async (req, res) => {
     if (!teacher) return res.status(400).json({ error: 'Docente no válido' });
 
     const course = await Course.create({ name, room: room || '', division: division._id, owner: teacher._id, school });
+
+    logAudit(req, 'course.create',
+      [
+        { type: 'course',   id: course._id,   name: course.name },
+        { type: 'division', id: division._id, name: division.name },
+        { type: 'user',     id: teacher._id,  name: teacher.name },
+      ],
+      { codigo: course.code },
+    );
+
     res.status(201).json({ course });
   } catch (err) {
     if (err.name === 'ValidationError') {
@@ -399,6 +489,13 @@ router.post('/courses/:id/edit', async (req, res) => {
     }
 
     const course = await Course.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
+
+    logAudit(req, 'course.edit',
+      [{ type: 'course', id: course._id, name: course.name }],
+      {},
+      { schoolId: existing.school || null },
+    );
+
     res.json({ course });
   } catch (err) {
     if (err.name === 'ValidationError') {
@@ -422,6 +519,16 @@ router.post('/courses/:id/assign-teacher', async (req, res) => {
     if (!teacher) return res.status(400).json({ error: 'Docente no válido' });
     course.owner = teacher._id;
     await course.save({ validateModifiedOnly: true });
+
+    logAudit(req, 'course.assign_teacher',
+      [
+        { type: 'course', id: course._id,  name: course.name },
+        { type: 'user',   id: teacher._id, name: teacher.name },
+      ],
+      {},
+      { schoolId: course.school || null },
+    );
+
     res.json({ teacherName: teacher.name, teacherId: teacher._id });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -435,6 +542,13 @@ router.post('/courses/:id/delete', async (req, res) => {
     if (!course) return res.status(404).json({ error: 'Materia no encontrada' });
     if (school && course.school?.toString() !== school.toString()) return res.status(403).json({ error: 'Sin acceso' });
     await cascadeDeleteCourse(req.params.id);
+
+    logAudit(req, 'course.delete',
+      [{ type: 'course', id: course._id, name: course.name }],
+      { alumnos: (course.students || []).length },
+      { schoolId: course.school || null },
+    );
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -469,6 +583,12 @@ router.post('/divisions/create', async (req, res) => {
     const schoolId = res.locals.user.school;
     if (!schoolId) return res.status(400).json({ error: 'Sin escuela asignada' });
     const division = await Division.create({ name, school: schoolId });
+
+    logAudit(req, 'division.create',
+      [{ type: 'division', id: division._id, name: division.name }],
+      {},
+    );
+
     res.status(201).json({ division });
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ error: 'Ya existe un curso con ese nombre en esta escuela' });
@@ -494,7 +614,15 @@ router.post('/divisions/:id/edit', async (req, res) => {
     if (!existing) return res.status(404).json({ error: 'Curso no encontrado' });
     if (school && existing.school?.toString() !== school.toString()) return res.status(403).json({ error: 'Sin acceso' });
     const { name } = req.body;
+    const oldName = existing.name;
     const division = await Division.findByIdAndUpdate(req.params.id, { name }, { new: true, runValidators: true });
+
+    logAudit(req, 'division.edit',
+      [{ type: 'division', id: division._id, name: division.name }],
+      oldName !== division.name ? { de: oldName, a: division.name } : {},
+      { schoolId: existing.school || null },
+    );
+
     res.json({ division });
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ error: 'Ya existe un curso con ese nombre' });
@@ -516,6 +644,13 @@ router.post('/divisions/:id/delete', async (req, res) => {
       return res.status(409).json({ error: `No se puede eliminar: tiene ${courseCount} materia(s) asociada(s)` });
     }
     await Division.findByIdAndDelete(req.params.id);
+
+    logAudit(req, 'division.delete',
+      [{ type: 'division', id: division._id, name: division.name }],
+      {},
+      { schoolId: division.school || null },
+    );
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -559,6 +694,13 @@ router.post('/subjects/create', async (req, res) => {
     const { name, description, color, school: bodySchool } = req.body;
     const schoolId = res.locals.user.school || bodySchool || null;
     const subject = await Subject.create({ name, description, color, school: schoolId });
+
+    logAudit(req, 'subject.create',
+      [{ type: 'subject', id: subject._id, name: subject.name }],
+      {},
+      { schoolId: schoolId || null },
+    );
+
     res.status(201).json({ subject });
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ error: 'Ya existe una materia con ese nombre' });
@@ -584,7 +726,15 @@ router.post('/subjects/:id/edit', async (req, res) => {
     if (!existing) return res.status(404).json({ error: 'Materia no encontrada' });
     if (school && existing.school?.toString() !== school.toString()) return res.status(403).json({ error: 'Sin acceso' });
     const { name, description, color } = req.body;
+    const oldName = existing.name;
     const subject = await Subject.findByIdAndUpdate(req.params.id, { name, description, color }, { new: true, runValidators: true });
+
+    logAudit(req, 'subject.edit',
+      [{ type: 'subject', id: subject._id, name: subject.name }],
+      oldName !== subject.name ? { de: oldName, a: subject.name } : {},
+      { schoolId: existing.school || null },
+    );
+
     res.json({ subject });
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ error: 'Ya existe una materia con ese nombre' });
@@ -616,6 +766,13 @@ router.post('/subjects/:id/delete', async (req, res) => {
     if (!subject) return res.status(404).json({ error: 'Materia no encontrada' });
     if (school && subject.school?.toString() !== school.toString()) return res.status(403).json({ error: 'Sin acceso' });
     await Subject.findByIdAndDelete(req.params.id);
+
+    logAudit(req, 'subject.delete',
+      [{ type: 'subject', id: subject._id, name: subject.name }],
+      {},
+      { schoolId: subject.school || null },
+    );
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -876,6 +1033,16 @@ router.post('/import/execute', async (req, res) => {
       }
     }
 
+    logAudit(req, 'import.execute', [],
+      {
+        flujo: 'cargos',
+        docentes_nuevos: results.docentes.created,
+        cursos_nuevos:   results.cursos.created,
+        materias_nuevas: results.materias.created,
+        inscriptos:      results.inscriptos,
+      },
+    );
+
     return res.json({ results });
   }
 
@@ -962,6 +1129,17 @@ router.post('/import/execute', async (req, res) => {
       }
     }
 
+    logAudit(req, 'import.execute', [],
+      {
+        flujo:             'sistema',
+        divisiones_nuevas: results.divisiones.created,
+        docentes_nuevos:   results.docentes.created,
+        alumnos_nuevos:    results.alumnos.created,
+        cursos_nuevos:     results.cursos.created,
+        inscriptos:        results.inscriptos,
+      },
+    );
+
     return res.json({ results });
   }
 
@@ -1022,6 +1200,16 @@ router.post('/import/execute', async (req, res) => {
       } catch { results.materias.skipped++; }
     }
   }
+
+  logAudit(req, 'import.execute', [],
+    {
+      flujo:           'alumnos',
+      alumnos_nuevos:  results.alumnos.created,
+      cursos_nuevos:   results.cursos.created,
+      materias_nuevas: results.materias.created,
+      inscriptos:      results.inscriptos,
+    },
+  );
 
   res.json({ results });
 });

@@ -13,7 +13,8 @@ const connectDB    = require('./config/db');
 const { checkUser } = require('./middleware/auth');
 const { schoolCache } = require('./middleware/cache');
 const { getMaintenanceState, SYSTEM_OWNER_EMAIL } = require('./config/maintenance');
-const School = require('./models/School');
+const School     = require('./models/School');
+const Suggestion = require('./models/Suggestion');
 
 const authRoutes         = require('./routes/auth');
 const courseRoutes       = require('./routes/courses');
@@ -24,6 +25,7 @@ const superadminRoutes   = require('./routes/superadmin');
 const directivoRoutes    = require('./routes/directivo');
 const backupRoutes       = require('./routes/backup');
 const suggestionRoutes   = require('./routes/suggestions');
+const auditRoutes        = require('./routes/audit');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -192,6 +194,30 @@ app.use((req, res, next) => {
   res.status(503).render('maintenance', { message: state.message, eta: state.eta });
 });
 
+// ── Bandeja de sugerencias: contador de respuestas sin leer ─────────────────
+// Inyecta res.locals.unreadSuggestionCount para el badge del sobre en el header.
+// Mismo patrón defensivo que el resto de los middlewares globales: try/catch que
+// nunca puede tumbar una request, y un killswitch por env var para apagarlo sin
+// redeploy si algún día hiciera falta (ej. sospecha de que esta query pesa en
+// producción bajo carga — no debería, el índice {user:1, status:1} la hace
+// sub-milisegundo, pero la opción de apagarla en caliente no cuesta nada tenerla).
+const SUGGESTIONS_INBOX_ENABLED = process.env.SUGGESTIONS_INBOX_ENABLED !== 'false';
+app.use(async (req, res, next) => {
+  res.locals.unreadSuggestionCount = 0;
+  if (SUGGESTIONS_INBOX_ENABLED && res.locals.user) {
+    try {
+      res.locals.unreadSuggestionCount = await Suggestion.countDocuments({
+        user:       res.locals.user._id,
+        status:     'answered',
+        readByUser: false,
+      });
+    } catch {
+      // Se queda en 0: el sobre simplemente no muestra badge, nunca rompe la página.
+    }
+  }
+  next();
+});
+
 // ── Rutas ────────────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
   if (!res.locals.user) return res.redirect('/login');
@@ -213,6 +239,10 @@ app.use('/',           authRoutes);
 app.use('/courses',    courseRoutes);
 app.use('/announcements', announcementRoutes);
 app.use('/activities', activityRoutes);
+// Auditoría: define rutas absolutas (/admin/audit y /superadmin/audit). Se monta
+// ANTES de adminRoutes/superadminRoutes para que intercepte esas rutas antes de
+// caer en el 404 de los otros routers (que no las conocen).
+app.use('/',            auditRoutes);
 app.use('/admin',      adminRoutes);
 // Montado ANTES de /superadmin para que Express lo intercepte primero sin ambigüedad
 // (aunque hoy superadmin.js no tiene rutas que choquen con /backup/*).

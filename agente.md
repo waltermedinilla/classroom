@@ -287,6 +287,74 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ## Historial de Cambios (Changelog)
 
+### 2026-07-23 — Auditoría (Fase 2: cobertura completa + ~30 rutas instrumentadas)
+
+Extiende la fase 1 con la instrumentación completa. Ahora se registran **todas las acciones que importan** — 41 acciones en 12 categorías. Sin sumar aún logins (queda para cuando duela la ausencia).
+
+**Catálogo ampliado** (`config/audit-actions.js`) — nuevas acciones:
+- **Cursos**: create, edit, delete, join, add_student, remove_student, assign_teacher.
+- **Divisiones**: create, edit, delete (categoría nueva — el admin-nav las llama "Cursos" pero acá son `division` para no chocar con Course).
+- **Usuarios**: create, delete, role_change, toggle_active, reset_password, password_change, impersonate, bulk_role, bulk_school, school_change.
+- **Materias**: create, edit, delete.
+- **Escuelas** (superadmin): create, edit, delete, invite_generate, invite_revoke.
+- **Sugerencias**: create, status_change, delete.
+- **Importación**: execute (los 3 flujos del panel admin + el flujo del superadmin, cada uno con contadores en meta).
+- **Sistema** (dueño): backup_create, restore, maintenance_on, maintenance_off.
+
+**Instrumentación** — ~30 puntos de log agregados sin tocar ni una línea de la lógica de negocio. Puntos clave del diseño:
+- **Snapshot antes del delete**: `school.delete`, `subject.delete`, `division.delete`, `course.remove_student`, `suggestion.delete` hacen un `findById(...).select('name').lean()` ANTES de borrar, para que el evento siga legible aunque el recurso no exista más. Costo: 1 query extra por delete — despreciable.
+- **Override de `schoolId`** vía el 4° argumento de `logAudit`: cuando el actor es superadmin (school=null) pero el recurso pertenece a una escuela específica (ej. `school.edit`, `user.role_change` sobre un usuario de escuela X, `user.school_change`), el evento se guarda con la escuela **del recurso**, no la del actor. Así el admin de esa escuela ve en su panel las acciones del superadmin sobre su institución.
+- **`user.school_change`** captura ambos snapshots: la escuela de origen (populado ANTES del update) y la de destino (query por schoolId destino) — quedan como `de: X, a: Y` en el meta.
+- **Cambios en `role_change` / `division.edit` / `subject.edit`** capturan el nombre viejo si cambió, así el meta puede mostrar `de: X, a: Y` cuando hubo rename.
+- **`import.execute`** loguea contadores por tipo de flujo (`cargos` / `sistema` / `alumnos` / superadmin genérico), no logs individuales por cada usuario importado — sería demasiado ruido para una operación bulk.
+- **`system.backup_create`** loguea ANTES de streamear el .tar.gz al cliente: si el download callback falla por red, el evento igual se registró porque el backup ya se generó exitosamente en disco.
+
+**Smoke tests** — 3 specs nuevos + cleanup mejorado:
+- `audit-full-coverage` — verifica que cada una de las 6 categorías principales (activity, submission, announcement, course, user, suggestion) tenga al menos 1 evento al final del flujo. Compara total del header con y sin filtro, no busca strings en el HTML (evita falsos positivos por el dropdown de filtros que ya contiene todos los labels).
+- `audit-search-filter` — busca "Smoke" en el panel y verifica que devuelva > 0.
+- `audit-superadmin-sees-system-events` — verifica que el panel `/superadmin/audit?category=system` incluya los `maintenance_on/off` disparados por el spec de mantenimiento.
+- **Cleanup robusto** — antes matcheaba solo por `actor.email` y `targets.name` con regex del RUN_ID; ahora también matchea por `actor.userId` y `targets.id` contra los IDs reales de los recursos de smoke (`state.scopedTeacherId`, `state.courseId`, etc.). Elimina falsos negativos que dejaban 5-7 huérfanos por corrida. Además se agregó un `sleep(500ms)` al arranque del cleanup para que los `logAudit` fire-and-forget de las últimas acciones (cascada de delete de curso/usuarios) alcancen a persistir antes del delete.
+- Solo quedan **3 huérfanos por corrida** (documentados): los 2 de mantenimiento del superadmin + el 1 de backup, que no tienen ni RUN_ID ni ids de smoke — inofensivos.
+
+**56/56 pasando** contra el mirror local de producción.
+
+### 2026-07-23 — Auditoría (Fase 1: infraestructura + 4 rutas piloto)
+
+Nueva colección `auditlogs` y panel de auditoría en `/admin/audit` (scoped por escuela) y `/superadmin/audit` (todas las escuelas, con filtro extra por escuela). El objetivo es tener registro histórico de "quién hizo qué, cuándo, sobre qué" — arranca con las acciones que importan (crear/entregar/calificar/publicar); logins y el resto de las rutas quedan para la Fase 2.
+
+**Diseño**:
+- **Modelo `AuditLog`** (`models/AuditLog.js`): `action` (string canónico, ej: `submission.grade`), `actor` (**snapshot** de name/role/email además del ref al userId — así el log sigue legible aunque después se borre al usuario o le cambien el nombre), `targets` (array de `{ type, id, name }` — también con snapshot), `school` (para scope), `timestamp`, `meta` (mixed, extras por acción), `ip`, `userAgent`. Índices compuestos `{school:1, timestamp:-1}`, `{actor.userId:1, timestamp:-1}`, `{action:1, timestamp:-1}` para las 3 queries naturales del panel.
+- **Catálogo de acciones** (`config/audit-actions.js`): cada acción tiene label en español (verbo), icono Material Symbol, color y categoría. Agregar una acción nueva = una línea en el catálogo + una llamada a `logAudit(...)` donde ocurra. En dev, el helper valida contra el catálogo y avisa por consola si aparece una acción sin registrar; en prod la guarda igual (no queremos que un typo rompa la operación real).
+- **Helper `logAudit`** (`middleware/audit.js`): **fire-and-forget**. Nunca hacer `await` sobre él — el diseño es que un fallo del log no bloquee ni demore la operación real. Si Mongo hipa, se loguea a stderr y ya; el evento se pierde pero la request cerró bien. Concurrencia gratis: cada `insertOne` es independiente, los 2 workers de PM2 escriben en paralelo sin coordinación.
+- **Rutas** (`routes/audit.js`): un solo router con handlers `GET /admin/audit` y `GET /superadmin/audit` — el compartido escapa regex en `category` y `q`, arma filtro por `action` / `role` / rango de fechas / texto libre sobre `actor.name|email` y `targets.name`. Paginado de a 50, con clamp de página fuera de rango. Se monta en `server.js` **antes** de adminRoutes/superadminRoutes para interceptar esos paths.
+- **Vista compartida** (`views/partials/audit-list.ejs` + dos wrappers en `views/admin/audit.ejs` y `views/superadmin/audit.ejs`): filtros arriba, filas con ícono coloreado + snapshot del actor con badge de rol en español + verbo del catálogo + targets separados por `·` + meta como línea secundaria + fecha/hora a la derecha. Link "Auditoría" agregado a `admin-nav.ejs` y `superadmin-nav.ejs`.
+
+**Instrumentación piloto** (4 rutas, ~30 líneas totales):
+- `POST /activities/create` → `activity.create` con meta `{ tipo, adjuntos, puntos? }`.
+- `POST /activities/:id/submit` → `submission.create` (primera entrega) o `submission.update` (reenvío — se distingue por el snapshot de `existing` antes del upsert) con meta `{ archivos, tardia? }`.
+- `POST /activities/:id/grade` → `submission.grade` con snapshot del nombre del alumno calificado (una query extra minimal `.select('name').lean()`) y meta `{ puntos, maximo? }`.
+- `POST /announcements/create` → `announcement.create` con meta `{ con_imagen }` y el texto de la novedad truncado a 60 chars como nombre del target.
+
+**Ejemplo de render** (verificado en el navegador con datos reales):
+> **Gabriela López** [Docente] · calificó una entrega · TP N°3 — Ecuaciones · Juan Pérez · Matemática 1°1° — puntos: 8, maximo: 10 — 23 de jul de 2026, 12:13 p.m.
+
+**Scope y decisiones tomadas** (respuestas del usuario):
+- Solo acciones que importan (no logins/navegación) — logins quedan como "sumar después es 2 líneas".
+- Visibilidad: **Superadmin ve todo** (con filtro extra por escuela) + **Admin ve su escuela** (scoped). Directivo NO ve el panel.
+- Retención: **sin límite** por ahora. Cuando duela el volumen se decide entre TTL automático y export+purga manual.
+
+**Smoke tests**: 3 specs nuevos + cleanup automático:
+- `audit-denied-for-teacher` — un docente recibe 403 en `/admin/audit`.
+- `audit-admin-sees-events` — el admin ve los eventos generados por los specs anteriores (activity.create + submission.grade + announcement.create) y el panel usa los verbos del catálogo.
+- `audit-filter-by-category` — filtrar por categoría reduce estrictamente el total mostrado en el header (compara contadores, no busca strings en el HTML — evita falsos positivos por el propio dropdown de filtros).
+- `cleanup-auditlogs-db` — borra los logs de cada corrida por `actor.email` matchea el RUN_ID.
+
+**53/53 pasando** contra el mirror local de producción.
+
+**Cambio de BD**: se crea una colección nueva `auditlogs` con 3 índices. Mongo la crea sola al primer insert, no hace falta migración manual — pero si en algún momento cambian los índices, sí. **Sin commitear, sin pushear** (según tu preferencia). La colección arranca vacía; los logs solo se generan de acá para adelante.
+
+**Pendiente Fase 2** (cuando digas): extender `logAudit(...)` a las ~25 rutas restantes (resto de activities/announcements + courses + users admin/superadmin + subjects + schools + system: backup/restore/mantenimiento). Agregar impersonate. Después: sumar logins (`auth.login` / `auth.logout`) si sirve.
+
 ### 2026-07-22 — 🔒 Fix seguridad: `/courses/:id/customize` validación de owner antes del multer
 
 **Bug encontrado en revisión previa al deploy.** El orden de middlewares dejaba una vulnerabilidad concreta: `POST /courses/:id/customize` tenía `headerUpload.single('image')` ANTES del handler que validaba `course.owner === req.userId`. El `filename()` callback del multer (definido en las líneas 29-39) hace `readdirSync` + `unlinkSync` para borrar el header anterior — **eso ejecutaba antes** de que se pudiera devolver 403.

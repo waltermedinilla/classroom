@@ -81,6 +81,119 @@
       }
     }
   </script>
+
+  <!-- Bandeja "Mis sugerencias" — historial propio + respuestas del equipo -->
+  <div id="inboxModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2000;align-items:center;justify-content:center" onclick="if(event.target===this)closeInboxModal()">
+    <div style="background:var(--surface);border-radius:12px;width:100%;max-width:520px;margin:16px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.2)">
+      <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+        <h3 style="margin:0;font-size:18px;display:flex;align-items:center;gap:8px">
+          <span class="material-symbols-outlined" style="color:#1a73e8">mail</span>
+          Mis sugerencias
+        </h3>
+        <button class="icon-btn" onclick="closeInboxModal()" title="Cerrar">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div id="inboxBody" style="overflow-y:auto;flex:1"></div>
+    </div>
+  </div>
+
+  <script>
+    function escapeHtml(str) {
+      var div = document.createElement('div');
+      div.textContent = str == null ? '' : String(str);
+      return div.innerHTML;
+    }
+
+    function updateInboxBadge(count) {
+      var badge = document.getElementById('inboxBadge');
+      var icon  = document.querySelector('#inboxBtn .material-symbols-outlined');
+      if (icon) icon.textContent = count > 0 ? 'mark_email_unread' : 'mail';
+      if (!badge) return;
+      if (count > 0) {
+        badge.textContent = count > 9 ? '9+' : count;
+        badge.style.display = 'flex';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    async function openInboxModal() {
+      document.getElementById('inboxModal').style.display = 'flex';
+      var body = document.getElementById('inboxBody');
+      body.innerHTML = '<div style="padding:40px 16px;text-align:center;color:var(--text-secondary)">Cargando…</div>';
+      try {
+        var res  = await fetch('/suggestions/mine');
+        var data = await res.json();
+        renderInbox(data.suggestions || []);
+      } catch {
+        body.innerHTML = '<div style="padding:40px 16px;text-align:center;color:var(--danger)">Error al cargar tus sugerencias</div>';
+      }
+    }
+
+    function closeInboxModal() {
+      document.getElementById('inboxModal').style.display = 'none';
+    }
+
+    var INBOX_STATUS = {
+      pending:  { label: 'Pendiente',  bg: '#fff3e0', color: '#ea8600' },
+      reviewed: { label: 'Revisada',   bg: '#e8eaed', color: '#5f6368' },
+      answered: { label: 'Respondida', bg: '#e6f4ea', color: '#137333' },
+    };
+
+    function renderInbox(suggestions) {
+      var body = document.getElementById('inboxBody');
+      if (!suggestions.length) {
+        body.innerHTML = '<div class="empty-state" style="padding:40px 16px">' +
+          '<div class="empty-icon"><span class="material-symbols-outlined">mail</span></div>' +
+          '<p>Todavía no enviaste ninguna sugerencia.</p></div>';
+        return;
+      }
+
+      body.innerHTML = suggestions.map(function (s) {
+        var st   = INBOX_STATUS[s.status] || INBOX_STATUS.pending;
+        var date = new Date(s.createdAt).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' });
+        var responseHtml = '';
+        if (s.status === 'answered' && s.response) {
+          var rdate = s.respondedAt
+            ? new Date(s.respondedAt).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+            : '';
+          responseHtml = '' +
+            '<div style="margin-top:10px;padding:12px 14px;background:var(--bg);border-radius:8px;border-left:3px solid #1a73e8">' +
+              '<div style="font-size:11px;font-weight:600;color:#1a73e8;margin-bottom:4px;display:flex;align-items:center;gap:4px">' +
+                '<span class="material-symbols-outlined" style="font-size:14px">reply</span>' +
+                'Respuesta del equipo' + (rdate ? ' · ' + rdate : '') +
+              '</div>' +
+              '<div style="font-size:13px;color:var(--text);white-space:pre-wrap">' + escapeHtml(s.response) + '</div>' +
+            '</div>';
+        }
+        return '' +
+          '<div style="padding:14px 24px;border-bottom:1px solid var(--border)">' +
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">' +
+              '<div style="font-size:13px;color:var(--text);white-space:pre-wrap;flex:1">' + escapeHtml(s.text) + '</div>' +
+              '<span style="flex-shrink:0;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:' + st.bg + ';color:' + st.color + '">' + st.label + '</span>' +
+            '</div>' +
+            '<div style="font-size:11px;color:var(--text-hint);margin-top:4px">' + date + '</div>' +
+            responseHtml +
+          '</div>';
+      }).join('');
+
+      // Marca como leídas las respondidas no leídas (fire-and-forget) y baja el badge ya mismo.
+      // No esperamos la respuesta del server: si falla, el peor caso es que el badge vuelva
+      // a aparecer en el próximo pageview (se recalcula server-side), nunca queda "colgado".
+      var unread = suggestions.filter(function (s) { return s.status === 'answered' && !s.readByUser; });
+      if (unread.length) {
+        unread.forEach(function (s) {
+          fetch('/suggestions/mine/' + s._id + '/read', { method: 'POST' }).catch(function () {});
+        });
+        updateInboxBadge(0);
+      }
+    }
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeInboxModal();
+    });
+  </script>
   <% } %>
 
   <script>

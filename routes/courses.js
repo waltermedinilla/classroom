@@ -10,6 +10,7 @@ const Submission = require('../models/Submission');
 const XLSX       = require('xlsx');
 const { requireAuth } = require('../middleware/auth');
 const { invalidateUser } = require('../middleware/cache');
+const { logAudit } = require('../middleware/audit');
 
 const router = express.Router();
 
@@ -151,6 +152,15 @@ router.post('/create', requireAuth, async (req, res) => {
       school,
       owner: req.userId,
     });
+
+    logAudit(req, 'course.create',
+      [
+        { type: 'course',   id: course._id,   name: course.name },
+        { type: 'division', id: division._id, name: division.name },
+      ],
+      { codigo: course.code, ...(course.room ? { aula: course.room } : {}) },
+    );
+
     res.status(201).json({ course });
   } catch (err) {
     if (err.name === 'ValidationError') {
@@ -182,6 +192,12 @@ router.post('/join', requireAuth, async (req, res) => {
     }
     course.students.push(req.userId);
     await course.save();
+
+    logAudit(req, 'course.join',
+      [{ type: 'course', id: course._id, name: course.name }],
+      { codigo: course.code },
+    );
+
     res.json({ course });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -258,6 +274,12 @@ router.post('/profile/change-password', requireAuth, async (req, res) => {
     }
     user.password = newPassword;
     await user.save();
+
+    logAudit(req, 'user.password_change',
+      [{ type: 'user', id: user._id, name: user.name }],
+      {},
+    );
+
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'Error del servidor' });
@@ -304,6 +326,15 @@ router.post('/:id/add-student', requireAuth, async (req, res) => {
     }
     course.students.push(student._id);
     await course.save();
+
+    logAudit(req, 'course.add_student',
+      [
+        { type: 'course', id: course._id,  name: course.name },
+        { type: 'user',   id: student._id, name: student.name },
+      ],
+      {},
+    );
+
     res.json({ student: { _id: student._id, name: student.name, email: student.email } });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -331,6 +362,17 @@ router.delete('/:id/students/:studentId', requireAuth, async (req, res) => {
     }
     course.students = course.students.filter(s => s.toString() !== req.params.studentId);
     await course.save();
+
+    // Snapshot del nombre del alumno para que el evento siga legible aunque se borre.
+    const removed = await User.findById(req.params.studentId).select('name').lean();
+    logAudit(req, 'course.remove_student',
+      [
+        { type: 'course', id: course._id,           name: course.name },
+        { type: 'user',   id: req.params.studentId, name: removed?.name || '' },
+      ],
+      {},
+    );
+
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'Error del servidor' });

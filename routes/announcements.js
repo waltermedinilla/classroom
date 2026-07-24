@@ -4,6 +4,7 @@ const path     = require('path');
 const Announcement = require('../models/Announcement');
 const Course   = require('../models/Course');
 const { requireAuth } = require('../middleware/auth');
+const { logAudit }    = require('../middleware/audit');
 
 const fs = require('fs');
 const router = express.Router();
@@ -82,6 +83,15 @@ router.post('/:id/comment', requireAuth, async (req, res) => {
     // Populamos el autor del último comentario para devolver datos completos al frontend
     await ann.populate('comments.author', 'name');
     const newComment = ann.comments[ann.comments.length - 1];
+
+    logAudit(req, 'announcement.comment',
+      [
+        { type: 'announcement', id: ann._id,    name: (ann.text || '').slice(0, 60) },
+        { type: 'course',       id: course._id, name: course.name },
+      ],
+      {},
+    );
+
     res.status(201).json({ comment: newComment });
   } catch (e) {
     res.status(500).json({ error: 'Error al comentar' });
@@ -118,6 +128,17 @@ router.post('/create', requireAuth, upload.single('image'), async (req, res) => 
 
     // Populamos el autor para que el frontend pueda mostrar el nombre inmediatamente
     const populated = await announcement.populate('author', 'name email');
+
+    logAudit(req, 'announcement.create',
+      [
+        { type: 'announcement', id: announcement._id, name: (text || '').slice(0, 60) },
+        { type: 'course',       id: course._id,       name: course.name },
+      ],
+      {
+        con_imagen: req.file ? 'sí' : 'no',
+      },
+    );
+
     res.status(201).json({ announcement: populated });
   } catch (err) {
     if (err.name === 'ValidationError') {

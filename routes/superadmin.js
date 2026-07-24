@@ -13,6 +13,7 @@ const { getNetworkStats } = require('../config/network');
 const { requireAuth }      = require('../middleware/auth');
 const { requireSuperAdmin } = require('../middleware/superadmin');
 const { invalidateUser, invalidateSchool } = require('../middleware/cache');
+const { logAudit } = require('../middleware/audit');
 
 // Multer en memoria para importación Excel (no necesita guardarse en disco)
 const xlsUpload = multer({
@@ -88,6 +89,13 @@ router.post('/schools/create', async (req, res) => {
   try {
     const { name, description, color } = req.body;
     const school = await School.create({ name, description, color });
+
+    logAudit(req, 'school.create',
+      [{ type: 'school', id: school._id, name: school.name }],
+      {},
+      { schoolId: school._id },
+    );
+
     res.status(201).json({ school });
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ error: 'Ya existe una escuela con ese nombre' });
@@ -140,6 +148,13 @@ router.post('/schools/:id/edit', async (req, res) => {
     );
     if (!school) return res.status(404).json({ error: 'Escuela no encontrada' });
     invalidateSchool(req.params.id);
+
+    logAudit(req, 'school.edit',
+      [{ type: 'school', id: school._id, name: school.name }],
+      {},
+      { schoolId: school._id },
+    );
+
     res.json({ school });
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ error: 'Ya existe una escuela con ese nombre' });
@@ -152,8 +167,17 @@ router.post('/schools/:id/edit', async (req, res) => {
 
 router.post('/schools/:id/delete', async (req, res) => {
   try {
+    // Snapshot ANTES del delete para que el evento sea legible aunque la escuela ya no exista.
+    const snap = await School.findById(req.params.id).select('name').lean();
     await School.findByIdAndDelete(req.params.id);
     invalidateSchool(req.params.id);
+
+    logAudit(req, 'school.delete',
+      [{ type: 'school', id: req.params.id, name: snap?.name || '' }],
+      {},
+      // school:null porque la escuela ya no existe — solo el superadmin lo verá
+    );
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -171,6 +195,13 @@ router.post('/schools/:id/invite', async (req, res) => {
     school.inviteToken = crypto.randomBytes(24).toString('hex'); // 48 hex chars
     await school.save();
     const inviteUrl = `${req.protocol}://${req.get('host')}/register/invite/${school.inviteToken}`;
+
+    logAudit(req, 'school.invite_generate',
+      [{ type: 'school', id: school._id, name: school.name }],
+      {},
+      { schoolId: school._id },
+    );
+
     res.json({ inviteUrl });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -185,6 +216,13 @@ router.post('/schools/:id/revoke-invite', async (req, res) => {
     if (!school) return res.status(404).json({ error: 'Escuela no encontrada' });
     school.inviteToken = null;
     await school.save();
+
+    logAudit(req, 'school.invite_revoke',
+      [{ type: 'school', id: school._id, name: school.name }],
+      {},
+      { schoolId: school._id },
+    );
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -209,6 +247,13 @@ router.post('/users/create', async (req, res) => {
     const userData = { name, email, password, role, school: school || null };
     if (dni) userData.dni = dni;
     const user = await User.create(userData);
+
+    logAudit(req, 'user.create',
+      [{ type: 'user', id: user._id, name: user.name }],
+      { rol: user.role, ...(user.email ? { email: user.email } : {}) },
+      { schoolId: user.school || null },
+    );
+
     res.status(201).json({ user });
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ error: 'El correo ya está registrado' });
@@ -279,6 +324,18 @@ router.post('/users/bulk-school', async (req, res) => {
       return res.status(400).json({ error: 'No se especificaron usuarios' });
     await User.updateMany({ _id: { $in: userIds } }, { school: schoolId || null });
     userIds.forEach(invalidateUser);
+
+    // Snapshot del nombre de la escuela destino (o "sin escuela") para el log.
+    let destName = 'sin escuela';
+    if (schoolId) {
+      const s = await School.findById(schoolId).select('name').lean();
+      destName = s?.name || '';
+    }
+    logAudit(req, 'user.bulk_school', [],
+      { usuarios: userIds.length, destino: destName },
+      { schoolId: schoolId || null },
+    );
+
     res.json({ ok: true, updated: userIds.length });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -301,6 +358,11 @@ router.post('/users/bulk-role', async (req, res) => {
 
     await User.updateMany({ _id: { $in: filtered } }, { role });
     filtered.forEach(invalidateUser);
+
+    logAudit(req, 'user.bulk_role', [],
+      { usuarios: filtered.length, rol: role },
+    );
+
     res.json({ ok: true, updated: filtered.length });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -314,13 +376,29 @@ router.post('/users/bulk-role', async (req, res) => {
 router.post('/users/:id/school', async (req, res) => {
   try {
     const { schoolId } = req.body;
+    // Snapshot ANTES del update para poder loguear la escuela de origen.
+    const before   = await User.findById(req.params.id).populate('school', 'name');
+    if (!before) return res.status(404).json({ error: 'Usuario no encontrado' });
+    const fromName = before.school?.name || 'sin escuela';
+
     const user = await User.findByIdAndUpdate(
       req.params.id,
       { school: schoolId || null },
       { new: true }
     );
-    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
     invalidateUser(req.params.id);
+
+    let toName = 'sin escuela';
+    if (schoolId) {
+      const s = await School.findById(schoolId).select('name').lean();
+      toName = s?.name || '';
+    }
+    logAudit(req, 'user.school_change',
+      [{ type: 'user', id: user._id, name: user.name }],
+      { de: fromName, a: toName },
+      { schoolId: schoolId || before.school || null },
+    );
+
     res.json({ user });
   } catch (err) {
     if (err.code === 11000) {
@@ -342,8 +420,16 @@ router.post('/users/:id/role', async (req, res) => {
     if (req.params.id === req.userId) {
       return res.status(400).json({ error: 'No puedes cambiar tu propio rol' });
     }
+    const oldRole = target.role;
     const user = await User.findByIdAndUpdate(req.params.id, { role }, { new: true, runValidators: true });
     invalidateUser(req.params.id);
+
+    logAudit(req, 'user.role_change',
+      [{ type: 'user', id: user._id, name: user.name }],
+      { de: oldRole, a: user.role },
+      { schoolId: target.school || null },
+    );
+
     res.json({ user });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -575,6 +661,15 @@ router.post('/import/execute', async (req, res) => {
       }
     }
 
+    logAudit(req, 'import.execute', [],
+      {
+        usuarios_nuevos: results.usuarios.created,
+        materias_nuevas: results.materias.created,
+        cursos_nuevos:   results.cursos.created,
+      },
+      { schoolId },
+    );
+
     res.json({ results });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor: ' + err.message });
@@ -765,16 +860,72 @@ router.get('/suggestions', async (req, res) => {
 
 router.post('/suggestions/:id/reviewed', async (req, res) => {
   try {
-    await Suggestion.findByIdAndUpdate(req.params.id, { status: 'reviewed' });
+    const s = await Suggestion.findByIdAndUpdate(req.params.id, { status: 'reviewed' }, { new: true });
+    if (!s) return res.status(404).json({ error: 'Sugerencia no encontrada' });
+
+    logAudit(req, 'suggestion.status_change',
+      [{ type: 'suggestion', id: s._id, name: (s.text || '').slice(0, 60) }],
+      { estado: 'revisada' },
+      { schoolId: s.school || null },
+    );
+
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
 
+// POST /superadmin/suggestions/:id/respond — escribe (o reescribe) la respuesta.
+// Mismo endpoint para "responder por primera vez" y "editar una respuesta ya enviada":
+// en ambos casos se resetea readByUser=false, así el usuario ve el badge del sobre
+// de nuevo cuando el superadmin corrige o amplía lo que había escrito.
+router.post('/suggestions/:id/respond', async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'La respuesta no puede estar vacía' });
+    }
+    const isEdit = req.body.isEdit === true || req.body.isEdit === 'true';
+
+    const s = await Suggestion.findByIdAndUpdate(
+      req.params.id,
+      {
+        response:    text.trim(),
+        respondedAt: new Date(),
+        respondedBy: req.userId,
+        status:      'answered',
+        readByUser:  false,
+      },
+      { new: true },
+    );
+    if (!s) return res.status(404).json({ error: 'Sugerencia no encontrada' });
+
+    logAudit(req, 'suggestion.respond',
+      [{ type: 'suggestion', id: s._id, name: (s.text || '').slice(0, 60) }],
+      { accion: isEdit ? 'editada' : 'nueva' },
+      { schoolId: s.school || null },
+    );
+
+    res.json({ ok: true, suggestion: s });
+  } catch {
+    res.status(500).json({ error: 'Error al guardar la respuesta' });
+  }
+});
+
 router.delete('/suggestions/:id', async (req, res) => {
   try {
+    // Snapshot antes del delete para preservar el texto de la sugerencia en el log
+    const snap = await Suggestion.findById(req.params.id).select('text school').lean();
     await Suggestion.findByIdAndDelete(req.params.id);
+
+    if (snap) {
+      logAudit(req, 'suggestion.delete',
+        [{ type: 'suggestion', id: req.params.id, name: (snap.text || '').slice(0, 60) }],
+        {},
+        { schoolId: snap.school || null },
+      );
+    }
+
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'Error del servidor' });

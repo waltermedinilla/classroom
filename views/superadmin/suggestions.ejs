@@ -22,13 +22,15 @@
     </div>
 
     <!-- Filtros -->
-    <div style="display:flex;gap:8px;margin-bottom:24px">
+    <div style="display:flex;gap:8px;margin-bottom:24px;flex-wrap:wrap">
       <a href="/superadmin/suggestions?status=all"
         class="btn <%= status === 'all' ? 'btn-primary' : 'btn-outline' %>">Todas</a>
       <a href="/superadmin/suggestions?status=pending"
         class="btn <%= status === 'pending' ? 'btn-primary' : 'btn-outline' %>">Pendientes</a>
       <a href="/superadmin/suggestions?status=reviewed"
         class="btn <%= status === 'reviewed' ? 'btn-primary' : 'btn-outline' %>">Revisadas</a>
+      <a href="/superadmin/suggestions?status=answered"
+        class="btn <%= status === 'answered' ? 'btn-primary' : 'btn-outline' %>">Respondidas</a>
     </div>
 
     <% if (suggestions.length === 0) { %>
@@ -37,9 +39,17 @@
         <p>No hay sugerencias<%= status !== 'all' ? ' en esta categoría' : '' %>.</p>
       </div>
     <% } else { %>
+      <%
+        const statusBadges = {
+          pending:  { label: 'PENDIENTE',  bg: '#fff3e0', color: '#ea8600' },
+          reviewed: { label: 'REVISADA',   bg: '#e8eaed', color: '#5f6368' },
+          answered: { label: 'RESPONDIDA', bg: '#e6f4ea', color: '#137333' },
+        };
+      %>
       <div style="display:flex;flex-direction:column;gap:14px">
         <% suggestions.forEach(s => { %>
-          <div class="suggestion-card" id="scard-<%= s._id %>">
+          <% const sb = statusBadges[s.status] || statusBadges.pending; %>
+          <div class="suggestion-card" id="scard-<%= s._id %>" data-status="<%= s.status %>">
             <div class="suggestion-header">
               <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
                 <div class="avatar" style="width:36px;height:36px;font-size:15px;flex-shrink:0;background:<%= s.user?.role === 'admin' ? '#ea4335' : s.user?.role === 'directivo' ? '#9334e6' : s.user?.role === 'preceptor' ? '#ea8600' : '#0d7377' %>">
@@ -60,14 +70,18 @@
                 </div>
               </div>
               <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                <span id="statusBadge-<%= s._id %>" style="background:<%= sb.bg %>;color:<%= sb.color %>;font-size:11px;padding:3px 10px;border-radius:12px;font-weight:600"><%= sb.label %></span>
                 <% if (s.status === 'pending') { %>
-                  <span style="background:#fff3e0;color:#ea8600;font-size:11px;padding:3px 10px;border-radius:12px;font-weight:600">PENDIENTE</span>
                   <button class="btn btn-outline" style="font-size:12px;padding:4px 12px" onclick="markReviewed('<%= s._id %>')">
                     <span class="material-symbols-outlined" style="font-size:15px">check_circle</span>
                     Marcar revisada
                   </button>
-                <% } else { %>
-                  <span style="background:#e6f4ea;color:#137333;font-size:11px;padding:3px 10px;border-radius:12px;font-weight:600">REVISADA</span>
+                <% } %>
+                <% if (s.status !== 'answered') { %>
+                  <button class="btn btn-primary" style="font-size:12px;padding:4px 12px" onclick="toggleRespond('<%= s._id %>')">
+                    <span class="material-symbols-outlined" style="font-size:15px">reply</span>
+                    Responder
+                  </button>
                 <% } %>
                 <button class="icon-btn" title="Eliminar" onclick="deleteSuggestion('<%= s._id %>')">
                   <span class="material-symbols-outlined" style="font-size:18px;color:var(--text-hint)">delete</span>
@@ -75,6 +89,32 @@
               </div>
             </div>
             <p class="suggestion-text"><%= s.text %></p>
+
+            <% if (s.status === 'answered') { %>
+              <div style="margin-top:4px;padding:12px 14px;background:var(--bg);border-radius:8px;border-left:3px solid #1a73e8" id="responseDisplay-<%= s._id %>">
+                <div style="font-size:11px;font-weight:600;color:#1a73e8;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+                  <span style="display:flex;align-items:center;gap:4px">
+                    <span class="material-symbols-outlined" style="font-size:14px">reply</span>
+                    Tu respuesta<% if (s.respondedAt) { %> · <%= new Date(s.respondedAt).toLocaleDateString('es-ES', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) %><% } %>
+                  </span>
+                  <button class="icon-btn" style="width:24px;height:24px" title="Editar respuesta" onclick="toggleRespond('<%= s._id %>', true)">
+                    <span class="material-symbols-outlined" style="font-size:15px">edit</span>
+                  </button>
+                </div>
+                <div style="font-size:13px;color:var(--text);white-space:pre-wrap" id="responseText-<%= s._id %>"><%= s.response %></div>
+              </div>
+            <% } %>
+
+            <div class="suggest-respond-area" id="respond-<%= s._id %>" style="display:none;margin-top:12px">
+              <textarea class="respond-textarea" id="respondText-<%= s._id %>" rows="3" maxlength="1000"
+                placeholder="Escribí tu respuesta…"
+                style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:13px;resize:vertical;font-family:inherit;background:var(--surface);color:var(--text);box-sizing:border-box;outline:none"></textarea>
+              <div id="respondError-<%= s._id %>" style="display:none;color:var(--danger);font-size:12px;margin-top:4px"></div>
+              <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+                <button class="btn btn-outline" style="font-size:12px;padding:6px 14px" onclick="toggleRespond('<%= s._id %>')">Cancelar</button>
+                <button class="btn btn-primary" style="font-size:12px;padding:6px 14px" id="respondBtn-<%= s._id %>" onclick="submitResponse('<%= s._id %>')">Enviar respuesta</button>
+              </div>
+            </div>
           </div>
         <% }) %>
       </div>
@@ -127,9 +167,10 @@
       const res = await fetch(`/superadmin/suggestions/${id}/reviewed`, { method: 'POST' });
       if (res.ok) {
         const card = document.getElementById('scard-' + id);
+        card.dataset.status = 'reviewed';
         card.querySelector('.btn.btn-outline').remove();
-        card.querySelector('[style*="PENDIENTE"]').outerHTML =
-          '<span style="background:#e6f4ea;color:#137333;font-size:11px;padding:3px 10px;border-radius:12px;font-weight:600">REVISADA</span>';
+        document.getElementById('statusBadge-' + id).outerHTML =
+          `<span id="statusBadge-${id}" style="background:#e8eaed;color:#5f6368;font-size:11px;padding:3px 10px;border-radius:12px;font-weight:600">REVISADA</span>`;
       }
     }
 
@@ -137,6 +178,66 @@
       if (!confirm('¿Eliminar esta sugerencia?')) return;
       const res = await fetch(`/superadmin/suggestions/${id}`, { method: 'DELETE' });
       if (res.ok) document.getElementById('scard-' + id).remove();
+    }
+
+    // Abre/cierra el área de respuesta. isEdit=true precarga el texto actual (editar
+    // una respuesta ya enviada); false arranca vacío (responder por primera vez).
+    function toggleRespond(id, isEdit) {
+      const area    = document.getElementById('respond-' + id);
+      const showing = area.style.display !== 'none';
+      if (showing) {
+        area.style.display = 'none';
+        return;
+      }
+      if (isEdit) {
+        const current = document.getElementById('responseText-' + id);
+        document.getElementById('respondText-' + id).value = current ? current.textContent : '';
+      }
+      area.style.display = 'block';
+      document.getElementById('respondText-' + id).focus();
+    }
+
+    async function submitResponse(id) {
+      const textarea = document.getElementById('respondText-' + id);
+      const errBox    = document.getElementById('respondError-' + id);
+      const btn       = document.getElementById('respondBtn-' + id);
+      const text      = textarea.value.trim();
+      errBox.style.display = 'none';
+
+      if (!text) {
+        errBox.textContent = 'Escribí una respuesta antes de enviar';
+        errBox.style.display = 'block';
+        return;
+      }
+
+      const card   = document.getElementById('scard-' + id);
+      const isEdit = card.dataset.status === 'answered';
+
+      btn.disabled = true;
+      btn.textContent = 'Enviando…';
+      try {
+        const res  = await fetch(`/superadmin/suggestions/${id}/respond`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ text, isEdit }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          // Recarga la página: más simple y robusto que replicar en JS todos los
+          // estados posibles (pending/reviewed/answered) que puede tomar la tarjeta.
+          location.reload();
+        } else {
+          errBox.textContent = data.error || 'Error al enviar la respuesta';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'Enviar respuesta';
+        }
+      } catch {
+        errBox.textContent = 'Error de conexión. Intentá de nuevo.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Enviar respuesta';
+      }
     }
   </script>
 </body>

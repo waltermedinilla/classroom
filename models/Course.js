@@ -42,6 +42,19 @@ const courseSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
   }],
+  // Fecha en que cada alumno se inscribió a esta materia. Map<studentId, Date>.
+  // Solo se popula desde POST /admin/users/create cuando el admin da de alta un alumno
+  // seleccionando un Curso (Division) — se lo inscribe en todas las materias de ese Curso
+  // con joinedAt = ahora. Los alumnos existentes al momento de agregar este campo, y los
+  // que agrega el docente manualmente desde su curso, NO tienen entrada acá — se interpretan
+  // como "siempre estuvo" y ven todas las actividades sin filtro (backward compat).
+  // Consultado por routes/activities.js para ocultar tareas ya vencidas cuando el alumno
+  // se inscribió después del dueDate.
+  enrollmentDates: {
+    type: Map,
+    of: Date,
+    default: {},
+  },
   // Personalización visual del encabezado
   header: {
     color:  { type: String, default: null },

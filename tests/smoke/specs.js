@@ -301,6 +301,178 @@ const specs = [
     },
   },
 
+  // ── Alta de alumno con Curso (matricula automática en materias + regla temporal) ──
+  // Verifica el flujo nuevo: admin crea usuario con role=student + divisionId, y el backend:
+  //  1. Inscribe al alumno en TODAS las materias del Curso seleccionado (1 en smoke — el
+  //     único curso creado por `course-create`).
+  //  2. Guarda joinedAt = ahora en Course.enrollmentDates para ese alumno.
+  //  3. En GET /activities/course/:id, si el alumno tiene joinedAt, el server oculta las
+  //     tareas cuyo dueDate ya venció ANTES de ese momento — salvo que el docente haya
+  //     habilitado tardías (decisión explícita del usuario).
+  // Se contrasta con `scopedStudent` (que se unió por código, sin joinedAt) — ese sigue
+  // viendo TODAS las actividades (backward compat con lo que había antes de esta feature).
+  {
+    id: 'enrolldiv-teacher-creates-past-activity',
+    title: 'El docente crea una actividad con dueDate en el PASADO (ambientar el caso borde)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const yesterday = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+      const res = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: 'Tarea vencida (pre-latejoiner)', type: 'tarea', points: '10', dueDate: yesterday },
+        expectStatus: 201,
+      });
+      state.pastActivityId = res.json.activity._id;
+    },
+  },
+  {
+    id: 'enrolldiv-admin-creates-latejoiner-with-division',
+    title: 'El admin crea un alumno con divisionId → se inscribe en las materias del Curso',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const email = `latejoiner.${Date.now()}@example.com`;
+      const res = await client.post('admin', '/admin/users/create', {
+        body: {
+          name: 'Late Joiner Smoke',
+          email,
+          password: 'SmokeTest1234',
+          role: 'student',
+          divisionId: state.divisionId,
+        },
+        expectStatus: 201,
+      });
+      assert(res.json.enrolledIn === 1, `esperaba enrolledIn=1 (el único curso del smoke), recibí ${res.json.enrolledIn}`);
+      state.lateJoinerId    = res.json.user._id;
+      state.lateJoinerEmail = email;
+    },
+  },
+  {
+    id: 'enrolldiv-latejoiner-login',
+    title: 'El late-joiner inicia sesión',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.post('lateJoiner', '/login', {
+        body: { email: state.lateJoinerEmail, password: 'SmokeTest1234' },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'enrolldiv-latejoiner-hides-past-activity',
+    title: 'El late-joiner NO ve la actividad vencida antes de su alta',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('lateJoiner', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      const seesPast = res.json.activities.some(a => a._id === state.pastActivityId);
+      assert(!seesPast, 'la actividad vencida antes de la inscripción NO debería figurarle al late-joiner');
+    },
+  },
+  {
+    id: 'enrolldiv-latejoiner-sees-current-activity',
+    title: 'El late-joiner SÍ ve la actividad vigente (creada antes pero con dueDate futuro o sin dueDate)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('lateJoiner', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      const seesCurrent = res.json.activities.some(a => a._id === state.activityId);
+      assert(seesCurrent, 'la actividad vigente (sin dueDate) SÍ debería figurarle al late-joiner');
+    },
+  },
+  {
+    id: 'enrolldiv-oldstudent-still-sees-past',
+    title: 'El alumno unido por código (sin joinedAt) sigue viendo todas las actividades',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('scopedStudent', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      const seesPast    = res.json.activities.some(a => a._id === state.pastActivityId);
+      const seesCurrent = res.json.activities.some(a => a._id === state.activityId);
+      assert(seesPast,    'scopedStudent (sin joinedAt) debería seguir viendo la actividad vencida — backward compat');
+      assert(seesCurrent, 'scopedStudent debería seguir viendo la actividad vigente');
+    },
+  },
+  {
+    id: 'enrolldiv-late-submissions-override',
+    title: 'Si el docente habilita tardías en la actividad vencida, el late-joiner también la ve',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Habilitar tardías en la actividad vencida
+      await client.patch('scopedTeacher', `/activities/${state.pastActivityId}/toggle-late`, { expectStatus: 200 });
+
+      const res = await client.get('lateJoiner', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      const seesPast = res.json.activities.some(a => a._id === state.pastActivityId);
+      assert(seesPast, 'con allowLateSubmissions=true, la actividad vencida debería aparecer también al late-joiner');
+    },
+  },
+  {
+    id: 'enrolldiv-cleanup-latejoiner',
+    title: 'Limpieza: el admin borra al late-joiner y la actividad vencida',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      if (state.pastActivityId) {
+        await client.delete('scopedTeacher', `/activities/${state.pastActivityId}`, { expectStatus: 200 });
+      }
+      if (state.lateJoinerId) {
+        await client.post('admin', `/admin/users/${state.lateJoinerId}/delete`, { expectStatus: 200 });
+      }
+    },
+  },
+
+  // ── Auditoría (fase 1: 4 eventos piloto) ──────────────────────────────────
+  // Los specs anteriores ya dispararon las 4 acciones instrumentadas:
+  //   activity.create · submission.create · submission.update · submission.grade
+  //   announcement.create
+  // El helper logAudit es fire-and-forget (no await en la ruta), así que en
+  // teoría hay una ventana de milisegundos entre el response HTTP y el insert
+  // en Mongo. En la práctica, cuando este spec corre ya pasaron varios HTTP
+  // roundtrips más, muy por encima del tiempo de un insertOne.
+  {
+    id: 'audit-denied-for-teacher',
+    title: 'Un docente NO puede acceder al panel de auditoría (403)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      await client.get('scopedTeacher', '/admin/audit', { expectStatus: [403, 302] });
+    },
+  },
+  {
+    id: 'audit-admin-sees-events',
+    title: 'El admin ve el panel de auditoría con los eventos recientes de su escuela',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('admin', '/admin/audit', { expectStatus: 200 });
+      // La actividad de smoke y la novedad de smoke debieron generar eventos visibles
+      assert(res.text.includes('Actividad de smoke test'),
+        'el panel debería mostrar la actividad de smoke (activity.create)');
+      assert(res.text.includes('creó una actividad') || res.text.includes('calificó una entrega'),
+        'el panel debería usar los verbos del catálogo de acciones');
+    },
+  },
+  {
+    id: 'audit-filter-by-category',
+    title: 'El filtro por categoría acota los eventos del panel',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // Compara el total mostrado en el header del panel — el string "X evento(s)"
+      // es único de la sección-header y no aparece en los <option> del dropdown.
+      // Filtrar por categoría debe reducir estrictamente el total.
+      const extractTotal = (html) => {
+        const m = html.match(/([\d.]+) evento/); // "12 eventos" o "1 evento"
+        if (!m) throw new Error('no se encontró el contador "X eventos" en el HTML');
+        return parseInt(m[1].replace(/\./g, ''), 10);
+      };
+
+      const all         = await client.get('admin', '/admin/audit', { expectStatus: 200 });
+      const submissions = await client.get('admin', '/admin/audit?category=submission', { expectStatus: 200 });
+      const activities  = await client.get('admin', '/admin/audit?category=activity', { expectStatus: 200 });
+
+      const totalAll         = extractTotal(all.text);
+      const totalSubmissions = extractTotal(submissions.text);
+      const totalActivities  = extractTotal(activities.text);
+
+      assert(totalSubmissions < totalAll,  `filtro submission debería reducir el total (${totalSubmissions} vs ${totalAll})`);
+      assert(totalActivities  < totalAll,  `filtro activity debería reducir el total (${totalActivities} vs ${totalAll})`);
+      assert(totalSubmissions > 0,         'debería haber al menos una entrega/calificación registrada');
+      assert(totalActivities  > 0,         'debería haber al menos una creación de actividad registrada');
+    },
+  },
+
   // ── Regresión: sugerencias abiertas a docente/alumno (arreglo de esta sesión) ──
   {
     id: 'suggestions-teacher-sees-fab',
@@ -333,6 +505,104 @@ const specs = [
         expectStatus: 201,
       });
       state.studentSuggestionText = `Smoke test — sugerencia de alumno ${RUN_ID}`;
+    },
+  },
+
+  // ── Bandeja de sugerencias: respuesta del superadmin + sobre con badge ────
+  {
+    id: 'suggestions-student-fetches-mine',
+    title: 'El alumno ve su propia sugerencia en /suggestions/mine',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('scopedStudent', '/suggestions/mine', { expectStatus: 200 });
+      const mine = res.json.suggestions.find(s => s.text === state.studentSuggestionText);
+      assert(mine, 'la sugerencia recién enviada debería aparecer en /suggestions/mine');
+      assert(mine.status === 'pending', `esperaba status pending, encontré ${mine.status}`);
+      assert(mine.readByUser === false, 'una sugerencia sin respuesta no debería estar marcada como leída');
+      state.studentSuggestionId = mine._id;
+    },
+  },
+  {
+    id: 'suggestions-superadmin-can-respond',
+    title: 'El superadmin responde la sugerencia del alumno',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, env }) {
+      // Login propio del actor 'superadmin' acá: el spec genérico "superadmin-login" vive
+      // mucho más abajo en el archivo (sección Nivel 3), después de esta sección. Sin este
+      // login, la cookie jar de 'superadmin' está vacía y el POST cae en 302 → /login.
+      await client.post('superadmin', '/login', {
+        body: { email: env.SMOKE_SUPERADMIN_EMAIL, password: env.SMOKE_SUPERADMIN_PASSWORD },
+        expectStatus: 200,
+      });
+
+      state.suggestionResponseText = `Gracias por la sugerencia — smoke ${RUN_ID}`;
+      await client.post('superadmin', `/superadmin/suggestions/${state.studentSuggestionId}/respond`, {
+        body: { text: state.suggestionResponseText, isEdit: false },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'suggestions-student-sees-answer-and-badge',
+    title: 'El alumno ve la respuesta y el badge del sobre aparece en el header',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const mineRes = await client.get('scopedStudent', '/suggestions/mine', { expectStatus: 200 });
+      const mine = mineRes.json.suggestions.find(s => s._id === state.studentSuggestionId);
+      assert(mine, 'la sugerencia debería seguir apareciendo en /suggestions/mine');
+      assert(mine.status === 'answered', `esperaba status answered, encontré ${mine.status}`);
+      assert(mine.response === state.suggestionResponseText, 'el texto de la respuesta debería coincidir');
+      assert(mine.readByUser === false, 'recién respondida: todavía no debería estar marcada como leída');
+
+      // El badge del sobre se renderiza server-side en cualquier página con header (ej. /courses)
+      const pageRes = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
+      assert(pageRes.text.includes('id="inboxBadge"'), 'el header debería mostrar el badge del sobre con respuestas sin leer');
+    },
+  },
+  {
+    id: 'suggestions-student-marks-read-clears-badge',
+    title: 'Marcar como leída hace desaparecer el badge del sobre',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.post('scopedStudent', `/suggestions/mine/${state.studentSuggestionId}/read`, { expectStatus: 200 });
+
+      const mineRes = await client.get('scopedStudent', '/suggestions/mine', { expectStatus: 200 });
+      const mine = mineRes.json.suggestions.find(s => s._id === state.studentSuggestionId);
+      assert(mine.readByUser === true, 'después de marcar como leída, readByUser debería ser true');
+
+      const pageRes = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
+      assert(!pageRes.text.includes('id="inboxBadge"'), 'el badge no debería aparecer una vez leída la respuesta');
+    },
+  },
+  {
+    id: 'suggestions-edit-response-reopens-badge',
+    title: 'Editar la respuesta vuelve a marcarla como no leída (el badge reaparece)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const editedText = `Respuesta editada — smoke ${RUN_ID}`;
+      await client.post('superadmin', `/superadmin/suggestions/${state.studentSuggestionId}/respond`, {
+        body: { text: editedText, isEdit: true },
+        expectStatus: 200,
+      });
+
+      const mineRes = await client.get('scopedStudent', '/suggestions/mine', { expectStatus: 200 });
+      const mine = mineRes.json.suggestions.find(s => s._id === state.studentSuggestionId);
+      assert(mine.response === editedText, 'la respuesta editada debería reflejarse');
+      assert(mine.readByUser === false, 'editar la respuesta debería resetear readByUser a false');
+
+      const pageRes = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
+      assert(pageRes.text.includes('id="inboxBadge"'), 'el badge debería reaparecer tras editar la respuesta');
+    },
+  },
+  {
+    id: 'suggestions-inbox-denies-other-users-suggestions',
+    title: 'Un usuario no puede marcar como leída la sugerencia de otro (404)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // scopedTeacher intenta marcar como leída la sugerencia del alumno — no es suya
+      await client.post('scopedTeacher', `/suggestions/mine/${state.studentSuggestionId}/read`, {
+        expectStatus: 404,
+      });
     },
   },
 
@@ -616,6 +886,55 @@ const specs = [
     },
   },
 
+  // ── Auditoría (fase 2: cobertura de todas las categorías nuevas) ──────────
+  // Este spec corre AL FINAL del flujo (justo antes de cleanup), así ya se
+  // dispararon eventos de: activity/submission/announcement/course/user/
+  // suggestion/system/course.delete → todas las categorías instrumentadas.
+  {
+    id: 'audit-full-coverage',
+    title: 'El panel muestra al menos una acción de cada categoría instrumentada',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const extractTotal = (html) => {
+        const m = html.match(/([\d.]+) evento/);
+        if (!m) throw new Error('no se encontró el contador "X eventos" en el HTML');
+        return parseInt(m[1].replace(/\./g, ''), 10);
+      };
+
+      // Cada categoría debería tener >= 1 evento por lo que ya corrió antes.
+      const categorias = ['activity', 'submission', 'announcement', 'course', 'user', 'suggestion'];
+      for (const cat of categorias) {
+        const res = await client.get('admin', `/admin/audit?category=${cat}`, { expectStatus: 200 });
+        const total = extractTotal(res.text);
+        assert(total > 0, `categoría "${cat}" debería tener al menos 1 evento (encontré ${total})`);
+      }
+    },
+  },
+  {
+    id: 'audit-search-filter',
+    title: 'El filtro de búsqueda por texto encuentra eventos del smoke actual',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // Los targets del smoke tienen "Smoke" o "smoke" en su nombre (Materia Smoke, etc.)
+      const res = await client.get('admin', '/admin/audit?q=Smoke', { expectStatus: 200 });
+      const match = res.text.match(/([\d.]+) evento/);
+      assert(match && parseInt(match[1].replace(/\./g, ''), 10) > 0,
+        'la búsqueda por "Smoke" debería devolver eventos');
+    },
+  },
+  {
+    id: 'audit-superadmin-sees-system-events',
+    title: 'El superadmin ve los eventos de sistema (mantenimiento) en su panel',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('superadmin', '/superadmin/audit?category=system', { expectStatus: 200 });
+      const match = res.text.match(/([\d.]+) evento/);
+      const total = match ? parseInt(match[1].replace(/\./g, ''), 10) : 0;
+      // maintenance_on + maintenance_off del spec de mantenimiento
+      assert(total >= 2, `deberían haber al menos 2 eventos de sistema (mantenimiento on/off), encontré ${total}`);
+    },
+  },
+
   // ── Limpieza (Nivel 2): borra todo lo que creó esta corrida ───────────────
   {
     id: 'cleanup-course',
@@ -649,6 +968,52 @@ const specs = [
       try {
         await client.connect();
         await client.db().collection('suggestions').deleteMany({ text: { $regex: RUN_ID } });
+      } finally {
+        await client.close();
+      }
+    },
+  },
+  {
+    // Los audit logs generados por esta corrida se identifican por dos vías:
+    //  1. Los IDs reales de los recursos de smoke (curso, división, usuarios, actividad)
+    //     — cualquier evento que los tenga en actor.userId o targets[].id se borra.
+    //     Es el criterio más confiable: no depende de que el name/email siga formato.
+    //  2. RUN_ID como fallback: cubre eventos donde el actor es un usuario de smoke
+    //     (actor.email = scoped.smoke.*.<RUN_ID>@...) o donde el target lleva RUN_ID
+    //     en el nombre (ej. "Materia Smoke <RUN_ID>").
+    // Los eventos de sistema (backup/maintenance) del superadmin quedan porque
+    // no contienen el RUN_ID ni ids de smoke; son 3 registros por corrida — inofensivos.
+    id: 'cleanup-auditlogs-db',
+    title: 'Limpieza: borra los audit logs generados por esta corrida',
+    requiresEnv: ['MONGODB_URI'],
+    async run({ env, state }) {
+      // Delay corto: los logAudit son fire-and-forget (no await en la ruta),
+      // así que los últimos disparados por cleanup-users-and-division / cleanup-course
+      // pueden estar todavía en vuelo cuando llegamos acá. 500ms alcanza y sobra
+      // para un insertOne local; sin esto quedan huérfanos hasta la próxima corrida.
+      await new Promise(r => setTimeout(r, 500));
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const client = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await client.connect();
+
+        // IDs de recursos del smoke (los presentes; algunos pueden no estar si el spec falló)
+        const idStrings = [
+          state.scopedTeacherId, state.scopedStudentId, state.directivoId,
+          state.courseId, state.divisionId, state.activityId,
+          state.announcementId, state.teacherId, state.studentId,
+        ].filter(Boolean);
+        const ids = idStrings.map(s => new ObjectId(s));
+
+        await client.db().collection('auditlogs').deleteMany({
+          $or: [
+            { 'actor.userId': { $in: ids } },
+            { 'targets.id':   { $in: ids } },
+            { 'actor.email':  { $regex: RUN_ID } },
+            { 'targets.name': { $regex: RUN_ID } },
+          ],
+        });
       } finally {
         await client.close();
       }
