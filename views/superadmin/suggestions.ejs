@@ -121,8 +121,10 @@
 
       <%
         function buildUrl(overrides) {
-          const p = {};
-          if (status && status !== 'all') p.status = status;
+          // Siempre explícito (incluso "all"): el default del server ahora es "pending",
+          // así que un link de paginación sin status quedaría ambiguo y te devolvería
+          // a Pendientes en vez de mantenerte en la pestaña donde estabas.
+          const p = { status };
           Object.assign(p, overrides);
           return '/superadmin/suggestions?' + Object.entries(p).map(([k,v]) => k+'='+encodeURIComponent(v)).join('&');
         }

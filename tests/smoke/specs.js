@@ -415,6 +415,114 @@ const specs = [
     },
   },
 
+  // ── Alta de alumno con DNI ya existente: completa matrícula, no duplica ────
+  // Reproduce el escenario descripto por el usuario: si el DNI ingresado ya pertenece
+  // a un alumno, el sistema NO debe crear una cuenta nueva — debe usar la existente y
+  // matricularla solo en las materias del Curso que todavía le falten.
+  {
+    id: 'dni-existing-setup-second-course',
+    title: 'Se crea una segunda materia en el mismo Curso (para probar matrícula parcial)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const res = await client.post('scopedTeacher', '/courses/create', {
+        body: { name: `Materia Smoke 2 ${RUN_ID}`, divisionId: state.divisionId, room: '102' },
+        expectStatus: 201,
+      });
+      state.secondCourseId = res.json.course._id;
+    },
+  },
+  {
+    id: 'dni-existing-create-partial-student',
+    title: 'Se crea un alumno con DNI, matriculado a mano en solo UNA de las dos materias',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const email = `dni.partial.${RUN_ID}@example.com`;
+      const dni   = `p1-${RUN_ID}`;
+      const res = await client.post('admin', '/admin/users/create', {
+        body: { name: 'Alumno DNI Partial', email, password: 'SmokeTest1234', role: 'student', dni },
+        expectStatus: 201,
+      });
+      state.dniStudentId  = res.json.user._id;
+      state.dniStudentDni = dni;
+      // Lo agrega manualmente a la PRIMERA materia (state.courseId) — NO a la segunda
+      await client.post('scopedTeacher', `/courses/${state.courseId}/add-student`, {
+        body: { email },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'dni-existing-completes-missing-course',
+    title: 'Reingresar el mismo DNI con el Curso completa la materia faltante (no duplica ni crea cuenta nueva)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('admin', '/admin/users/create', {
+        body: {
+          name: 'Nombre Que Debe Ignorarse',
+          email: `otro.email.${RUN_ID}@example.com`,
+          password: 'OtraClave1234',
+          role: 'student',
+          dni: state.dniStudentDni,
+          divisionId: state.divisionId,
+        },
+        expectStatus: 200, // 200, no 201: no se crea nada nuevo
+      });
+      assert(res.json.existedAlready === true, 'debería indicar que el alumno ya existía');
+      assert(res.json.enrolledIn === 1, `esperaba completar 1 materia faltante, recibí ${res.json.enrolledIn}`);
+      assert(res.json.user._id === state.dniStudentId, 'debería devolver la cuenta EXISTENTE, no una nueva');
+      assert(res.json.user.name === 'Alumno DNI Partial', 'el nombre NO debería sobrescribirse con el del formulario');
+    },
+  },
+  {
+    id: 'dni-existing-fully-enrolled-noop',
+    title: 'Reingresar el mismo DNI cuando ya está en TODAS las materias no rompe nada (enrolledIn=0)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('admin', '/admin/users/create', {
+        body: { name: 'x', email: `x.${RUN_ID}@example.com`, password: 'x123456', role: 'student', dni: state.dniStudentDni, divisionId: state.divisionId },
+        expectStatus: 200,
+      });
+      assert(res.json.existedAlready === true, 'debería seguir indicando que ya existía');
+      assert(res.json.enrolledIn === 0, `ya debería estar en todas las materias, recibí enrolledIn=${res.json.enrolledIn}`);
+    },
+  },
+  {
+    id: 'dni-belongs-to-other-role-setup',
+    title: 'Se crea un docente de prueba con DNI conocido',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const dni = `p2-${RUN_ID}`;
+      const res = await client.post('admin', '/admin/users/create', {
+        body: { name: 'Docente Con DNI', email: `docente.dni.${RUN_ID}@example.com`, password: 'SmokeTest1234', role: 'teacher', dni },
+        expectStatus: 201,
+      });
+      state.teacherWithDniId = res.json.user._id;
+      state.teacherWithDni   = dni;
+    },
+  },
+  {
+    id: 'dni-belongs-to-other-role-rejected',
+    title: 'Dar de alta un alumno con el DNI de un docente existente es rechazado (409)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('admin', '/admin/users/create', {
+        body: { name: 'Intento Alumno', email: `intento.${RUN_ID}@example.com`, password: 'SmokeTest1234', role: 'student', dni: state.teacherWithDni },
+        expectStatus: 409,
+      });
+      assert(res.json.error.includes('Docente'), 'el mensaje debería mencionar que el DNI ya pertenece a un Docente');
+    },
+  },
+  {
+    id: 'dni-existing-cleanup',
+    title: 'Limpieza: borra la segunda materia, el alumno DNI y el docente de prueba',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      if (state.secondCourseId)   await client.post('admin', `/admin/courses/${state.secondCourseId}/delete`, { expectStatus: 200 });
+      if (state.dniStudentId)     await client.post('admin', `/admin/users/${state.dniStudentId}/delete`, { expectStatus: 200 });
+      if (state.teacherWithDniId) await client.post('admin', `/admin/users/${state.teacherWithDniId}/delete`, { expectStatus: 200 });
+    },
+  },
+
   // ── Auditoría (fase 1: 4 eventos piloto) ──────────────────────────────────
   // Los specs anteriores ya dispararon las 4 acciones instrumentadas:
   //   activity.create · submission.create · submission.update · submission.grade
@@ -625,6 +733,86 @@ const specs = [
         form: fd, expectStatus: 403,
       });
       assert(res.json?.error, 'debería devolver un JSON con error');
+    },
+  },
+
+  // ── Cambio de correo propio (cualquier rol) ───────────────────────────────
+  {
+    id: 'email-change-wrong-password-rejected',
+    title: 'Cambiar de correo con la contraseña actual incorrecta es rechazado (400)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      await client.post('scopedTeacher', '/courses/profile/change-email', {
+        body: { newEmail: `nuevo.email.${RUN_ID}@example.com`, currentPassword: 'contraseña-incorrecta' },
+        expectStatus: 400,
+      });
+    },
+  },
+  {
+    id: 'email-change-invalid-format-rejected',
+    title: 'Un correo con formato inválido es rechazado (400)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      await client.post('scopedTeacher', '/courses/profile/change-email', {
+        body: { newEmail: 'no-es-un-email', currentPassword: teacher.password },
+        expectStatus: 400,
+      });
+    },
+  },
+  {
+    id: 'email-change-success',
+    title: 'El docente cambia su correo — el viejo deja de funcionar, el nuevo sí loguea',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const newEmail = `scoped.teacher.new.${RUN_ID}@example.com`;
+      const res = await client.post('scopedTeacher', '/courses/profile/change-email', {
+        body: { newEmail, currentPassword: teacher.password },
+        expectStatus: 200,
+      });
+      assert(res.json.email === newEmail, 'la respuesta debería confirmar el nuevo email');
+
+      // El email viejo ya no debería poder loguearse (la cuenta ahora usa el nuevo)
+      await client.post(null, '/login', {
+        body: { email: state.scopedTeacherEmail, password: teacher.password },
+        expectStatus: 400,
+      });
+
+      // El nuevo email SÍ debería poder loguearse
+      await client.post(null, '/login', {
+        body: { email: newEmail, password: teacher.password },
+        expectStatus: 200,
+      });
+
+      state.scopedTeacherEmail = newEmail; // por si algún spec posterior lo necesita
+    },
+  },
+  {
+    id: 'email-change-duplicate-rejected',
+    title: 'Cambiar el correo a uno ya en uso por otra cuenta es rechazado (400)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // scopedStudent intenta tomar el email (ya cambiado) del scopedTeacher
+      await client.post('scopedStudent', '/courses/profile/change-email', {
+        body: { newEmail: state.scopedTeacherEmail, currentPassword: student.password },
+        expectStatus: 400,
+      });
+    },
+  },
+  {
+    id: 'email-change-protected-account-blocked',
+    title: 'La cuenta protegida del dueño del sistema NO puede autocambiarse el correo (403)',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, env }) {
+      // Login propio del actor acá (no depende del spec "superadmin-login", que corre
+      // mucho más abajo en el archivo — mismo motivo que en los specs de sugerencias).
+      await client.post('superadmin', '/login', {
+        body: { email: env.SMOKE_SUPERADMIN_EMAIL, password: env.SMOKE_SUPERADMIN_PASSWORD },
+        expectStatus: 200,
+      });
+      await client.post('superadmin', '/courses/profile/change-email', {
+        body: { newEmail: `otra.cosa.${RUN_ID}@example.com`, currentPassword: env.SMOKE_SUPERADMIN_PASSWORD },
+        expectStatus: 403,
+      });
     },
   },
 

@@ -20,10 +20,10 @@
         <p style="color:var(--text-secondary);font-size:14px;margin-top:4px"><%= divisions.length %> curso(s) encontrado(s)</p>
       </div>
       <div class="dashboard-actions">
-        <a href="/admin/divisions/create" class="btn btn-primary">
+        <button class="btn btn-primary" onclick="openDivisionModal()">
           <span class="material-symbols-outlined">add</span>
           Nuevo Curso
-        </a>
+        </button>
       </div>
     </div>
 
@@ -45,7 +45,7 @@
         <div class="empty-icon"><span class="material-symbols-outlined">class</span></div>
         <p><%= search ? 'No se encontraron cursos con ese nombre' : 'No hay cursos registrados aún' %></p>
         <% if (!search) { %>
-          <a href="/admin/divisions/create" class="btn btn-primary" style="margin-top:20px">Crear primer curso</a>
+          <button class="btn btn-primary" style="margin-top:20px" onclick="openDivisionModal()">Crear primer curso</button>
         <% } %>
       </div>
     <% } else { %>
@@ -95,6 +95,35 @@
     <% } %>
   </main>
 
+  <!-- Modal: Nuevo Curso -->
+  <div class="modal-overlay" id="divisionModal">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">class</span>
+          <h3>Nuevo Curso / División</h3>
+        </div>
+        <button class="icon-btn" onclick="closeDivisionModal()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">Los cursos representan divisiones de la escuela (ej: 1°1°, 2°3°, 3°2°). Cada curso puede tener varias materias.</p>
+        <form id="createDivisionForm">
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">class</span>
+            <input type="text" id="dName" placeholder="Nombre del curso (ej: 1°1°, 2°3°)" required>
+          </div>
+          <div class="form-error" id="divisionFormError" style="margin-top:16px"></div>
+          <button type="submit" class="btn btn-primary btn-full" style="margin-top:20px">
+            <span class="material-symbols-outlined">check</span>
+            Crear Curso
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <%- include('../partials/footer') %>
   <script>
     async function deleteDivision(id, name, courseCount) {
@@ -107,6 +136,50 @@
       const data = await res.json();
       if (res.ok) location.reload();
       else alert(data.error || 'Error al eliminar');
+    }
+
+    function openDivisionModal() {
+      document.getElementById('divisionModal').classList.add('show');
+      document.body.style.overflow = 'hidden';
+    }
+    function closeDivisionModal() {
+      document.getElementById('divisionModal').classList.remove('show');
+      document.body.style.overflow = '';
+      document.getElementById('createDivisionForm').reset();
+      document.getElementById('divisionFormError').classList.remove('show');
+    }
+    document.getElementById('divisionModal').addEventListener('click', function (e) {
+      if (e.target === this) closeDivisionModal();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeDivisionModal();
+    });
+
+    document.getElementById('createDivisionForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById('divisionFormError');
+      errorEl.classList.remove('show');
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Creando...';
+      const res = await fetch('/admin/divisions/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: document.getElementById('dName').value.trim() }),
+      });
+      const data = await res.json();
+      btn.disabled = false;
+      btn.innerHTML = '<span class="material-symbols-outlined">check</span> Crear Curso';
+      if (!res.ok) {
+        errorEl.textContent = data.error;
+        errorEl.classList.add('show');
+        return;
+      }
+      location.reload();
+    });
+
+    if (new URLSearchParams(window.location.search).get('create') === '1') {
+      openDivisionModal();
     }
   </script>
 </body>

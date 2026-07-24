@@ -833,7 +833,9 @@ router.get('/monitor/stats', async (req, res) => {
 /* ─── Sugerencias ─── */
 router.get('/suggestions', async (req, res) => {
   try {
-    const status = req.query.status || 'all';
+    // Default "pending": el superadmin entra directo a lo que necesita atención.
+    // "Todas" sigue disponible como tab, pero hay que pedirla explícitamente.
+    const status = req.query.status || 'pending';
     const LIMIT  = 25;
     const page   = Math.max(1, parseInt(req.query.page) || 1);
     const filter = status !== 'all' ? { status } : {};

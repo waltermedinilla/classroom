@@ -150,9 +150,14 @@ router.get('/users', async (req, res) => {
     courses.forEach(c => c.students.forEach(sid => { enrolledMap[sid.toString()] = true; }));
   }
 
+  // Divisiones para el combobox del modal "Nuevo usuario" (solo se muestra con rol Alumno)
+  const divisions = school
+    ? await Division.find({ school }).sort({ name: 1 }).select('_id name').lean()
+    : [];
+
   const totalPages  = Math.ceil(total / LIMIT);
   const queryParams = { ...(role && { role }), ...(search && { search }) };
-  res.render('admin/users', { users, enrolledMap, currentRole: role || '', search: search || '', page, totalPages, total, queryParams });
+  res.render('admin/users', { users, enrolledMap, divisions, currentRole: role || '', search: search || '', page, totalPages, total, queryParams });
 });
 
 router.get('/users/create', async (req, res) => {
@@ -165,12 +170,80 @@ router.get('/users/create', async (req, res) => {
   res.render('admin/user-form', { user: null, divisions });
 });
 
+// Inscribe a `student` en las materias del Curso `divisionId` donde todavía no figura.
+// Usado tanto para un alumno recién creado como para uno que ya existía (encontrado por
+// DNI) — en ambos casos la regla es la misma: completar lo que le falta, sin duplicar.
+// Devuelve la cantidad de materias NUEVAS en las que quedó inscripto.
+async function enrollStudentInDivisionCourses(req, student, divisionId, school, via) {
+  if (!divisionId || !school) return 0;
+  // Valida que la división pertenezca a la misma escuela (defensa en profundidad,
+  // aunque el select del formulario solo muestra las de la escuela del admin).
+  const division = await Division.findOne({ _id: divisionId, school }).select('_id name');
+  if (!division) return 0;
+
+  const courses = await Course.find({ division: division._id, school }).select('_id name students enrollmentDates');
+  const now = new Date();
+  let enrolledIn = 0;
+  for (const c of courses) {
+    if (c.students.some(s => s.toString() === student._id.toString())) continue; // ya inscripto: no duplicar
+    c.students.push(student._id);
+    c.enrollmentDates.set(student._id.toString(), now);
+    await c.save({ validateModifiedOnly: true });
+    enrolledIn++;
+  }
+
+  if (enrolledIn > 0) {
+    logAudit(req, 'course.add_student',
+      [
+        { type: 'division', id: division._id, name: division.name },
+        { type: 'user',     id: student._id,  name: student.name },
+      ],
+      { materias: enrolledIn, via },
+    );
+  }
+  return enrolledIn;
+}
+
+// Nombres de rol en español, solo para el mensaje de error de DNI-en-otro-rol de acá abajo
+// (el mapa completo res.locals.roleNames vive en server.js como middleware EJS, no como
+// módulo reusable — para un solo mensaje de error no vale la pena extraerlo).
+const ROLE_LABEL = {
+  admin: 'Administrador', directivo: 'Directivo', teacher: 'Docente',
+  preceptor: 'Preceptor', soe: 'SOE', student: 'Alumno', superadmin: 'Superadministrador',
+};
+
 router.post('/users/create', async (req, res) => {
   try {
     const { name, email, password, role, dni, divisionId } = req.body;
     if (role === 'superadmin') return res.status(403).json({ error: 'No permitido' });
-    const userData = { name, email, password, role, school: res.locals.user.school };
-    if (dni) userData.dni = dni;
+
+    const school = res.locals.user.school;
+    const trimmedDni = dni ? String(dni).trim() : '';
+
+    // ── Alumno con DNI: puede ser una persona que YA existe en el sistema ──────
+    // El índice único {school,dni} solo permite UNA cuenta por DNI en la escuela, así
+    // que si ya existe alguien con este DNI, "crear un alumno nuevo" no es lo correcto:
+    // o ya es alumno (solo falta completar su matrícula) o tiene otro rol (conflicto real).
+    // Se chequea ANTES de intentar crear — antes esto fallaba con el error 11000 del
+    // índice, devolviendo el mensaje engañoso "El correo ya está registrado" aunque el
+    // email fuera distinto y el verdadero choque fuera el DNI.
+    if (role === 'student' && trimmedDni && school) {
+      const existing = await User.findOne({ school, dni: trimmedDni });
+      if (existing) {
+        if (existing.role !== 'student') {
+          return res.status(409).json({
+            error: `Este DNI ya pertenece a ${existing.name} (${ROLE_LABEL[existing.role] || existing.role}) — no se puede matricular como alumno.`,
+          });
+        }
+        // Ya existe como alumno: no se crea una cuenta nueva. Se completa su matrícula
+        // en las materias del Curso elegido que todavía le falten (si se eligió alguno).
+        const enrolledIn = await enrollStudentInDivisionCourses(req, existing, divisionId, school, 'alta-alumno-dni-existente');
+        return res.status(200).json({ user: existing, enrolledIn, existedAlready: true });
+      }
+    }
+
+    const userData = { name, email, password, role, school };
+    if (trimmedDni) userData.dni = trimmedDni;
     const user = await User.create(userData);
 
     logAudit(req, 'user.create',
@@ -181,35 +254,11 @@ router.post('/users/create', async (req, res) => {
     // Si es alumno y el admin eligió un Curso: lo inscribimos en TODAS las materias
     // de ese Curso, guardando joinedAt = ahora en Course.enrollmentDates para que las
     // tareas vencidas ANTES de esta fecha no le figuren (ver filtro en routes/activities.js).
-    let enrolledIn = 0;
-    if (role === 'student' && divisionId && res.locals.user.school) {
-      // Validar que la división pertenezca a la misma escuela (defensa en profundidad,
-      // aunque el select solo muestra las de la escuela del admin).
-      const division = await Division.findOne({ _id: divisionId, school: res.locals.user.school }).select('_id name');
-      if (division) {
-        const courses = await Course.find({ division: division._id, school: res.locals.user.school }).select('_id name students enrollmentDates');
-        const now = new Date();
-        for (const c of courses) {
-          if (c.students.some(s => s.toString() === user._id.toString())) continue; // ya inscripto: no duplicar
-          c.students.push(user._id);
-          c.enrollmentDates.set(user._id.toString(), now);
-          await c.save({ validateModifiedOnly: true });
-          enrolledIn++;
-        }
+    const enrolledIn = role === 'student'
+      ? await enrollStudentInDivisionCourses(req, user, divisionId, school, 'alta-alumno-con-curso')
+      : 0;
 
-        if (enrolledIn > 0) {
-          logAudit(req, 'course.add_student',
-            [
-              { type: 'division', id: division._id, name: division.name },
-              { type: 'user',     id: user._id,     name: user.name },
-            ],
-            { materias: enrolledIn, via: 'alta-alumno-con-curso' },
-          );
-        }
-      }
-    }
-
-    res.status(201).json({ user, enrolledIn });
+    res.status(201).json({ user, enrolledIn, existedAlready: false });
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ error: 'El correo ya está registrado' });
     if (err.name === 'ValidationError') {

@@ -44,7 +44,7 @@
         <% if (user.dni) { %>
           <p style="font-family:monospace;font-size:13px;color:var(--text-secondary);margin-bottom:2px">DNI: <%= user.dni %></p>
         <% } %>
-        <p class="profile-email"><%= user.email %></p>
+        <p class="profile-email" id="profileEmailText"><%= user.email %></p>
         <span class="role-badge role-<%= user.role %>" style="font-size:14px;padding:6px 16px"><%= roleNames[user.role] || user.role %></span>
         <% if (school) { %>
           <p style="font-size:13px;color:var(--text-secondary);margin-top:8px;display:flex;align-items:center;gap:6px">
@@ -55,10 +55,36 @@
         <p class="profile-date">Miembro desde <%= new Date(user.createdAt).toLocaleDateString('es-ES', { day:'numeric', month:'long', year:'numeric' }) %></p>
       </div>
       <div class="profile-actions">
+        <% if (user.email !== systemOwnerEmail) { %>
+        <button class="btn btn-outline" onclick="document.getElementById('changeEmailModal').style.display='flex'">
+          <span class="material-symbols-outlined" style="font-size:18px">alternate_email</span>
+          Cambiar correo
+        </button>
+        <% } %>
         <button class="btn btn-outline" onclick="document.getElementById('changePwdModal').style.display='flex'">
           <span class="material-symbols-outlined" style="font-size:18px">lock</span>
           Cambiar contraseña
         </button>
+      </div>
+    </div>
+
+    <!-- Modal cambiar correo -->
+    <div id="changeEmailModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center">
+      <div style="background:#fff;border-radius:12px;padding:32px;width:100%;max-width:400px;margin:16px;box-shadow:0 8px 32px rgba(0,0,0,.2)">
+        <h3 style="margin:0 0 20px;font-size:18px">Cambiar correo electrónico</h3>
+        <div id="changeEmailError" style="display:none;background:#fce8e6;color:#c5221f;padding:10px 14px;border-radius:8px;font-size:14px;margin-bottom:16px"></div>
+        <div id="changeEmailOk" style="display:none;background:#e6f4ea;color:#137333;padding:10px 14px;border-radius:8px;font-size:14px;margin-bottom:16px"></div>
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <input type="email" id="newEmailInput" placeholder="Nuevo correo electrónico" style="padding:10px 14px;border:1px solid #dadce0;border-radius:8px;font-size:14px;outline:none">
+          <input type="password" id="currentPwdForEmail" placeholder="Contraseña actual" style="padding:10px 14px;border:1px solid #dadce0;border-radius:8px;font-size:14px;outline:none">
+        </div>
+        <p style="font-size:12px;color:var(--text-secondary);margin-top:10px">
+          La próxima vez que inicies sesión vas a usar el correo nuevo. Guardalo bien.
+        </p>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:24px">
+          <button class="btn btn-outline" onclick="closeEmailModal()">Cancelar</button>
+          <button class="btn btn-primary" id="saveEmailBtn" onclick="submitChangeEmail()">Guardar</button>
+        </div>
       </div>
     </div>
 
@@ -312,6 +338,60 @@
           setTimeout(closePwdModal, 1500);
         } else {
           errBox.textContent = data.error || 'Error al cambiar la contraseña';
+          errBox.style.display = 'block';
+        }
+      } catch (e) {
+        errBox.textContent = 'Error de conexión. Intentá de nuevo.';
+        errBox.style.display = 'block';
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = 'Guardar';
+      }
+    }
+
+    function closeEmailModal() {
+      document.getElementById('changeEmailModal').style.display = 'none';
+      document.getElementById('newEmailInput').value = '';
+      document.getElementById('currentPwdForEmail').value = '';
+      document.getElementById('changeEmailError').style.display = 'none';
+      document.getElementById('changeEmailOk').style.display = 'none';
+    }
+
+    async function submitChangeEmail() {
+      const errBox  = document.getElementById('changeEmailError');
+      const okBox   = document.getElementById('changeEmailOk');
+      const saveBtn = document.getElementById('saveEmailBtn');
+      errBox.style.display = 'none';
+      okBox.style.display  = 'none';
+
+      const newEmail        = document.getElementById('newEmailInput').value.trim();
+      const currentPassword = document.getElementById('currentPwdForEmail').value;
+
+      if (!newEmail || !currentPassword) {
+        errBox.textContent = 'Completá los dos campos';
+        errBox.style.display = 'block';
+        return;
+      }
+
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<span class="upload-spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Guardando…';
+
+      try {
+        const res  = await fetch('/courses/profile/change-email', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ newEmail, currentPassword }),
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          okBox.textContent = 'Correo actualizado. La próxima vez ingresá con el nuevo.';
+          okBox.style.display = 'block';
+          document.getElementById('profileEmailText').textContent = data.email;
+          document.getElementById('currentPwdForEmail').value = '';
+          setTimeout(closeEmailModal, 1800);
+        } else {
+          errBox.textContent = data.error || 'Error al cambiar el correo';
           errBox.style.display = 'block';
         }
       } catch (e) {

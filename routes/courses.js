@@ -11,6 +11,7 @@ const XLSX       = require('xlsx');
 const { requireAuth } = require('../middleware/auth');
 const { invalidateUser } = require('../middleware/cache');
 const { logAudit } = require('../middleware/audit');
+const { SYSTEM_OWNER_EMAIL } = require('../config/maintenance');
 
 const router = express.Router();
 
@@ -211,7 +212,7 @@ router.get('/profile', requireAuth, async (req, res) => {
       const joinedCourses = await Course.find({ students: req.userId })
         .populate('owner', 'name email')
         .populate('division', 'name');
-      return res.render('profile', { joinedCourses, createdCourses: [], activityCount: 0, totalStudents: 0 });
+      return res.render('profile', { joinedCourses, createdCourses: [], activityCount: 0, totalStudents: 0, systemOwnerEmail: SYSTEM_OWNER_EMAIL });
     }
     const [createdCourses, activityCount] = await Promise.all([
       Course.find({ owner: req.userId })
@@ -220,7 +221,7 @@ router.get('/profile', requireAuth, async (req, res) => {
       Activity.countDocuments({ author: req.userId }),
     ]);
     const totalStudents = createdCourses.reduce((sum, c) => sum + c.students.length, 0);
-    res.render('profile', { createdCourses, activityCount, totalStudents, joinedCourses: [] });
+    res.render('profile', { createdCourses, activityCount, totalStudents, joinedCourses: [], systemOwnerEmail: SYSTEM_OWNER_EMAIL });
   } catch (err) {
     res.status(500).send('Error del servidor');
   }
@@ -282,6 +283,63 @@ router.post('/profile/change-password', requireAuth, async (req, res) => {
 
     res.json({ ok: true });
   } catch {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /courses/profile/change-email
+// Cualquier rol puede cambiar su propio correo. Requiere la contraseña actual (mismo
+// resguardo que change-password) para que una sesión abierta en una compu compartida no
+// pueda usarse para redirigir la cuenta a otro correo sin que el dueño se entere.
+// La cuenta protegida (ver PROTECTED_ADMIN_EMAIL en routes/admin.js, mismo valor que
+// SYSTEM_OWNER_EMAIL) NO puede autocambiarse el email: ese string está hardcodeado como
+// constante de seguridad en varios archivos (borrado/rol/mantenimiento) — si esa cuenta
+// cambiara de dirección, esas protecciones quedarían apuntando a un email que ya no es
+// el suyo. Decisión explícita del dueño del sistema, no un descuido.
+router.post('/profile/change-email', requireAuth, async (req, res) => {
+  try {
+    const { currentPassword, newEmail } = req.body;
+    if (!currentPassword || !newEmail) {
+      return res.status(400).json({ error: 'Completá todos los campos' });
+    }
+    const normalized = newEmail.toLowerCase().trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+      return res.status(400).json({ error: 'Ingresá un correo electrónico válido' });
+    }
+
+    const user = await User.findById(req.userId).select('+password');
+    if (user.email === SYSTEM_OWNER_EMAIL) {
+      return res.status(403).json({ error: 'Esta cuenta no puede cambiar su correo por este medio' });
+    }
+
+    const isMatch = await user.comparePassword(currentPassword);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'La contraseña actual es incorrecta' });
+    }
+
+    if (normalized === user.email) {
+      return res.status(400).json({ error: 'Ese ya es tu correo actual' });
+    }
+
+    const oldEmail = user.email;
+    user.email = normalized;
+    await user.save();
+    invalidateUser(user._id);
+
+    logAudit(req, 'user.email_change',
+      [{ type: 'user', id: user._id, name: user.name }],
+      { de: oldEmail, a: normalized },
+    );
+
+    res.json({ ok: true, email: user.email });
+  } catch (err) {
+    // Índice único violado: el correo ya está en uso por otra cuenta
+    if (err.code === 11000) {
+      return res.status(400).json({ error: 'Ese correo ya está en uso por otra cuenta' });
+    }
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
+    }
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

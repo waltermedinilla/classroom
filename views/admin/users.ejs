@@ -20,10 +20,10 @@
         <p style="color:var(--text-secondary);font-size:14px;margin-top:4px"><%= total %> usuario(s) encontrado(s)</p>
       </div>
       <div class="dashboard-actions">
-        <a href="/admin/users/create" class="btn btn-primary">
+        <button class="btn btn-primary" onclick="openUserModal()">
           <span class="material-symbols-outlined">person_add</span>
           Nuevo usuario
-        </a>
+        </button>
       </div>
     </div>
 
@@ -102,6 +102,153 @@
     <%- include('../partials/pagination') %>
   </main>
 
+  <!-- Modal: Nuevo usuario -->
+  <div class="modal-overlay" id="userModal">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">person_add</span>
+          <h3>Nuevo usuario</h3>
+        </div>
+        <button class="icon-btn" onclick="closeUserModal()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <form id="createUserForm">
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">badge</span>
+            <input type="text" id="uName" placeholder="Nombre completo" required>
+          </div>
+          <div class="input-group" style="margin-top:16px">
+            <span class="material-symbols-outlined input-icon">fingerprint</span>
+            <input type="text" id="uDni" placeholder="DNI (opcional)">
+          </div>
+          <div class="input-group" style="margin-top:16px">
+            <span class="material-symbols-outlined input-icon">email</span>
+            <input type="email" id="uEmail" placeholder="Correo electrónico" required>
+          </div>
+          <div class="input-group" style="margin-top:16px">
+            <span class="material-symbols-outlined input-icon">lock</span>
+            <input type="password" id="uPassword" placeholder="Contraseña (mín. 6 caracteres)" required>
+          </div>
+          <div class="input-group" style="margin-top:16px">
+            <span class="material-symbols-outlined input-icon">badge</span>
+            <select id="uRole" class="select-input" onchange="toggleUserDivisionField()">
+              <option value="student">Alumno</option>
+              <option value="teacher">Docente</option>
+              <option value="preceptor">Preceptor</option>
+              <option value="soe">SOE</option>
+              <option value="directivo">Directivo</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </div>
+          <!-- Combobox condicional: solo visible cuando el rol es "Alumno". Si se elige un
+               Curso, el backend inscribe al alumno en todas sus materias con joinedAt = ahora
+               (ver POST /admin/users/create) — las tareas ya vencidas antes de esa fecha no
+               le figurarán, salvo que no tengan fecha límite o el docente habilite tardías. -->
+          <div class="input-group" id="uDivisionField" style="margin-top:16px<%= divisions && divisions.length ? '' : ';display:none' %>">
+            <span class="material-symbols-outlined input-icon">school</span>
+            <select id="uDivisionId" class="select-input">
+              <option value="">— Sin curso (opcional) —</option>
+              <% (divisions || []).forEach(d => { %>
+                <option value="<%= d._id %>"><%= d.name %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="form-error" id="userFormError" style="margin-top:16px"></div>
+          <div id="userFormSuccess" style="display:none;margin-top:16px;padding:10px 14px;background:#e6f4ea;color:#137333;border-radius:8px;font-size:13px"></div>
+          <button type="submit" class="btn btn-primary btn-full" style="margin-top:20px">
+            <span class="material-symbols-outlined">check</span>
+            Crear usuario
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <%- include('../partials/footer') %>
+  <script>
+    function openUserModal() {
+      document.getElementById('userModal').classList.add('show');
+      document.body.style.overflow = 'hidden';
+      toggleUserDivisionField();
+    }
+    function closeUserModal() {
+      document.getElementById('userModal').classList.remove('show');
+      document.body.style.overflow = '';
+      document.getElementById('createUserForm').reset();
+      document.getElementById('userFormError').classList.remove('show');
+      document.getElementById('userFormSuccess').style.display = 'none';
+      toggleUserDivisionField();
+    }
+    document.getElementById('userModal').addEventListener('click', function (e) {
+      if (e.target === this) closeUserModal();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeUserModal();
+    });
+
+    // Muestra el combobox de Curso solo cuando el rol es Alumno. Si no hay divisiones
+    // cargadas en la escuela del admin, queda oculto siempre (nada que elegir).
+    function toggleUserDivisionField() {
+      const role  = document.getElementById('uRole').value;
+      const field = document.getElementById('uDivisionField');
+      const hasDivisions = field.querySelectorAll('option').length > 1; // > 1: siempre está la opción vacía
+      field.style.display = (role === 'student' && hasDivisions) ? '' : 'none';
+      if (role !== 'student') document.getElementById('uDivisionId').value = '';
+    }
+
+    document.getElementById('createUserForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorEl   = document.getElementById('userFormError');
+      const successEl = document.getElementById('userFormSuccess');
+      errorEl.classList.remove('show');
+      successEl.style.display = 'none';
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Creando...';
+      const res = await fetch('/admin/users/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: document.getElementById('uName').value,
+          dni: document.getElementById('uDni').value.trim() || undefined,
+          email: document.getElementById('uEmail').value,
+          password: document.getElementById('uPassword').value,
+          role: document.getElementById('uRole').value,
+          divisionId: document.getElementById('uDivisionId').value || undefined,
+        }),
+      });
+      const data = await res.json();
+      btn.disabled = false;
+      btn.innerHTML = '<span class="material-symbols-outlined">check</span> Crear usuario';
+      if (!res.ok) {
+        errorEl.textContent = data.error;
+        errorEl.classList.add('show');
+        return;
+      }
+      if (data.existedAlready) {
+        // No se creó nadie: el DNI ya correspondía a un alumno existente. Se lo
+        // matriculó en las materias que le faltaban del Curso elegido (si eligió uno).
+        successEl.textContent = data.enrolledIn > 0
+          ? `Ya existía un alumno con ese DNI (${data.user.name}). Se lo inscribió en ${data.enrolledIn} materia${data.enrolledIn === 1 ? '' : 's'} que le faltaba${data.enrolledIn === 1 ? '' : 'n'} del curso.`
+          : `Ya existía un alumno con ese DNI (${data.user.name}). Ya estaba matriculado en todas las materias de este curso.`;
+        successEl.style.display = 'block';
+        setTimeout(() => { window.location.href = '/admin/users/' + data.user._id; }, 1600);
+      } else if (data.enrolledIn > 0) {
+        successEl.textContent = `Usuario creado e inscripto en ${data.enrolledIn} materia${data.enrolledIn === 1 ? '' : 's'} del curso.`;
+        successEl.style.display = 'block';
+        setTimeout(() => { window.location.href = '/admin/users/' + data.user._id; }, 900);
+      } else {
+        window.location.href = '/admin/users/' + data.user._id;
+      }
+    });
+
+    // Soporte para abrir el modal directo por link (ej: desde el dashboard admin)
+    if (new URLSearchParams(window.location.search).get('create') === '1') {
+      openUserModal();
+    }
+  </script>
 </body>
 </html>
