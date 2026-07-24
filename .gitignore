@@ -15,3 +15,9 @@ migrate-to-prod.js
 migrate-themes.js
 make-favicon.js
 list-dbs.js
+
+# Configuración local de Claude Code: acumula comandos aprobados en la allowlist,
+# algunos de los cuales pueden incluir credenciales pasadas inline (ej: SMOKE_ADMIN_PASSWORD=...
+# en un comando de smoke test). Nunca debe subirse al repo. Ver [[production-credentials]]
+# en la memoria del proyecto para el detalle del leak histórico (commits b8d746e, 7266f43).
+.claude/settings.local.json
