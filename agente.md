@@ -287,6 +287,25 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ## Historial de Cambios (Changelog)
 
+### 2026-07-25 — Restricciones UI a docentes + infraestructura multi-docente (WIP)
+
+**Contexto**: la auditoría de 2026-07-01 había detectado 62 grupos de materias (Course) con nombre repetido dentro de la misma División — casi todas del mismo lote de importación "Cargos", con distintos docentes asignados. El usuario pidió consolidarlas: una sola materia por grupo, uniendo a los docentes de las eliminadas como co-docentes de la que queda. Esta sesión dejó la **infraestructura lista y commiteada, pero la fusión de datos reales sin empezar** — ver memoria `materias-duplicadas-consolidacion` para el estado exacto y los próximos pasos.
+
+**Restricciones de UI a docentes (completo)**:
+- `dashboard.ejs`: oculta "Unirse a clase" y "Crear clase" para `role==='teacher'`.
+- `course.ejs` (tab Personas): oculta "Agregar Alumno", "Deshabilitar cuenta", "Quitar del curso" — solo cuando el dueño del curso es específicamente docente (un admin-dueño conserva los botones).
+- Decisión explícita: solo UI, sin bloquear el backend (las rutas siguen aceptando la acción si se llaman directo).
+
+**Modelo multi-docente (nuevo, para soportar la fusión)**:
+- `Course.coTeachers: [ObjectId]` — docentes adicionales con los mismos permisos que `owner` sobre la materia. `owner` sigue siendo el docente principal, nunca se pisa.
+- `Course.isTeacher(userId)` — método de instancia, único punto de verdad para "¿es docente de esta materia?" (owner o cualquier coTeacher). Seguro con el campo poblado o sin popular.
+- Reemplazados los ~27 chequeos `course.owner.toString() === userId` esparcidos en `activities.js`, `announcements.js`, `courses.js` y `course.ejs` por `course.isTeacher(userId)`.
+- Queries "mis cursos" (dashboard, perfil, panel directivo M4) extendidas para incluir materias co-dictadas.
+- Alerta directivo "materias sin docente" ahora considera coTeachers activos antes de marcar una materia como huérfana.
+- Límite de alcance consciente: el reporte directivo M3 "Actividad docente" sigue atribuyendo cada materia solo a su owner principal (es un reporte de lectura, no un chequeo de permisos) — documentado en el código, se extiende si hace falta.
+
+**Pendiente para la próxima sesión**: función de fusión de materias (migrar alumnos/actividades/entregas/novedades del perdedor al ganador + sumar su owner a coTeachers + recién ahí borrar), smoke tests del flujo multi-docente, y la revisión interactiva de los 60 grupos ambiguos (ninguno tiene una señal automática que distinga cuál conservar — se decide caso por caso con el usuario).
+
 ### 2026-07-23 — Auditoría (Fase 2: cobertura completa + ~30 rutas instrumentadas)
 
 Extiende la fase 1 con la instrumentación completa. Ahora se registran **todas las acciones que importan** — 41 acciones en 12 categorías. Sin sumar aún logins (queda para cuando duela la ausencia).
