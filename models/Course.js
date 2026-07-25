@@ -31,12 +31,25 @@ const courseSchema = new mongoose.Schema({
     ref: 'School',
     required: [true, 'La escuela es requerida'],
   },
-  // Docente dueño del curso
+  // Docente principal (dueño) del curso. Se mantiene como "el" docente mostrado en
+  // tarjetas/listados — no se toca al consolidar materias duplicadas.
   owner: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true,
   },
+  // Docentes adicionales con los mismos permisos que el owner sobre esta materia
+  // (crear/editar/eliminar actividades, calificar, publicar novedades, gestionar alumnos,
+  // ver el gradebook). Se pobló por primera vez al consolidar materias duplicadas: cuando
+  // dos o más Course del mismo nombre en la misma división se fusionan en una sola, los
+  // owners de las eliminadas pasan acá en vez de perderse (ver scripts/merge-courses.js).
+  // Siempre chequear pertenencia con isCourseTeacher(course, userId) — nunca comparar
+  // solo contra `owner` directamente en código nuevo.
+  coTeachers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: [],
+  }],
   // Lista de alumnos inscriptos
   students: [{
     type: mongoose.Schema.Types.ObjectId,
@@ -62,5 +75,20 @@ const courseSchema = new mongoose.Schema({
     image:  { type: String, default: null },
   },
 }, { timestamps: true });
+
+// Único punto de verdad para "¿es docente de esta materia?" — owner O cualquiera de
+// coTeachers. Usar esto en vez de comparar contra `owner` a mano en rutas nuevas.
+// Seguro tanto si owner/coTeachers vienen sin popular (ObjectId crudo) como si vienen
+// populados (.populate('owner', 'name')) — en ese caso hay que comparar por ._id,
+// porque el .toString() de un documento completo NO es el mismo que el del ObjectId.
+function idToString(val) {
+  return (val && val._id ? val._id : val).toString();
+}
+courseSchema.methods.isTeacher = function (userId) {
+  if (!userId) return false;
+  const uid = userId.toString();
+  if (idToString(this.owner) === uid) return true;
+  return (this.coTeachers || []).some(t => idToString(t) === uid);
+};
 
 module.exports = mongoose.model('Course', courseSchema);

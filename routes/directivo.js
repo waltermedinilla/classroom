@@ -47,9 +47,18 @@ router.get('/', async (req, res) => {
     const inactiveTeacherIds = await User.find({
       school, role: { $in: ['teacher', 'admin'] }, active: false,
     }).distinct('_id');
-    const orphanedCourses = inactiveTeacherIds.length
-      ? await Course.countDocuments({ school, owner: { $in: inactiveTeacherIds } })
-      : 0;
+    // Un curso solo cuenta como "sin docente" si el owner está inactivo Y además
+    // NINGÚN co-docente (Course.coTeachers) está activo — si hay al menos un co-docente
+    // activo, la materia sigue atendida y no debería generar la alerta.
+    let orphanedCourses = 0;
+    if (inactiveTeacherIds.length) {
+      const inactiveSet = new Set(inactiveTeacherIds.map(String));
+      const candidates = await Course.find({ school, owner: { $in: inactiveTeacherIds } })
+        .select('coTeachers').lean();
+      orphanedCourses = candidates.filter(c =>
+        (c.coTeachers || []).every(t => inactiveSet.has(t.toString()))
+      ).length;
+    }
 
     // "Alumnos sin matricular" — students que no aparecen en ningún Course.students.
     const enrolledIds = await Course.find({ school }).distinct('students');
@@ -589,6 +598,13 @@ router.get('/teachers', async (req, res) => {
       { $match: { course: { $in: courses.map(c => c._id) }, createdAt: { $gte: monthAgo } } },
       { $group: { _id: '$course', count: { $sum: 1 } } },
     ]);
+    // NOTA DE ALCANCE: este reporte atribuye cada materia SOLO a su owner principal, no a
+    // sus coTeachers (co-docentes sumados al consolidar materias duplicadas — ver
+    // Course.coTeachers). Es una simplificación consciente: las estadísticas institucionales
+    // de acá no se pierden ni se corrompen, simplemente no se duplican bajo el co-docente
+    // también. Extenderlo requeriría tocar las 3 agregaciones de abajo (monthlyByTeacher,
+    // overdueByTeacher, teacherAvgAgg) — no se hizo en esta pasada por ser un reporte de
+    // solo lectura, no un chequeo de permisos. Si hace falta, pedirlo explícitamente.
     const courseOwnerMap = Object.fromEntries(courses.map(c => [c._id.toString(), c.owner.toString()]));
     const monthlyByTeacher = {};
     monthlyActs.forEach(m => {
@@ -679,7 +695,8 @@ router.get('/teachers/:id', async (req, res) => {
     if (!['teacher', 'admin'].includes(teacher.role)) return res.status(404).send('El usuario no es docente');
     if (school && teacher.school?.toString() !== school.toString()) return res.status(403).send('Acceso denegado');
 
-    const courses = await Course.find({ owner: teacher._id })
+    // Incluye materias donde este docente es owner O co-docente (Course.coTeachers).
+    const courses = await Course.find({ $or: [{ owner: teacher._id }, { coTeachers: teacher._id }] })
       .populate('division', 'name')
       .select('_id name division students');
 

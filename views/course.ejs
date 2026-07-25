@@ -42,7 +42,7 @@
         <div class="avatar" style="width:48px;height:48px;font-size:22px;background:rgba(255,255,255,0.3)"><%= course.owner.name.charAt(0).toUpperCase() %></div>
         <span class="course-owner-name"><%= course.owner.name %></span>
       </div>
-      <% if (course.owner._id.toString() === user._id.toString()) { %>
+      <% if (course.isTeacher(user._id)) { %>
       <button class="header-customize-btn" onclick="openCustomizeModal()">
         <span class="material-symbols-outlined">palette</span>
         Personalizar
@@ -59,7 +59,7 @@
         <span class="material-symbols-outlined">assignment</span>
         Actividades
       </button>
-      <% if (course.owner._id.toString() === user._id.toString()) { %>
+      <% if (course.isTeacher(user._id)) { %>
       <button class="tab" data-tab="calificaciones">
         <span class="material-symbols-outlined">grade</span>
         Calificaciones
@@ -107,7 +107,7 @@
 
         <!-- Columna principal -->
         <div class="stream-main">
-          <% if (course.owner._id.toString() === user._id.toString()) { %>
+          <% if (course.isTeacher(user._id)) { %>
           <!-- Botón Nuevo anuncio (solo docente) -->
           <div class="stream-action-row" id="streamActionRow">
             <button class="stream-announce-btn" onclick="openAnnouncementForm()">
@@ -167,10 +167,20 @@
           <span class="material-symbols-outlined">people</span>
           <h3>Estudiantes</h3>
           <span class="people-count"><%= course.students.length %></span>
-          <% if (course.owner._id.toString() === user._id.toString()) { %>
+          <%
+            // Los docentes ya no pueden agregar/deshabilitar/quitar alumnos desde acá
+            // (decisión del usuario 2026-07-25). Si el owner es un admin (Course.owner
+            // puede serlo, ver agente.md), conserva estos botones — la restricción es
+            // específica para el rol docente, no para "quien sea dueño del curso".
+            const isOwnerView = course.isTeacher(user._id);
+            const teacherManagesPeople = isOwnerView && user.role !== 'teacher';
+          %>
+          <% if (isOwnerView) { %>
+          <% if (teacherManagesPeople) { %>
           <button class="add-person-btn" onclick="openAddStudentModal()" title="Agregar alumno">
             <span class="material-symbols-outlined">person_add</span>
           </button>
+          <% } %>
           <button class="add-person-btn" onclick="exportStudents()" title="Exportar lista (.xlsx)" style="margin-left:4px">
             <span class="material-symbols-outlined">download</span>
           </button>
@@ -185,7 +195,8 @@
         <% course.students.forEach(student => { %>
           <%
             const isDisabled = student.active === false;
-            const isOwnerView = course.owner._id.toString() === user._id.toString();
+            // isOwnerView / teacherManagesPeople ya se calcularon arriba, en el header
+            // de esta misma card ("Estudiantes") — se reusan acá vía closure de EJS.
           %>
           <div class="person-item<%= isDisabled ? ' person-disabled' : '' %>" data-student-id="<%= student._id %>" data-active="<%= isDisabled ? 'false' : 'true' %>">
             <% if (student.avatar) { %>
@@ -201,7 +212,7 @@
             <% if (isDisabled) { %>
             <span class="badge-disabled" style="margin-left:auto">DESHABILITADO</span>
             <% } %>
-            <% if (isOwnerView) { %>
+            <% if (teacherManagesPeople) { %>
             <div style="<%= isDisabled ? '' : 'margin-left:auto' %>;display:flex;gap:4px">
               <button class="icon-btn toggle-active-btn" onclick="toggleStudentActive('<%= student._id %>')"
                 title="<%= isDisabled ? 'Habilitar cuenta' : 'Deshabilitar cuenta' %>"
@@ -238,7 +249,7 @@
     </div>
 
     <!-- Tab: Calificaciones (solo docente) -->
-    <% if (course.owner._id.toString() === user._id.toString()) { %>
+    <% if (course.isTeacher(user._id)) { %>
     <div class="tab-content hidden" id="calificacionesTab">
       <div id="calificacionesList">
         <div class="empty-state">
@@ -261,7 +272,7 @@
   </main>
 
   <!-- FAB solo para docente del curso -->
-  <% if (course.owner._id.toString() === user._id.toString()) { %>
+  <% if (course.isTeacher(user._id)) { %>
   <button class="fab" id="fabBtn" style="display:none" onclick="window.location.href='/activities/new?courseId=<%= course._id %>'" title="Nueva tarea">
     <span class="material-symbols-outlined">add</span>
   </button>
@@ -471,7 +482,7 @@
   </div>
 
   <!-- Modal: Personalizar portada -->
-  <% if (course.owner._id.toString() === user._id.toString()) { %>
+  <% if (course.isTeacher(user._id)) { %>
   <div class="modal-overlay" id="customizeModal">
     <div class="modal" style="max-width:460px">
       <div class="modal-header">
@@ -575,7 +586,7 @@
   <%- include('partials/footer') %>
   <script>
     window.COURSE_ID = '<%= course._id %>';
-    window.IS_OWNER = <%= course.owner._id.toString() === user._id.toString() %>;
+    window.IS_OWNER = <%= course.isTeacher(user._id) %>;
 
     function showUploadErrModal(title, msg) {
       document.getElementById('uplModalTitle').innerHTML =
@@ -594,7 +605,7 @@
     window.COURSE_COLOR2 = '<%= (course.header && course.header.color2) ? course.header.color2 : "" %>';
   </script>
   <script src="/js/course.js"></script>
-  <% if (course.owner._id.toString() === user._id.toString()) { %>
+  <% if (course.isTeacher(user._id)) { %>
   <script>
     const PRESET_COLORS = ['#1a73e8','#34a853','#ea4335','#fbbc04','#9334e6','#0d7377','#e91e63','#ff5722','#795548','#607d8b'];
     const _INIT_COLOR  = '<%= (course.header && course.header.color)  ? course.header.color  : "#1a73e8" %>';

@@ -70,10 +70,10 @@ router.post('/:id/comment', requireAuth, async (req, res) => {
     const ann = await Announcement.findById(req.params.id);
     if (!ann) return res.status(404).json({ error: 'Novedad no encontrada' });
 
-    // Verifica que el usuario sea miembro del curso (owner o alumno inscripto)
+    // Verifica que el usuario sea miembro del curso (docente o alumno inscripto)
     const course  = await Course.findById(ann.course);
     const uid     = req.userId;
-    const allowed = course.owner.toString() === uid || course.students.some(s => s.toString() === uid);
+    const allowed = course.isTeacher(uid) || course.students.some(s => s.toString() === uid);
     if (!allowed) return res.status(403).json({ error: 'Sin acceso' });
 
     // Inserta el comentario en el array anidado y guarda el documento
@@ -109,8 +109,8 @@ router.post('/create', requireAuth, upload.single('image'), async (req, res) => 
     const course = await Course.findById(courseId);
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
 
-    // Tanto el docente como los alumnos inscriptos pueden publicar novedades
-    const isOwner   = course.owner.toString() === req.userId;
+    // Tanto el docente (owner o co-docente) como los alumnos inscriptos pueden publicar novedades
+    const isOwner   = course.isTeacher(req.userId);
     const isStudent = course.students.some(s => s.toString() === req.userId);
     if (!isOwner && !isStudent) {
       return res.status(403).json({ error: 'Acceso denegado' });

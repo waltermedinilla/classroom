@@ -15,11 +15,16 @@
     <div class="dashboard-topbar">
       <h2>Tus clases</h2>
       <div class="dashboard-actions">
+        <% /* Los docentes ya no pueden unirse por código ni crear materias desde acá
+              (decisión del usuario 2026-07-25) — se ocultan los botones, el código y
+              las rutas quedan intactos para no romper al resto de los roles. */ %>
+        <% if (user.role !== 'teacher') { %>
         <button class="btn btn-outline" onclick="showJoinModal()">
           <span class="material-symbols-outlined">group_add</span>
           Unirse a clase
         </button>
-        <% if (user.role !== 'student') { %>
+        <% } %>
+        <% if (user.role !== 'student' && user.role !== 'teacher') { %>
         <button class="btn btn-primary" onclick="showCreateModal()">
           <span class="material-symbols-outlined">add</span>
           Crear clase

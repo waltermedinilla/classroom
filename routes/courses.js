@@ -79,7 +79,10 @@ const avatarUpload = multer({
 router.get('/', requireAuth, async (req, res) => {
   try {
     const [created, joined] = await Promise.all([
-      Course.find({ owner: req.userId })
+      // Incluye materias donde el usuario es owner O co-docente (ver Course.coTeachers,
+      // sumado al consolidar materias duplicadas — un co-docente debe ver la materia acá
+      // igual que el owner original).
+      Course.find({ $or: [{ owner: req.userId }, { coTeachers: req.userId }] })
         .populate('owner', 'name email')
         .populate('division', 'name'),
       Course.find({ students: req.userId })
@@ -180,7 +183,7 @@ router.post('/join', requireAuth, async (req, res) => {
     if (!course) {
       return res.status(404).json({ error: 'No se encontró un curso con ese código' });
     }
-    if (course.owner.toString() === req.userId) {
+    if (course.isTeacher(req.userId)) {
       return res.status(400).json({ error: 'No puedes unirte a tu propio curso' });
     }
     if (course.students.includes(req.userId)) {
@@ -215,7 +218,8 @@ router.get('/profile', requireAuth, async (req, res) => {
       return res.render('profile', { joinedCourses, createdCourses: [], activityCount: 0, totalStudents: 0, systemOwnerEmail: SYSTEM_OWNER_EMAIL });
     }
     const [createdCourses, activityCount] = await Promise.all([
-      Course.find({ owner: req.userId })
+      // Incluye materias co-dictadas (ver Course.coTeachers), mismo motivo que en GET /courses.
+      Course.find({ $or: [{ owner: req.userId }, { coTeachers: req.userId }] })
         .populate('owner', 'name email')
         .populate('division', 'name'),
       Activity.countDocuments({ author: req.userId }),
@@ -352,7 +356,7 @@ router.get('/:id', requireAuth, async (req, res) => {
       .populate('students', 'name email dni active avatar')
       .populate('division', 'name');
     if (!course) return res.status(404).send('Curso no encontrado');
-    const isOwner   = course.owner._id.toString() === req.userId;
+    const isOwner   = course.isTeacher(req.userId);
     const isStudent = course.students.some(s => s._id.toString() === req.userId);
     if (!isOwner && !isStudent) return res.status(403).send('Acceso denegado');
     res.render('course', { course });
@@ -366,7 +370,7 @@ router.post('/:id/add-student', requireAuth, async (req, res) => {
   try {
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
-    if (course.owner.toString() !== req.userId) {
+    if (!course.isTeacher(req.userId)) {
       return res.status(403).json({ error: 'Solo el docente puede agregar alumnos' });
     }
     const { email } = req.body;
@@ -404,7 +408,7 @@ router.delete('/:id/students/:studentId', requireAuth, async (req, res) => {
   try {
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
-    if (course.owner.toString() !== req.userId) {
+    if (!course.isTeacher(req.userId)) {
       return res.status(403).json({ error: 'Solo el docente puede quitar alumnos' });
     }
     if (!course.students.some(s => s.toString() === req.params.studentId)) {
@@ -442,7 +446,7 @@ router.post('/:id/students/:studentId/toggle-active', requireAuth, async (req, r
   try {
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
-    if (course.owner.toString() !== req.userId) {
+    if (!course.isTeacher(req.userId)) {
       return res.status(403).json({ error: 'Solo el docente puede modificar alumnos' });
     }
     if (!course.students.some(s => s.toString() === req.params.studentId)) {
@@ -464,7 +468,7 @@ router.get('/:id/gradebook', requireAuth, async (req, res) => {
   try {
     const course = await Course.findById(req.params.id).populate('students', 'name email');
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
-    if (course.owner.toString() !== req.userId) return res.status(403).json({ error: 'Sin acceso' });
+    if (!course.isTeacher(req.userId)) return res.status(403).json({ error: 'Sin acceso' });
     const activities = await Activity.find({ course: req.params.id }).sort({ createdAt: -1 });
     const gradeMap = {};
     activities.forEach(act => {
@@ -488,7 +492,7 @@ router.get('/:id/export-students', requireAuth, async (req, res) => {
   try {
     const course = await Course.findById(req.params.id).populate('students', 'name email dni active');
     if (!course) return res.status(404).send('Curso no encontrado');
-    if (course.owner.toString() !== req.userId) return res.status(403).send('Sin acceso');
+    if (!course.isTeacher(req.userId)) return res.status(403).send('Sin acceso');
     const rows = course.students.map((s, i) => ({
       '#':       i + 1,
       'Nombre':  s.name,
@@ -536,9 +540,11 @@ router.get('/:id/data', requireAuth, async (req, res) => {
 // curso de un docente B iterando sobre IDs. Por eso: primero validamos, después multer.
 router.post('/:id/customize', requireAuth, async (req, res, next) => {
   try {
-    const course = await Course.findById(req.params.id).select('owner');
+    // select incluye coTeachers: si solo trajéramos 'owner', isTeacher() no podría ver a
+    // los co-docentes (this.coTeachers vendría undefined) y los rechazaría por error.
+    const course = await Course.findById(req.params.id).select('owner coTeachers');
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
-    if (course.owner.toString() !== req.userId) {
+    if (!course.isTeacher(req.userId)) {
       return res.status(403).json({ error: 'Solo el docente puede personalizar el curso' });
     }
     next();
