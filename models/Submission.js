@@ -23,6 +23,18 @@ const submissionSchema = new mongoose.Schema({
   text:     { type: String, default: '', trim: true },
   // Fecha de la primera entrega (se setea una sola vez en el upsert via $setOnInsert)
   firstSubmittedAt: { type: Date, default: null },
+  // Respuestas estructuradas cuando la actividad viene de una plantilla interactiva.
+  // Array libre indexado por questionId; el formato lo entiende services/autoGrader.
+  // Ej: [{ questionId, mc: {selected: [optId,...]}, tf: {answer: true}, ... }]
+  answers: { type: [mongoose.Schema.Types.Mixed], default: undefined },
+  // Resultado de la autocalificación al submitear. Se sobrescribe en cada reenvío
+  // EXCEPTO si el docente ya puso un override manual (ver activity.grades[]).
+  autoGraded: {
+    points:    { type: Number },
+    maxPoints: { type: Number },
+    breakdown: [{ type: mongoose.Schema.Types.Mixed }], // [{questionId, awarded, max, correct}]
+    gradedAt:  { type: Date },
+  },
 }, { timestamps: true }); // updatedAt se usa para mostrar cuándo fue el último reenvío
 
 // Índice único: un alumno solo puede tener una entrega por actividad

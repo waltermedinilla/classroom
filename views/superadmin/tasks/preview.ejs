@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Preview: <%= template.title %> - Superadmin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../../partials/header') %>
+
+  <main class="main-content" style="max-width:820px">
+    <div class="preview-topbar">
+      <a href="/superadmin/tasks" class="btn btn-outline">
+        <span class="material-symbols-outlined">arrow_back</span>
+        Volver
+      </a>
+      <div class="preview-topbar-title">
+        <h2><%= template.title %></h2>
+        <p>Modo preview — respondé como si fueras alumno. No se guarda nada.</p>
+      </div>
+      <a href="/superadmin/tasks/<%= template._id %>/edit" class="btn btn-outline">
+        <span class="material-symbols-outlined">edit</span>
+        Editar
+      </a>
+    </div>
+
+    <% if (template.description) { %>
+      <p class="preview-description"><%= template.description %></p>
+    <% } %>
+
+    <div id="runnerContainer" class="runner-container"></div>
+
+    <div class="runner-footer">
+      <button class="btn btn-primary btn-full" id="btnSubmitRun">
+        <span class="material-symbols-outlined">check</span>
+        Enviar respuestas
+      </button>
+    </div>
+
+    <div id="runnerResult" class="runner-result" style="display:none"></div>
+  </main>
+
+  <%- include('../../partials/footer') %>
+
+  <script>
+    // El runner recibe SOLO las preguntas (con respuestas correctas dentro, porque
+    // en preview el superadmin ya las conoce). Para el alumno se filtrarán a nivel
+    // de ruta antes de mandar el snapshot. Ver Fase 5.
+    window._runner = {
+      templateId: <%- JSON.stringify(String(template._id)) %>,
+      questions:  <%- JSON.stringify(template.questions) %>,
+      // Endpoint de calificación en modo preview (no persiste).
+      gradeUrl:   '/superadmin/tasks/' + <%- JSON.stringify(String(template._id)) %> + '/preview-grade',
+    };
+  </script>
+  <script src="/js/task-runner.js"></script>
+</body>
+</html>

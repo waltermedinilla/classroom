@@ -17,6 +17,8 @@ const { invalidateUser, invalidateSchool } = require('../middleware/cache');
 const { logAudit } = require('../middleware/audit');
 const School   = require('../models/School');
 const THEMES   = require('../config/themes');
+const ActivityTemplate   = require('../models/ActivityTemplate');
+const TemplateAssignment = require('../models/TemplateAssignment');
 
 // Rutas base de archivos en disco (deben coincidir con las de routes/activities.js
 // y routes/announcements.js) para poder eliminar los archivos físicos en la cascada.
@@ -1323,6 +1325,60 @@ router.post('/theme/respond', requireAuth, requireAdmin, async (req, res) => {
     invalidateSchool(res.locals.user.school);
     res.json({ ok: true });
   } catch {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+/* ─── Plantillas de tareas ofrecidas a la escuela ─── */
+// Fase 4 del gestor de plantillas. Mismo patrón que /admin/theme:
+// el admin ve lo que le fue OFRECIDO por el superadmin y decide aceptar o rechazar.
+// La lista incluye ofrecidas, aceptadas y rechazadas — todas las que llegaron
+// alguna vez. Si el superadmin revoca, el doc se borra y desaparece de la lista.
+router.get('/task-templates', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    if (!res.locals.taskTemplatesEnabled) return res.status(404).send('No disponible');
+    const schoolId = res.locals.user.school;
+    if (!schoolId) return res.status(400).send('Este usuario no tiene escuela asignada');
+
+    const assignments = await TemplateAssignment.find({ school: schoolId })
+      .populate('template', 'title description questions defaultPoints updatedAt status')
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    // Filtro plantillas que quedaron sin template (borradas por superadmin — no debería
+    // pasar por la guarda de DELETE, pero por defensa igual filtramos).
+    const rows = assignments.filter(a => a.template);
+    res.render('admin/task-templates/index', { assignments: rows, activePage: 'task-templates' });
+  } catch (err) {
+    res.status(500).send('Error del servidor');
+  }
+});
+
+// POST /admin/task-templates/respond — el admin acepta o rechaza una oferta.
+// Body: { templateId, action: 'accept' | 'reject' }. Actualiza status y registra
+// respondedBy + respondedAt. Solo válido sobre TemplateAssignment de la propia escuela.
+router.post('/task-templates/respond', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    if (!res.locals.taskTemplatesEnabled) return res.status(404).json({ error: 'No disponible' });
+    const { templateId, action } = req.body;
+    if (!['accept', 'reject'].includes(action)) {
+      return res.status(400).json({ error: 'Acción inválida' });
+    }
+    const status = action === 'accept' ? 'accepted' : 'rejected';
+    const schoolId = res.locals.user.school;
+
+    const a = await TemplateAssignment.findOneAndUpdate(
+      { template: templateId, school: schoolId },
+      { $set: { status, respondedBy: req.userId, respondedAt: new Date() } },
+      { new: true },
+    ).populate('template', 'title');
+    if (!a) return res.status(404).json({ error: 'Esta plantilla no está ofrecida a tu escuela' });
+
+    logAudit(req, action === 'accept' ? 'task_template.accept' : 'task_template.reject',
+      [{ type: 'task_template', id: a.template._id, name: a.template.title }],
+    );
+    res.json({ assignment: a });
+  } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

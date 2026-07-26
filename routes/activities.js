@@ -11,6 +11,9 @@ const User       = require('../models/User');
 const XLSX       = require('xlsx');
 const { requireAuth } = require('../middleware/auth');
 const { logAudit }    = require('../middleware/audit');
+const ActivityTemplate   = require('../models/ActivityTemplate');
+const TemplateAssignment = require('../models/TemplateAssignment');
+const { computeAutoGrade } = require('../services/autoGrader');
 
 // Adjuntos del docente: dentro de /public (acceso estático directo)
 // Estructura: public/archivos/{schoolId}/actividades/{courseId}/{filename}
@@ -37,6 +40,33 @@ function uniqueFilename(originalname) {
 // nombres sin acentos (puro ASCII) el round-trip no cambia nada.
 function fixFilenameEncoding(originalname) {
   return Buffer.from(originalname, 'latin1').toString('utf8');
+}
+
+// Devuelve una copia de la pregunta sin las claves que revelan la respuesta correcta.
+// Se usa al mandar templateSnapshot al alumno: enunciado + opciones/pares sí,
+// pero isCorrect / correctAnswer / correctPairs / acceptedAnswers NO.
+function stripAnswerKeys(q) {
+  const out = { _id: q._id, type: q.type, prompt: q.prompt, points: q.points };
+  if (q.type === 'mc' && q.mc) {
+    out.mc = {
+      multipleAllowed: q.mc.multipleAllowed,
+      options: (q.mc.options || []).map(o => ({ _id: o._id, text: o.text })),
+    };
+  }
+  if (q.type === 'tf')     out.tf     = {}; // solo enunciado, sin correctAnswer
+  if (q.type === 'match' && q.match) {
+    out.match = {
+      leftItems:  (q.match.leftItems  || []).map(i => ({ _id: i._id, text: i.text })),
+      rightItems: (q.match.rightItems || []).map(i => ({ _id: i._id, text: i.text })),
+    };
+  }
+  if (q.type === 'fill' && q.fill) {
+    out.fill = { template: q.fill.template };
+  }
+  if (q.type === 'common' && q.common) {
+    out.common = { instructions: q.common.instructions };
+  }
+  return out;
 }
 
 // Multer para adjuntos del docente al crear/editar actividades
@@ -154,6 +184,11 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
         const myGrade = act.grades.find(g => g.student.toString() === userId);
         obj.myGrade = myGrade ? { points: myGrade.points, feedback: myGrade.feedback || '' } : null;
         delete obj.grades; // No exponer notas de otros alumnos
+        // Si es una actividad interactiva, filtrar las respuestas correctas del snapshot
+        // (el autoGrader corre siempre server-side; el alumno nunca las necesita ver).
+        if (obj.templateSnapshot && obj.templateSnapshot.questions) {
+          obj.templateSnapshot.questions = obj.templateSnapshot.questions.map(stripAnswerKeys);
+        }
         return obj;
       });
     }
@@ -167,16 +202,82 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
 // POST /activities/create
 // Crea una nueva actividad con adjuntos y/o links
 // multipart/form-data: { courseId, title, description?, dueDate?, availableFrom?, points?, links?, files? }
+// GET /activities/available-templates?courseId=X
+// Devuelve las plantillas ACEPTADAS por la escuela del curso, listas para
+// instanciar. Solo válido si el docente es owner del curso y el feature flag
+// TASK_TEMPLATES_TEACHER_ENABLED está prendido; con el flag off responde
+// siempre { templates: [] } — así el frontend puede llamar sin problema y
+// simplemente ve una lista vacía → no muestra selector.
+router.get('/available-templates', requireAuth, async (req, res) => {
+  try {
+    if (!res.locals.taskTemplatesTeacherEnabled) return res.json({ templates: [] });
+    const { courseId } = req.query;
+    if (!courseId) return res.status(400).json({ error: 'Falta courseId' });
+
+    const course = await Course.findById(courseId).select('school owner coTeachers').lean();
+    if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
+    const uid = String(res.locals.user._id);
+    const isTeacher = String(course.owner) === uid
+      || (course.coTeachers || []).some(t => String(t) === uid);
+    if (!isTeacher) return res.status(403).json({ error: 'Sin acceso' });
+
+    // Todas las plantillas aceptadas por la escuela del curso (activo = status:'accepted').
+    const assignments = await TemplateAssignment.find({ school: course.school, status: 'accepted' })
+      .populate('template', 'title description questions defaultPoints status')
+      .lean();
+
+    const templates = assignments
+      .filter(a => a.template && a.template.status === 'published')
+      .map(a => ({
+        _id:           a.template._id,
+        title:         a.template.title,
+        description:   a.template.description,
+        questionsCount: (a.template.questions || []).length,
+        defaultPoints: a.template.defaultPoints,
+      }));
+
+    res.json({ templates });
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // links es un JSON string de array: [{ url, name? }]
 // Retorna: { activity } con autor populado (201)
 router.post('/create', requireAuth, upload.array('files', 10), async (req, res) => {
   try {
-    const { courseId, title, description, dueDate, availableFrom, points, links, type } = req.body;
+    const { courseId, title, description, dueDate, availableFrom, points, links, type, templateId } = req.body;
 
     const course = await Course.findById(courseId);
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
     if (!course.isTeacher(res.locals.user._id)) {
       return res.status(403).json({ error: 'Solo el docente puede crear actividades' });
+    }
+
+    // Si viene templateId (y el feature flag está prendido), validar que la escuela
+    // haya aceptado la plantilla y copiar sus preguntas al snapshot inmutable. Si el
+    // superadmin edita la plantilla luego, esta actividad NO cambia — protege las
+    // entregas ya realizadas de alumnos.
+    let templateSnapshot;
+    if (templateId) {
+      if (!res.locals.taskTemplatesTeacherEnabled) {
+        return res.status(403).json({ error: 'Las plantillas de tareas no están habilitadas' });
+      }
+      const assignment = await TemplateAssignment.findOne({
+        school: course.school, template: templateId, status: 'accepted',
+      }).lean();
+      if (!assignment) {
+        return res.status(403).json({ error: 'Esta plantilla no está habilitada para tu escuela' });
+      }
+      const tpl = await ActivityTemplate.findById(templateId).lean();
+      if (!tpl || tpl.status !== 'published') {
+        return res.status(400).json({ error: 'Plantilla no disponible' });
+      }
+      templateSnapshot = {
+        templateId:        tpl._id,
+        templateUpdatedAt: tpl.updatedAt,
+        questions:         tpl.questions,
+      };
     }
 
     const schoolId    = res.locals.user.school?.toString() || 'general';
@@ -206,6 +307,11 @@ router.post('/create', requireAuth, upload.array('files', 10), async (req, res) 
       });
     }
 
+    // Si viene con plantilla y el docente no puso puntos, tomo los de la plantilla.
+    const resolvedPoints = (points !== '' && points != null)
+      ? Number(points)
+      : (templateSnapshot ? Number(templateSnapshot.questions.reduce((a, q) => a + (Number(q.points) || 0), 0)) : null);
+
     const activity = await Activity.create({
       course:        courseId,
       author:        res.locals.user._id,
@@ -213,9 +319,10 @@ router.post('/create', requireAuth, upload.array('files', 10), async (req, res) 
       description:   description?.trim() || '',
       dueDate:       dueDate || null,
       availableFrom: availableFrom || new Date(), // Por defecto: disponible de inmediato
-      points:        points !== '' && points != null ? Number(points) : null,
+      points:        resolvedPoints,
       type:          type || 'tarea',
       attachments,
+      ...(templateSnapshot ? { templateSnapshot } : {}),
     });
 
     await activity.populate('author', 'name');
@@ -402,9 +509,10 @@ router.post('/:id/grade', requireAuth, async (req, res) => {
     if (existing) {
       existing.points   = Number(points);
       existing.gradedAt = new Date();
+      existing.manual   = true; // el docente sobrescribe → protege contra re-autocalificación
       if (feedback !== undefined) existing.feedback = feedback.trim();
     } else {
-      activity.grades.push({ student: studentId, points: Number(points), feedback: (feedback || '').trim() });
+      activity.grades.push({ student: studentId, points: Number(points), feedback: (feedback || '').trim(), manual: true });
     }
 
     await activity.save();
@@ -723,16 +831,61 @@ router.post('/:id/submit', requireAuth, conditionalMultipart, async (req, res) =
       filesToSave = existing?.files || [];
     }
 
+    // Si la actividad viene de una plantilla interactiva, aceptar respuestas
+    // estructuradas y autocalificar server-side. El campo `answers` viaja en el
+    // JSON body; el autocalificador es la única fuente de verdad para el puntaje.
+    let autoGraded;
+    let answersToSave;
+    if (activity.templateSnapshot && req.body.answers) {
+      const rawAnswers = typeof req.body.answers === 'string' ? JSON.parse(req.body.answers) : req.body.answers;
+      answersToSave = Array.isArray(rawAnswers) ? rawAnswers : [];
+      const result = computeAutoGrade(activity.templateSnapshot.questions || [], answersToSave);
+      autoGraded = {
+        points:    result.points,
+        maxPoints: result.maxPoints,
+        breakdown: result.breakdown,
+        gradedAt:  new Date(),
+      };
+    }
+
     // Upsert: crea la entrega si no existe, la actualiza si ya existe
     // $setOnInsert solo aplica en la creación: preserva la fecha original de la primera entrega
+    const submissionUpdate = {
+      $set: { files: filesToSave, text: text?.trim() || '' },
+      $setOnInsert: { firstSubmittedAt: new Date() },
+    };
+    if (answersToSave) submissionUpdate.$set.answers = answersToSave;
+    if (autoGraded)    submissionUpdate.$set.autoGraded = autoGraded;
+
     const submission = await Submission.findOneAndUpdate(
       { activity: req.params.id, student: userId },
-      {
-        $set:         { files: filesToSave, text: text?.trim() || '' },
-        $setOnInsert: { firstSubmittedAt: new Date() },
-      },
+      submissionUpdate,
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
+
+    // Si hay autocalificación, escribirla también en activity.grades[] para que el
+    // gradebook / directivo la vean igual que una nota manual. NUNCA pisa un
+    // override manual del docente: si ya existe un grade con manual=true, respetamos.
+    if (autoGraded) {
+      const gExisting = activity.grades.find(g => g.student.toString() === userId);
+      if (!gExisting || gExisting.manual === false) {
+        if (gExisting) {
+          gExisting.points   = autoGraded.points;
+          gExisting.feedback = 'Autocalificado';
+          gExisting.gradedAt = autoGraded.gradedAt;
+          gExisting.manual   = false;
+        } else {
+          activity.grades.push({
+            student:  userId,
+            points:   autoGraded.points,
+            feedback: 'Autocalificado',
+            gradedAt: autoGraded.gradedAt,
+            manual:   false,
+          });
+        }
+        await activity.save();
+      }
+    }
 
     // Distingue primera entrega vs reenvío usando el snapshot de `existing`
     // capturado ANTES del upsert. La fecha de la actividad puede ser null

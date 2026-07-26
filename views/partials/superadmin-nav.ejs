@@ -23,6 +23,12 @@
     <span class="material-symbols-outlined">palette</span>
     Temas
   </a>
+  <% if (typeof taskTemplatesEnabled === 'undefined' || taskTemplatesEnabled) { %>
+  <a href="/superadmin/tasks" class="admin-nav-item <%= activePage === 'tasks' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">assignment</span>
+    Tareas
+  </a>
+  <% } %>
   <a href="/superadmin/monitor" class="admin-nav-item <%= activePage === 'monitor' ? 'active' : '' %>">
     <span class="material-symbols-outlined">monitor_heart</span>
     Monitor

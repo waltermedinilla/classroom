@@ -117,6 +117,20 @@
         </div>
       </div>
 
+      <!-- Selector de plantilla — se muestra sólo si el server devuelve plantillas
+           disponibles (feature flag TASK_TEMPLATES_TEACHER_ENABLED). Si el flag
+           está apagado, este bloque queda oculto y el docente ve el form idéntico
+           a como venía siendo. -->
+      <div class="sidebar-card" id="templateCard" style="display:none">
+        <div class="sidebar-label">Usar plantilla</div>
+        <div class="sidebar-input-wrap">
+          <select id="sTemplateId" class="sidebar-input">
+            <option value="">— Sin plantilla —</option>
+          </select>
+        </div>
+        <div class="sidebar-hint" id="templateHint">Actividad interactiva; el sistema califica automáticamente.</div>
+      </div>
+
       <div class="sidebar-card">
         <div class="sidebar-label">Tipo</div>
         <div class="sidebar-input-wrap">
@@ -169,6 +183,41 @@
 
   <script>
     const COURSE_ID = '<%= course._id %>';
+
+    // Carga plantillas habilitadas para este curso. Si el feature flag está apagado
+    // en el server, la respuesta es {templates:[]} y el selector queda oculto.
+    (async function loadTemplates() {
+      try {
+        const res = await fetch('/activities/available-templates?courseId=' + encodeURIComponent(COURSE_ID), {
+          headers: { 'Accept': 'application/json' },
+        });
+        const data = await res.json();
+        if (!res.ok) return;
+        const templates = data.templates || [];
+        if (templates.length === 0) return; // sin plantillas → sidebar sigue como siempre
+        const card = document.getElementById('templateCard');
+        const sel  = document.getElementById('sTemplateId');
+        templates.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t._id;
+          opt.textContent = t.title + ' (' + t.questionsCount + ' pregunta' + (t.questionsCount === 1 ? '' : 's') + ')';
+          opt.dataset.points = t.defaultPoints;
+          sel.appendChild(opt);
+        });
+        card.style.display = '';
+        // Al elegir plantilla, auto-completar los puntos y ocultar los adjuntos
+        // (una actividad interactiva no lleva archivos del docente, es cerrada).
+        sel.addEventListener('change', () => {
+          const chosen = sel.options[sel.selectedIndex];
+          const pts = chosen && chosen.dataset.points;
+          if (sel.value && pts) document.getElementById('sPoints').value = pts;
+          const uploadCard = document.querySelector('.creator-attachments');
+          if (uploadCard) uploadCard.style.display = sel.value ? 'none' : '';
+        });
+      } catch {
+        // Sin conectividad al endpoint: mostramos el form clásico sin selector.
+      }
+    })();
     const EXT_COLOR = { PDF: '#ea4335', DOC: '#1a73e8', DOCX: '#1a73e8', XLS: '#34a853', XLSX: '#34a853' };
 
     // Precarga "Disponible desde" con ahora y "Fecha de entrega" con una semana después
@@ -415,6 +464,12 @@
       fd.append('availableFrom', document.getElementById('sAvailableFrom').value || '');
       fd.append('uploadedFiles', JSON.stringify(Object.values(actUploadedFiles)));
       fd.append('links', JSON.stringify(actLinks));
+
+      // Si el docente eligió una plantilla, la mandamos: el server copia el
+      // snapshot y la actividad se comporta como interactiva. Sin plantilla,
+      // el flujo es idéntico al que tenía antes de la Fase 5.
+      const tplSel = document.getElementById('sTemplateId');
+      if (tplSel && tplSel.value) fd.append('templateId', tplSel.value);
 
       const res = await fetch('/activities/create', { method: 'POST', body: fd });
       const data = await res.json();

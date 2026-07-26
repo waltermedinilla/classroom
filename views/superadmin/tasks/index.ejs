@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tareas - Superadmin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../../partials/superadmin-nav', { activePage: 'tasks' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Gestor de Tareas</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Plantillas de actividades interactivas — se arman acá y se asignan a escuelas.
+        </p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/superadmin/tasks/assign" class="btn btn-outline">
+          <span class="material-symbols-outlined">send</span>
+          Ofrecer a escuelas
+        </a>
+        <a href="/superadmin/tasks/new" class="btn btn-primary">
+          <span class="material-symbols-outlined">add</span>
+          Nueva plantilla
+        </a>
+      </div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card" style="--stat-color:#1a73e8">
+        <div class="stat-icon"><span class="material-symbols-outlined">assignment</span></div>
+        <div class="stat-info">
+          <span class="stat-value"><%= stats.total %></span>
+          <span class="stat-label">Plantillas totales</span>
+        </div>
+      </div>
+      <div class="stat-card" style="--stat-color:#fbbc04">
+        <div class="stat-icon"><span class="material-symbols-outlined">edit_note</span></div>
+        <div class="stat-info">
+          <span class="stat-value"><%= stats.draft %></span>
+          <span class="stat-label">Borradores</span>
+        </div>
+      </div>
+      <div class="stat-card" style="--stat-color:#34a853">
+        <div class="stat-icon"><span class="material-symbols-outlined">rocket_launch</span></div>
+        <div class="stat-info">
+          <span class="stat-value"><%= stats.published %></span>
+          <span class="stat-label">Publicadas</span>
+        </div>
+      </div>
+      <div class="stat-card" style="--stat-color:#5f6368">
+        <div class="stat-icon"><span class="material-symbols-outlined">archive</span></div>
+        <div class="stat-info">
+          <span class="stat-value"><%= stats.archived %></span>
+          <span class="stat-label">Archivadas</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" style="margin-top:32px">
+      <div class="section-header">
+        <span class="material-symbols-outlined section-icon">assignment</span>
+        <h3>Plantillas</h3>
+      </div>
+
+      <% if (templates.length === 0) { %>
+        <div class="empty-state">
+          <div class="empty-icon"><span class="material-symbols-outlined">assignment</span></div>
+          <p>Todavía no hay plantillas.</p>
+          <a href="/superadmin/tasks/new" class="btn btn-primary" style="margin-top:20px">
+            <span class="material-symbols-outlined">add</span>
+            Crear la primera plantilla
+          </a>
+        </div>
+      <% } else { %>
+        <div class="template-list">
+          <% templates.forEach(t => {
+            const statusMeta = {
+              draft:     { label: 'Borrador',   bg: '#fff3e0', color: '#ea8600' },
+              published: { label: 'Publicada',  bg: '#e6f4ea', color: '#137333' },
+              archived:  { label: 'Archivada',  bg: '#e8eaed', color: '#5f6368' },
+            }[t.status] || { label: t.status, bg: '#eee', color: '#333' };
+          %>
+          <div class="template-row" data-id="<%= t._id %>">
+            <div class="template-row-main">
+              <div class="template-row-title">
+                <h4><%= t.title %></h4>
+                <span class="template-status-badge" style="background:<%= statusMeta.bg %>;color:<%= statusMeta.color %>">
+                  <%= statusMeta.label %>
+                </span>
+              </div>
+              <% if (t.description) { %>
+                <p class="template-row-desc"><%= t.description %></p>
+              <% } %>
+              <div class="template-row-meta">
+                <span><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle">quiz</span> <%= t.questions.length %> pregunta<%= t.questions.length === 1 ? '' : 's' %></span>
+                <span><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle">stars</span> <%= t.defaultPoints %> pts</span>
+                <span><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle">schedule</span> <%= new Date(t.updatedAt).toLocaleDateString('es-AR', { day:'numeric', month:'short', year:'numeric' }) %></span>
+              </div>
+            </div>
+            <div class="template-row-actions">
+              <a href="/superadmin/tasks/<%= t._id %>/preview" class="btn btn-outline" title="Previsualizar">
+                <span class="material-symbols-outlined">play_arrow</span>
+                Preview
+              </a>
+              <a href="/superadmin/tasks/<%= t._id %>/edit" class="btn btn-outline" title="Editar">
+                <span class="material-symbols-outlined">edit</span>
+                Editar
+              </a>
+              <% if (t.status === 'draft') { %>
+                <button class="btn btn-primary" onclick="publishTemplate('<%= t._id %>', this)" title="Publicar">
+                  <span class="material-symbols-outlined">rocket_launch</span>
+                  Publicar
+                </button>
+              <% } else if (t.status === 'published') { %>
+                <button class="btn btn-outline" onclick="archiveTemplate('<%= t._id %>', this)" title="Archivar">
+                  <span class="material-symbols-outlined">archive</span>
+                  Archivar
+                </button>
+              <% } %>
+              <button class="icon-btn" onclick="deleteTemplate('<%= t._id %>', '<%= t.title.replace(/'/g, "\\'") %>')" title="Eliminar" style="color:var(--danger)">
+                <span class="material-symbols-outlined">delete</span>
+              </button>
+            </div>
+          </div>
+          <% }) %>
+        </div>
+      <% } %>
+    </div>
+  </main>
+
+  <%- include('../../partials/footer') %>
+
+  <script>
+    async function publishTemplate(id, btn) {
+      if (!confirm('¿Publicar esta plantilla? Podrás asignarla a escuelas.')) return;
+      btn.disabled = true;
+      const res = await fetch('/superadmin/tasks/' + id + '/publish', { method: 'POST', headers: { 'Accept': 'application/json' } });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error || 'Error'); btn.disabled = false; return; }
+      location.reload();
+    }
+    async function archiveTemplate(id, btn) {
+      if (!confirm('¿Archivar esta plantilla? Los docentes dejarán de verla.')) return;
+      btn.disabled = true;
+      const res = await fetch('/superadmin/tasks/' + id + '/archive', { method: 'POST', headers: { 'Accept': 'application/json' } });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error || 'Error'); btn.disabled = false; return; }
+      location.reload();
+    }
+    async function deleteTemplate(id, title) {
+      if (!confirm('¿Eliminar la plantilla "' + title + '"?\nSi está asignada a escuelas, tendrás que desasignarla primero.')) return;
+      const res = await fetch('/superadmin/tasks/' + id, { method: 'DELETE', headers: { 'Accept': 'application/json' } });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error || 'Error'); return; }
+      location.reload();
+    }
+  </script>
+</body>
+</html>

@@ -1550,7 +1550,60 @@ async function loadStudentDetail(activityId) {
   // Fetch de la entrega actual del alumno (puede ser null si no entregó todavía)
   const subRes  = await fetch('/activities/' + activityId + '/my-submission');
   const subData = subRes.ok ? await subRes.json() : { submission: null };
-  renderSubmissionSection(activityId, subData.submission, isBlocked);
+
+  // Si la actividad viene de una plantilla interactiva, mostramos el runner en
+  // lugar del formulario de archivos + texto. La calificación es automática
+  // server-side al enviar (endpoint /activities/:id/submit ya extendido).
+  if (act.templateSnapshot && Array.isArray(act.templateSnapshot.questions)) {
+    renderRunnerSection(activityId, act, subData.submission, isBlocked);
+  } else {
+    renderSubmissionSection(activityId, subData.submission, isBlocked);
+  }
+}
+
+// Renderiza la sección "Mi entrega" cuando la actividad es una plantilla interactiva.
+// Usa task-runner.js (ya cargado en views/course.ejs). El submit no se pisa si el
+// docente puso override manual — el server ya lo respeta.
+function renderRunnerSection(activityId, act, submission, isBlocked) {
+  const section = document.getElementById('submissionSection');
+  if (isBlocked && !submission) {
+    section.innerHTML = '<div class="deadline-warning"><span class="material-symbols-outlined">lock</span> No se puede responder: el plazo venció.</div>';
+    return;
+  }
+  const alreadyAnswered = submission && submission.autoGraded;
+  section.innerHTML = `
+    <div style="margin-top:16px;padding:14px 16px;background:var(--bg);border-radius:8px;font-size:13px;color:var(--text-secondary)">
+      <span class="material-symbols-outlined" style="vertical-align:-4px;color:var(--primary)">quiz</span>
+      Actividad interactiva. Al enviar tus respuestas el sistema las califica automáticamente.
+    </div>
+    <div id="runnerContainer" class="runner-container" style="margin-top:12px"></div>
+    <div class="runner-footer" style="margin-top:16px">
+      <button class="btn btn-primary btn-full" id="btnSubmitRun" ${isBlocked ? 'disabled' : ''}>
+        <span class="material-symbols-outlined">check</span>
+        ${alreadyAnswered ? 'Volver a enviar' : 'Enviar respuestas'}
+      </button>
+    </div>
+    <div id="runnerResult" class="runner-result" style="display:none;margin-top:16px"></div>
+  `;
+  window.mountRunner({
+    templateId: act.templateSnapshot.templateId,
+    questions:  act.templateSnapshot.questions,
+    gradeUrl:   '/activities/' + activityId + '/submit',
+  });
+  // Si ya había respondido, mostrar el resultado guardado sin volver a enviar.
+  if (alreadyAnswered) {
+    const box = document.getElementById('runnerResult');
+    const r = submission.autoGraded;
+    const pct = r.maxPoints > 0 ? Math.round(r.points / r.maxPoints * 100) : 0;
+    const rows = (r.breakdown || []).map(function (b) {
+      const q = act.templateSnapshot.questions.find(function (x) { return String(x._id) === String(b.questionId); });
+      const icon = b.correct === true ? 'check_circle' : b.correct === false ? 'cancel' : 'help';
+      const color = b.correct === true ? '#137333' : b.correct === false ? '#c5221f' : '#5f6368';
+      return '<div class="result-row"><span class="material-symbols-outlined" style="color:' + color + '">' + icon + '</span><div class="result-row-info"><div class="result-row-prompt">' + (q ? q.prompt : '') + '</div><div class="result-row-meta">' + b.awarded + ' / ' + b.max + ' pts</div></div></div>';
+    }).join('');
+    box.innerHTML = '<div class="result-header"><div class="result-score"><span class="result-score-value">' + r.points + '</span><span class="result-score-max">/ ' + r.maxPoints + '</span></div><div class="result-score-pct">' + pct + '%</div></div><div class="result-list">' + rows + '</div>';
+    box.style.display = 'block';
+  }
 }
 
 // Array temporal de archivos seleccionados para la entrega (File objects antes de subir)

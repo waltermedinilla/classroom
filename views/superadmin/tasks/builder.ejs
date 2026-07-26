@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= template ? 'Editar' : 'Nueva' %> plantilla - Superadmin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="creator-page">
+  <header class="creator-header">
+    <div class="creator-header-left">
+      <a href="/superadmin/tasks" class="icon-btn" title="Volver al gestor">
+        <span class="material-symbols-outlined">arrow_back</span>
+      </a>
+      <span class="creator-header-title" id="hdrTitle"><%= template ? 'Editar plantilla' : 'Nueva plantilla' %></span>
+    </div>
+    <div class="creator-header-right">
+      <button class="btn btn-outline" onclick="saveTemplate(false)" id="btnSave">
+        <span class="material-symbols-outlined">save</span>
+        Guardar borrador
+      </button>
+      <% if (template) { %>
+      <a href="/superadmin/tasks/<%= template._id %>/preview" class="btn btn-outline">
+        <span class="material-symbols-outlined">play_arrow</span>
+        Preview
+      </a>
+      <% } %>
+      <button class="btn btn-primary" onclick="saveTemplate(true)" id="btnPublish">
+        <span class="material-symbols-outlined">rocket_launch</span>
+        Guardar y publicar
+      </button>
+    </div>
+  </header>
+
+  <div class="creator-body">
+    <main class="creator-main">
+      <div class="creator-card">
+        <input type="text" id="tplTitle" class="creator-title-field" placeholder="Título de la plantilla" value="<%= template ? template.title : '' %>">
+        <textarea id="tplDescription" class="task-desc-field" placeholder="Descripción breve (opcional)"><%= template ? template.description : '' %></textarea>
+      </div>
+
+      <div id="questionsContainer" class="questions-container">
+        <!-- las tarjetas de preguntas se renderean dinámicamente por task-builder.js -->
+      </div>
+
+      <div class="add-question-hint">
+        <span class="material-symbols-outlined">arrow_forward</span>
+        Elegí un tipo de pregunta en la barra lateral para agregarla
+      </div>
+    </main>
+
+    <aside class="creator-sidebar">
+      <div class="sidebar-card">
+        <div class="sidebar-label">Puntaje total</div>
+        <input type="number" id="tplDefaultPoints" class="sidebar-input" min="0" value="<%= template ? template.defaultPoints : 100 %>">
+      </div>
+
+      <div class="sidebar-card">
+        <div class="sidebar-label">Agregar pregunta</div>
+        <div class="qtype-picker">
+          <button class="qtype-card" onclick="addQuestion('common')">
+            <span class="material-symbols-outlined">description</span>
+            <span>Actividad común</span>
+          </button>
+          <button class="qtype-card" onclick="addQuestion('mc')">
+            <span class="material-symbols-outlined">radio_button_checked</span>
+            <span>Múltiple choice</span>
+          </button>
+          <button class="qtype-card" onclick="addQuestion('tf')">
+            <span class="material-symbols-outlined">check_circle</span>
+            <span>Verdadero / Falso</span>
+          </button>
+          <button class="qtype-card" onclick="addQuestion('match')">
+            <span class="material-symbols-outlined">swap_horiz</span>
+            <span>Unir con flechas</span>
+          </button>
+          <button class="qtype-card" onclick="addQuestion('fill')">
+            <span class="material-symbols-outlined">edit_note</span>
+            <span>Completar palabra</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="sidebar-card">
+        <div class="sidebar-label">Estado</div>
+        <div id="tplStatusBadge" class="template-status-badge" style="display:inline-block">
+          <%= template ? (template.status === 'published' ? 'Publicada' : template.status === 'archived' ? 'Archivada' : 'Borrador') : 'Sin guardar' %>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    // Estado del builder — arranca vacío o con la plantilla precargada.
+    window._builder = {
+      id:            <%- template ? JSON.stringify(String(template._id)) : 'null' %>,
+      questions:     <%- template ? JSON.stringify(template.questions) : '[]' %>,
+    };
+  </script>
+  <script src="/js/task-builder.js"></script>
+</body>
+</html>

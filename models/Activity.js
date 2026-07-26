@@ -6,6 +6,12 @@ const gradeSchema = new mongoose.Schema({
   points:   { type: Number, required: true, min: 0 }, // Nota asignada por el docente
   feedback: { type: String, default: '' },             // Comentario escrito del docente al alumno
   gradedAt: { type: Date, default: Date.now },         // Fecha en que se calificó
+  // true = el docente la puso (o editó) manualmente vía POST /:id/grade
+  // false = la puso el autocalificador (actividades con templateSnapshot)
+  // Se usa en el reenvío del alumno para NO pisar overrides manuales del docente.
+  // Default true: los grades históricos existentes se leen como "manuales", que
+  // es exactamente lo que eran (no había autocalificador antes).
+  manual:   { type: Boolean, default: true },
 });
 
 // Sub-schema para un adjunto (archivo o enlace) agregado por el docente al crear la actividad
@@ -15,6 +21,17 @@ const attachmentSchema = new mongoose.Schema({
   url:  { type: String, required: true },  // Ruta pública (/archivos/...) o URL externa
   mime: { type: String, default: '' },
 }, { _id: false }); // Sin _id propio; los adjuntos se identifican por su url
+
+// Snapshot inmutable de la plantilla al momento de instanciar la actividad.
+// Copiamos las preguntas COMPLETAS (con respuestas correctas) acá para que si el
+// superadmin edita la plantilla después, las entregas de los alumnos sigan siendo
+// evaluadas contra el enunciado que efectivamente vieron.
+const templateSnapshotSchema = new mongoose.Schema({
+  templateId: { type: mongoose.Schema.Types.ObjectId, ref: 'ActivityTemplate' },
+  // Timestamp de la plantilla al momento del snapshot (para trazabilidad de "qué versión estás viendo")
+  templateUpdatedAt: { type: Date },
+  questions: [{ type: mongoose.Schema.Types.Mixed }],
+}, { _id: false });
 
 const activitySchema = new mongoose.Schema({
   // Curso al que pertenece esta actividad (requerido para filtrar por curso)
@@ -37,6 +54,9 @@ const activitySchema = new mongoose.Schema({
   type: { type: String, enum: ['tarea', 'evaluacion', 'tp', 'examen'], default: 'tarea' },
   // Flag que habilita entregas fuera de término (lo activa/desactiva el docente con toggle-late)
   allowLateSubmissions: { type: Boolean, default: false },
+  // Presente solo si la actividad fue instanciada desde una plantilla del gestor
+  // (ver services/autoGrader.js para la evaluación). Actividades "clásicas" no lo llevan.
+  templateSnapshot: { type: templateSnapshotSchema, default: undefined },
 }, { timestamps: true });
 
 // Índices usados por el panel directivo (tasa de entrega, actividades vencidas sin calificar)

@@ -15,6 +15,7 @@ const { schoolCache } = require('./middleware/cache');
 const { getMaintenanceState, SYSTEM_OWNER_EMAIL } = require('./config/maintenance');
 const School     = require('./models/School');
 const Suggestion = require('./models/Suggestion');
+const TemplateAssignment = require('./models/TemplateAssignment');
 const APP_VERSION = require('./package.json').version;
 
 const authRoutes         = require('./routes/auth');
@@ -27,6 +28,7 @@ const directivoRoutes    = require('./routes/directivo');
 const backupRoutes       = require('./routes/backup');
 const suggestionRoutes   = require('./routes/suggestions');
 const auditRoutes        = require('./routes/audit');
+const tasksRoutes        = require('./routes/tasks');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -170,6 +172,11 @@ app.use((req, res, next) => {
     student:    'Alumno',
   };
   res.locals.appVersion = APP_VERSION;
+  // Feature flags del gestor de plantillas de actividades. Ver plan
+  // composed-launching-cray.md (fase 1). Los booleanos se resuelven una vez
+  // por request para que las vistas puedan condicionar UI sin releer env vars.
+  res.locals.taskTemplatesEnabled        = process.env.TASK_TEMPLATES_ENABLED !== 'false';
+  res.locals.taskTemplatesTeacherEnabled = process.env.TASK_TEMPLATES_TEACHER_ENABLED === 'true';
   next();
 });
 
@@ -220,6 +227,27 @@ app.use(async (req, res, next) => {
   next();
 });
 
+// ── Plantillas de tareas ofrecidas y sin responder ──────────────────────────
+// Inyecta res.locals.pendingTaskTemplates para el dot rojo del nav "Plantillas"
+// (mismo patrón que el de la solapa Tema). Solo cuenta si el user es admin de
+// una escuela y el feature flag está prendido. Índice {school:1, status:1} en
+// TemplateAssignment mantiene esta query sub-milisegundo.
+app.use(async (req, res, next) => {
+  res.locals.pendingTaskTemplates = 0;
+  const u = res.locals.user;
+  if (u && u.role === 'admin' && u.school && res.locals.taskTemplatesEnabled) {
+    try {
+      res.locals.pendingTaskTemplates = await TemplateAssignment.countDocuments({
+        school: u.school,
+        status: 'offered',
+      });
+    } catch {
+      // Idem: si falla el conteo, el badge no aparece y listo.
+    }
+  }
+  next();
+});
+
 // ── Rutas ────────────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
   if (!res.locals.user) return res.redirect('/login');
@@ -255,6 +283,11 @@ app.use('/admin',      adminRoutes);
 // Montado ANTES de /superadmin para que Express lo intercepte primero sin ambigüedad
 // (aunque hoy superadmin.js no tiene rutas que choquen con /backup/*).
 app.use('/superadmin/backup', backupRoutes);
+// Mismo criterio: /superadmin/tasks va antes de /superadmin para que Express lo
+// intercepte sin ambigüedad. El feature flag se chequea dentro del router.
+if (process.env.TASK_TEMPLATES_ENABLED !== 'false') {
+  app.use('/superadmin/tasks', tasksRoutes);
+}
 app.use('/superadmin',  superadminRoutes);
 app.use('/directivo',   directivoRoutes);
 app.use('/suggestions', suggestionRoutes);

@@ -34,4 +34,13 @@
       <span style="position:absolute;top:6px;right:6px;width:8px;height:8px;background:#ea4335;border-radius:50%"></span>
     <% } %>
   </a>
+  <% if (typeof taskTemplatesEnabled === 'undefined' || taskTemplatesEnabled) { %>
+  <a href="/admin/task-templates" class="admin-nav-item <%= activePage === 'task-templates' ? 'active' : '' %>" style="position:relative">
+    <span class="material-symbols-outlined">assignment</span>
+    Plantillas
+    <% if (typeof pendingTaskTemplates !== 'undefined' && pendingTaskTemplates > 0) { %>
+      <span style="position:absolute;top:6px;right:6px;width:8px;height:8px;background:#ea4335;border-radius:50%" title="<%= pendingTaskTemplates %> pendiente(s)"></span>
+    <% } %>
+  </a>
+  <% } %>
 </nav>

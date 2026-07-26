@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plantillas de tareas - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* Reutiliza el shape visual de views/superadmin/tasks/assign.ejs, pero
+       centrado en UNA card por plantilla que le fue ofrecida a esta escuela. */
+    .tt-info {
+      background: var(--bg); border-left: 3px solid var(--primary);
+      padding: 12px 16px; border-radius: 8px;
+      margin-bottom: 24px; font-size: 13px; color: var(--text-secondary);
+    }
+    .tt-info strong { color: var(--text); }
+    .tt-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; overflow: hidden; margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.04);
+    }
+    .tt-card-body {
+      padding: 18px 22px; display: flex; align-items: flex-start; gap: 14px;
+    }
+    .tt-card-icon {
+      width: 44px; height: 44px; flex-shrink: 0;
+      background: var(--primary-light, #e8f0fe); border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--primary);
+    }
+    .tt-card-icon .material-symbols-outlined { font-size: 24px; }
+    .tt-card-main { flex: 1; min-width: 0; }
+    .tt-card-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .tt-card-title h3 { margin: 0; font-size: 17px; font-weight: 600; color: var(--text); }
+    .tt-status-badge {
+      font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 10px;
+    }
+    .tt-status-badge.accepted { background: #e6f4ea; color: #137333; }
+    .tt-status-badge.offered  { background: #fff3e0; color: #ea8600; }
+    .tt-status-badge.rejected { background: #fce8e6; color: #ea4335; }
+    @media (prefers-color-scheme: dark) {
+      .tt-status-badge.accepted { background: #1a3a22; color: #6fcf7a; }
+      .tt-status-badge.offered  { background: #3a2e0a; color: #f5c842; }
+      .tt-status-badge.rejected { background: #3a1e1c; color: #ea9d95; }
+    }
+    .tt-card-desc { margin: 4px 0 0; font-size: 13px; color: var(--text-secondary); }
+    .tt-card-chips { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+    .tt-chip {
+      font-size: 11px; padding: 2px 8px; border-radius: 10px;
+      background: var(--bg); color: var(--text-secondary);
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .tt-chip .material-symbols-outlined { font-size: 13px; }
+    .tt-actions {
+      display: flex; gap: 8px; flex-shrink: 0; align-items: center;
+    }
+    .tt-hint {
+      font-size: 12px; color: var(--text-hint); margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <%- include('../../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../../partials/admin-nav', { activePage: 'task-templates' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Plantillas de tareas</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Plantillas que el superadministrador ofreció a esta escuela.
+          Al aceptarlas, quedan disponibles para todos los docentes.
+        </p>
+      </div>
+    </div>
+
+    <div class="tt-info">
+      <strong>¿Cómo funciona?</strong> Cada plantilla es una actividad interactiva
+      lista para usar (múltiple choice, verdadero/falso, unir con flechas, etc.).
+      Podés previsualizarla antes de decidir. Aceptar la habilita para que
+      cualquier docente de la escuela pueda crearla en sus materias.
+    </div>
+
+    <% if (assignments.length === 0) { %>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">assignment</span></div>
+        <p>Todavía no hay plantillas ofrecidas.<br>
+          Cuando el superadministrador te ofrezca alguna, va a aparecer acá.</p>
+      </div>
+    <% } %>
+
+    <% assignments.forEach(a => {
+      const t = a.template;
+      const statusMeta = ({
+        accepted: { label: '✓ Aceptada',  cls: 'accepted' },
+        offered:  { label: '⏳ Pendiente', cls: 'offered' },
+        rejected: { label: '✕ Rechazada', cls: 'rejected' },
+      })[a.status];
+    %>
+      <div class="tt-card">
+        <div class="tt-card-body">
+          <div class="tt-card-icon"><span class="material-symbols-outlined">assignment</span></div>
+          <div class="tt-card-main">
+            <div class="tt-card-title">
+              <h3><%= t.title %></h3>
+              <span class="tt-status-badge <%= statusMeta.cls %>"><%= statusMeta.label %></span>
+            </div>
+            <% if (t.description) { %>
+              <p class="tt-card-desc"><%= t.description %></p>
+            <% } %>
+            <div class="tt-card-chips">
+              <span class="tt-chip"><span class="material-symbols-outlined">quiz</span> <%= (t.questions || []).length %> pregunta<%= (t.questions || []).length === 1 ? '' : 's' %></span>
+              <span class="tt-chip"><span class="material-symbols-outlined">stars</span> <%= t.defaultPoints %> pts</span>
+              <% if (a.respondedAt) { %>
+                <span class="tt-chip"><span class="material-symbols-outlined">event_available</span> Respondida el <%= new Date(a.respondedAt).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' }) %></span>
+              <% } else { %>
+                <span class="tt-chip"><span class="material-symbols-outlined">schedule</span> Ofrecida el <%= new Date(a.createdAt).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' }) %></span>
+              <% } %>
+            </div>
+          </div>
+          <div class="tt-actions">
+            <% if (a.status === 'offered') { %>
+              <button class="btn btn-outline" onclick="respond('<%= t._id %>','reject',this)">
+                <span class="material-symbols-outlined">close</span>
+                Rechazar
+              </button>
+              <button class="btn btn-primary" onclick="respond('<%= t._id %>','accept',this)">
+                <span class="material-symbols-outlined">check</span>
+                Aceptar
+              </button>
+            <% } else if (a.status === 'accepted') { %>
+              <button class="btn btn-outline" onclick="respond('<%= t._id %>','reject',this)" title="Retirar el acceso de los docentes a esta plantilla">
+                <span class="material-symbols-outlined">close</span>
+                Desactivar
+              </button>
+            <% } else { %>
+              <button class="btn btn-primary" onclick="respond('<%= t._id %>','accept',this)">
+                <span class="material-symbols-outlined">check</span>
+                Aceptar
+              </button>
+            <% } %>
+          </div>
+        </div>
+      </div>
+    <% }) %>
+  </main>
+
+  <%- include('../../partials/footer') %>
+
+  <script>
+    async function respond(templateId, action, btn) {
+      const label = action === 'accept' ? 'aceptar' : 'rechazar';
+      if (!confirm('¿Confirmar ' + label + ' esta plantilla?')) return;
+      btn.disabled = true;
+      const res = await fetch('/admin/task-templates/respond', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ templateId, action }),
+      });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error || 'Error'); btn.disabled = false; return; }
+      location.reload();
+    }
+  </script>
+</body>
+</html>
