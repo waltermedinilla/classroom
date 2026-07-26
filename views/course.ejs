@@ -39,8 +39,8 @@
         </div>
       </div>
       <div class="course-owner">
-        <div class="avatar" style="width:48px;height:48px;font-size:22px;background:rgba(255,255,255,0.3)"><%= course.owner.name.charAt(0).toUpperCase() %></div>
-        <span class="course-owner-name"><%= course.owner.name %></span>
+        <div class="avatar" style="width:48px;height:48px;font-size:22px;background:rgba(255,255,255,0.3)"><%= featuredTeacher.name.charAt(0).toUpperCase() %></div>
+        <span class="course-owner-name"><%= featuredTeacher.name %></span>
       </div>
       <% if (course.isTeacher(user._id)) { %>
       <button class="header-customize-btn" onclick="openCustomizeModal()">

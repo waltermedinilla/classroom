@@ -6,6 +6,7 @@ const Course   = require('../models/Course');
 const Division = require('../models/Division');
 const User     = require('../models/User');
 const Activity   = require('../models/Activity');
+const Announcement = require('../models/Announcement');
 const Submission = require('../models/Submission');
 const XLSX       = require('xlsx');
 const { requireAuth } = require('../middleware/auth');
@@ -365,7 +366,28 @@ router.get('/:id', requireAuth, async (req, res) => {
     // como "APELLIDO, Nombre", así que ordenar por el string completo alcanza.
     course.students.sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
 
-    res.render('course', { course });
+    // Docente destacado en la esquina superior derecha de la ficha: solo a modo de
+    // figurar, NO cambia quién es el titular real (course.owner sigue intacto). Por
+    // defecto se muestra el titular; si hay suplentes y alguno creó más tareas+novedades
+    // que el titular en esta materia, se muestra ese suplente en su lugar.
+    let featuredTeacher = course.owner;
+    if (course.coTeachers.length > 0) {
+      const candidates = [course.owner, ...course.coTeachers];
+      const counts = await Promise.all(candidates.map(async (t) => {
+        const [activities, announcements] = await Promise.all([
+          Activity.countDocuments({ course: course._id, author: t._id }),
+          Announcement.countDocuments({ course: course._id, author: t._id }),
+        ]);
+        return activities + announcements;
+      }));
+      let bestIdx = 0;
+      for (let i = 1; i < candidates.length; i++) {
+        if (counts[i] > counts[bestIdx]) bestIdx = i;
+      }
+      featuredTeacher = candidates[bestIdx];
+    }
+
+    res.render('course', { course, featuredTeacher });
   } catch (err) {
     res.status(500).send('Error del servidor');
   }
