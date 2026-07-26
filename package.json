@@ -1,6 +1,6 @@
 {
   "name": "classroom-escuela",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Google Classroom clone with Node.js, Express, MongoDB and vanilla JS",
   "main": "server.js",
   "scripts": {
@@ -13,7 +13,8 @@
     "prod:status": "pm2 status",
     "cleanup": "node cleanup-files.js",
     "cleanup:dry": "node cleanup-files.js --dry-run",
-    "test:smoke": "node tests/smoke/run.js"
+    "test:smoke": "node tests/smoke/run.js",
+    "prepare": "husky"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -35,6 +36,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "husky": "^9.1.7",
     "nodemon": "^2.0.20",
     "sharp": "^0.34.5"
   }
