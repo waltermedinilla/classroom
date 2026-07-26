@@ -100,6 +100,21 @@ function copyDir(src, dest) {
   return getDirStats(dest);
 }
 
+// Mueve un archivo entre dos ubicaciones que pueden estar en filesystems distintos
+// (ej. os.tmpdir() vs BACKUPS_DIR dentro del repo — en producción suelen ser mounts
+// distintos, ahí fs.renameSync tira EXDEV: "cross-device link not permitted"). rename()
+// es atómico y no copia bytes cuando ambos paths están en el mismo device, así que se
+// intenta primero y solo se cae a copiar+borrar si hace falta cruzar de filesystem.
+function moveFileSync(src, dest) {
+  try {
+    fs.renameSync(src, dest);
+  } catch (err) {
+    if (err.code !== 'EXDEV') throw err;
+    fs.copyFileSync(src, dest);
+    fs.unlinkSync(src);
+  }
+}
+
 // Reemplaza un directorio completo con el contenido extraído del backup. Usa cpSync
 // (no rename) porque el extractDir puede estar en otro filesystem/unidad que el destino
 // (relevante en Windows dev; en Linux prod ambos suelen estar en el mismo disco pero
@@ -252,7 +267,7 @@ router.post('/preview', (req, res, next) => {
 
     const token      = crypto.randomBytes(16).toString('hex');
     const tarPath    = path.join(UPLOADS_DIR, `${token}.tar.gz`);
-    fs.renameSync(req.file.path, tarPath);
+    moveFileSync(req.file.path, tarPath);
 
     // Extrae ÚNICAMENTE manifest.json (sin tocar db/ ni files/) para que el preview
     // sea instantáneo aunque el backup pese cientos de MB.
@@ -359,7 +374,7 @@ router.post('/restore', restoreLimiter, async (req, res) => {
     const safety = await createBackupTarball(res.locals.user.email);
     fs.mkdirSync(BACKUPS_DIR, { recursive: true });
     const safetyDest = path.join(BACKUPS_DIR, `pre-restore-${safety.stamp}.tar.gz`);
-    fs.renameSync(safety.tarPath, safetyDest);
+    moveFileSync(safety.tarPath, safetyDest);
     log.push(`Backup de seguridad generado: ${path.basename(safetyDest)}`);
 
     // 2. Extrae el backup a restaurar completo (ahora sí, db/ + files/)
