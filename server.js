@@ -224,6 +224,12 @@ app.get('/', (req, res) => {
   // El directivo cae directo en su panel institucional (no en /courses, donde
   // solo vería los cursos donde alguien lo haya inscripto explícitamente).
   if (res.locals.user.role === 'directivo') return res.redirect('/directivo');
+  // Admin/superadmin caen en su propio panel, no en /courses — ese dashboard
+  // ("Tus clases") es para docente/alumno. Antes, si el admin también era
+  // dueño de alguna materia (Course.owner puede serlo, ver routes/admin.js),
+  // /courses lo hacía aterrizar ahí por defecto como si su rol fuera docente.
+  if (res.locals.user.role === 'superadmin') return res.redirect('/superadmin');
+  if (res.locals.user.role === 'admin')      return res.redirect('/admin');
   res.redirect('/courses');
 });
 

@@ -360,6 +360,11 @@ router.get('/:id', requireAuth, async (req, res) => {
     const isOwner   = course.isTeacher(req.userId);
     const isStudent = course.students.some(s => s._id.toString() === req.userId);
     if (!isOwner && !isStudent) return res.status(403).send('Acceso denegado');
+
+    // Orden alfabético por apellido para la solapa Personas — los nombres se cargan
+    // como "APELLIDO, Nombre", así que ordenar por el string completo alcanza.
+    course.students.sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+
     res.render('course', { course });
   } catch (err) {
     res.status(500).send('Error del servidor');

@@ -452,7 +452,7 @@ router.get('/courses', async (req, res) => {
       .limit(LIMIT),
     Course.countDocuments(filter),
     Division.find(sf).sort({ name: 1 }),
-    User.find({ ...sf, role: { $in: ['teacher', 'admin'] } }).sort({ name: 1 }).select('_id name email'),
+    User.find({ ...sf, role: 'teacher' }).sort({ name: 1 }).select('_id name email'),
   ]);
 
   const totalPages  = Math.ceil(total / LIMIT);
@@ -465,7 +465,7 @@ router.get('/courses/create', async (req, res) => {
   const sf     = school ? { school } : {};
   const [divisions, teachers, subjects] = await Promise.all([
     Division.find(sf).sort({ name: 1 }),
-    User.find({ ...sf, role: { $in: ['teacher', 'admin'] } }).sort({ name: 1 }).select('_id name email'),
+    User.find({ ...sf, role: 'teacher' }).sort({ name: 1 }).select('_id name email'),
     Subject.find(sf).sort({ name: 1 }).select('name'),
   ]);
   res.render('admin/course-form', { course: null, divisions, teachers, subjects });
@@ -510,7 +510,7 @@ router.get('/courses/:id/edit', async (req, res) => {
   if (school && course.school?.toString() !== school.toString()) return res.status(403).send('Acceso denegado');
   const [divisions, teachers, subjects] = await Promise.all([
     Division.find(sf).sort({ name: 1 }),
-    User.find({ ...sf, role: { $in: ['teacher', 'admin'] } }).sort({ name: 1 }).select('_id name email'),
+    User.find({ ...sf, role: 'teacher' }).sort({ name: 1 }).select('_id name email'),
     Subject.find(sf).sort({ name: 1 }).select('name'),
   ]);
   res.render('admin/course-form', { course, divisions, teachers, subjects });
@@ -874,7 +874,7 @@ router.get('/import', async (req, res) => {
   const school = res.locals.user.school;
   const sf = school ? { school } : {};
   const [teachers, subjects] = await Promise.all([
-    User.find({ ...sf, role: { $in: ['teacher', 'admin'] } }).sort({ name: 1 }).select('_id name email role'),
+    User.find({ ...sf, role: 'teacher' }).sort({ name: 1 }).select('_id name email role'),
     Subject.find(sf).sort({ name: 1 }).select('_id name color'),
   ]);
   res.render('admin/import', { teachers, subjects });
