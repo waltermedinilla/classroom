@@ -1,0 +1,2 @@
+# Placeholder: por ahora no hay chequeos pre-commit obligatorios.
+# El autobump de versión ocurre en post-commit, no aquí.

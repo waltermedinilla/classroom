@@ -15,6 +15,7 @@ const { schoolCache } = require('./middleware/cache');
 const { getMaintenanceState, SYSTEM_OWNER_EMAIL } = require('./config/maintenance');
 const School     = require('./models/School');
 const Suggestion = require('./models/Suggestion');
+const APP_VERSION = require('./package.json').version;
 
 const authRoutes         = require('./routes/auth');
 const courseRoutes       = require('./routes/courses');
@@ -168,6 +169,7 @@ app.use((req, res, next) => {
     soe:        'SOE',
     student:    'Alumno',
   };
+  res.locals.appVersion = APP_VERSION;
   next();
 });
 

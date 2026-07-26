@@ -1,3 +1,7 @@
+  <div class="app-version" style="position:fixed;left:12px;bottom:8px;font-size:11px;color:var(--text-hint);opacity:.7;user-select:none;pointer-events:none;z-index:1;font-family:inherit">
+    Versión <%= typeof appVersion !== 'undefined' ? appVersion : '' %>
+  </div>
+
   <% const _canSuggest = !!user; %>
   <% if (_canSuggest) { %>
   <button class="fab" id="fabSuggest" onclick="document.getElementById('suggestionModal').style.display='flex'" title="Enviar sugerencia">
@@ -90,9 +94,15 @@
           <span class="material-symbols-outlined" style="color:#1a73e8">mail</span>
           Mis sugerencias
         </h3>
-        <button class="icon-btn" onclick="closeInboxModal()" title="Cerrar">
-          <span class="material-symbols-outlined">close</span>
-        </button>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn btn-primary" style="padding:6px 12px;font-size:13px;display:inline-flex;align-items:center;gap:4px" onclick="openSuggestFromInbox()" title="Enviar nueva sugerencia">
+            <span class="material-symbols-outlined" style="font-size:16px">add</span>
+            Nueva sugerencia
+          </button>
+          <button class="icon-btn" onclick="closeInboxModal()" title="Cerrar">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
       </div>
       <div id="inboxBody" style="overflow-y:auto;flex:1"></div>
     </div>
@@ -133,6 +143,13 @@
 
     function closeInboxModal() {
       document.getElementById('inboxModal').style.display = 'none';
+    }
+
+    function openSuggestFromInbox() {
+      closeInboxModal();
+      document.getElementById('suggestionModal').style.display = 'flex';
+      var ta = document.getElementById('suggestionText');
+      if (ta) setTimeout(function () { ta.focus(); }, 50);
     }
 
     var INBOX_STATUS = {

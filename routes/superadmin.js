@@ -230,17 +230,8 @@ router.post('/schools/:id/revoke-invite', async (req, res) => {
 });
 
 /* ─── Users ─── */
-// GET /superadmin/users/create — Formulario de creación de usuario (sin restricción de escuela)
-router.get('/users/create', async (req, res) => {
-  try {
-    const schools = await School.find().sort({ name: 1 }).select('_id name');
-    res.render('superadmin/user-form', { schools });
-  } catch (err) {
-    res.status(500).send('Error del servidor');
-  }
-});
-
 // POST /superadmin/users/create — Crea un usuario con cualquier rol y escuela (incluido superadmin)
+// El alta se hace desde el modal embebido en views/superadmin/users.ejs (no hay página aparte).
 router.post('/users/create', async (req, res) => {
   try {
     const { name, email, password, role, school, dni } = req.body;

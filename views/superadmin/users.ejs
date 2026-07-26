@@ -24,10 +24,10 @@
         </p>
       </div>
       <div class="dashboard-actions">
-        <a href="/superadmin/users/create" class="btn btn-primary">
+        <button class="btn btn-primary" onclick="openUserModal()">
           <span class="material-symbols-outlined">person_add</span>
           Nuevo usuario
-        </a>
+        </button>
       </div>
     </div>
 
@@ -231,9 +231,124 @@
     </button>
   </div>
 
+  <!-- Modal: Nuevo usuario (equivalente al del admin, pero con selector de escuela) -->
+  <div class="modal-overlay" id="userModal">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">person_add</span>
+          <h3>Nuevo usuario</h3>
+        </div>
+        <button class="icon-btn" onclick="closeUserModal()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <form id="createUserForm">
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">badge</span>
+            <input type="text" id="uName" placeholder="Nombre completo" required>
+          </div>
+          <div class="input-group" style="margin-top:16px">
+            <span class="material-symbols-outlined input-icon">fingerprint</span>
+            <input type="text" id="uDni" placeholder="DNI (opcional)">
+          </div>
+          <div class="input-group" style="margin-top:16px">
+            <span class="material-symbols-outlined input-icon">email</span>
+            <input type="email" id="uEmail" placeholder="Correo electrónico" required>
+          </div>
+          <div class="input-group" style="margin-top:16px">
+            <span class="material-symbols-outlined input-icon">lock</span>
+            <input type="password" id="uPassword" placeholder="Contraseña (mín. 5 caracteres)" required>
+          </div>
+          <div class="input-group" style="margin-top:16px">
+            <span class="material-symbols-outlined input-icon">badge</span>
+            <select id="uRole" class="select-input">
+              <option value="student">Alumno</option>
+              <option value="teacher">Docente</option>
+              <option value="preceptor">Preceptor</option>
+              <option value="soe">SOE</option>
+              <option value="directivo">Directivo</option>
+              <option value="admin">Administrador</option>
+              <option value="superadmin">Superadministrador</option>
+            </select>
+          </div>
+          <div class="input-group" style="margin-top:16px">
+            <span class="material-symbols-outlined input-icon">domain</span>
+            <select id="uSchool" class="select-input">
+              <option value="">Sin escuela asignada</option>
+              <% schools.forEach(s => { %>
+                <option value="<%= s._id %>"><%= s.name %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="form-error" id="userFormError" style="margin-top:16px"></div>
+          <button type="submit" class="btn btn-primary btn-full" style="margin-top:20px">
+            <span class="material-symbols-outlined">check</span>
+            Crear usuario
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <%- include('../partials/footer') %>
 
   <script>
+    // ── Modal Nuevo usuario ──
+    function openUserModal() {
+      document.getElementById('userModal').classList.add('show');
+      document.body.style.overflow = 'hidden';
+    }
+    function closeUserModal() {
+      document.getElementById('userModal').classList.remove('show');
+      document.body.style.overflow = '';
+      document.getElementById('createUserForm').reset();
+      document.getElementById('userFormError').classList.remove('show');
+    }
+    document.getElementById('userModal').addEventListener('click', function (e) {
+      if (e.target === this) closeUserModal();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeUserModal();
+    });
+    // Permite abrir el modal directo con ?create=1 (por si algún link viejo apuntaba a /superadmin/users/create)
+    if (new URLSearchParams(window.location.search).get('create') === '1') {
+      openUserModal();
+    }
+
+    document.getElementById('createUserForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById('userFormError');
+      errorEl.classList.remove('show');
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Creando...';
+
+      const res = await fetch('/superadmin/users/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name:     document.getElementById('uName').value,
+          dni:      document.getElementById('uDni').value.trim() || undefined,
+          email:    document.getElementById('uEmail').value,
+          password: document.getElementById('uPassword').value,
+          role:     document.getElementById('uRole').value,
+          school:   document.getElementById('uSchool').value || null,
+        }),
+      });
+      const data = await res.json();
+      btn.disabled = false;
+      btn.innerHTML = '<span class="material-symbols-outlined">check</span> Crear usuario';
+
+      if (!res.ok) {
+        errorEl.textContent = data.error;
+        errorEl.classList.add('show');
+        return;
+      }
+      location.reload();
+    });
+
     // ── Selección ──
     const selectAll = document.getElementById('selectAll');
     const bulkBar   = document.getElementById('bulkBar');
