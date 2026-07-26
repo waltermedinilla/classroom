@@ -43,7 +43,7 @@ const courseSchema = new mongoose.Schema({
   // ver el gradebook). Se pobló por primera vez al consolidar materias duplicadas: cuando
   // dos o más Course del mismo nombre en la misma división se fusionan en una sola, los
   // owners de las eliminadas pasan acá en vez de perderse (ver scripts/merge-courses.js).
-  // Siempre chequear pertenencia con isCourseTeacher(course, userId) — nunca comparar
+  // Siempre chequear pertenencia con course.isTeacher(userId) — nunca comparar
   // solo contra `owner` directamente en código nuevo.
   coTeachers: [{
     type: mongoose.Schema.Types.ObjectId,

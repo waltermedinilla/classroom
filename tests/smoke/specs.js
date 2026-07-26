@@ -21,6 +21,11 @@ const student = {
   email:    `smoke.student.${RUN_ID}@example.com`,
   password: 'SmokeTest1234',
 };
+const coTeacher = {
+  name:     'Smoke CoTeacher',
+  email:    `smoke.coteacher.${RUN_ID}@example.com`,
+  password: 'SmokeTest1234',
+};
 
 const specs = [
   // ── Nivel 1: sin credenciales — server, registro, login ──────────────────
@@ -298,6 +303,156 @@ const specs = [
       const res = await client.get('scopedTeacher', `/courses/${state.courseId}/gradebook`, { expectStatus: 200 });
       const points = res.json.gradeMap[state.activityId]?.[state.scopedStudentId];
       assert(points === 9, `esperaba nota 9 en el gradebook, encontré ${points}`);
+    },
+  },
+
+  // ── Multi-docente: un coTeacher puede hacer todo lo que el owner (infra de esta sesión) ──
+  // Todavía no existe endpoint en la API para agregar un co-docente (lo hará
+  // scripts/merge-courses.js al fusionar materias duplicadas) — por eso el segundo spec
+  // toca Mongo directo, igual que las limpiezas de auditlogs/sugerencias más abajo.
+  {
+    id: 'coteacher-setup-create',
+    title: 'El admin da de alta un segundo docente para probar coTeachers',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const res = await client.post('admin', '/admin/users/create', {
+        body: { name: coTeacher.name, email: coTeacher.email, password: coTeacher.password, role: 'teacher' },
+        expectStatus: 201,
+      });
+      state.coTeacherId = res.json.user._id;
+    },
+  },
+  {
+    id: 'coteacher-add-to-course-db',
+    title: 'Se agrega el segundo docente a coTeachers del curso de smoke (directo en Mongo)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ env, state }) {
+      const { MongoClient, ObjectId } = require('mongodb');
+      const client = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await client.connect();
+        await client.db().collection('courses').updateOne(
+          { _id: new ObjectId(state.courseId) },
+          { $addToSet: { coTeachers: new ObjectId(state.coTeacherId) } },
+        );
+      } finally {
+        await client.close();
+      }
+    },
+  },
+  {
+    id: 'coteacher-login',
+    title: 'El co-docente inicia sesión',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      await client.post('coTeacher', '/login', {
+        body: { email: coTeacher.email, password: coTeacher.password },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'coteacher-can-create-activity',
+    title: 'El co-docente crea una actividad en el curso (no es el owner)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const res = await client.post('coTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: 'Actividad de co-docente smoke', type: 'tarea', points: '10' },
+        expectStatus: 201,
+      });
+      state.coTeacherActivityId = res.json.activity._id;
+    },
+  },
+  {
+    id: 'coteacher-can-publish-announcement',
+    title: 'El co-docente publica una novedad en el curso',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.post('coTeacher', '/announcements/create', {
+        body: { courseId: state.courseId, text: 'Novedad de co-docente smoke' },
+        expectStatus: 201,
+      });
+    },
+  },
+  {
+    id: 'coteacher-add-student-setup',
+    title: 'Se crea un alumno adicional para probar agregar/quitar por el co-docente',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const email = `smoke.coteacher.student.${RUN_ID}@example.com`;
+      const res = await client.post('admin', '/admin/users/create', {
+        body: { name: 'Smoke CoTeacher Student', email, password: 'SmokeTest1234', role: 'student' },
+        expectStatus: 201,
+      });
+      state.coTeacherStudentId    = res.json.user._id;
+      state.coTeacherStudentEmail = email;
+    },
+  },
+  {
+    id: 'coteacher-can-add-student',
+    title: 'El co-docente agrega al alumno al curso (no es el owner)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.post('coTeacher', `/courses/${state.courseId}/add-student`, {
+        body: { email: state.coTeacherStudentEmail },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'coteacher-can-remove-student',
+    title: 'El co-docente quita al mismo alumno del curso (no es el owner)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.delete('coTeacher', `/courses/${state.courseId}/students/${state.coTeacherStudentId}`, {
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'coteacher-can-grade',
+    title: 'El co-docente ve y califica una entrega de su propia actividad',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.post('scopedStudent', `/activities/${state.coTeacherActivityId}/submit`, {
+        body: { text: 'Entrega para el co-docente' },
+        expectStatus: 200,
+      });
+      const subs = await client.get('coTeacher', `/activities/${state.coTeacherActivityId}/submissions`, { expectStatus: 200 });
+      assert(subs.json.submissions.length === 1, 'debería haber exactamente 1 entrega');
+      await client.post('coTeacher', `/activities/${state.coTeacherActivityId}/grade`, {
+        body: { studentId: state.scopedStudentId, points: '8', feedback: 'Bien (co-docente)' },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'coteacher-can-customize',
+    title: 'El co-docente personaliza el curso (no es el owner)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const fd = new FormData();
+      fd.append('mode', 'gradient');
+      fd.append('color', '#123456');
+      await client.post('coTeacher', `/courses/${state.courseId}/customize`, {
+        form: fd, expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'coteacher-cleanup',
+    title: 'Limpieza: borra la actividad del co-docente y las cuentas de prueba',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      if (state.coTeacherActivityId) {
+        await client.delete('coTeacher', `/activities/${state.coTeacherActivityId}`, { expectStatus: 200 });
+      }
+      if (state.coTeacherStudentId) {
+        await client.post('admin', `/admin/users/${state.coTeacherStudentId}/delete`, { expectStatus: 200 });
+      }
+      if (state.coTeacherId) {
+        await client.post('admin', `/admin/users/${state.coTeacherId}/delete`, { expectStatus: 200 });
+      }
     },
   },
 
@@ -1191,6 +1346,7 @@ const specs = [
           state.scopedTeacherId, state.scopedStudentId, state.directivoId,
           state.courseId, state.divisionId, state.activityId,
           state.announcementId, state.teacherId, state.studentId,
+          state.coTeacherId, state.coTeacherStudentId, state.coTeacherActivityId,
         ].filter(Boolean);
         const ids = idStrings.map(s => new ObjectId(s));
 

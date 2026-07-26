@@ -33,6 +33,8 @@ const ACTIONS = {
   'course.add_student':    { label: 'agregó un alumno',         icon: 'person_add',           color: '#137333', category: 'course' },
   'course.remove_student': { label: 'quitó un alumno',          icon: 'person_remove',        color: '#ea8600', category: 'course' },
   'course.assign_teacher': { label: 'asignó docente',           icon: 'assignment_ind',       color: '#1a73e8', category: 'course' },
+  'course.add_coteacher':  { label: 'agregó un suplente',       icon: 'group_add',            color: '#1a73e8', category: 'course' },
+  'course.merge':           { label: 'fusionó materias duplicadas', icon: 'merge_type',       color: '#9334e6', category: 'course' },
 
   // ── Divisiones (Division = "1°1°", "2°A", etc.) ───────────────────────────
   'division.create':      { label: 'creó una división',        icon: 'add_box',              color: '#1a73e8', category: 'division' },

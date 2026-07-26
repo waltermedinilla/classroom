@@ -16,6 +16,14 @@ migrate-themes.js
 make-favicon.js
 list-dbs.js
 
+# Backups descargados a la raíz del proyecto (150MB+, ver routes/backup.js) — nunca al repo
+classroom-backup-*.tar.gz
+# Archivos temporales de Office (candado al tener el xlsx abierto)
+~$*
+# Planillas sueltas en la raíz con datos de alumnos/docentes/DNI — nunca al repo
+issues.txt
+Escuela_4118.xlsx
+
 # Configuración local de Claude Code: acumula comandos aprobados en la allowlist,
 # algunos de los cuales pueden incluir credenciales pasadas inline (ej: SMOKE_ADMIN_PASSWORD=...
 # en un comando de smoke test). Nunca debe subirse al repo. Ver [[production-credentials]]

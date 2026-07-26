@@ -505,7 +505,7 @@ router.post('/courses/create', async (req, res) => {
 router.get('/courses/:id/edit', async (req, res) => {
   const school = res.locals.user.school;
   const sf     = school ? { school } : {};
-  const course = await Course.findById(req.params.id).populate('division').populate('owner', 'name email');
+  const course = await Course.findById(req.params.id).populate('division').populate('owner', 'name email').populate('coTeachers', 'name email');
   if (!course) return res.status(404).send('Materia no encontrada');
   if (school && course.school?.toString() !== school.toString()) return res.status(403).send('Acceso denegado');
   const [divisions, teachers, subjects] = await Promise.all([
@@ -579,6 +579,47 @@ router.post('/courses/:id/assign-teacher', async (req, res) => {
     );
 
     res.json({ teacherName: teacher.name, teacherId: teacher._id });
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /admin/courses/:id/co-teachers — agrega un docente suplente (no reemplaza al
+// titular, a diferencia de /assign-teacher). Solo agregar por ahora — sacar suplentes
+// queda para más adelante (decisión del usuario 2026-07-25).
+router.post('/courses/:id/co-teachers', async (req, res) => {
+  try {
+    const school = res.locals.user.school;
+    const course = await Course.findById(req.params.id);
+    if (!course) return res.status(404).json({ error: 'Materia no encontrada' });
+    if (school && course.school?.toString() !== school.toString()) {
+      return res.status(403).json({ error: 'Sin acceso' });
+    }
+    const { teacherId } = req.body;
+    if (!teacherId) return res.status(400).json({ error: 'Falta el docente' });
+    const teacher = await User.findOne({ _id: teacherId, school: school || course.school });
+    if (!teacher) return res.status(400).json({ error: 'Docente no válido' });
+
+    if (course.owner.toString() === teacher._id.toString()) {
+      return res.status(400).json({ error: 'Ya es el docente titular de esta materia' });
+    }
+    if (course.coTeachers.some(t => t.toString() === teacher._id.toString())) {
+      return res.status(400).json({ error: 'Ya es suplente de esta materia' });
+    }
+
+    course.coTeachers.push(teacher._id);
+    await course.save({ validateModifiedOnly: true });
+
+    logAudit(req, 'course.add_coteacher',
+      [
+        { type: 'course', id: course._id,  name: course.name },
+        { type: 'user',   id: teacher._id, name: teacher.name },
+      ],
+      {},
+      { schoolId: course.school || null },
+    );
+
+    res.json({ teacher: { _id: teacher._id, name: teacher.name, email: teacher.email } });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
   }

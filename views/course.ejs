@@ -152,7 +152,7 @@
       <div class="people-card">
         <div class="people-card-header">
           <span class="material-symbols-outlined">school</span>
-          <h3>Profesor</h3>
+          <h3><%= (course.coTeachers && course.coTeachers.length) ? 'Docentes' : 'Profesor' %></h3>
         </div>
         <div class="person-item">
           <div class="avatar" style="background:#1a73e8"><%= course.owner.name.charAt(0).toUpperCase() %></div>
@@ -160,7 +160,20 @@
             <div class="person-name"><%= course.owner.name %></div>
             <div class="person-email"><%= course.owner.email %></div>
           </div>
+          <% if (course.coTeachers && course.coTeachers.length) { %>
+          <span class="badge-disabled" style="margin-left:auto;background:#e8f0fe;color:#1a73e8">TITULAR</span>
+          <% } %>
         </div>
+        <% (course.coTeachers || []).forEach(ct => { %>
+        <div class="person-item">
+          <div class="avatar" style="background:#9334e6"><%= ct.name.charAt(0).toUpperCase() %></div>
+          <div class="person-info">
+            <div class="person-name"><%= ct.name %></div>
+            <div class="person-email"><%= ct.email %></div>
+          </div>
+          <span class="badge-disabled" style="margin-left:auto;background:#f3e8fd;color:#9334e6">SUPLENTE</span>
+        </div>
+        <% }) %>
       </div>
       <div class="people-card">
         <div class="people-card-header">

@@ -31,6 +31,14 @@ function uniqueFilename(originalname) {
   return Date.now() + '-' + Math.random().toString(36).slice(2) + ext;
 }
 
+// Busboy (usado por multer) decodifica los headers multipart como latin1 por defecto,
+// pero los navegadores mandan el nombre del archivo en UTF-8 — sin este fix, "Guía.pdf"
+// llega como "GuÃ­a.pdf". Reinterpretar los bytes como UTF-8 recupera los acentos; en
+// nombres sin acentos (puro ASCII) el round-trip no cambia nada.
+function fixFilenameEncoding(originalname) {
+  return Buffer.from(originalname, 'latin1').toString('utf8');
+}
+
 // Multer para adjuntos del docente al crear/editar actividades
 // schoolId y courseId vienen de res.locals.user y req.body.courseId respectivamente
 const upload = multer({
@@ -185,7 +193,7 @@ router.post('/create', requireAuth, upload.array('files', 10), async (req, res) 
     (req.files || []).forEach(f => {
       attachments.push({
         type: 'file',
-        name: f.originalname,
+        name: fixFilenameEncoding(f.originalname),
         url:  `/archivos/${schoolId}/actividades/${courseId}/${f.filename}`,
         mime: f.mimetype,
       });
@@ -279,7 +287,7 @@ router.post('/upload-attachment', requireAuth, (req, res, next) => {
     }
     const schoolId = res.locals.user.school?.toString() || 'general';
     const url = `/archivos/${schoolId}/actividades/${courseId}/${req.file.filename}`;
-    res.json({ url, name: req.file.originalname, mime: req.file.mimetype });
+    res.json({ url, name: fixFilenameEncoding(req.file.originalname), mime: req.file.mimetype });
   } catch (err) {
     if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }
     res.status(500).json({ error: err.message || 'Error al subir el archivo' });
@@ -620,7 +628,7 @@ router.post('/:id/upload-submission-file', requireAuth, (req, res, next) => {
     const schoolId = res.locals.user.school?.toString() || 'general';
     res.json({
       storagePath: [schoolId, req.params.id, userId, req.file.filename].join('/'),
-      name:        req.file.originalname,
+      name:        fixFilenameEncoding(req.file.originalname),
       filename:    req.file.filename,
       mime:        req.file.mimetype,
       size:        req.file.size,
@@ -689,7 +697,7 @@ router.post('/:id/submit', requireAuth, conditionalMultipart, async (req, res) =
 
     // Archivos que llegan directo en el FormData (flujo viejo, compatibilidad)
     const multipartFiles = (req.files || []).map(f => ({
-      name:        f.originalname,
+      name:        fixFilenameEncoding(f.originalname),
       filename:    f.filename,
       storagePath: [schoolId, req.params.id, userId, f.filename].join('/'),
       mime:        f.mimetype,

@@ -353,6 +353,7 @@ router.get('/:id', requireAuth, async (req, res) => {
   try {
     const course = await Course.findById(req.params.id)
       .populate('owner', 'name email')
+      .populate('coTeachers', 'name email')
       .populate('students', 'name email dni active avatar')
       .populate('division', 'name');
     if (!course) return res.status(404).send('Curso no encontrado');

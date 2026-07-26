@@ -78,6 +78,46 @@
             </p>
           <% } %>
 
+          <% if (course) { %>
+          <label style="display:block;font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">Suplentes</label>
+          <div id="coTeachersList" style="margin-bottom:10px">
+            <% if (!course.coTeachers || course.coTeachers.length === 0) { %>
+              <p style="font-size:13px;color:var(--text-hint)" id="noCoTeachersMsg">Sin suplentes agregados todavía.</p>
+            <% } %>
+            <% (course.coTeachers || []).forEach(ct => { %>
+              <div class="person-item" style="padding:4px 0" data-coteacher-id="<%= ct._id %>">
+                <div class="avatar" style="width:32px;height:32px;font-size:14px;background:#9334e6"><%= ct.name.charAt(0).toUpperCase() %></div>
+                <div class="person-info">
+                  <div class="person-name" style="font-size:13px"><%= ct.name %></div>
+                  <div class="person-email" style="font-size:12px"><%= ct.email %></div>
+                </div>
+              </div>
+            <% }) %>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:4px">
+            <div class="input-group" style="flex:1;margin-bottom:0">
+              <span class="material-symbols-outlined input-icon">group_add</span>
+              <select id="newCoTeacherId" style="flex:1;border:none;background:transparent;font-size:14px;color:var(--text-primary);outline:none;padding:0">
+                <option value="">Agregar suplente...</option>
+                <% teachers.forEach(t => { %>
+                  <%
+                    const isOwner   = course.owner && course.owner._id?.toString() === t._id.toString();
+                    const isAlready = (course.coTeachers || []).some(ct => ct._id.toString() === t._id.toString());
+                  %>
+                  <% if (!isOwner && !isAlready) { %>
+                    <option value="<%= t._id %>"><%= t.name %> (<%= t.email %>)</option>
+                  <% } %>
+                <% }) %>
+              </select>
+            </div>
+            <button type="button" class="btn btn-outline" id="addCoTeacherBtn">Agregar</button>
+          </div>
+          <div class="form-error" id="coTeacherError" style="margin-bottom:8px"></div>
+          <p style="font-size:12px;color:var(--text-hint);margin-top:0;margin-bottom:16px">
+            Los suplentes tienen los mismos permisos que el docente titular sobre esta materia (crear actividades, calificar, gestionar alumnos).
+          </p>
+          <% } %>
+
           <label style="display:block;font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">Aula (opcional)</label>
           <div class="input-group" style="margin-bottom:16px">
             <span class="material-symbols-outlined input-icon">meeting_room</span>
@@ -126,6 +166,33 @@
       }
       window.location.href = '/admin/courses';
     });
+
+    <% if (course) { %>
+    document.getElementById('addCoTeacherBtn').addEventListener('click', async () => {
+      const select  = document.getElementById('newCoTeacherId');
+      const errorEl = document.getElementById('coTeacherError');
+      errorEl.classList.remove('show');
+      const teacherId = select.value;
+      if (!teacherId) return;
+
+      const btn = document.getElementById('addCoTeacherBtn');
+      btn.disabled = true;
+      const res  = await fetch('/admin/courses/<%= course._id %>/co-teachers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teacherId }),
+      });
+      const data = await res.json();
+      btn.disabled = false;
+
+      if (!res.ok) {
+        errorEl.textContent = data.error;
+        errorEl.classList.add('show');
+        return;
+      }
+      window.location.reload();
+    });
+    <% } %>
   </script>
 </body>
 </html>
