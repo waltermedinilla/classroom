@@ -289,6 +289,28 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ## Historial de Cambios (Changelog)
 
+### 2026-07-28 — Previsualización embebida de Google Drive / Docs / Sheets / Slides
+
+**Pedido**: que el docente pueda adjuntar un enlace a un archivo de Google Drive en una tarea.
+
+**Aclaración**: adjuntar links **ya funcionaba** (botón "Agregar enlace" en `/activities/new` y en el modal de creación; el backend los guarda como `{ type:'link', url, name }`). No hizo falta tocar backend. Lo que faltaba era la previsualización: al hacer click, todo link que no fuera de YouTube abría una pestaña nueva.
+
+**Cambio** (`public/js/course.js`, solo frontend):
+- Helper nuevo `_gDriveEmbedUrl(url)` — devuelve la URL `/preview` si reconoce un archivo de Google embebible, o `''` si no. Al devolver `''` el flujo cae en el `window.open` de siempre, así que **cualquier formato no reconocido sigue comportándose exactamente como antes**.
+- Formatos soportados: `drive.google.com/file/d/ID/view`, `drive.google.com/open?id=ID` (formato viejo de compartir), y `docs.google.com/{document,spreadsheets,presentation}/d/ID/edit`.
+- **Google Forms queda deliberadamente afuera**: el alumno necesita interactuar y completar, y embeberlo en un modal es peor experiencia que abrirlo en su propia pestaña.
+- `openAttachmentPreview`: branch nuevo que renderea el iframe de Drive, siguiendo el mismo patrón que el de YouTube.
+- El botón de la barra superior pasa a "Abrir en Google Drive". **Por qué no "Descargar"**: el atributo `download` de `<a>` es ignorado en cross-origin, así que ese botón no haría nada. Además es la salida del alumno si el archivo no está compartido (ver limitación abajo).
+- `buildAttachmentListHTML`: el ícono del ítem ahora anticipa lo que va a pasar al click — `play_circle` (YouTube), `visibility` (Drive, previsualiza en el modal), `open_in_new` (el resto, abre pestaña).
+
+**⚠️ Limitación conocida**: el archivo debe estar compartido en Drive como **"cualquiera con el enlace"**. Si queda restringido, Google muestra su propia pantalla de "solicitar acceso" *dentro* del iframe. No se puede detectar desde el frontend (es cross-origin), por eso el botón "Abrir en Google Drive" siempre está disponible como escape. Sería una mejora futura avisarlo en la UI al pegar un link de Drive.
+
+**Verificado**:
+- 12 formatos de URL probados contra la función: los 6 de Google embeben correctamente; Forms, YouTube, sitios comunes, URL vacía, `null` y URLs malformadas caen en el fallback sin excepciones.
+- En el navegador, los flujos preexistentes intactos: YouTube sigue embebiendo, los links comunes siguen abriendo pestaña, el PDF sigue con su visor y botón "Descargar".
+- Flujo real de punta a punta: crear actividad con link de Drive → se guarda → se renderea con ícono `visibility` → el click abre el modal con `.../preview` y el botón correcto.
+- Suite smoke: 93/94 (el único fallo sigue siendo el ambiental de paginación, ver Issues Conocidos #8).
+
 ### 2026-07-28 — Fix CRÍTICO: el deploy automático se suicidaba a mitad de camino
 
 **Síntoma**: tras pushear, el footer de las páginas seguía mostrando `v1.0.2` mientras `package.json` en el disco del servidor ya decía `v1.0.4`. El sitio respondía HTTP 200 y no parecía roto.

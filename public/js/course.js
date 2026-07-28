@@ -43,6 +43,40 @@ function _ytId(url) {
   return m ? m[1] : '';
 }
 
+// ─── Google Drive / Docs / Sheets / Slides ───
+// Devuelve la URL de embed (`/preview`) si el link es de un archivo de Google que se puede
+// previsualizar embebido, o '' si no lo es. Al devolver '' el flujo cae en el comportamiento
+// de siempre (abrir en pestaña nueva), así que cualquier formato de URL que no reconozcamos
+// sigue funcionando exactamente como antes.
+//
+// Formatos soportados:
+//   drive.google.com/file/d/ID/view          → drive.google.com/file/d/ID/preview
+//   drive.google.com/open?id=ID              → drive.google.com/file/d/ID/preview
+//   docs.google.com/document/d/ID/edit       → docs.google.com/document/d/ID/preview
+//   docs.google.com/spreadsheets/d/ID/edit   → .../preview   (idem presentation)
+//
+// Google Forms queda deliberadamente afuera: el alumno necesita interactuar y completar,
+// y embeberlo en un modal es peor experiencia que abrirlo en su propia pestaña.
+function _gDriveEmbedUrl(url) {
+  const u = url || '';
+  if (!/^https?:\/\/(drive|docs)\.google\.com\//i.test(u)) return '';
+  if (/\/forms\//i.test(u)) return '';
+
+  // Archivo suelto en Drive (PDF, imagen, video, lo que sea)
+  const file = u.match(/drive\.google\.com\/file\/d\/([A-Za-z0-9_-]+)/i);
+  if (file) return `https://drive.google.com/file/d/${file[1]}/preview`;
+
+  // Link de compartir viejo: /open?id=...
+  const open = u.match(/drive\.google\.com\/open\?id=([A-Za-z0-9_-]+)/i);
+  if (open) return `https://drive.google.com/file/d/${open[1]}/preview`;
+
+  // Documento nativo de Google (Docs / Sheets / Slides)
+  const doc = u.match(/docs\.google\.com\/(document|spreadsheets|presentation)\/d\/([A-Za-z0-9_-]+)/i);
+  if (doc) return `https://docs.google.com/${doc[1]}/d/${doc[2]}/preview`;
+
+  return '';
+}
+
 // Construye el HTML de la lista de adjuntos (archivos y links) de una actividad
 // Cada ítem usa data-atributos para pasar los datos al previsualizador al hacer click
 function buildAttachmentListHTML(attachments) {
@@ -64,7 +98,9 @@ function buildAttachmentListHTML(attachments) {
     // Link
     const domain  = getDomain(a.url);
     const isYt    = _isYoutube(a.url);
-    const linkIcon = isYt ? 'play_circle' : 'open_in_new';
+    // El ícono anticipa lo que va a pasar al hacer click: reproducir (YouTube), previsualizar
+    // dentro del modal (Drive), o abrir en otra pestaña (el resto).
+    const linkIcon = isYt ? 'play_circle' : _gDriveEmbedUrl(a.url) ? 'visibility' : 'open_in_new';
     return `<div class="att-item" style="cursor:pointer"
       data-att-type="link" data-att-name="${escAtt(a.name || domain)}"
       data-att-url="${escAtt(a.url)}" data-att-mime=""
@@ -92,10 +128,11 @@ function handleAttachmentClick(el) {
 }
 
 // Abre el previsualizador:
-//  - PDF       → iframe inline en modal pantalla completa + botón Descargar
-//  - YouTube   → iframe embed en modal pantalla completa + botón Abrir en YouTube
-//  - Word/Excel → descarga directa inmediata (sin modal)
-//  - Otro link → abre en nueva pestaña (la mayoría bloquea embedding)
+//  - PDF        → iframe inline en modal pantalla completa + botón Descargar
+//  - YouTube    → iframe embed en modal pantalla completa + botón Abrir en YouTube
+//  - Google Drive/Docs/Sheets/Slides → iframe /preview + botón Abrir en Google Drive
+//  - Word/Excel → visor de Office Online (o descarga si estamos en local)
+//  - Otro link  → abre en nueva pestaña (la mayoría bloquea embedding)
 function openAttachmentPreview(att) {
   const name     = att.name || '';
   const url      = att.url  || '';
@@ -103,9 +140,11 @@ function openAttachmentPreview(att) {
   const isOffice = att.type === 'file' && _isOffice(name);
   const isImage  = att.type === 'file' && _isImage(name);
   const isYt     = _isYoutube(url);
+  // '' si no es un link de Google embebible → cae en el window.open de siempre
+  const gDriveUrl = att.type === 'link' ? _gDriveEmbedUrl(url) : '';
 
-  // Links que no son YouTube → abrir en nueva pestaña
-  if (att.type === 'link' && !isYt) {
+  // Links que no son YouTube ni Google Drive → abrir en nueva pestaña
+  if (att.type === 'link' && !isYt && !gDriveUrl) {
     window.open(url, '_blank', 'noopener');
     return;
   }
@@ -157,6 +196,14 @@ function openAttachmentPreview(att) {
     bodyContent = `<iframe src="https://www.youtube.com/embed/${vid}?autoplay=1&rel=0"
       class="att-preview-frame" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>`;
 
+  } else if (gDriveUrl) {
+    // Google sirve /preview con X-Frame-Options que permite el embed. Si el archivo NO está
+    // compartido como "cualquiera con el enlace", Google muestra su propia pantalla de
+    // "solicitar acceso" DENTRO del iframe — no podemos detectarlo desde acá (es cross-origin),
+    // por eso el botón "Abrir en Google Drive" de la barra superior es la salida para el alumno.
+    bodyContent = `<iframe src="${gDriveUrl}" class="att-preview-frame"
+      allow="autoplay" allowfullscreen></iframe>`;
+
   } else if (att.type === 'file') {
     // Formato sin previewer (ej: ZIP). Muestra aviso + botón para descargar.
     bodyContent = `<div class="att-preview-no-support">
@@ -173,9 +220,14 @@ function openAttachmentPreview(att) {
   const downloadUrl = servesInline
     ? url + (url.includes('?') ? '&' : '?') + 'dl=1'
     : url;
-  const actionBtn = isYt
+  // Para links externos (YouTube, Drive) el botón abre el original en una pestaña nueva:
+  // el atributo `download` de <a> es ignorado en cross-origin, así que ofrecer "Descargar"
+  // ahí no haría nada. Además es la salida del alumno si el archivo de Drive no está
+  // compartido y el iframe le muestra "solicitar acceso".
+  const externalLabel = isYt ? 'Abrir en YouTube' : gDriveUrl ? 'Abrir en Google Drive' : '';
+  const actionBtn = externalLabel
     ? `<a href="${url}" target="_blank" rel="noopener" class="att-preview-btn">
-        <span class="material-symbols-outlined">open_in_new</span> Abrir en YouTube
+        <span class="material-symbols-outlined">open_in_new</span> ${externalLabel}
        </a>`
     : `<a href="${downloadUrl}" download="${escAtt(name)}" class="att-preview-btn">
         <span class="material-symbols-outlined">download</span> Descargar
