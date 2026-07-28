@@ -11,6 +11,7 @@ const User       = require('../models/User');
 const XLSX       = require('xlsx');
 const { requireAuth } = require('../middleware/auth');
 const { logAudit }    = require('../middleware/audit');
+const { uploadLimiter } = require('../middleware/rate-limits');
 const ActivityTemplate   = require('../models/ActivityTemplate');
 const TemplateAssignment = require('../models/TemplateAssignment');
 const { computeAutoGrade } = require('../services/autoGrader');
@@ -244,9 +245,9 @@ router.get('/available-templates', requireAuth, async (req, res) => {
 
 // links es un JSON string de array: [{ url, name? }]
 // Retorna: { activity } con autor populado (201)
-router.post('/create', requireAuth, upload.array('files', 10), async (req, res) => {
+router.post('/create', requireAuth, uploadLimiter, upload.array('files', 10), async (req, res) => {
   try {
-    const { courseId, title, description, dueDate, availableFrom, points, links, type, templateId } = req.body;
+    const { courseId, title, description, dueDate, availableFrom, points, links, type, templateId, allowResubmission } = req.body;
 
     const course = await Course.findById(courseId);
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
@@ -321,6 +322,7 @@ router.post('/create', requireAuth, upload.array('files', 10), async (req, res) 
       availableFrom: availableFrom || new Date(), // Por defecto: disponible de inmediato
       points:        resolvedPoints,
       type:          type || 'tarea',
+      allowResubmission: !!allowResubmission,
       attachments,
       ...(templateSnapshot ? { templateSnapshot } : {}),
     });
@@ -368,7 +370,7 @@ const uploadSingle = multer({
 // Pre-sube un adjunto antes de crear la actividad; courseId viene en la query string.
 // Body multipart: { file }
 // Retorna: { url, name, mime }
-router.post('/upload-attachment', requireAuth, (req, res, next) => {
+router.post('/upload-attachment', requireAuth, uploadLimiter, (req, res, next) => {
   // Intercepta errores de multer para devolver JSON en español en lugar del mensaje en inglés
   uploadSingle.single('file')(req, res, (err) => {
     if (err) {
@@ -627,11 +629,11 @@ router.patch('/:id/toggle-late', requireAuth, async (req, res) => {
 
 // PUT /activities/:id
 // Edita campos básicos de la actividad (no modifica adjuntos ni calificaciones)
-// Body: { title, description?, dueDate?, availableFrom?, points?, type? }
+// Body: { title, description?, dueDate?, availableFrom?, points?, type?, allowResubmission? }
 // Retorna: { activity }
 router.put('/:id', requireAuth, async (req, res) => {
   try {
-    const { title, description, dueDate, availableFrom, points, type } = req.body;
+    const { title, description, dueDate, availableFrom, points, type, allowResubmission } = req.body;
     const activity = await Activity.findById(req.params.id);
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
     const course = await Course.findById(activity.course);
@@ -646,6 +648,7 @@ router.put('/:id', requireAuth, async (req, res) => {
     activity.availableFrom = availableFrom || activity.availableFrom;
     activity.points        = points !== '' && points != null ? Number(points) : null;
     if (type) activity.type = type;
+    activity.allowResubmission = !!allowResubmission;
     await activity.save();
 
     logAudit(req, 'activity.edit',
@@ -687,8 +690,38 @@ router.get('/submission-file/:filename', requireAuth, async (req, res) => {
     const filePath = path.join(ENTREGAS_BASE, file.storagePath);
     if (!fs.existsSync(filePath)) return res.status(404).send('Archivo no encontrado en disco');
 
-    // Fuerza descarga con el nombre original del archivo (respeta caracteres UTF-8)
-    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+    // Por defecto sirve inline (permite que el navegador o el previewer del frontend muestren
+    // el PDF/imagen embebidos en un iframe). Con ?dl=1 fuerza descarga. Antes SIEMPRE forzaba
+    // descarga, lo que rompía la previsualización: aunque el frontend abriera un modal con
+    // <iframe src="...">, el navegador disparaba el "Save as…" al recibir el header attachment.
+    const disposition = req.query.dl === '1' ? 'attachment' : 'inline';
+    res.setHeader('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+    res.sendFile(filePath);
+  } catch {
+    res.status(500).send('Error del servidor');
+  }
+});
+
+// GET /activities/:id/staged-file/:filename
+// Sirve inline un archivo YA pre-subido por el alumno pero AÚN NO enviado como entrega
+// (o sea, el archivo está en disco en el path final pero no hay Submission todavía, o hay
+// una Submission distinta y este es un archivo nuevo por adjuntar).
+// Seguridad: solo devuelve el archivo si existe en {schoolId}/{actId}/{userId}/{filename},
+// el path bajo el propio dir del alumno — imposible ver archivos de otros pasando filenames.
+router.get('/:id/staged-file/:filename', requireAuth, async (req, res) => {
+  try {
+    const { id: activityId, filename } = req.params;
+    const userId   = res.locals.user._id.toString();
+    const schoolId = res.locals.user.school?.toString() || 'general';
+
+    // path.join normaliza .. y separadores; el filename viene de multer (timestamp+random+ext)
+    // así que no contiene barras, pero verificamos igual con basename para no dejar pasar traversal.
+    const safeName = path.basename(filename);
+    const filePath = path.join(ENTREGAS_BASE, schoolId, activityId, userId, safeName);
+    if (!fs.existsSync(filePath)) return res.status(404).send('Archivo no encontrado');
+
+    const disposition = req.query.dl === '1' ? 'attachment' : 'inline';
+    res.setHeader('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(safeName)}`);
     res.sendFile(filePath);
   } catch {
     res.status(500).send('Error del servidor');
@@ -701,7 +734,7 @@ router.get('/submission-file/:filename', requireAuth, async (req, res) => {
 // en el JSON del submit final (ver POST /:id/submit).
 // Body multipart: { file }
 // Retorna: { storagePath, name, filename, mime, size }
-router.post('/:id/upload-submission-file', requireAuth, (req, res, next) => {
+router.post('/:id/upload-submission-file', requireAuth, uploadLimiter, (req, res, next) => {
   // Intercepta errores de multer para devolver JSON en español, como en /upload-attachment
   submissionUpload.single('file')(req, res, (err) => {
     if (err) {
@@ -731,6 +764,12 @@ router.post('/:id/upload-submission-file', requireAuth, (req, res, next) => {
     if (activity.dueDate && new Date(activity.dueDate) < new Date() && !activity.allowLateSubmissions) {
       fs.unlinkSync(req.file.path);
       return res.status(403).json({ error: 'El plazo de entrega ha vencido. El docente debe habilitar las entregas tardías.' });
+    }
+    // Bloquea si ya entregó antes y el docente no habilitó la edición
+    const existingSub = await Submission.findOne({ activity: req.params.id, student: userId });
+    if (existingSub && !activity.allowResubmission) {
+      fs.unlinkSync(req.file.path);
+      return res.status(403).json({ error: 'Esta actividad no permite modificar la entrega una vez enviada.' });
     }
 
     const schoolId = res.locals.user.school?.toString() || 'general';
@@ -765,7 +804,7 @@ const conditionalMultipart = (req, res, next) => {
   next();
 };
 
-router.post('/:id/submit', requireAuth, conditionalMultipart, async (req, res) => {
+router.post('/:id/submit', requireAuth, uploadLimiter, conditionalMultipart, async (req, res) => {
   try {
     const activity = await Activity.findById(req.params.id);
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
@@ -781,6 +820,13 @@ router.post('/:id/submit', requireAuth, conditionalMultipart, async (req, res) =
     // Bloquea si el plazo venció y el docente no habilitó entregas tardías
     if (activity.dueDate && new Date(activity.dueDate) < new Date() && !activity.allowLateSubmissions) {
       return res.status(403).json({ error: 'El plazo de entrega ha vencido. El docente debe habilitar las entregas tardías.' });
+    }
+
+    // Si ya entregó antes y el docente no habilitó la edición, la entrega queda fija:
+    // el alumno solo puede visualizarla, no reenviarla.
+    const existing = await Submission.findOne({ activity: req.params.id, student: userId });
+    if (existing && !activity.allowResubmission) {
+      return res.status(403).json({ error: 'Esta actividad no permite modificar la entrega una vez enviada.' });
     }
 
     const schoolId = res.locals.user.school?.toString() || 'general';
@@ -813,8 +859,6 @@ router.post('/:id/submit', requireAuth, conditionalMultipart, async (req, res) =
     }));
 
     const newFiles = [...preUploadedFiles, ...multipartFiles];
-
-    const existing = await Submission.findOne({ activity: req.params.id, student: userId });
 
     let filesToSave;
     if (newFiles.length > 0) {

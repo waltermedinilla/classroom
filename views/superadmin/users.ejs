@@ -105,6 +105,7 @@
               <th>Email</th>
               <th>Rol</th>
               <th>Escuela</th>
+              <th title="Novedades publicadas · Actividades creadas · Mensajes escritos">Nov·Act·Msg</th>
               <th>Acciones</th>
             </tr>
           </thead>
@@ -133,6 +134,9 @@
                   <% } else { %>
                     <span style="color:var(--text-hint);font-size:13px">—</span>
                   <% } %>
+                </td>
+                <td>
+                  <%- include('../partials/user-activity-stats', { stats: activityStats.get(u._id.toString()) }) %>
                 </td>
                 <td>
                   <div style="display:flex;gap:8px;align-items:center">

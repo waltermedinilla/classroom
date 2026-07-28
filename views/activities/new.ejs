@@ -166,6 +166,15 @@
         <div class="sidebar-hint">Vacío = sin fecha límite</div>
       </div>
 
+      <div class="sidebar-card">
+        <div class="sidebar-label">Edición del alumno</div>
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:14px;cursor:pointer;padding:4px 0">
+          <input type="checkbox" id="sAllowResubmission" style="margin-top:3px">
+          <span>Permitir que el alumno edite su entrega después de enviarla</span>
+        </label>
+        <div class="sidebar-hint">Sin marcar: una vez entregada, el alumno solo puede visualizarla.</div>
+      </div>
+
     </aside>
   </div>
 
@@ -462,6 +471,7 @@
       fd.append('points', document.getElementById('sPoints').value || '');
       fd.append('dueDate', document.getElementById('sDueDate').value || '');
       fd.append('availableFrom', document.getElementById('sAvailableFrom').value || '');
+      fd.append('allowResubmission', document.getElementById('sAllowResubmission').checked ? '1' : '');
       fd.append('uploadedFiles', JSON.stringify(Object.values(actUploadedFiles)));
       fd.append('links', JSON.stringify(actLinks));
 

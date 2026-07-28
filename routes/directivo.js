@@ -507,7 +507,7 @@ router.get('/students', async (req, res) => {
 router.get('/students/:id', async (req, res) => {
   const school = res.locals.user.school;
   try {
-    const student = await User.findById(req.params.id).select('_id name email dni active role school createdAt');
+    const student = await User.findById(req.params.id).select('_id name email dni active role school createdAt phone instagram facebook');
     if (!student) return res.status(404).send('Alumno no encontrado');
     if (student.role !== 'student') return res.status(404).send('El usuario no es alumno');
     if (school && student.school?.toString() !== school.toString()) return res.status(403).send('Acceso denegado');
@@ -688,7 +688,7 @@ router.get('/teachers', async (req, res) => {
 router.get('/teachers/:id', async (req, res) => {
   const school = res.locals.user.school;
   try {
-    const teacher = await User.findById(req.params.id).select('_id name email active role school createdAt');
+    const teacher = await User.findById(req.params.id).select('_id name email active role school createdAt phone instagram facebook');
     if (!teacher) return res.status(404).send('Docente no encontrado');
     // Admins también pueden ser owner de un curso; el listado /directivo/teachers los incluye
     // así que este perfil debe aceptarlos, sino los links caerían en 404.

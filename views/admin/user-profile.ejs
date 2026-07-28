@@ -42,6 +42,7 @@
             <strong><%= totalStudents %></strong>&nbsp;alumno<%= totalStudents !== 1 ? 's' : '' %> en total
           </div>
         </div>
+        <%- include('../partials/contact-info', { person: target }) %>
       </div>
       <div style="margin-left:auto;display:flex;flex-direction:column;gap:10px;align-items:stretch;min-width:200px">
         <% const isProtected = target.email === PROTECTED_ADMIN_EMAIL || target.role === 'superadmin'; %>

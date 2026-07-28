@@ -1,0 +1,35 @@
+<%# Chips de contacto de solo lectura. Espera `person` (User) en el scope del include.
+    Los handles ya están saneados al guardar (routes/courses.js), pero igual se
+    interpolan con el tag de output que escapa por defecto, para que EJS escape por las dudas. %>
+<% if (person.phone || person.instagram || person.facebook) { %>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
+    <% if (person.phone) { %>
+      <a href="tel:<%= person.phone.replace(/[^\d+]/g, '') %>" title="Llamar"
+         style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:var(--surface-variant,#f1f3f4);border-radius:20px;font-size:13px;color:var(--text);text-decoration:none">
+        <span class="material-symbols-outlined" style="font-size:16px;color:#137333">call</span>
+        <%= person.phone %>
+      </a>
+      <a href="https://wa.me/<%= person.phone.replace(/\D/g, '') %>" target="_blank" rel="noopener noreferrer" title="WhatsApp"
+         style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:var(--surface-variant,#f1f3f4);border-radius:20px;font-size:13px;color:var(--text);text-decoration:none">
+        <span class="material-symbols-outlined" style="font-size:16px;color:#25d366">chat</span>
+        WhatsApp
+      </a>
+    <% } %>
+    <% if (person.instagram) { %>
+      <a href="https://instagram.com/<%= person.instagram %>" target="_blank" rel="noopener noreferrer"
+         style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:var(--surface-variant,#f1f3f4);border-radius:20px;font-size:13px;color:var(--text);text-decoration:none">
+        <span class="material-symbols-outlined" style="font-size:16px;color:#e1306c">photo_camera</span>
+        @<%= person.instagram %>
+      </a>
+    <% } %>
+    <% if (person.facebook) { %>
+      <a href="https://facebook.com/<%= person.facebook %>" target="_blank" rel="noopener noreferrer"
+         style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:var(--surface-variant,#f1f3f4);border-radius:20px;font-size:13px;color:var(--text);text-decoration:none">
+        <span class="material-symbols-outlined" style="font-size:16px;color:#1877f2">group</span>
+        Facebook
+      </a>
+    <% } %>
+  </div>
+<% } else { %>
+  <p style="font-size:13px;color:var(--text-hint);margin-top:10px">Sin información de contacto</p>
+<% } %>

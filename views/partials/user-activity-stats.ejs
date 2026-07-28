@@ -1,0 +1,18 @@
+<%# Partial: 3 chips coloreados con la cantidad de novedades / actividades / mensajes
+    que el usuario ha PUBLICADO (docente-centered). Consume `stats` = { novedades, actividades, mensajes }
+    del helper services/userActivityStats.js (ya con default 0/0/0). %>
+<% const s = stats || { novedades: 0, actividades: 0, mensajes: 0 }; %>
+<div style="display:inline-flex;gap:6px;font-family:monospace">
+  <span title="Novedades publicadas: <%= s.novedades %>"
+        style="min-width:28px;padding:2px 6px;text-align:center;border-radius:10px;font-size:12px;font-weight:600;background:<%= s.novedades > 0 ? '#e8f0fe' : 'transparent' %>;color:<%= s.novedades > 0 ? '#1a73e8' : 'var(--text-hint,#9aa0a6)' %>;border:1px solid <%= s.novedades > 0 ? '#1a73e8' : 'var(--divider,#e0e0e0)' %>">
+    <%= s.novedades %>
+  </span>
+  <span title="Actividades creadas: <%= s.actividades %>"
+        style="min-width:28px;padding:2px 6px;text-align:center;border-radius:10px;font-size:12px;font-weight:600;background:<%= s.actividades > 0 ? '#fef7e0' : 'transparent' %>;color:<%= s.actividades > 0 ? '#e37400' : 'var(--text-hint,#9aa0a6)' %>;border:1px solid <%= s.actividades > 0 ? '#e37400' : 'var(--divider,#e0e0e0)' %>">
+    <%= s.actividades %>
+  </span>
+  <span title="Mensajes / comentarios: <%= s.mensajes %>"
+        style="min-width:28px;padding:2px 6px;text-align:center;border-radius:10px;font-size:12px;font-weight:600;background:<%= s.mensajes > 0 ? '#e6f4ea' : 'transparent' %>;color:<%= s.mensajes > 0 ? '#137333' : 'var(--text-hint,#9aa0a6)' %>;border:1px solid <%= s.mensajes > 0 ? '#137333' : 'var(--divider,#e0e0e0)' %>">
+    <%= s.mensajes %>
+  </span>
+</div>

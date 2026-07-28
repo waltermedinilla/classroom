@@ -209,6 +209,31 @@ router.post('/join', requireAuth, async (req, res) => {
   }
 });
 
+// Limpia un celular: conserva dígitos, +, espacios, guiones y paréntesis; exige 7-20 caracteres.
+function sanitizePhone(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return { value: '', error: null };
+  if (!/^[0-9+\-\s()]{7,20}$/.test(value)) {
+    return { value: null, error: 'El celular tiene un formato inválido' };
+  }
+  return { value, error: null };
+}
+
+// Normaliza un handle de red social: acepta "@user", "user" o una URL completa del dominio
+// dado, y devuelve solo el handle limpio (sin @, sin dominio, sin query string ni path extra).
+// Nunca se guarda la URL completa — se reconstruye al mostrarla.
+function sanitizeSocialHandle(raw, domain) {
+  let value = String(raw || '').trim();
+  if (!value) return { value: '', error: null };
+  value = value.replace(/^https?:\/\//i, '').replace(/^www\./i, '');
+  if (value.toLowerCase().startsWith(domain + '/')) value = value.slice(domain.length + 1);
+  value = value.split('?')[0].split('/')[0].replace(/^@/, '');
+  if (!/^[a-zA-Z0-9_.\-]{1,50}$/.test(value)) {
+    return { value: null, error: 'El usuario/link no tiene un formato válido' };
+  }
+  return { value, error: null };
+}
+
 // GET /courses/profile
 router.get('/profile', requireAuth, async (req, res) => {
   try {
@@ -345,6 +370,37 @@ router.post('/profile/change-email', requireAuth, async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// PATCH /courses/profile/contact
+// El propio usuario actualiza sus datos de contacto (celular, Instagram, Facebook). Todos
+// los campos son opcionales; mandar '' borra el campo. Solo se guarda el handle/número
+// limpio — el link completo (instagram.com/…, wa.me/…) se arma al mostrarlo, nunca al guardar.
+router.patch('/profile/contact', requireAuth, async (req, res) => {
+  try {
+    const phoneResult    = sanitizePhone(req.body.phone);
+    const instaResult    = sanitizeSocialHandle(req.body.instagram, 'instagram.com');
+    const facebookResult = sanitizeSocialHandle(req.body.facebook, 'facebook.com');
+
+    const error = phoneResult.error || instaResult.error || facebookResult.error;
+    if (error) return res.status(400).json({ error });
+
+    const user = await User.findByIdAndUpdate(req.userId, {
+      phone:     phoneResult.value || null,
+      instagram: instaResult.value || null,
+      facebook:  facebookResult.value || null,
+    }, { new: true, runValidators: true });
+    invalidateUser(user._id);
+
+    logAudit(req, 'user.contact_change',
+      [{ type: 'user', id: user._id, name: user.name }],
+      {},
+    );
+
+    res.json({ ok: true, phone: user.phone, instagram: user.instagram, facebook: user.facebook });
+  } catch {
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

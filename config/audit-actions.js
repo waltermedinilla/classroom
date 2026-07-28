@@ -49,6 +49,7 @@ const ACTIONS = {
   'user.reset_password':  { label: 'reseteó la contraseña de', icon: 'lock_reset',           color: '#ea8600', category: 'user' },
   'user.password_change': { label: 'cambió su contraseña',     icon: 'password',             color: '#5f6368', category: 'user' },
   'user.email_change':    { label: 'cambió su correo',         icon: 'alternate_email',      color: '#5f6368', category: 'user' },
+  'user.contact_change':  { label: 'actualizó su contacto',    icon: 'contact_phone',        color: '#5f6368', category: 'user' },
   'user.impersonate':     { label: 'inició suplantación de',   icon: 'visibility',           color: '#9334e6', category: 'user' },
   'user.bulk_role':       { label: 'cambió el rol en masa',    icon: 'group',                color: '#9334e6', category: 'user' },
   'user.bulk_school':     { label: 'asignó escuela en masa',   icon: 'group',                color: '#1a73e8', category: 'user' },

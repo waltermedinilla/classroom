@@ -157,9 +157,13 @@ router.get('/users', async (req, res) => {
     ? await Division.find({ school }).sort({ name: 1 }).select('_id name').lean()
     : [];
 
+  // Contadores para la columna "Nov·Act·Msg" (una consulta bulk por métrica, no una por usuario)
+  const { getUserActivityStats } = require('../services/userActivityStats');
+  const activityStats = await getUserActivityStats(users.map(u => u._id));
+
   const totalPages  = Math.ceil(total / LIMIT);
   const queryParams = { ...(role && { role }), ...(search && { search }) };
-  res.render('admin/users', { users, enrolledMap, divisions, currentRole: role || '', search: search || '', page, totalPages, total, queryParams });
+  res.render('admin/users', { users, enrolledMap, activityStats, divisions, currentRole: role || '', search: search || '', page, totalPages, total, queryParams });
 });
 
 router.get('/users/create', async (req, res) => {

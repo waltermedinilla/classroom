@@ -63,6 +63,7 @@
               <th>Usuario</th>
               <th>Email</th>
               <th>Rol</th>
+              <th title="Novedades publicadas · Actividades creadas · Mensajes escritos">Nov·Act·Msg</th>
               <th>Registro</th>
               <th>Acciones</th>
             </tr>
@@ -89,6 +90,9 @@
                 </td>
                 <td class="td-email"><%= u.email %></td>
                 <td><span class="role-badge role-<%= u.role %>"><%= roleNames[u.role] || u.role %></span></td>
+                <td>
+                  <%- include('../partials/user-activity-stats', { stats: activityStats.get(u._id.toString()) }) %>
+                </td>
                 <td class="td-date"><%= new Date(u.createdAt).toLocaleDateString('es-ES', { day:'numeric', month:'short', year:'numeric' }) %></td>
                 <td>
                   <a href="/admin/users/<%= u._id %>" class="btn btn-outline" style="padding:6px 16px;font-size:13px">Ver perfil</a>

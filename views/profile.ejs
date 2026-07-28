@@ -106,6 +106,35 @@
       </div>
     </div>
 
+    <!-- Contacto y redes -->
+    <section class="section" style="margin-top:32px">
+      <div class="section-header">
+        <span class="material-symbols-outlined section-icon">contact_phone</span>
+        <h3>Contacto y redes</h3>
+      </div>
+      <div class="profile-action-card">
+        <div class="form-error" id="contactError"></div>
+        <div id="contactOk" style="display:none;background:#e6f4ea;color:#137333;padding:10px 14px;border-radius:8px;font-size:14px;margin-bottom:16px"></div>
+        <div style="display:flex;flex-direction:column;gap:14px;max-width:420px">
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">call</span>
+            <input type="tel" id="contactPhone" placeholder="Celular" value="<%= user.phone || '' %>">
+          </div>
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">photo_camera</span>
+            <input type="text" id="contactInstagram" placeholder="Instagram (usuario o link)" value="<%= user.instagram || '' %>">
+          </div>
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">group</span>
+            <input type="text" id="contactFacebook" placeholder="Facebook (usuario o link)" value="<%= user.facebook || '' %>">
+          </div>
+        </div>
+        <div style="margin-top:20px">
+          <button class="btn btn-primary" id="saveContactBtn" onclick="submitContact()">Guardar</button>
+        </div>
+      </div>
+    </section>
+
     <!-- Stats -->
     <% if (user.role !== 'student') { %>
     <div class="stats-grid" style="margin-top:32px">
@@ -400,6 +429,49 @@
       } finally {
         saveBtn.disabled = false;
         saveBtn.innerHTML = 'Guardar';
+      }
+    }
+
+    async function submitContact() {
+      const errBox  = document.getElementById('contactError');
+      const okBox   = document.getElementById('contactOk');
+      const saveBtn = document.getElementById('saveContactBtn');
+      errBox.classList.remove('show');
+      okBox.style.display = 'none';
+
+      const phone     = document.getElementById('contactPhone').value.trim();
+      const instagram = document.getElementById('contactInstagram').value.trim();
+      const facebook  = document.getElementById('contactFacebook').value.trim();
+
+      saveBtn.disabled = true;
+      const originalLabel = saveBtn.textContent;
+      saveBtn.innerHTML = '<span class="upload-spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Guardando…';
+
+      try {
+        const res  = await fetch('/courses/profile/contact', {
+          method:  'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ phone, instagram, facebook }),
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          document.getElementById('contactPhone').value     = data.phone     || '';
+          document.getElementById('contactInstagram').value = data.instagram || '';
+          document.getElementById('contactFacebook').value  = data.facebook  || '';
+          okBox.textContent = 'Datos de contacto actualizados';
+          okBox.style.display = 'block';
+          setTimeout(() => { okBox.style.display = 'none'; }, 2500);
+        } else {
+          errBox.textContent = data.error || 'Error al guardar los datos de contacto';
+          errBox.classList.add('show');
+        }
+      } catch (e) {
+        errBox.textContent = 'Error de conexión. Intentá de nuevo.';
+        errBox.classList.add('show');
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = originalLabel;
       }
     }
   </script>

@@ -54,6 +54,10 @@ const activitySchema = new mongoose.Schema({
   type: { type: String, enum: ['tarea', 'evaluacion', 'tp', 'examen'], default: 'tarea' },
   // Flag que habilita entregas fuera de término (lo activa/desactiva el docente con toggle-late)
   allowLateSubmissions: { type: Boolean, default: false },
+  // Flag que permite al alumno editar/reenviar su entrega después de la primera vez
+  // (lo activa/desactiva el docente). Default false: una vez entregada, queda fija
+  // y el alumno solo puede visualizarla (no editarla).
+  allowResubmission: { type: Boolean, default: false },
   // Presente solo si la actividad fue instanciada desde una plantilla del gestor
   // (ver services/autoGrader.js para la evaluación). Actividades "clásicas" no lo llevan.
   templateSnapshot: { type: templateSnapshotSchema, default: undefined },

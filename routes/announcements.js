@@ -5,6 +5,7 @@ const Announcement = require('../models/Announcement');
 const Course   = require('../models/Course');
 const { requireAuth } = require('../middleware/auth');
 const { logAudit }    = require('../middleware/audit');
+const { uploadLimiter } = require('../middleware/rate-limits');
 
 const fs = require('fs');
 const router = express.Router();
@@ -102,7 +103,7 @@ router.post('/:id/comment', requireAuth, async (req, res) => {
 // Crea una nueva novedad en un curso; opcionalmente con imagen adjunta
 // multipart/form-data: { courseId, text, image? }
 // Retorna: { announcement } con autor populado
-router.post('/create', requireAuth, upload.single('image'), async (req, res) => {
+router.post('/create', requireAuth, uploadLimiter, upload.single('image'), async (req, res) => {
   try {
     const { courseId, text } = req.body;
 

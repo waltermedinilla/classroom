@@ -46,6 +46,21 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null,      // URL pública del avatar; null = usar inicial del nombre
   },
+  phone: {
+    type: String,
+    trim: true,
+    default: null,      // Celular de contacto; se valida formato en la ruta, no acá
+  },
+  instagram: {
+    type: String,
+    trim: true,
+    default: null,      // Solo el handle limpio (sin @ ni URL); el link se arma al mostrarlo
+  },
+  facebook: {
+    type: String,
+    trim: true,
+    default: null,      // Solo el handle limpio (sin URL); el link se arma al mostrarlo
+  },
   lastSeen: {
     type: Date,
     default: null,

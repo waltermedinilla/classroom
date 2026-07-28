@@ -36,6 +36,7 @@ function escAtt(s) { return String(s || '').replace(/&/g,'&amp;').replace(/"/g,'
 
 function _isPdf(name)    { return /\.pdf$/i.test(name || ''); }
 function _isOffice(name) { return /\.(doc|docx|xls|xlsx)$/i.test(name || ''); }
+function _isImage(name)  { return /\.(jpe?g|png|gif|webp)$/i.test(name || ''); }
 function _isYoutube(url) { return /youtu\.?be/.test(url || ''); }
 function _ytId(url) {
   const m = (url || '').match(/(?:v=|youtu\.be\/|\/embed\/)([A-Za-z0-9_-]{11})/);
@@ -100,6 +101,7 @@ function openAttachmentPreview(att) {
   const url      = att.url  || '';
   const isPdf    = att.type === 'file' && _isPdf(name);
   const isOffice = att.type === 'file' && _isOffice(name);
+  const isImage  = att.type === 'file' && _isImage(name);
   const isYt     = _isYoutube(url);
 
   // Links que no son YouTube → abrir en nueva pestaña
@@ -144,19 +146,38 @@ function openAttachmentPreview(att) {
         </iframe>`;
     }
 
+  } else if (isImage) {
+    bodyContent = `<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;padding:20px;overflow:auto">
+      <img src="${url}" alt="${escAtt(name)}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:6px;box-shadow:0 2px 12px rgba(0,0,0,.3)">
+    </div>`;
+
   } else if (isYt) {
     const vid = _ytId(url);
     if (!vid) { window.open(url, '_blank', 'noopener'); return; }
     bodyContent = `<iframe src="https://www.youtube.com/embed/${vid}?autoplay=1&rel=0"
       class="att-preview-frame" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>`;
+
+  } else if (att.type === 'file') {
+    // Formato sin previewer (ej: ZIP). Muestra aviso + botón para descargar.
+    bodyContent = `<div class="att-preview-no-support">
+      <span class="material-symbols-outlined">description</span>
+      <p>Este tipo de archivo no se puede previsualizar</p>
+      <p class="att-preview-no-support-sub">Descargalo para abrirlo con la app correspondiente.</p>
+    </div>`;
   }
 
-  // Botón de acción en la barra superior
+  // Botón de acción en la barra superior. Para submission-file agregamos ?dl=1 porque el
+  // endpoint sirve inline por defecto (para permitir la preview inline en iframe); sin ese
+  // parámetro el navegador podría abrir el archivo en vez de descargarlo.
+  const servesInline = url.startsWith('/activities/submission-file/') || /\/activities\/[^/]+\/staged-file\//.test(url);
+  const downloadUrl = servesInline
+    ? url + (url.includes('?') ? '&' : '?') + 'dl=1'
+    : url;
   const actionBtn = isYt
     ? `<a href="${url}" target="_blank" rel="noopener" class="att-preview-btn">
         <span class="material-symbols-outlined">open_in_new</span> Abrir en YouTube
        </a>`
-    : `<a href="${url}" download="${escAtt(name)}" class="att-preview-btn">
+    : `<a href="${downloadUrl}" download="${escAtt(name)}" class="att-preview-btn">
         <span class="material-symbols-outlined">download</span> Descargar
        </a>`;
 
@@ -432,7 +453,13 @@ function switchToActivities() {
 }
 
 // Muestra preview de la imagen seleccionada para una novedad (FileReader → base64)
-document.getElementById('imageInput').addEventListener('change', function () {
+// OJO: `?.` es obligatorio. #imageInput vive dentro de `<% if (course.isTeacher(...)) %>`
+// en views/course.ejs, así que NO existe para el alumno. Sin el optional chaining esto
+// tiraba TypeError en el nivel superior del script y abortaba la carga de course.js
+// entero: todo lo declarado más abajo con const/let (SUB_ALLOWED_EXTS, SUB_MAX_SIZE…)
+// quedaba sin inicializar y la entrega del alumno se rompía por TDZ. Mismo motivo en
+// el resto de los addEventListener de nivel superior de este archivo.
+document.getElementById('imageInput')?.addEventListener('change', function () {
   if (this.files && this.files[0]) {
     selectedImage = this.files[0];
     document.getElementById('imageName').textContent = '';
@@ -496,7 +523,7 @@ let activityFiles = []; // Archivos locales seleccionados (File objects, aún no
 let activityLinks = []; // Links agregados manualmente [{ name, url }]
 
 // Agrega archivos al array local cuando el usuario los selecciona
-document.getElementById('activityFileInput').addEventListener('change', function () {
+document.getElementById('activityFileInput')?.addEventListener('change', function () {
   Array.from(this.files).forEach(f => activityFiles.push(f));
   this.value = ''; // Resetea el input para permitir seleccionar el mismo archivo de nuevo
   renderAttachmentPreviews();
@@ -512,7 +539,7 @@ function toggleLinkInput() {
 }
 
 // Enter en el campo de link lo agrega directamente
-document.getElementById('linkUrlInput').addEventListener('keydown', function (e) {
+document.getElementById('linkUrlInput')?.addEventListener('keydown', function (e) {
   if (e.key === 'Enter') { e.preventDefault(); addLinkFromInput(); }
 });
 
@@ -596,7 +623,7 @@ function closeActivityModal() {
 }
 
 // Cierra el modal si el usuario hace clic en el overlay
-document.getElementById('activityModal').addEventListener('click', function (e) {
+document.getElementById('activityModal')?.addEventListener('click', function (e) {
   if (e.target === this) closeActivityModal();
 });
 
@@ -954,6 +981,7 @@ function openEditModal(actId) {
   }
   document.getElementById('editDueDate').value       = toLocal(act.dueDate);
   document.getElementById('editAvailableFrom').value = toLocal(act.availableFrom);
+  document.getElementById('editAllowResubmission').checked = !!act.allowResubmission;
 
   document.getElementById('editError').textContent = '';
   document.getElementById('editActivityModal').classList.add('show');
@@ -964,7 +992,7 @@ function closeEditModal() {
   document.getElementById('editActivityModal').classList.remove('show');
 }
 
-document.getElementById('editActivityModal').addEventListener('click', function (e) {
+document.getElementById('editActivityModal')?.addEventListener('click', function (e) {
   if (e.target === this) closeEditModal();
 });
 
@@ -992,6 +1020,7 @@ async function saveEditActivity() {
       dueDate:       document.getElementById('editDueDate').value || '',
       availableFrom: document.getElementById('editAvailableFrom').value || '',
       points:        document.getElementById('editPoints').value || '',
+      allowResubmission: document.getElementById('editAllowResubmission').checked,
     }),
   });
 
@@ -1223,7 +1252,7 @@ function closeActivityDetail() {
   document.getElementById('activityDetailModal').classList.remove('show');
 }
 
-document.getElementById('activityDetailModal').addEventListener('click', function (e) {
+document.getElementById('activityDetailModal')?.addEventListener('click', function (e) {
   if (e.target === this) closeActivityDetail();
 });
 
@@ -1330,8 +1359,11 @@ async function loadTeacherDetail(activityId) {
               <span class="material-symbols-outlined" style="font-size:11px;vertical-align:-1px">update</span>
               Act: ${fmtShort(sub.updatedAt)}</span>` : ''}
             ${sub.text ? `<p class="gt-sub-text" title="${sub.text}">${sub.text}</p>` : ''}
-            ${sub.files.map(f => `<a href="/activities/submission-file/${f.filename}" download class="gt-sub-file">
-              <span class="material-symbols-outlined">attach_file</span>${f.name}</a>`).join('')}
+            ${sub.files.map(f => `<span class="gt-sub-file" style="cursor:pointer"
+              data-att-type="file" data-att-name="${escAtt(f.name)}"
+              data-att-url="${escAtt('/activities/submission-file/' + f.filename)}" data-att-mime="${f.mime||''}"
+              onclick="handleAttachmentClick(this)" role="button" tabindex="0">
+              <span class="material-symbols-outlined">attach_file</span>${f.name}</span>`).join('')}
           </div>`
         : `<span class="gt-sub-badge gt-sub-pending">
             <span class="material-symbols-outlined">schedule</span>Pendiente
@@ -1557,7 +1589,7 @@ async function loadStudentDetail(activityId) {
   if (act.templateSnapshot && Array.isArray(act.templateSnapshot.questions)) {
     renderRunnerSection(activityId, act, subData.submission, isBlocked);
   } else {
-    renderSubmissionSection(activityId, subData.submission, isBlocked);
+    renderSubmissionSection(activityId, subData.submission, isBlocked, !!act.allowResubmission);
   }
 }
 
@@ -1571,25 +1603,33 @@ function renderRunnerSection(activityId, act, submission, isBlocked) {
     return;
   }
   const alreadyAnswered = submission && submission.autoGraded;
+  // locked: ya respondió y el docente no habilitó que edite/reenvíe — solo puede ver el resultado
+  const locked = alreadyAnswered && !act.allowResubmission;
   section.innerHTML = `
     <div style="margin-top:16px;padding:14px 16px;background:var(--bg);border-radius:8px;font-size:13px;color:var(--text-secondary)">
       <span class="material-symbols-outlined" style="vertical-align:-4px;color:var(--primary)">quiz</span>
       Actividad interactiva. Al enviar tus respuestas el sistema las califica automáticamente.
     </div>
+    ${locked ? `<div class="deadline-info" style="margin-top:12px">
+      <span class="material-symbols-outlined" style="font-size:18px">lock</span>
+      Ya enviaste tus respuestas. El docente no permite modificarlas — podés ver tu resultado abajo.
+    </div>` : `
     <div id="runnerContainer" class="runner-container" style="margin-top:12px"></div>
     <div class="runner-footer" style="margin-top:16px">
       <button class="btn btn-primary btn-full" id="btnSubmitRun" ${isBlocked ? 'disabled' : ''}>
         <span class="material-symbols-outlined">check</span>
         ${alreadyAnswered ? 'Volver a enviar' : 'Enviar respuestas'}
       </button>
-    </div>
+    </div>`}
     <div id="runnerResult" class="runner-result" style="display:none;margin-top:16px"></div>
   `;
-  window.mountRunner({
-    templateId: act.templateSnapshot.templateId,
-    questions:  act.templateSnapshot.questions,
-    gradeUrl:   '/activities/' + activityId + '/submit',
-  });
+  if (!locked) {
+    window.mountRunner({
+      templateId: act.templateSnapshot.templateId,
+      questions:  act.templateSnapshot.questions,
+      gradeUrl:   '/activities/' + activityId + '/submit',
+    });
+  }
   // Si ya había respondido, mostrar el resultado guardado sin volver a enviar.
   if (alreadyAnswered) {
     const box = document.getElementById('runnerResult');
@@ -1616,7 +1656,7 @@ window._subFiles = [];
 const SUB_ALLOWED_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'gif', 'zip'];
 const SUB_MAX_SIZE     = 20 * 1024 * 1024; // 20 MB
 
-function renderSubmissionSection(actId, submission, isBlocked = false) {
+function renderSubmissionSection(actId, submission, isBlocked = false, allowResubmission = false) {
   const container = document.getElementById('submissionSection');
   if (!container) return;
 
@@ -1625,19 +1665,10 @@ function renderSubmissionSection(actId, submission, isBlocked = false) {
   window._subUploadedFiles = [];
   window._subPendingUploads = 0;
 
-  if (isBlocked) {
-    container.innerHTML = `<div style="margin-top:24px;border-top:1px solid var(--divider);padding-top:20px">
-      <h4 style="font-size:15px;margin:0 0 12px;display:flex;align-items:center;gap:8px">
-        <span class="material-symbols-outlined" style="font-size:18px;color:var(--text-hint)">upload_file</span>
-        Mi entrega
-      </h4>
-      <div class="deadline-warning">
-        <span class="material-symbols-outlined" style="font-size:18px">lock</span>
-        No podés enviar tu entrega porque el plazo ha vencido.
-      </div>
-    </div>`;
-    return;
-  }
+  // canEdit: puede entregar por primera vez o reenviar. Falso si el plazo venció,
+  // o si ya entregó y el docente no habilitó la edición de entregas — en ese caso
+  // la entrega queda fija y solo se puede visualizar (no editar).
+  const canEdit = !isBlocked && (!submission || allowResubmission);
 
   let html = `<div style="margin-top:24px;border-top:1px solid var(--divider);padding-top:20px">
     <h4 style="font-size:15px;margin:0 0 12px;display:flex;align-items:center;gap:8px">
@@ -1645,7 +1676,7 @@ function renderSubmissionSection(actId, submission, isBlocked = false) {
       Mi entrega
     </h4>`;
 
-  // Si ya entregó, muestra el estado actual antes del formulario de reenvío
+  // Si ya entregó, muestra el estado actual (siempre visible, sea o no editable)
   if (submission) {
     const firstDate  = submission.firstSubmittedAt || submission.createdAt;
     const isUpdated  = firstDate && Math.abs(new Date(firstDate) - new Date(submission.updatedAt)) > 2000;
@@ -1667,50 +1698,81 @@ function renderSubmissionSection(actId, submission, isBlocked = false) {
       html += `<div class="att-list" style="margin-top:4px">`;
       submission.files.forEach(f => {
         const { ext, color } = extColor(f.name);
-        // Link de descarga protegida: la ruta /activities/submission-file/:filename verifica acceso
-        html += `<a href="/activities/submission-file/${f.filename}" download class="att-item">
+        // Click abre el previewer (PDF inline, Office online, imagen embedded); dentro del modal
+        // hay botón "Descargar". La ruta /activities/submission-file/:filename verifica acceso.
+        const url = '/activities/submission-file/' + f.filename;
+        html += `<div class="att-item" style="cursor:pointer"
+          data-att-type="file" data-att-name="${escAtt(f.name)}"
+          data-att-url="${escAtt(url)}" data-att-mime="${f.mime||''}"
+          onclick="handleAttachmentClick(this)" role="button" tabindex="0">
           <div class="att-item-icon" style="background:${color}">${ext}</div>
           <span class="att-item-name">${f.name}</span>
-          <span class="material-symbols-outlined att-item-open">download</span>
-        </a>`;
+          <span class="material-symbols-outlined att-item-open">visibility</span>
+        </div>`;
       });
       html += `</div>`;
     }
 
+    if (!canEdit) {
+      html += `<div style="display:flex;align-items:center;gap:5px;margin-top:8px;color:var(--text-hint);font-size:12px">
+        <span class="material-symbols-outlined" style="font-size:14px">lock</span>
+        ${isBlocked ? 'El plazo de entrega venció.' : 'El docente no permite modificar la entrega una vez enviada.'} Solo podés visualizarla.
+      </div>`;
+    }
+
     html += `</div>`;
+  } else if (isBlocked) {
+    html += `<div class="deadline-warning">
+      <span class="material-symbols-outlined" style="font-size:18px">lock</span>
+      No podés enviar tu entrega porque el plazo ha vencido.
+    </div>`;
   }
 
-  // Formulario de entrega / reenvío
-  html += `<div style="margin-bottom:10px">
-    <textarea id="subText" rows="3" placeholder="Comentario (opcional)..."
-      style="width:100%;padding:10px 12px;border:1px solid var(--divider);border-radius:8px;font-size:14px;font-family:inherit;resize:vertical;background:var(--background);color:var(--text-primary);box-sizing:border-box">${submission?.text || ''}</textarea>
-  </div>
-  <div id="subFilePreviews" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px"></div>
-  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-    <label class="btn btn-outline" style="cursor:pointer;margin:0">
-      <span class="material-symbols-outlined">attach_file</span>
-      Adjuntar archivos
-      <input type="file" id="subFileInput" multiple style="display:none"
-        accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.zip">
-    </label>
-    <button class="btn btn-primary" onclick="submitWork('${actId}')">
-      <span class="material-symbols-outlined">send</span>
-      ${submission ? 'Reenviar' : 'Entregar'}
-    </button>
-    <span id="subMsg" style="font-size:13px;color:var(--secondary);display:none">
-      <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px">check_circle</span>
-      Entrega enviada
-    </span>
-  </div>`;
+  // Formulario de entrega / reenvío — solo si está permitido editar.
+  // Layout equivalente al del docente en views/activities/new.ejs: card "Adjuntar" con
+  // botón circular grande + grid de previsualizaciones abajo. Reusa las clases CSS
+  // .creator-att-*/att-preview-* que ya tiene el docente para un look consistente.
+  if (canEdit) {
+    html += `<div style="margin-bottom:14px">
+      <textarea id="subText" rows="3" placeholder="Comentario (opcional)..."
+        style="width:100%;padding:10px 12px;border:1px solid var(--divider);border-radius:8px;font-size:14px;font-family:inherit;resize:vertical;background:var(--background);color:var(--text-primary);box-sizing:border-box">${submission?.text || ''}</textarea>
+    </div>
+    <div class="creator-card" style="margin-bottom:16px">
+      <div class="creator-card-section-title">Adjuntar</div>
+      <div class="creator-att-row">
+        <label class="creator-att-btn" title="Subir archivo (PDF, Word, Excel, imágenes o ZIP)">
+          <input type="file" id="subFileInput" multiple hidden
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.zip">
+          <div class="creator-att-circle">
+            <span class="material-symbols-outlined">upload</span>
+          </div>
+          <span>Subir</span>
+        </label>
+      </div>
+      <div id="subFilePreviews" class="att-preview-grid" style="padding:0 24px 20px;margin-top:4px"></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="submitWork('${actId}')">
+        <span class="material-symbols-outlined">send</span>
+        ${submission ? 'Reenviar' : 'Entregar'}
+      </button>
+      <span id="subMsg" style="font-size:13px;color:var(--secondary);display:none">
+        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px">check_circle</span>
+        Entrega enviada
+      </span>
+    </div>`;
+  }
 
   html += '</div>';
   container.innerHTML = html;
 
   // Listener para el input de archivos: valida y arranca pre-subida inmediata (uno por uno)
-  document.getElementById('subFileInput').addEventListener('change', function () {
-    Array.from(this.files).forEach(f => uploadSubFile(actId, f));
-    this.value = '';
-  });
+  if (canEdit) {
+    document.getElementById('subFileInput').addEventListener('change', function () {
+      Array.from(this.files).forEach(f => uploadSubFile(actId, f));
+      this.value = '';
+    });
+  }
 }
 
 // Sincroniza el botón "Entregar" con la cantidad de uploads pendientes.
@@ -1802,13 +1864,24 @@ function uploadSubFile(actId, file) {
         mime:        data.mime,
         size:        data.size,
       });
-      // Reemplaza la barra por el nombre + botón de quitar (mismo look que docente)
+      // Reemplaza la barra por el nombre + botón de quitar (mismo look que docente).
+      // La miniatura + nombre son clickeables: abren el previewer usando el endpoint
+      // /activities/:id/staged-file/:filename (sirve archivos pre-subidos aún sin Submission).
+      // El botón X sigue funcionando por stopPropagation en su onclick.
+      const previewUrl = '/activities/' + actId + '/staged-file/' + data.filename;
       c.innerHTML = `
-        <div class="att-preview-thumb" style="background:${color}">
+        <div class="att-preview-thumb" style="background:${color};cursor:pointer"
+          data-att-type="file" data-att-name="${escAtt(data.name)}"
+          data-att-url="${escAtt(previewUrl)}" data-att-mime="${data.mime||''}"
+          onclick="handleAttachmentClick(this)" role="button" tabindex="0"
+          title="Ver archivo">
           <span class="att-preview-ext">${ext}</span>
         </div>
-        <div class="att-preview-name" title="${file.name}">${file.name}</div>
-        <button class="att-preview-remove" onclick="removeUploadedSubFile('${uid}')" title="Quitar">
+        <div class="att-preview-name" title="${file.name}"
+          data-att-type="file" data-att-name="${escAtt(data.name)}"
+          data-att-url="${escAtt(previewUrl)}" data-att-mime="${data.mime||''}"
+          onclick="handleAttachmentClick(this)" style="cursor:pointer">${file.name}</div>
+        <button class="att-preview-remove" onclick="event.stopPropagation();removeUploadedSubFile('${uid}')" title="Quitar">
           <span class="material-symbols-outlined">close</span>
         </button>`;
     } else {
@@ -1885,7 +1958,8 @@ async function submitWork(actId) {
   }
 
   window._subUploadedFiles = [];
-  renderSubmissionSection(actId, data.submission);
+  const act = window._activities[actId] || {};
+  renderSubmissionSection(actId, data.submission, false, !!act.allowResubmission);
 
   const msg = document.getElementById('subMsg');
   if (msg) { msg.style.display = 'inline-flex'; setTimeout(() => { msg.style.display = 'none'; }, 3000); }
@@ -1906,7 +1980,7 @@ function closeAddStudentModal() {
   err.classList.remove('show');
 }
 
-document.getElementById('addStudentModal').addEventListener('click', function (e) {
+document.getElementById('addStudentModal')?.addEventListener('click', function (e) {
   if (e.target === this) closeAddStudentModal();
 });
 

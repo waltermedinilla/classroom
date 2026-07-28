@@ -80,6 +80,7 @@
         <div class="profile-meta">
           Alta: <%= new Date(teacher.createdAt).toLocaleDateString('es-AR', {day:'numeric', month:'long', year:'numeric'}) %>
         </div>
+        <%- include('../partials/contact-info', { person: teacher }) %>
       </div>
     </div>
 

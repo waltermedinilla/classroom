@@ -198,8 +198,9 @@ const specs = [
     title: 'El docente crea una actividad',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state }) {
+      // allowResubmission=1 porque el suite hace varios submits secuenciales sobre esta misma actividad
       const res = await client.post('scopedTeacher', '/activities/create', {
-        body: { courseId: state.courseId, title: 'Actividad de smoke test', type: 'tarea', points: '10' },
+        body: { courseId: state.courseId, title: 'Actividad de smoke test', type: 'tarea', points: '10', allowResubmission: '1' },
         expectStatus: 201,
       });
       state.activityId = res.json.activity._id;

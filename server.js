@@ -62,40 +62,40 @@ app.use(helmet({
 // Limita peticiones por IP para evitar que un usuario sature el servidor.
 // En modo PM2 cluster, cada worker tiene su propio conteo (limitación aceptable para una escuela).
 
-// Límite general: 400 peticiones cada 15 minutos por IP
-// Cubre el uso normal de un alumno/docente navegando activamente
+// Límite general: 1200 peticiones cada 15 minutos por IP
+// Cubre el uso normal de un alumno/docente navegando activamente. Se triplicó desde 400
+// el 2026-07-28 junto con los otros dos limiters — misma lógica que authLimiter/uploadLimiter:
+// ~300 personas de la escuela detrás de la misma IP pública NAT.
 const generalLimiter = rateLimit({
   windowMs:          15 * 60 * 1000, // Ventana de 15 minutos
-  max:               400,
+  max:               1200,
   standardHeaders:   true,           // Incluye RateLimit-* en los encabezados
   legacyHeaders:     false,
   message:           { error: 'Demasiadas peticiones. Intentá de nuevo en 15 minutos.' },
   skip: (req) => req.path.startsWith('/css/') || req.path.startsWith('/js/'), // No limita estáticos
 });
 
-// Límite para login/registro: 1000 intentos cada 15 minutos por IP.
+// Límite para login/registro: 3000 intentos cada 15 minutos por IP.
 // La escuela tiene ~300 personas conectadas al mismo WiFi al mismo tiempo (arranque de clase),
 // y cada login normal consume ~2-3 requests (GET /login + POST /login + posibles reintentos).
-// Con 300 usuarios * 3 = 900 requests esperadas, 1000 deja holgura sin romper la
-// protección anti-brute-force: un atacante que intenta 1000 contraseñas en 15 min sigue
-// siendo detectable y desalentado. Subimos desde 15 (valor previo, que rompía con >5 usuarios
-// detrás de la misma IP pública NAT).
+// Con 300 usuarios * 3 = 900 requests esperadas, un límite de 3000 deja mucha holgura para
+// picos (reintentos, refresh, sesiones vencidas simultáneas) sin romper la protección
+// anti-brute-force: un atacante que intenta 3000 contraseñas en 15 min sigue siendo
+// detectable y desalentado. Subimos desde 15 → 1000 → 3000 (triplicado el 2026-07-28
+// junto con los otros limiters como blindaje preventivo).
 const authLimiter = rateLimit({
   windowMs:        15 * 60 * 1000,
-  max:             1000,
+  max:             3000,
   standardHeaders: true,
   legacyHeaders:   false,
   message:         { error: 'Demasiados intentos. Esperá 15 minutos antes de intentar nuevamente.' },
 });
 
-// Límite para subida de archivos: 60 por hora por IP (previene abuso de almacenamiento)
-const uploadLimiter = rateLimit({
-  windowMs:        60 * 60 * 1000, // Ventana de 1 hora
-  max:             60,
-  standardHeaders: true,
-  legacyHeaders:   false,
-  message:         { error: 'Límite de subidas alcanzado. Intentá de nuevo en 1 hora.' },
-});
+// Límite para subida de archivos: definido en middleware/rate-limits.js y aplicado
+// inline en las rutas específicas que hacen upload (activities/create, upload-attachment,
+// upload-submission-file, submit, announcements/create). Antes se aplicaba con
+// `app.use('/activities', ...)` y golpeaba todos los GET del router, agotando el cupo
+// con navegación normal y rompiendo "Mis notas", listado de actividades y novedades.
 
 // Aplica límite general a todas las rutas dinámicas
 app.use(generalLimiter);
@@ -184,9 +184,14 @@ app.use((req, res, next) => {
 // Se activa manualmente desde /superadmin/backup o automáticamente durante un
 // restore (ver routes/backup.js). El dueño del sistema tiene bypass total (puede
 // seguir usando la app normalmente para verificar que todo esté bien); cualquier
-// otro usuario ve la página de mantenimiento en TODO menos login/logout/estáticos
+// otro usuario logueado ve la página de mantenimiento en TODO menos login/logout/estáticos
 // (para poder autenticarse y para que la propia página de mantenimiento se vea bien)
 // y el webhook de deploy (para no bloquear un despliegue en curso).
+// Usuarios NO logueados: si aterrizan en cualquier ruta bloqueada, los mandamos a
+// /login antes de mostrar la pantalla de mantenimiento. Así el dueño puede volver
+// a autenticarse si se le venció la cookie o se le reinició la máquina — sin este
+// redirect, la pantalla de mantenimiento no linkea al login y quedaría lockeado
+// (mitigable borrando maintenance.json a mano, pero incómodo en producción).
 app.use((req, res, next) => {
   const state = getMaintenanceState();
   if (!state) return next();
@@ -195,6 +200,13 @@ app.use((req, res, next) => {
   const exempt = ['/login', '/logout', '/favicon.png', '/Logo.jpg', '/deploy'].includes(req.path)
     || req.path.startsWith('/css/') || req.path.startsWith('/js/');
   if (exempt) return next();
+
+  // Sin sesión activa: al login, para que el dueño (o cualquiera) pueda intentar entrar.
+  // Solo aplica a navegaciones HTML — un cliente JSON sin auth ya iba a recibir 401 igual,
+  // le devolvemos el 503 estándar como hasta ahora.
+  if (!res.locals.user && req.accepts('html') && req.method === 'GET') {
+    return res.redirect('/login');
+  }
 
   res.set('Retry-After', '300');
   if (req.accepts('json') && !req.accepts('html')) {
@@ -266,10 +278,6 @@ app.get('/', (req, res) => {
 // Rate limiter específico para autenticación (antes de montar el router)
 app.use('/login',    authLimiter);
 app.use('/register', authLimiter);
-
-// Rate limiter para subida de archivos
-app.use('/activities', uploadLimiter);
-app.use('/announcements', uploadLimiter);
 
 app.use('/',           authRoutes);
 app.use('/courses',    courseRoutes);

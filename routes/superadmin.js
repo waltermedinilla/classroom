@@ -287,10 +287,14 @@ router.get('/users', async (req, res) => {
       School.find().sort({ name: 1 }).select('_id name'), // Para el filtro de escuela en la vista
     ]);
 
+    // Contadores para la columna "Nov·Act·Msg" (bulk, no una query por usuario)
+    const { getUserActivityStats } = require('../services/userActivityStats');
+    const activityStats = await getUserActivityStats(users.map(u => u._id));
+
     const pages = Math.ceil(total / limitNum) || 1; // Al menos 1 página aunque no haya resultados
 
     res.render('superadmin/users', {
-      users, schools, total,
+      users, schools, total, activityStats,
       currentRole:   role     || '',
       search:        search   || '',
       currentSchool: schoolId || '',

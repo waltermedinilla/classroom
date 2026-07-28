@@ -282,10 +282,176 @@ Variables CSS para colores, sombras, radios. Componentes:
 4. La relación materia↔curso es por coincidencia de texto (`Subject.name` === `Course.name`), no hay FK. Renombrar una materia rompe la asociación. Mejora futura: `Course.subject` como ObjectId ref
 5. Rate limiting (`express-rate-limit`) y Helmet **ya están activos** (ver `server.js`)
 6. **Cache por-worker** de usuario y escuela (TTL 45s, ver `middleware/cache.js`): reduce load en Mongo pero no se comparte entre workers de PM2 cluster. Cambios de rol/estado/escuela pueden tardar hasta 45s en aplicar en OTRO worker. Ver mitigaciones en el changelog 2026-07-21.
+7. **`public/js/course.js` es compartido por docente y alumno**, pero `views/course.ejs` renderea DOM distinto según el rol (`<% if (course.isTeacher(user._id)) %>`). Todo `document.getElementById(...)` en el **nivel superior** del script debe usar `?.` — si el elemento no existe para ese rol, el `TypeError` corta la ejecución del archivo entero y deja sin inicializar todos los `const`/`let` de más abajo (falla silenciosa, solo visible en la consola del navegador). Ya pasó una vez: ver changelog 2026-07-28 "course.js abortaba entero para el alumno".
+8. El smoke test `directivo-sees-courses-with-metrics` falla contra una BD local espejada de producción: `GET /directivo/courses` pagina de a 25 (`routes/directivo.js`) y con 419 materias el curso de smoke no entra en la primera página. El test se escribió antes de que se agregara esa paginación (2026-07-22). No es una regresión.
 
 ---
 
 ## Historial de Cambios (Changelog)
+
+### 2026-07-28 — Fix CRÍTICO: `course.js` abortaba entero para el alumno (card de adjunto invisible)
+
+**Bug reportado**: "al adjuntar archivo de parte de la respuesta a una actividad del docente, no me levanta la card que previsualiza el estado que se está subiendo al servidor y qué tipo de archivo es, si es pdf, o word, o excel, como sí figura cuando el docente lo precarga cuando arma la actividad".
+
+**Causa raíz** (mucho más grave de lo que parecía el síntoma): `public/js/course.js` hacía, en el **nivel superior** del script:
+
+```js
+document.getElementById('imageInput').addEventListener('change', …);   // línea 456
+```
+
+`#imageInput` (adjuntar imagen a una novedad) vive dentro de `<% if (course.isTeacher(user._id)) { %>` en `views/course.ejs` → **no existe para el alumno**. Entonces `getElementById` devuelve `null`, el `.addEventListener` tira `TypeError`, y **la ejecución del script se corta ahí**.
+
+Consecuencia en cascada: todo lo declarado más abajo con `const`/`let` en el nivel superior nunca se inicializa y queda permanentemente en la TDZ (Temporal Dead Zone). En particular `SUB_ALLOWED_EXTS` y `SUB_MAX_SIZE` (línea 1650). Como las `function` declarations **sí** se hoistean, `uploadSubFile` existía y se podía llamar — pero explotaba en su primera línea con `ReferenceError: Cannot access 'SUB_ALLOWED_EXTS' before initialization`, **antes** de llegar a crear la card. De ahí que no apareciera absolutamente nada: ni card, ni barra de progreso, ni modal de error.
+
+Por eso el docente no lo sufría: para él `#imageInput` existe, el script carga completo, y todo funciona.
+
+**Fix**: optional chaining (`?.`) en los **7** `addEventListener` de nivel superior del archivo, ya que el DOM de `course.ejs` varía según el rol:
+`imageInput`, `activityFileInput`, `linkUrlInput`, `activityModal`, `editActivityModal`, `activityDetailModal`, `addStudentModal`.
+
+**Verificado** en el navegador con un alumno real de prueba (creado y borrado en la misma sesión):
+- Antes: `SUB_ALLOWED_EXTS is not defined`, grid vacío.
+- Después: `SUB_ALLOWED_EXTS` OK; card visible 110×104 px, aparece **inmediata** con la barra de progreso, y con el color correcto por tipo — PDF `rgb(234,67,53)` / XLSX `rgb(52,168,83)`.
+- Al terminar la subida la card se convierte en clickeable (`cursor:pointer`) y abre el previewer.
+- El botón ✕ quita la card sin abrir el previewer (`stopPropagation`).
+- Envío final: `POST /:id/submit` guarda la entrega y la re-renderiza con el archivo clickeable.
+
+**Nota de mantenimiento**: `course.js` es un único script compartido por las vistas de docente y de alumno, que renderean DOM distinto. Cualquier `getElementById(...)` nuevo **en el nivel superior** debe usar `?.` o ir dentro de una función, o se repite este bug silencioso (no hay error visible en pantalla, solo en la consola del navegador).
+
+### 2026-07-28 — Preview de adjuntos pre-subidos, antes de enviar la entrega
+
+**Pedido**: el alumno no podía ver el archivo que acababa de adjuntar hasta después de darle "Entregar".
+
+**Cambio**:
+- **Backend**: nuevo `GET /activities/:id/staged-file/:filename` (routes/activities.js) que sirve **inline** un archivo ya pre-subido pero todavía sin `Submission`. Seguridad: solo lee de `ENTREGAS_BASE/{schoolId}/{actId}/{userId}/{filename}` — el directorio propio del alumno, tomado de la sesión, nunca del request. `path.basename()` sobre el filename bloquea path traversal. Con `?dl=1` fuerza descarga.
+- **Frontend** (`uploadSubFile`): al completar la subida, la miniatura y el nombre de la card quedan clickeables con `data-att-*` + `handleAttachmentClick` apuntando al endpoint nuevo. El botón ✕ lleva `event.stopPropagation()` para no abrir el previewer al quitar.
+- **Previewer**: el helper que agrega `?dl=1` al botón "Descargar" ahora también reconoce las URLs de `staged-file` (antes solo `submission-file`).
+
+**Verificado**: `staged-file` responde 200 `application/pdf` + `Content-Disposition: inline` y carga en iframe; `?dl=1` → `attachment`; path traversal (`..%2F..%2F..%2Fpackage.json`, con y sin encodear) → 404; click en la card abre el modal con el `iframe src` correcto.
+
+### 2026-07-28 — UI de adjuntar entrega del alumno igual a la del docente
+
+**Pedido**: "quiero que me permita adjuntarlo como lo hace el docente en la sección de tareas". El alumno tenía un botón `.btn-outline` chico "Adjuntar archivos" — funcional, pero visualmente inconsistente con la card "Adjuntar" del docente en `views/activities/new.ejs` (círculo grande "Subir" bien visible + grid de previsualización).
+
+**Cambio** (public/js/course.js, `renderSubmissionSection`): el formulario de entrega del alumno ahora usa el mismo layout que el creator del docente — `<div class="creator-card">` con `<div class="creator-att-row">` conteniendo el `.creator-att-btn` circular "Subir", más el `#subFilePreviews` con clase `.att-preview-grid`. Todas las clases CSS ya existían (las usa el docente en new.ejs); no se agregó CSS nuevo.
+
+La infraestructura de upload (`uploadSubFile` con XHR + progress bar por archivo + `removeUploadedSubFile`) ya venía usando las clases `.att-preview-card` / `.att-preview-thumb` / `.att-preview-ext` iguales al docente — solo el botón "Adjuntar" era distinto. Ahora todo el flujo se ve idéntico.
+
+**Verificado**: JS syntax OK, smoke suite 81/93 sin regresiones. El reproductor del alumno ABREGO en la actividad "Nueva tarea" confirma que `canEdit=true` y el formulario se renderea (antes del cambio el botón estaba pero era chico y poco visible; ahora es un círculo grande "Subir" imposible de perderse).
+
+### 2026-07-28 — Preview de archivos entregados (alumno y docente)
+
+**Bug reportado**: al ver "Mi entrega" en una actividad ya enviada, el alumno no podía previsualizar los archivos que había subido — solo se descargaban al click. Mismo problema para el docente viendo las entregas de sus alumnos en la solapa Notas.
+
+**Causa doble**:
+1. `GET /activities/submission-file/:filename` (routes/activities.js) siempre forzaba `Content-Disposition: attachment` → aunque el frontend intentara mostrar el archivo en un iframe, el navegador disparaba "Save as…" en vez de renderizarlo.
+2. `renderSubmissionSection` (public/js/course.js) y la tabla de entregas del docente rendeaban los archivos como `<a href="…" download>` en vez de usar `handleAttachmentClick` como sí hacen los adjuntos de la actividad.
+
+**Fix**:
+- **Backend**: el endpoint ahora sirve `inline` por defecto (permite iframe preview del PDF/imagen). Con `?dl=1` fuerza `attachment` — usado por el botón "Descargar" del modal para descarga real. Los checks de acceso (dueño de la entrega o docente del curso) no cambiaron.
+- **Frontend**: los archivos de entrega ahora se rendean con `data-att-*` + `onclick="handleAttachmentClick(this)"` — mismo previewer que los adjuntos del docente. Cambiado en `renderSubmissionSection` (vista alumno) y en la tabla `sub.files.map` del gradebook (vista docente).
+- **Previewer**: agregado soporte para imágenes (jpg/png/gif/webp) — antes solo tenía PDF, Office y YouTube; caía en `else` sin `bodyContent` y el modal se abría vacío. Ahora imagen embedded + fallback textual para formatos sin preview (ej: ZIP). Helper nuevo `_isImage`.
+- **Previewer**: el botón "Descargar" del modal, cuando la URL apunta a `/activities/submission-file/`, agrega `?dl=1` para forzar descarga (el attribute `download` del `<a>` por sí solo puede no ganar contra `Content-Disposition: inline` en todos los navegadores).
+
+**Verificado** contra el server real: `GET /submission-file/:f` responde `Content-Disposition: inline` por defecto y `attachment` con `?dl=1`, los 403/302 de acceso siguen intactos. Suite smoke: 81/93 sin regresiones (mismas 2 fallas preexistentes).
+
+### 2026-07-28 — Fix: "Error al cargar notas" y actividades/novedades sin cargar (rate limiter mal aplicado)
+
+**Bug reportado**: al abrir un curso, la solapa "Mis notas" mostraba "Error al cargar notas.", y las listas de novedades y actividades no cargaban.
+
+**Causa**: en `server.js` estaba `app.use('/activities', uploadLimiter)` y `app.use('/announcements', uploadLimiter)` con `max: 60/hora por IP`. Eso limitaba **cualquier request** a esas rutas, incluidos los GET de lectura (`GET /activities/course/:id`, `GET /activities/:id/my-submission`, `GET /announcements/course/:id`, etc.). Con ~300 personas de la escuela detrás de la misma IP pública NAT (mismo motivo por el que `authLimiter` usa 1000, ver comentario en server.js:78), el cupo se agotaba en minutos y todos los alumnos que abrieran un curso veían 429 disfrazado del mensaje "Límite de subidas alcanzado". Confirmado reproduciendo el flujo end-to-end como el alumno afectado (ABREGO SEÑO, LUCAS URIEL en el curso Lengua 2°2° de BRUDEZAN): antes del fix, los 4 GETs que dispara `public/js/course.js` devolvían 429; después del fix, 200.
+
+**Fix**:
+- `middleware/rate-limits.js` (nuevo): exporta `uploadLimiter` con `max: 600/hora` (cabe uso escolar normal y sigue frenando un abuser real).
+- `server.js`: se quita la definición local y los dos `app.use('/…', uploadLimiter)` globales.
+- `routes/activities.js` y `routes/announcements.js`: se aplica `uploadLimiter` inline en las 5 rutas que realmente hacen upload de archivos — `POST /activities/create`, `POST /activities/upload-attachment`, `POST /activities/:id/upload-submission-file`, `POST /activities/:id/submit`, `POST /announcements/create`. Todo el resto (GETs, calificar, comentar, borrar, editar) queda sin este limiter (sigue cubierto por `generalLimiter`: 400/15min).
+
+**Verificado**: smoke suite completa sin regresiones (81/93 igual que antes, las 2 fallas son preexistentes — una depende de credenciales de superadmin no pasadas, la otra es el test flaky de dataset grande ya conocido). Reproductor manual confirma que los 4 GETs del alumno vuelven 200; los uploads siguen protegidos por el limiter aplicado inline.
+
+**Extra** (mismo día, decisión del usuario tras el fix): se **triplicaron los 3 rate limiters** como blindaje preventivo, para que un pico de uso escolar no vuelva a agotar ninguno:
+- `generalLimiter`: 400 → **1200** peticiones / 15min (server.js)
+- `authLimiter`:    1000 → **3000** intentos / 15min (server.js)
+- `uploadLimiter`:  600 → **1800** subidas / hora (middleware/rate-limits.js)
+
+Todos siguen siendo suficientes para detectar y desalentar un abuser real (3000 login attempts o 1800 uploads en 15/60 min es claramente anormal), pero con ~300 personas de la escuela detrás de la misma IP pública NAT, dejan margen amplio para picos de arranque de clase, reintentos y actividad simultánea.
+
+### 2026-07-27 — Campos de contacto y redes en el perfil (celular, Instagram, Facebook)
+
+Nuevos campos opcionales en `User`: `phone`, `instagram`, `facebook`. Solo el propio usuario los edita; se muestran como chips de solo lectura en las vistas donde admin/directivo ya veían el perfil de otro usuario.
+
+**Modelo** (`models/User.js`): 3 campos String opcionales, `default: null`, sin validación en el schema (se valida/sanitiza en la ruta). Sin migración — Mongoose aplica el default a los documentos existentes.
+
+**Backend** (`routes/courses.js`):
+- `PATCH /courses/profile/contact` (requireAuth, actúa sobre `req.userId` — nadie edita el contacto de otro). Body `{ phone, instagram, facebook }`, todos opcionales; mandar `''` borra el campo.
+- `sanitizePhone()`: acepta dígitos, `+`, espacios, guiones y paréntesis, 7-20 caracteres.
+- `sanitizeSocialHandle(raw, domain)`: acepta `@handle`, `handle` o URL completa (`https://www.instagram.com/handle/...?query`) y devuelve solo el handle limpio (sin protocolo, `www.`, dominio, query ni path extra). Nunca se guarda la URL completa — se reconstruye al mostrarla.
+- `logAudit(..., 'user.contact_change', ...)` + `invalidateUser()` para no servir el caché de 45s con datos viejos.
+- Acción nueva en el catálogo: `config/audit-actions.js` → `user.contact_change`.
+
+**Frontend propio** (`views/profile.ejs`): sección "Contacto y redes" con 3 inputs editables + botón Guardar, AJAX contra el PATCH de arriba (mismo patrón que cambiar email/contraseña).
+
+**Solo lectura** — partial compartido `views/partials/contact-info.ejs` (recibe `person`), incluido en:
+- `views/admin/user-profile.ejs` — admin viendo cualquier usuario de su escuela.
+- `views/directivo/student-detail.ejs` y `views/directivo/teacher-detail.ejs` — directivo/admin viendo alumno o docente (`routes/directivo.js` — se agregó `phone instagram facebook` a los `.select()` de `/students/:id` y `/teachers/:id`, que antes NO traían esos campos).
+- Chips: teléfono (`tel:`) + WhatsApp (`wa.me/` con solo dígitos — funciona si el usuario carga el número con código de país), Instagram y Facebook como link `https://dominio/handle` con `target="_blank" rel="noopener noreferrer"`. Todo interpolado con el tag de output que escapa por defecto (no con el que no escapa), para blindar contra XSS aunque los handles ya vengan saneados.
+
+**Gap conocido, no cerrado en esta pasada**: docente/preceptor/SOE no tienen hoy ninguna vista para ver el perfil de otro usuario (`middleware/directivo.js` solo acepta `directivo/admin/superadmin`), y superadmin no tiene página individual de usuario (`routes/superadmin.js` no tiene `GET /users/:id`). La regla de visibilidad "todos estos roles ven el contacto de todos" queda documentada pero sin superficie donde mostrarse para esos casos — se resuelve cuando exista la tab "Personas" del curso (gap #12 del audit backlog) o una página individual en superadmin.
+
+**Verificado** end-to-end contra el server real: alumno autoregistrado guarda/borra contacto vía PATCH (con formatos de input variados: `@handle`, URL completa con query, `www.`), rechazo 400 de teléfono/handle inválido, admin creó alumno y docente de prueba en su escuela → cada uno seteó su contacto → verificado que aparece en `/admin/users/:id`, `/directivo/students/:id` y `/directivo/teachers/:id` con los links correctos. Sin regresiones (usuarios de prueba borrados al final).
+
+### 2026-07-27 — Columna Nov·Act·Msg en listados de usuarios (admin y superadmin)
+
+Nueva columna en `/admin/users` y `/superadmin/users` con 3 chips coloreados que muestran cuánto ha PUBLICADO cada usuario (semántica docente-centered elegida por el usuario):
+
+- **Novedades** (azul `#1a73e8`): anuncios donde `Announcement.author === userId`.
+- **Actividades** (naranja `#e37400`): tareas donde `Activity.author === userId`.
+- **Mensajes** (verde `#137333`): comentarios que el usuario escribió dentro de `Announcement.comments[]`.
+
+Chips con 0 se muestran en gris atenuado, chips > 0 con fondo suave del color correspondiente. Tooltip en cada chip con el label completo y el número.
+
+**Implementación**:
+- Helper nuevo `services/userActivityStats.js` — 3 aggregations bulk (una por métrica) filtradas por el conjunto de `userIds` de la página actual. Devuelve `Map<userId, {novedades, actividades, mensajes}>`. Escala con el `limit` de la página (25 en admin, hasta 100 en superadmin), no una query por usuario.
+- Partial compartido `views/partials/user-activity-stats.ejs` consume el `stats` del helper. Comentario del partial usa `<%# ... %>` (comentario EJS), no `<% // ... %>` — este último rompe el parser cuando dentro del comentario hay ejemplos con `<%- include %>` porque el `%>` interno cierra el bloque exterior.
+- Rutas: `routes/admin.js:161-162` y `routes/superadmin.js:290-292` invocan el helper y pasan `activityStats` a la vista.
+- Vistas: `views/admin/users.ejs:67` y `views/superadmin/users.ejs:108` agregan header + celda con `include` al partial.
+
+**Sin índices nuevos**: `Announcement.author` y `Activity.author` no están indexados; con el volumen actual de la escuela (decenas de anuncios/actividades) el aggregation es rápido. Si en producción se nota, agregar `{author:1}` a ambos modelos.
+
+**Verificado** contra el server real: los conteos del helper coinciden con `countDocuments` bruto por usuario, y los chips renderizan en el HTML con los colores correctos (validado con `document.querySelectorAll('span[title*="publicadas"]')`).
+
+### 2026-07-27 — Modo mantenimiento: usuarios sin sesión aterrizan en /login
+
+**Problema**: si al dueño (`waltermedinilla@gmail.com`) se le reiniciaba la máquina o vencía la cookie estando el modo mantenimiento activo, la pantalla `views/maintenance.ejs` no linkeaba al login. Podía escribir `/login` a mano (siempre estuvo exempt) o borrar `maintenance.json` en disco, pero ninguno de los dos era descubrible.
+
+**Cambio** (`server.js:190-215`): en el middleware global de mantenimiento, si `!res.locals.user && req.accepts('html') && req.method === 'GET'` → `res.redirect('/login')` antes de renderizar la pantalla de mantenimiento. Usuarios logueados no-dueño siguen viendo la pantalla igual que antes. Clientes JSON sin auth siguen recibiendo 503 (no redirect).
+
+Una vez que el dueño se autentica, el bypass por email (`res.locals.user?.email === SYSTEM_OWNER_EMAIL`) ya funciona: entra a la app, va a `/superadmin/backup` y apaga el modo.
+
+**Verificado** con script contra el server real (6 escenarios: sin sesión→redirect, admin no-dueño→503, superadmin→bypass, GET/POST /login funciona, JSON sin auth→503). Sin regresiones.
+
+### 2026-07-27 — Ver entrega en modo solo lectura + edición opt-in por actividad
+
+**Solicitud**: el alumno debe poder ver su entrega ya enviada (texto + archivos), pero sin poder editarla. Solo si el docente lo habilita explícitamente en esa actividad, el alumno puede reenviarla mientras el plazo esté abierto.
+
+**Modelo** (`models/Activity.js`):
+- Campo `allowResubmission: Boolean, default: false`. **No requiere migración**: Mongoose aplica el default al leer. Documentos existentes en producción se comportan como "no editable" hasta que el docente los edite y active la casilla.
+
+**Backend** (`routes/activities.js`):
+- `POST /activities/create` y `PUT /activities/:id` aceptan `allowResubmission` en el body.
+- `POST /activities/:id/submit` y `POST /activities/:id/upload-submission-file` bloquean con 403 si ya existe `Submission` del alumno y `allowResubmission=false`. Mensaje: "Esta actividad no permite modificar la entrega una vez enviada".
+- La regla convive con `allowLateSubmissions`: primero se chequea plazo vencido, después edición-post-entrega.
+
+**UI docente**:
+- Casilla "Permitir que el alumno edite su entrega después de enviarla" en el sidebar del formulario de crear actividad (`views/activities/new.ejs`, id `sAllowResubmission`) y en el modal de editar actividad (`views/course.ejs`, id `editAllowResubmission`). Ambos mandan el flag al server.
+
+**UI alumno** (`public/js/course.js`):
+- `renderSubmissionSection(actId, submission, isBlocked, allowResubmission)`: cuando el alumno ya entregó y `allowResubmission=false`, muestra el bloque de solo lectura con texto, archivos descargables y aviso "El docente no permite modificar la entrega una vez enviada. Solo podés visualizarla." SIN el formulario de textarea/adjuntar.
+- `renderRunnerSection`: para actividades interactivas, oculta el runner cuando ya se respondió y no está permitida la edición — el alumno ve solo el resultado autogradeado.
+- `submitWork` re-renderiza pasando `act.allowResubmission` para no perder el flag después de un reenvío exitoso.
+
+**Datos**:
+- No se elimina ni modifica ningún documento existente. Efecto en actividades ya creadas: cualquiera con entregas previas queda cerrada a edición por defecto (comportamiento deseado); si el docente quiere abrirla, entra al modal de editar y marca la casilla.
+
+**Tests**: el spec `activity-create` en `tests/smoke/specs.js` ahora crea la actividad de prueba con `allowResubmission: '1'` — el suite hace tres submits secuenciales sobre la misma actividad y sin el flag el 2° submit fallaría con 403.
 
 ### 2026-07-25 — Restricciones UI a docentes + infraestructura multi-docente (WIP)
 
