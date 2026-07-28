@@ -37,6 +37,29 @@ const specs = [
     },
   },
   {
+    id: 'health-reports-loaded-version',
+    title: '/health responde sin auth y reporta la versión que está cargada en memoria',
+    async run({ client, assert }) {
+      // Sin cookie de sesión: /health tiene que contestar igual (se lo consulta justamente
+      // cuando algo anda mal). Va montado antes del rate limiter y del modo mantenimiento.
+      const res = await client.get(null, '/health', { expectStatus: 200 });
+
+      assert(res.json.status === 'ok', `status debería ser "ok", fue "${res.json.status}"`);
+      assert(res.json.db === 'ok', `db debería ser "ok", fue "${res.json.db}"`);
+      assert(typeof res.json.pid === 'number', 'debería reportar el pid del worker');
+
+      // El chequeo que le da sentido al endpoint: la versión en MEMORIA tiene que coincidir
+      // con la de package.json en DISCO. Si divergen, hubo un deploy que copió archivos pero
+      // no recargó los workers — el bug del 2026-07-28. Ver el script de deploy en server.js.
+      const onDisk = require('../../package.json').version;
+      assert(
+        res.json.version === onDisk,
+        `versión en memoria (v${res.json.version}) != package.json en disco (v${onDisk}) — ` +
+        'los workers están corriendo código viejo, hace falta un reload',
+      );
+    },
+  },
+  {
     id: 'register-teacher',
     title: 'Un docente puede autoregistrarse',
     async run({ client, state }) {

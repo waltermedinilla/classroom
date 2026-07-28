@@ -7,7 +7,7 @@ const compression  = require('compression');
 const helmet       = require('helmet');
 const rateLimit    = require('express-rate-limit');
 const crypto       = require('crypto');
-const { exec }     = require('child_process');
+const { spawn }    = require('child_process');
 const logger       = require('./config/logger');
 const connectDB    = require('./config/db');
 const { checkUser } = require('./middleware/auth');
@@ -17,6 +17,11 @@ const School     = require('./models/School');
 const Suggestion = require('./models/Suggestion');
 const TemplateAssignment = require('./models/TemplateAssignment');
 const APP_VERSION = require('./package.json').version;
+
+// Log del deploy automático (POST /deploy). Va a un archivo propio y no al logger de
+// winston a propósito: el proceso que escribe acá sobrevive al worker que lo lanzó
+// (ver el spawn detached en /deploy), así que no puede depender del logger de la app.
+const DEPLOY_LOG = path.join(__dirname, 'logs', 'deploy.log');
 
 const authRoutes         = require('./routes/auth');
 const courseRoutes       = require('./routes/courses');
@@ -97,6 +102,30 @@ const authLimiter = rateLimit({
 // `app.use('/activities', ...)` y golpeaba todos los GET del router, agotando el cupo
 // con navegación normal y rompiendo "Mis notas", listado de actividades y novedades.
 
+// ── Health check ─────────────────────────────────────────────────────────────
+// GET /health — estado de la instancia. Va montado ANTES del rate limiter y ANTES
+// del middleware de mantenimiento a propósito: tiene que responder justamente cuando
+// algo anda mal (cupo agotado, sitio en mantenimiento), que es cuando más se lo consulta.
+//
+// `version` sale de APP_VERSION, que se lee de package.json UNA SOLA VEZ al arrancar el
+// worker (línea 19). Por eso es la fuente de verdad de QUÉ CÓDIGO HAY REALMENTE CARGADO
+// EN MEMORIA, a diferencia del package.json del disco. Comparar ambos es lo que detecta
+// un deploy que copió los archivos pero no recargó los workers — ver el script de deploy
+// y el changelog 2026-07-28.
+//
+// No expone nada sensible: ni rutas, ni env vars, ni datos de usuarios.
+app.get('/health', (req, res) => {
+  // readyState de Mongoose: 1 = conectado. Cualquier otro valor es un problema.
+  const dbUp = require('mongoose').connection.readyState === 1;
+  res.status(dbUp ? 200 : 503).json({
+    status:  dbUp ? 'ok' : 'degraded',
+    version: APP_VERSION,
+    pid:     process.pid,          // distingue entre workers del cluster
+    uptime:  Math.round(process.uptime()), // segundos desde que arrancó ESTE worker
+    db:      dbUp ? 'ok' : 'down',
+  });
+});
+
 // Aplica límite general a todas las rutas dinámicas
 app.use(generalLimiter);
 
@@ -124,10 +153,41 @@ app.post('/deploy', express.raw({ type: 'application/json' }), (req, res) => {
 
   res.status(200).json({ message: 'Deploy iniciado' });
 
-  exec('git -C /home/walter/classroom pull && /usr/local/bin/pm2 restart classroom --update-env', (err, stdout, stderr) => {
-    if (err) logger.error('Deploy fallido', { error: err.message, stderr });
-    else     logger.info('Deploy exitoso', { stdout: stdout.trim() });
+  // ⚠️ CRÍTICO: este handler corre DENTRO de un worker de PM2, y el comando de abajo
+  // reinicia esos mismos workers. Con `exec()` el comando era hijo del worker, así que
+  // PM2 lo mataba junto con su padre a mitad de ejecución: el `git pull` completaba pero
+  // el reload no (o solo alcanzaba a un worker del cluster). Resultado: archivos nuevos
+  // en disco + código viejo en memoria, con el sitio respondiendo 200 como si nada.
+  // Ver el changelog 2026-07-28 para el diagnóstico completo.
+  //
+  // `detached: true` pone al hijo en su PROPIO grupo de procesos (setsid), y `unref()`
+  // lo desprende del event loop del padre. Así sobrevive a la muerte del worker y llega
+  // a terminar el reload. `stdio: 'ignore'` es necesario: sin él, los pipes quedan atados
+  // al padre y el hijo muere igual cuando ese padre se va.
+  //
+  // `reload` en vez de `restart`: levanta los workers de a uno, sin downtime.
+  // El último paso es la red de seguridad: compara la versión que /health reporta desde
+  // MEMORIA contra la que tiene package.json en DISCO. Si no coinciden, el reload no surtió
+  // efecto y quedó el Frankenstein (archivos nuevos + código viejo). En ese caso deja un
+  // ERROR bien visible en deploy.log en lugar de fallar en silencio, que fue exactamente
+  // lo que hizo que este bug pasara días sin detectarse.
+  const deployCmd = [
+    'git -C /home/walter/classroom pull',
+    '/usr/local/bin/pm2 reload classroom --update-env',
+    'sleep 5', // dale tiempo a los workers a levantar antes de consultarlos
+    `DISK=$(node -p "require('/home/walter/classroom/package.json').version")`,
+    `MEM=$(curl -sS http://localhost:${PORT}/health | node -p "JSON.parse(require('fs').readFileSync(0)).version")`,
+    'if [ "$DISK" = "$MEM" ]; then echo "OK deploy verificado: v$MEM"; ' +
+      'else echo "ERROR deploy NO recargo: disco=v$DISK memoria=v$MEM"; exit 1; fi',
+  ].join(' && ');
+
+  const child = spawn('sh', ['-c', `{ date; ${deployCmd}; } >> ${DEPLOY_LOG} 2>&1`], {
+    detached: true,
+    stdio:    'ignore',
   });
+  child.unref();
+
+  logger.info('Deploy disparado en background', { pid: child.pid, log: DEPLOY_LOG });
 });
 
 app.use(express.json({ limit: '2mb' }));

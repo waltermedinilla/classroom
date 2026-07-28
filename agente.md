@@ -289,6 +289,47 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ## Historial de Cambios (Changelog)
 
+### 2026-07-28 — Fix CRÍTICO: el deploy automático se suicidaba a mitad de camino
+
+**Síntoma**: tras pushear, el footer de las páginas seguía mostrando `v1.0.2` mientras `package.json` en el disco del servidor ya decía `v1.0.4`. El sitio respondía HTTP 200 y no parecía roto.
+
+**Causa raíz**: el webhook (`POST /deploy` en `server.js`) hacía
+
+```js
+exec('git -C /home/walter/classroom pull && /usr/local/bin/pm2 restart classroom --update-env', …)
+```
+
+Ese `exec` corre **dentro de un worker de PM2**, y el comando reinicia esos mismos workers. Al llegar a `pm2 restart`, PM2 mata el worker — y con él al proceso hijo que estaba ejecutando el comando. El `git pull` completaba (va primero), el restart no.
+
+**Estado resultante — un Frankenstein silencioso:**
+
+| Qué | De dónde sale | Tras el deploy roto |
+|---|---|---|
+| `public/js/*`, vistas `.ejs` | disco, en cada request | **nuevo** |
+| `routes/`, `models/`, `APP_VERSION` | memoria, al arrancar el worker | **viejo** |
+
+No es solo "desactualizado": una vista nueva puede esperar variables que la ruta vieja en memoria todavía no provee (ej. `activityStats` en `views/admin/users.ejs`) y la página tira error de render. Los endpoints nuevos dan 404.
+
+**Pista diagnóstica**: en `pm2 list`, los contadores de restart (`↺`) quedan **desparejos entre workers** (se vio 12 y 8). En cluster mode PM2 reinicia de a uno; el comando alcanzaba a reiniciar el primero y moría antes del segundo.
+
+**Fix** (`server.js`): `spawn` con `detached: true` + `unref()` y `stdio: 'ignore'`, para que el comando quede en su propio grupo de procesos y sobreviva a la muerte del worker. `reload` en lugar de `restart` (levanta de a uno, sin downtime). Salida a `logs/deploy.log`.
+
+**Red de seguridad**: el deploy ahora termina comparando la versión que `/health` reporta desde **memoria** contra la de `package.json` en **disco**. Si divergen, escribe `ERROR deploy NO recargo: disco=vX memoria=vY` en `deploy.log` y sale con código 1, en vez de fallar en silencio — que es lo que hizo que este bug pasara desapercibido.
+
+**⚠️ Bootstrap**: el primer push que incluya este fix lo va a procesar el webhook **viejo**, que se sigue suicidando. Va a dejar el código nuevo en disco sin recargar. Hace falta **un** `sudo -u walter pm2 reload classroom --update-env` manual esa única vez; a partir de ahí el pipeline se arregla solo.
+
+### 2026-07-28 — Endpoint `/health`
+
+`GET /health` → `{ status, version, pid, uptime, db }`. Público, sin auth.
+
+Montado **antes** del rate limiter y del middleware de mantenimiento a propósito: tiene que responder justamente cuando algo anda mal (cupo agotado, sitio en mantenimiento), que es cuando más se lo consulta. Devuelve 503 si Mongo está caído.
+
+El campo `version` sale de `APP_VERSION`, que se lee de `package.json` **una sola vez al arrancar el worker** (`server.js:19`). Por eso es la fuente de verdad de qué código hay realmente cargado en memoria, a diferencia del `package.json` del disco — y comparar ambos es lo que detecta un deploy que copió archivos sin recargar.
+
+`pid` distingue entre workers del cluster; `uptime` es de ese worker en particular.
+
+Smoke test nuevo: `health-reports-loaded-version` (suite 93/94; el único fallo restante es el ambiental de paginación del directivo, ver Issues Conocidos #8).
+
 ### 2026-07-28 — Fix CRÍTICO: `course.js` abortaba entero para el alumno (card de adjunto invisible)
 
 **Bug reportado**: "al adjuntar archivo de parte de la respuesta a una actividad del docente, no me levanta la card que previsualiza el estado que se está subiendo al servidor y qué tipo de archivo es, si es pdf, o word, o excel, como sí figura cuando el docente lo precarga cuando arma la actividad".
