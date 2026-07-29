@@ -285,9 +285,24 @@ const _activeTheme = (function() {
       <span class="drawer-title">Classroom</span>
     </div>
     <div class="drawer-body">
+      <%
+        // "/" no lleva al mismo lado para todos: server.js redirige a cada rol a su panel
+        // (admin → /admin, superadmin → /superadmin, directivo → /directivo) y solo a
+        // docentes y alumnos los manda a /courses.
+        //
+        // Por eso el rótulo cambia. Para los roles administrativos este ítem decía "Clases"
+        // pero abría su panel institucional, quedando como una segunda entrada al mismo lugar
+        // que "Administración" / "Panel Directivo" — y prometiendo cursos que no mostraba.
+        // Para docentes y alumnos "Clases" sigue siendo exacto.
+        //
+        // Durante una suplantación, res.locals.user es el usuario suplantado, así que el
+        // rótulo acompaña al rol que se está viendo. Es lo correcto.
+        const _rolAdministrativo = typeof user !== 'undefined' && user
+          && ['admin', 'superadmin', 'directivo'].includes(user.role);
+      %>
       <a href="/" class="drawer-item">
-        <span class="material-symbols-outlined">school</span>
-        <span>Clases</span>
+        <span class="material-symbols-outlined"><%= _rolAdministrativo ? 'home' : 'school' %></span>
+        <span><%= _rolAdministrativo ? 'Inicio' : 'Clases' %></span>
       </a>
       <% if (typeof user !== 'undefined' && user && user.role !== 'superadmin') { %>
         <a href="/courses/profile" class="drawer-item">

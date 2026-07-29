@@ -507,7 +507,7 @@ router.get('/students', async (req, res) => {
 router.get('/students/:id', async (req, res) => {
   const school = res.locals.user.school;
   try {
-    const student = await User.findById(req.params.id).select('_id name email dni active role school createdAt phone instagram facebook');
+    const student = await User.findById(req.params.id).select('_id name email dni active role school createdAt phone instagram facebook bio interests futureGoal');
     if (!student) return res.status(404).send('Alumno no encontrado');
     if (student.role !== 'student') return res.status(404).send('El usuario no es alumno');
     if (school && student.school?.toString() !== school.toString()) return res.status(403).send('Acceso denegado');
@@ -567,6 +567,40 @@ router.get('/students/:id', async (req, res) => {
 // Lista todos los docentes de la escuela con: cursos que dictan, cantidad de alumnos
 // atendidos, actividades publicadas último mes, entregas sin calificar hace > 15 días,
 // promedio general normalizado de sus cursos.
+// Cantidad de meses de la serie temporal de actividad docente (incluye el mes en curso).
+const SERIE_MESES = 6;
+
+// Devuelve el primer instante del mes que abre la ventana de la serie.
+// Se normaliza a las 00:00 del día 1 para que el $gte no recorte el mes más viejo.
+function inicioVentanaSerie() {
+  const d = new Date();
+  d.setMonth(d.getMonth() - (SERIE_MESES - 1));
+  d.setDate(1);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+// Etiquetas 'YYYY-MM' de la ventana, del mes más viejo al más nuevo.
+// Se construyen en JS (y no desde los datos) para que los meses SIN actividad aparezcan
+// igual, con cero: si la serie tuviera huecos, un mes sin trabajo no se distinguiría de
+// un mes que no entró en la ventana — y ver el bache es justamente el objetivo.
+function etiquetasMeses(desde) {
+  return Array.from({ length: SERIE_MESES }, (_, i) => {
+    const d = new Date(desde.getFullYear(), desde.getMonth() + i, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+}
+
+const NOMBRES_MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+// 'YYYY-MM' → 'jul' (o 'jul 25' si es de otro año, para que una ventana que cruza
+// diciembre no muestre dos meses con el mismo nombre sin distinguirlos).
+function mesCorto(clave) {
+  const [anio, mes] = clave.split('-').map(Number);
+  const nombre = NOMBRES_MES[mes - 1] || clave;
+  return anio === new Date().getFullYear() ? nombre : `${nombre} ${String(anio).slice(2)}`;
+}
+
 router.get('/teachers', async (req, res) => {
   const school = res.locals.user.school;
   if (!school) return res.render('directivo/no-school');
@@ -575,11 +609,16 @@ router.get('/teachers', async (req, res) => {
   const twoWeeksAgo = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000);
   const LIMIT = 25;
   const page  = Math.max(1, parseInt(req.query.page) || 1);
+  const { search = '', sort = 'overdue-desc' } = req.query;
 
   try {
     // Incluye admins: el schema Course permite que un admin sea dueño (ver routes/admin.js),
     // y sin ellos se perdían filas de docentes activos dictando cursos.
-    const teachers = await User.find({ school, role: { $in: ['teacher', 'admin'] } })
+    // El filtro por nombre va en la query (no en JS) porque la escuela tiene ~350 docentes.
+    const teacherFilter = { school, role: { $in: ['teacher', 'admin'] } };
+    if (search.trim()) teacherFilter.name = { $regex: search.trim(), $options: 'i' };
+
+    const teachers = await User.find(teacherFilter)
       .select('_id name email role active').lean();
 
     // Cursos por docente (owner) para saber a cuántos alumnos y cursos "atiende" cada uno
@@ -650,21 +689,111 @@ router.get('/teachers', async (req, res) => {
       teacherAvgAgg[t].count += g.count;
     });
 
+    // ── Serie temporal de los últimos SERIE_MESES meses ──────────────────────
+    // ATENCIÓN — atribución distinta al resto de esta ruta: las columnas de arriba
+    // (monthlyActs / overdueActs / avg) atribuyen por `course.owner` vía courseOwnerMap,
+    // así que un co-docente aparece en cero. La serie usa `Activity.author`, que es quien
+    // REALMENTE creó la actividad, y por eso sí refleja el trabajo de los co-docentes.
+    // La diferencia es deliberada: no se tocó la atribución vieja para no alterar números
+    // que el directivo ya viene leyendo. Ver la nota de alcance más arriba.
+    const desdeSerie = inicioVentanaSerie();
+    const meses      = etiquetasMeses(desdeSerie);
+    const teacherIds = teachers.map(t => t._id);
+
+    const [actsPorMes, correccionesPorMes] = await Promise.all([
+      // Actividades creadas por mes. Usa el índice { author: 1, createdAt: -1 }.
+      Activity.aggregate([
+        { $match: { author: { $in: teacherIds }, createdAt: { $gte: desdeSerie } } },
+        { $group: {
+            _id:   { autor: '$author', mes: { $dateToString: { format: '%Y-%m', date: '$createdAt' } } },
+            count: { $sum: 1 },
+        } },
+      ]),
+      // Correcciones hechas por mes, fechadas por grades[].gradedAt.
+      // `grades.manual: true` es OBLIGATORIO: el autocalificador escribe gradedAt en el
+      // mismo momento de la entrega con manual:false (ver routes/activities.js, submit),
+      // así que sin este filtro un docente que usa plantillas interactivas aparecería con
+      // cientos de "correcciones" que nunca hizo.
+      // Arranca por `course` (que sí tiene índice) para acotar a la escuela antes del unwind.
+      Activity.aggregate([
+        { $match: { course: { $in: courses.map(c => c._id) } } },
+        { $unwind: '$grades' },
+        { $match: { 'grades.manual': true, 'grades.gradedAt': { $gte: desdeSerie } } },
+        { $group: {
+            _id:   { autor: '$author', mes: { $dateToString: { format: '%Y-%m', date: '$grades.gradedAt' } } },
+            count: { $sum: 1 },
+        } },
+      ]),
+    ]);
+
+    // Map prellenado en cero (mismo patrón que services/userActivityStats.js)
+    const serieVacia = () => Object.fromEntries(meses.map(m => [m, 0]));
+    const serieActs = {}, serieCorr = {};
+    teacherIds.forEach(id => {
+      serieActs[id.toString()] = serieVacia();
+      serieCorr[id.toString()] = serieVacia();
+    });
+
+    // Las guardas cubren dos casos reales: actividades cuyo `author` quedó huérfano
+    // (usuario borrado) y meses que caen fuera de la ventana por desfase de timezone
+    // en el borde del mes — el $dateToString usa UTC y la ventana se arma en hora local.
+    const volcarSerie = (filas, destino) => {
+      for (const r of filas) {
+        const autor = r._id.autor?.toString();
+        if (!autor || !destino[autor]) continue;
+        if (!(r._id.mes in destino[autor])) continue;
+        destino[autor][r._id.mes] = r.count;
+      }
+    };
+    volcarSerie(actsPorMes, serieActs);
+    volcarSerie(correccionesPorMes, serieCorr);
+
+    // Tendencia: promedio de la segunda mitad de la ventana contra la primera.
+    // Con SERIE_MESES=6 son 3 meses contra 3. Umbral del 15% para no marcar como
+    // "sube"/"baja" un movimiento de una sola actividad.
+    const calcTendencia = (valores) => {
+      const mitad    = Math.floor(valores.length / 2);
+      const previos  = valores.slice(0, mitad);
+      const recientes = valores.slice(mitad);
+      const prom = (arr) => arr.reduce((a, b) => a + b, 0) / (arr.length || 1);
+      const antes = prom(previos), ahora = prom(recientes);
+      if (antes === 0 && ahora === 0) return 'sin-datos';
+      if (antes === 0) return 'sube';
+      const delta = (ahora - antes) / antes;
+      if (delta > 0.15)  return 'sube';
+      if (delta < -0.15) return 'baja';
+      return 'estable';
+    };
+
     const rows = teachers.map(t => {
-      const bag  = coursesByOwner.get(t._id.toString()) || { courseIds: [], studentSet: new Set() };
-      const agg  = teacherAvgAgg[t._id.toString()];
+      const key  = t._id.toString();
+      const bag  = coursesByOwner.get(key) || { courseIds: [], studentSet: new Set() };
+      const agg  = teacherAvgAgg[key];
+      const sActs = meses.map(m => serieActs[key][m]);
+      const sCorr = meses.map(m => serieCorr[key][m]);
       return {
         _id: t._id, name: t.name, email: t.email, active: t.active,
         courseCount:  bag.courseIds.length,
         studentCount: bag.studentSet.size,
-        monthlyActs:  monthlyByTeacher[t._id.toString()] || 0,
-        overdueActs:  overdueByTeacher[t._id.toString()] || 0,
+        monthlyActs:  monthlyByTeacher[key] || 0,
+        overdueActs:  overdueByTeacher[key] || 0,
         avg:          agg && agg.count > 0 ? Math.round((agg.sum / agg.count) * 10) / 10 : null,
+        serieActs:    sActs,
+        serieCorr:    sCorr,
+        serieTotal:   sActs.reduce((a, b) => a + b, 0),
+        tendencia:    calcTendencia(sActs),
       };
     });
 
-    // Ordena: los con más "sin calificar" arriba (foco de atención)
-    rows.sort((a, b) => (b.overdueActs - a.overdueActs) || a.name.localeCompare(b.name, 'es'));
+    // Orden configurable. El default sigue siendo el histórico (más "sin calificar" arriba).
+    // 'acts-asc' es el foco de atención real: docentes que dejaron de publicar.
+    const sorters = {
+      'overdue-desc': (a, b) => (b.overdueActs - a.overdueActs) || a.name.localeCompare(b.name, 'es'),
+      'acts-desc':    (a, b) => (b.serieTotal - a.serieTotal)   || a.name.localeCompare(b.name, 'es'),
+      'acts-asc':     (a, b) => (a.serieTotal - b.serieTotal)   || a.name.localeCompare(b.name, 'es'),
+      'name':         (a, b) => a.name.localeCompare(b.name, 'es'),
+    };
+    rows.sort(sorters[sort] || sorters['overdue-desc']);
 
     // Paginación en JS (mismo criterio que courses/students)
     const total      = rows.length;
@@ -675,8 +804,12 @@ router.get('/teachers', async (req, res) => {
 
     res.render('directivo/teachers', {
       teachers: pageTeachers,
+      meses, mesesLabel: meses.map(mesCorto),
+      search, sort,
       page: safePage, totalPages, total,
-      queryParams: {},
+      // Sin los filtros acá, pasar a la página 2 los perdería (ver partials/pagination.ejs,
+      // que reconstruye el query string desde este objeto).
+      queryParams: { search, sort },
       activePage: 'teachers',
     });
   } catch (err) {
@@ -688,7 +821,7 @@ router.get('/teachers', async (req, res) => {
 router.get('/teachers/:id', async (req, res) => {
   const school = res.locals.user.school;
   try {
-    const teacher = await User.findById(req.params.id).select('_id name email active role school createdAt phone instagram facebook');
+    const teacher = await User.findById(req.params.id).select('_id name email active role school createdAt phone instagram facebook bio interests futureGoal');
     if (!teacher) return res.status(404).send('Docente no encontrado');
     // Admins también pueden ser owner de un curso; el listado /directivo/teachers los incluye
     // así que este perfil debe aceptarlos, sino los links caerían en 404.
@@ -722,8 +855,39 @@ router.get('/teachers/:id', async (req, res) => {
       graded:     a.grades.length,
     }));
 
+    // ── Serie mensual de ESTE docente ────────────────────────────────────────
+    // Misma semántica que en el listado (ver GET /teachers): atribución por
+    // Activity.author, y las correcciones filtradas por grades.manual === true para no
+    // contar lo que puso el autocalificador.
+    const desdeSerie = inicioVentanaSerie();
+    const meses      = etiquetasMeses(desdeSerie);
+
+    const [actsMes, corrMes] = await Promise.all([
+      Activity.aggregate([
+        { $match: { author: teacher._id, createdAt: { $gte: desdeSerie } } },
+        { $group: { _id: { $dateToString: { format: '%Y-%m', date: '$createdAt' } }, count: { $sum: 1 } } },
+      ]),
+      Activity.aggregate([
+        { $match: { author: teacher._id } },
+        { $unwind: '$grades' },
+        { $match: { 'grades.manual': true, 'grades.gradedAt': { $gte: desdeSerie } } },
+        { $group: { _id: { $dateToString: { format: '%Y-%m', date: '$grades.gradedAt' } }, count: { $sum: 1 } } },
+      ]),
+    ]);
+
+    const aSerie = (filas) => {
+      const base = Object.fromEntries(meses.map(m => [m, 0]));
+      filas.forEach(f => { if (f._id in base) base[f._id] = f.count; });
+      return meses.map(m => base[m]);
+    };
+
     res.render('directivo/teacher-detail', {
       teacher,
+      serie: {
+        meses:      meses.map(mesCorto),
+        creadas:    aSerie(actsMes),
+        corregidas: aSerie(corrMes),
+      },
       courses: courses.map(c => ({
         _id: c._id, name: c.name,
         division: c.division?.name || '—',
@@ -736,6 +900,236 @@ router.get('/teachers/:id', async (req, res) => {
         totalStudents:   [...new Set(courses.flatMap(c => c.students.map(s => s.toString())))].length,
       },
       activePage: 'teachers',
+    });
+  } catch (err) {
+    res.status(500).send('Error del servidor');
+  }
+});
+
+/* ─── Divisiones ─────────────────────────────────────────────────────────── */
+// Vista por división (1°A, 2°B…), que es como suele pensar un directivo antes que
+// por materia suelta. `Division` es un modelo mínimo (name + school), así que todas
+// las métricas salen de cruzar sus materias.
+//
+// Calcula, por división: materias, alumnos únicos, docentes únicos, actividades,
+// tasa de entrega y promedio normalizado 0-10.
+//
+// Los alumnos se cuentan ÚNICOS por división: un mismo alumno cursa varias materias
+// del mismo año, así que sumar `students.length` de cada materia lo contaría repetido.
+// De ahí el $setUnion sobre el $reduce que aplana los arrays.
+router.get('/divisions', async (req, res) => {
+  const school = res.locals.user.school;
+  if (!school) return res.render('directivo/no-school');
+
+  const LIMIT = 25;
+  const page  = Math.max(1, parseInt(req.query.page) || 1);
+  const { search = '', sort = 'name' } = req.query;
+  const now = new Date();
+
+  try {
+    const match = { school: oid(school) };
+    if (search.trim()) match.name = { $regex: search.trim(), $options: 'i' };
+
+    const filas = await Division.aggregate([
+      { $match: match },
+      { $lookup: { from: 'courses', localField: '_id', foreignField: 'division', as: 'cursos' } },
+      { $lookup: {
+          from: 'activities',
+          let: { cursoIds: '$cursos._id' },
+          pipeline: [{ $match: { $expr: { $in: ['$course', '$$cursoIds'] } } }],
+          as: 'acts',
+      } },
+      { $project: {
+          name: 1,
+          materias:    { $size: '$cursos' },
+          actividades: { $size: '$acts' },
+          alumnos: { $size: { $setUnion: [{ $reduce: {
+              input: '$cursos.students', initialValue: [],
+              in: { $concatArrays: ['$$value', '$$this'] },
+          } }, []] } },
+          docentes: { $size: { $setUnion: ['$cursos.owner', []] } },
+          // Mismo criterio que /directivo/courses: vencida y sin ninguna nota cargada.
+          vencidasSinCalificar: { $size: { $filter: { input: '$acts', cond: { $and: [
+            { $ne: ['$$this.dueDate', null] },
+            { $lt: ['$$this.dueDate', now] },
+            { $eq: [{ $size: { $ifNull: ['$$this.grades', []] } }, 0] },
+          ] } } } },
+          cursoIds: '$cursos._id',
+      } },
+    ]);
+
+    // Entregas por división (para la tasa) — una sola query para todas.
+    const todosLosCursos = filas.flatMap(f => f.cursoIds);
+    const entregas = await Submission.aggregate([
+      { $lookup: { from: 'activities', localField: 'activity', foreignField: '_id', as: 'act' } },
+      { $unwind: '$act' },
+      { $match: { 'act.course': { $in: todosLosCursos } } },
+      { $group: { _id: '$act.course', count: { $sum: 1 } } },
+    ]);
+    const entregasPorCurso = Object.fromEntries(entregas.map(e => [e._id.toString(), e.count]));
+
+    // Promedio normalizado por división. Misma guarda `points > 0` que en /grades:
+    // sin ella, una actividad con points null o 0 rompería el $divide.
+    const notas = await Activity.aggregate([
+      { $lookup: { from: 'courses', localField: 'course', foreignField: '_id', as: 'courseDoc' } },
+      { $unwind: '$courseDoc' },
+      { $match: { 'courseDoc.school': oid(school), points: { $ne: null, $gt: 0 } } },
+      { $unwind: '$grades' },
+      { $group: {
+          _id: '$courseDoc.division',
+          sum:   { $sum: { $multiply: [{ $divide: ['$grades.points', '$points'] }, 10] } },
+          count: { $sum: 1 },
+      } },
+    ]);
+    const promPorDivision = Object.fromEntries(
+      notas.map(n => [n._id?.toString(), n.count > 0 ? Math.round((n.sum / n.count) * 10) / 10 : null]),
+    );
+
+    const rows = filas.map(f => {
+      const entregasDiv = f.cursoIds.reduce((acc, id) => acc + (entregasPorCurso[id.toString()] || 0), 0);
+      // Esperadas = actividades × alumnos de la división. Si da 0 no hay nada que medir
+      // todavía (null se renderiza como "—", no como 0%, que se leería como fracaso).
+      const esperadas = f.actividades * f.alumnos;
+      return {
+        _id: f._id, name: f.name,
+        materias: f.materias, alumnos: f.alumnos, docentes: f.docentes,
+        actividades: f.actividades,
+        vencidasSinCalificar: f.vencidasSinCalificar,
+        entregas: entregasDiv,
+        esperadas,
+        tasa: esperadas > 0 ? Math.round((entregasDiv / esperadas) * 100) : null,
+        promedio: promPorDivision[f._id.toString()] ?? null,
+      };
+    });
+
+    const sorters = {
+      'name':      (a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }),
+      'rate-asc':  (a, b) => (a.tasa ?? 999) - (b.tasa ?? 999) || a.name.localeCompare(b.name, 'es'),
+      'rate-desc': (a, b) => (b.tasa ?? -1)  - (a.tasa ?? -1)  || a.name.localeCompare(b.name, 'es'),
+      'alumnos':   (a, b) => b.alumnos - a.alumnos || a.name.localeCompare(b.name, 'es'),
+    };
+    rows.sort(sorters[sort] || sorters['name']);
+
+    const total      = rows.length;
+    const totalPages = Math.max(1, Math.ceil(total / LIMIT));
+    const safePage   = Math.min(page, totalPages);
+    const pageStart  = (safePage - 1) * LIMIT;
+
+    res.render('directivo/divisions', {
+      divisions: rows.slice(pageStart, pageStart + LIMIT),
+      search, sort,
+      page: safePage, totalPages, total,
+      queryParams: { search, sort },
+      activePage: 'divisions',
+    });
+  } catch (err) {
+    res.status(500).send('Error del servidor');
+  }
+});
+
+/* ─── Detalle read-only de división ──────────────────────────────────────── */
+// Materias y alumnos de una división, con links cruzados a sus respectivos detalles.
+// Sin paginación interna, igual que course-detail (una división tiene ~10 materias
+// y ~35 alumnos; paginar ahí sería ruido).
+router.get('/divisions/:id', async (req, res) => {
+  const school = res.locals.user.school;
+  try {
+    const division = await Division.findById(req.params.id);
+    if (!division) return res.status(404).send('División no encontrada');
+    if (school && division.school?.toString() !== school.toString()) {
+      return res.status(403).send('Acceso denegado');
+    }
+
+    const courses = await Course.find({ division: division._id })
+      .populate('owner', 'name email active')
+      .select('_id name owner students');
+    const courseIds = courses.map(c => c._id);
+
+    const activities = await Activity.find({ course: { $in: courseIds } })
+      .select('_id course dueDate grades points');
+
+    const entregas = await Submission.aggregate([
+      { $match: { activity: { $in: activities.map(a => a._id) } } },
+      { $group: { _id: '$activity', count: { $sum: 1 }, alumnos: { $addToSet: '$student' } } },
+    ]);
+    const entregasPorAct = Object.fromEntries(entregas.map(e => [e._id.toString(), e.count]));
+
+    // Entregas por alumno: se cuenta a nivel alumno para la tabla de abajo.
+    const entregasPorAlumno = {};
+    for (const e of entregas) {
+      for (const sid of e.alumnos) {
+        const k = sid.toString();
+        entregasPorAlumno[k] = (entregasPorAlumno[k] || 0) + 1;
+      }
+    }
+
+    const now = new Date();
+    const actsPorCurso = {};
+    activities.forEach(a => {
+      const k = a.course.toString();
+      if (!actsPorCurso[k]) actsPorCurso[k] = { total: 0, vencidasSinCalificar: 0, entregas: 0 };
+      actsPorCurso[k].total++;
+      actsPorCurso[k].entregas += entregasPorAct[a._id.toString()] || 0;
+      if (a.dueDate && a.dueDate < now && a.grades.length === 0) actsPorCurso[k].vencidasSinCalificar++;
+    });
+
+    const courseRows = courses.map(c => {
+      const bag = actsPorCurso[c._id.toString()] || { total: 0, vencidasSinCalificar: 0, entregas: 0 };
+      const esperadas = bag.total * c.students.length;
+      return {
+        _id: c._id, name: c.name,
+        teacher: c.owner?.name || '—',
+        teacherActive: c.owner?.active !== false,
+        students: c.students.length,
+        activities: bag.total,
+        entregas: bag.entregas,
+        esperadas,
+        tasa: esperadas > 0 ? Math.round((bag.entregas / esperadas) * 100) : null,
+        vencidasSinCalificar: bag.vencidasSinCalificar,
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+
+    // Alumnos únicos de la división (un alumno cursa varias materias del mismo año).
+    const alumnoIds = [...new Set(courses.flatMap(c => c.students.map(s => s.toString())))];
+    const alumnos = await User.find({ _id: { $in: alumnoIds } })
+      .select('_id name email dni').sort({ name: 1 }).lean();
+
+    // Promedio normalizado por alumno dentro de esta división.
+    const notas = await Activity.aggregate([
+      { $match: { course: { $in: courseIds }, points: { $ne: null, $gt: 0 } } },
+      { $unwind: '$grades' },
+      { $group: {
+          _id: '$grades.student',
+          sum:   { $sum: { $multiply: [{ $divide: ['$grades.points', '$points'] }, 10] } },
+          count: { $sum: 1 },
+      } },
+    ]);
+    const promPorAlumno = Object.fromEntries(
+      notas.map(n => [n._id.toString(), Math.round((n.sum / n.count) * 10) / 10]),
+    );
+
+    const totalActividades = activities.length;
+    const studentRows = alumnos.map(a => ({
+      _id: a._id, name: a.name, email: a.email, dni: a.dni,
+      entregas: entregasPorAlumno[a._id.toString()] || 0,
+      promedio: promPorAlumno[a._id.toString()] ?? null,
+    }));
+
+    const totalEntregas  = Object.values(entregasPorAct).reduce((x, y) => x + y, 0);
+    const totalEsperadas = courseRows.reduce((acc, c) => acc + c.esperadas, 0);
+
+    res.render('directivo/division-detail', {
+      division,
+      courses: courseRows,
+      students: studentRows,
+      stats: {
+        materias:    courses.length,
+        alumnos:     alumnos.length,
+        docentes:    new Set(courses.map(c => c.owner?._id?.toString()).filter(Boolean)).size,
+        actividades: totalActividades,
+        tasa:        totalEsperadas > 0 ? Math.round((totalEntregas / totalEsperadas) * 100) : null,
+      },
+      activePage: 'divisions',
     });
   } catch (err) {
     res.status(500).send('Error del servidor');

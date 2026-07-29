@@ -18,6 +18,10 @@ apunta a `localhost`/`127.0.0.1`, salvo que fuerces `SMOKE_ALLOW_REMOTE=true`.
    npm run test:smoke
    ```
 
+> También hay una suite **unitaria** aparte, que no necesita ni server ni base:
+> `npm run test:images` corre `tests/images/` (optimizador de imágenes) con el runner
+> nativo `node --test`. Tarda menos de un segundo — conviene correrla antes que el smoke.
+
 Con eso solo corre el **Nivel 1** (registro, login, servidor arriba) — no necesita
 credenciales. Para el flujo completo (curso, actividades, entregas, calificaciones,
 sugerencias) necesita un admin de escuela real de tu Mongo local:
@@ -47,6 +51,11 @@ y corré `npm run test:smoke` normalmente — `run.js` lo carga automático si e
   docente/alumno ven el botón de sugerencias y pueden enviarla (antes daba 403), y
   deshabilitar un usuario corta su sesión ya activa al toque (prueba la invalidación de
   cache, no que quede "vivo" hasta 5 min).
+- **Optimización de imágenes** (v1.0.7, dentro del Nivel 2): avatar, portada de materia
+  y novedad se guardan como WebP chico; re-subir el avatar cambia la URL y borra el
+  anterior del disco; un archivo que no es imagen se rechaza con 400 aunque la extensión
+  y el `Content-Type` digan lo contrario; un docente ajeno no puede pisar la portada de
+  otro curso; y los adjuntos que no son imágenes (PDF) siguen intactos.
 - **Nivel 3** (con `SMOKE_SUPERADMIN_*`, opcional): panel de sugerencias del superadmin
   pagina bien.
 - Al final borra todo lo que creó (curso, división, usuarios de prueba, sugerencias).

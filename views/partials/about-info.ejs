@@ -1,0 +1,50 @@
+<%# Perfil personal de solo lectura (bio, intereses, proyecto/especialidad).
+    Espera `person` (User) en el scope del include — mismo contrato que partials/contact-info.
+
+    Los campos los carga el propio usuario desde /profile. Alcance de visibilidad decidido
+    explícitamente: el propio usuario + el equipo directivo. NO se incluye este partial en
+    vistas que vean compañeros ni docentes, porque los alumnos son menores.
+
+    Todo se interpola con el tag que escapa por defecto: `bio` y `futureGoal` son texto libre
+    escrito por el usuario y nunca deben renderearse como HTML.
+%>
+<%
+  const _labels = locals.INTEREST_LABELS || {};
+  const _icons  = locals.INTEREST_ICONS  || {};
+  const _ints   = person.interests || [];
+  const _hayAlgo = person.bio || person.futureGoal || _ints.length > 0;
+%>
+<% if (_hayAlgo) { %>
+  <div style="margin-top:14px;padding:14px 16px;background:var(--surface-variant,#f8f9fa);border-radius:10px">
+
+    <% if (person.bio) { %>
+      <p style="font-size:13px;color:var(--text-primary);margin:0;line-height:1.6;white-space:pre-line"><%= person.bio %></p>
+    <% } %>
+
+    <% if (_ints.length > 0) { %>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:<%= person.bio ? '12' : '0' %>px">
+        <% _ints.forEach(id => { %>
+          <span style="display:inline-flex;align-items:center;gap:5px;padding:4px 11px;background:#e8f0fe;color:#1a73e8;border-radius:16px;font-size:12px;font-weight:500">
+            <% if (_icons[id]) { %><span class="material-symbols-outlined" style="font-size:14px"><%= _icons[id] %></span><% } %>
+            <%= _labels[id] || id %>
+          </span>
+        <% }) %>
+      </div>
+    <% } %>
+
+    <% if (person.futureGoal) { %>
+      <div style="display:flex;align-items:flex-start;gap:7px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border,#e0e0e0)">
+        <span class="material-symbols-outlined" style="font-size:16px;color:#1a73e8;margin-top:1px">
+          <%= person.role === 'student' ? 'rocket_launch' : 'workspace_premium' %>
+        </span>
+        <div>
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-hint);font-weight:600">
+            <%= person.role === 'student' ? 'Le gustaría dedicarse a' : 'Formación / especialidad' %>
+          </div>
+          <div style="font-size:13px;color:var(--text-primary);margin-top:2px"><%= person.futureGoal %></div>
+        </div>
+      </div>
+    <% } %>
+
+  </div>
+<% } %>

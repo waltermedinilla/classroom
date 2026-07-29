@@ -1548,6 +1548,39 @@ select, .select-input {
 }
 .pending-band-link:hover { text-decoration: underline; }
 
+/* ─── Aviso para completar el perfil (dashboard) ───
+   Azul informativo, deliberadamente distinto del ámbar de .pending-band: una tarea que
+   vence es urgente, completar el perfil es opcional. Si compartieran color, el alumno
+   aprendería a ignorar los dos. */
+.profile-band {
+  display: flex; align-items: center; gap: 10px;
+  background: #e8f0fe; border: 1px solid #c2d7fb;
+  border-radius: var(--radius-sm); padding: 12px 18px;
+  margin-bottom: 20px; font-size: 14px; color: #174ea6;
+}
+[data-theme="dark"] .profile-band {
+  background: rgba(26,115,232,.12); border-color: rgba(138,180,248,.35); color: #8ab4f8;
+}
+.profile-band > .material-symbols-outlined { font-size: 20px !important; color: #1a73e8; flex-shrink: 0; }
+[data-theme="dark"] .profile-band > .material-symbols-outlined { color: #8ab4f8; }
+.profile-band-link {
+  margin-left: auto; font-size: 13px; font-weight: 500;
+  color: var(--primary); text-decoration: none; flex-shrink: 0; white-space: nowrap;
+}
+.profile-band-link:hover { text-decoration: underline; }
+.profile-band-close {
+  background: none; border: none; cursor: pointer; padding: 2px;
+  display: flex; align-items: center; color: inherit; opacity: .55; flex-shrink: 0;
+  border-radius: 50%;
+}
+.profile-band-close:hover { opacity: 1; background: rgba(0,0,0,.06); }
+.profile-band-close .material-symbols-outlined { font-size: 18px !important; }
+/* En pantallas chicas el texto pasa a ocupar toda la fila y el link baja debajo */
+@media (max-width: 620px) {
+  .profile-band { flex-wrap: wrap; }
+  .profile-band-link { margin-left: 30px; }
+}
+
 /* ─── Submitted chip (docente: X/Y entregaron) ─── */
 .submitted-chip {
   display: inline-flex; align-items: center; gap: 3px;

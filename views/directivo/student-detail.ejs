@@ -89,6 +89,7 @@
           Alta: <%= new Date(student.createdAt).toLocaleDateString('es-AR', {day:'numeric', month:'long', year:'numeric'}) %>
         </div>
         <%- include('../partials/contact-info', { person: student }) %>
+        <%- include('../partials/about-info', { person: student }) %>
       </div>
     </div>
 

@@ -283,11 +283,209 @@ Variables CSS para colores, sombras, radios. Componentes:
 5. Rate limiting (`express-rate-limit`) y Helmet **ya están activos** (ver `server.js`)
 6. **Cache por-worker** de usuario y escuela (TTL 45s, ver `middleware/cache.js`): reduce load en Mongo pero no se comparte entre workers de PM2 cluster. Cambios de rol/estado/escuela pueden tardar hasta 45s en aplicar en OTRO worker. Ver mitigaciones en el changelog 2026-07-21.
 7. **`public/js/course.js` es compartido por docente y alumno**, pero `views/course.ejs` renderea DOM distinto según el rol (`<% if (course.isTeacher(user._id)) %>`). Todo `document.getElementById(...)` en el **nivel superior** del script debe usar `?.` — si el elemento no existe para ese rol, el `TypeError` corta la ejecución del archivo entero y deja sin inicializar todos los `const`/`let` de más abajo (falla silenciosa, solo visible en la consola del navegador). Ya pasó una vez: ver changelog 2026-07-28 "course.js abortaba entero para el alumno".
-8. El smoke test `directivo-sees-courses-with-metrics` falla contra una BD local espejada de producción: `GET /directivo/courses` pagina de a 25 (`routes/directivo.js`) y con 419 materias el curso de smoke no entra en la primera página. El test se escribió antes de que se agregara esa paginación (2026-07-22). No es una regresión.
+8. ~~El smoke test `directivo-sees-courses-with-metrics` falla contra una BD espejada de producción por paginación.~~ **Arreglado el 2026-07-28**: el test ahora busca el curso con `?search=` en vez de esperarlo en la primera página. La suite quedó en **97/97**.
+9. Las cuatro rutas de detalle del panel directivo (`/courses/:id`, `/students/:id`, `/teachers/:id`, `/divisions/:id`) devuelven **500 en vez de 404 cuando el `:id` no es un ObjectId válido** — `findById` lanza `CastError` y cae en el `catch` genérico. Con un ID válido pero inexistente sí dan 404 correctamente. Fix: `if (!mongoose.isValidObjectId(req.params.id)) return res.status(404)...` al entrar a cada handler. Conviene revisar si el patrón se repite en `routes/admin.js` y `routes/superadmin.js`.
+10. En el listado de divisiones, **la suma de la columna "Alumnos" supera el total de alumnos de la escuela**. No es un error: los alumnos se cuentan únicos *dentro* de cada división, y un alumno puede cursar materias de más de una.
 
 ---
 
 ## Historial de Cambios (Changelog)
+
+### 2026-07-28 — Optimización automática de imágenes al subirlas (v1.0.7)
+
+**Pedido**: que las imágenes se redimensionen apenas se suben y se guarden pesando mucho menos, con la herramienta conviviendo en el mismo servidor. Alcance acordado: avatares de perfil, portadas de materia e imágenes de novedades.
+
+**El problema medido**: los cuatro `multer.diskStorage()` guardaban el byte-por-byte que mandaba el navegador. En el mirror local: **78 imágenes = 74,7 MB**, avatares de hasta **3,07 MB** mostrados en un círculo de 40 px. Esto es exactamente la "observación para revisar aparte" que había quedado anotada al agregar la card de Almacenamiento al monitor (198 MB / 141 archivos en producción).
+
+#### Piezas nuevas
+
+| Archivo | Qué hace |
+|---|---|
+| `config/imagePresets.js` | Los techos por tipo de imagen, en un solo lugar |
+| `services/imageOptimizer.js` | Envuelve sharp: rota por EXIF, redimensiona, reencodea a WebP |
+| `middleware/image-upload.js` | multer en memoria + escritura en disco con nombre cache-busting |
+| `optimize-existing-images.js` | Backfill de lo ya subido (con `--dry-run`) |
+| `tests/images/optimizer.test.js` | 15 tests unitarios (`npm run test:images`, runner nativo `node --test`) |
+
+| Preset | Dónde | Máx | Ajuste | Calidad |
+|---|---|---|---|---|
+| `avatar` | perfil | 512×512 | `cover` | WebP 78 |
+| `header` | portada de materia | 1600×600 | `inside` | WebP 80 |
+| `novedad` | imagen de novedad | 1600 px lado mayor | `inside` | WebP 80 |
+
+**Resultado medido con el backfill en dry-run: 74,74 MB → 2,89 MB (96% de ahorro), 78/78 archivos, 0 errores.** Los backups `.tar.gz` bajan en la misma proporción.
+
+#### Por qué `memoryStorage` y no `diskStorage`
+
+Tres motivos, el segundo es el importante:
+
+1. El original nunca toca el disco (antes se escribían 3 MB para después borrarlos).
+2. **Elimina el callback `filename()` que borraba la imagen anterior.** Ese callback era la causa raíz de la vulnerabilidad de `POST /courses/:id/customize` documentada más abajo: multer corre antes que el handler, así que un docente ajeno borraba la portada de la víctima aunque después recibiera 403. La mitigación era un middleware previo que validaba permisos; ahora el borrado vive dentro del handler y el agujero está cerrado **por diseño**, no por orden de middlewares. El middleware previo se conservó igual, como defensa en profundidad.
+3. El costo es RAM (hasta 8 MB por request en vuelo), acotado por el `uploadLimiter` que ya existía. **No** se aplicó a entregas ni adjuntos de actividades: ahí hay PDFs de hasta 50 MB que no tienen por qué pasar por memoria.
+
+#### Detalles que no son obvios
+
+- **`.rotate()` antes del resize, siempre.** Al reencodear se pierde el EXIF — bien, porque ahí viaja el GPS de las fotos de celular de los alumnos (bonus de privacidad). Pero con el EXIF también se va el flag de orientación que hoy usa el navegador para enderezar la foto: sin rotar antes, toda foto vertical de celular quedaría acostada para siempre.
+- **Nombres con sufijo único** (`avatar-ms5e5v8i9df025.webp`). Con nombre fijo, re-subir el avatar pisaba el archivo pero no cambiaba la URL, y el navegador seguía mostrando el anterior desde su cache. Con todo convertido a `.webp` el nombre habría sido siempre el mismo y el bug pasaba de intermitente a permanente.
+- **`failOn: 'error'` y no el default `'warning'`.** El default rechazaba un avatar bajado de Google que cualquier navegador muestra perfecto ("premature end of JPEG image"), y de forma intermitente según la carga — lo más difícil de diagnosticar de todo esto. Con `'error'` toleramos los warnings de libjpeg igual que un navegador. Lo relevante para seguridad no cambia: un archivo que no es imagen revienta antes, en `metadata()`.
+- **`fit: 'cover'` + `withoutEnlargement: true` no se llevan bien** — con una entrada de 1600×400 sharp devolvía 512×**400** y el avatar salía rectangular, que el CSS circular después aplasta. Para `cover` el lado se calcula a mano como `min(preset, ancho, alto)`. Lo encontró un test unitario antes de que llegara a la app.
+- **Validación real de que es una imagen**: el `fileFilter` de multer solo mira la extensión y el `Content-Type` que declara el cliente, los dos falsificables — un archivo arbitrario renombrado a `.jpg` terminaba escrito dentro de `/public`. Decodificarlo con sharp es la validación de verdad. Ahora responde 400.
+- **Degradación si falta sharp**: el `require` va protegido con `try/catch`. El webhook de deploy hace `git pull` + `pm2 reload` pero **no** `npm install`; si el binario nativo no está, la app guarda los originales sin optimizar y loguea el error, en vez de no arrancar.
+- **GIF animado**: pasa intacto (convertirlo a WebP animado es caro y suele pesar más).
+- **Si el WebP pesaría más que el original**, gana el original (imágenes ya optimizadas).
+
+#### Retrocompatibilidad
+
+Las URLs viejas (`.jpg`/`.png`) siguen en la base y los archivos siguen en disco: nada se rompe. El backfill es un paso aparte y opcional.
+
+#### Backfill (`optimize-existing-images.js`)
+
+⚠️ **Toca la base de datos**: al cambiar la extensión cambia el nombre, y las URLs viven en `User.avatar`, `Course.header.image` y `Announcement.image`. Reescribir los archivos sin actualizar la base dejaría todas las imágenes rotas.
+
+Orden por archivo: escribir la nueva → actualizar la base → recién ahí borrar la vieja. Si el proceso muere en el medio, lo peor que queda es un archivo huérfano (lo levanta `cleanup-files.js`); nunca una URL apuntando a un archivo inexistente.
+
+Reintenta en **modo tolerante** los archivos que no decodifican en estricto: esos ya están publicados y el navegador los muestra parciales, así que rechazarlos no le devuelve la imagen a nadie y deja el peso completo en disco. En el mirror local fue 1 archivo de 78 — un JPEG truncado de 1,62 MB que quedó en 0,03 MB.
+
+Procedimiento en producción: backup → modo mantenimiento → `--dry-run` → correr → verificar → salir de mantenimiento.
+
+#### Verificación
+
+- `npm run test:images`: **15/15**.
+- `npm run test:smoke`: **109/109**, incluidos 9 specs nuevos de imágenes.
+- Backfill en dry-run sobre las 78 imágenes locales: 96% de ahorro, 0 errores.
+
+### 2026-07-28 — Monitor del superadmin: sección Almacenamiento
+
+**Pedido**: una card en el monitor que muestre cuánto se va guardando en disco y cuánto queda disponible.
+
+**Qué muestra**: uso del volumen con barra (mismo patrón visual que RAM), espacio libre, cuánto ocupa la app en total, y un desglose con barras proporcionales — entregas de alumnos, adjuntos/avatares y base de datos (con cantidad de documentos y peso de índices).
+
+#### La decisión de diseño que importa: dos costos muy distintos
+
+`views/superadmin/monitor.ejs` **refresca cada 5 segundos** (`REFRESH_SECONDS = 5`). Eso obliga a separar:
+
+| Dato | Costo | Estrategia |
+|---|---|---|
+| Espacio del volumen (`fs.statfs`) | una syscall, microsegundos | se calcula siempre |
+| Tamaño de las carpetas | O(cantidad de archivos) | **cacheado 60s** |
+
+Hoy son 144 archivos / ~214 MB y el escaneo tarda 39 ms, pero crece con cada entrega. Recorrer el árbol cada 5 segundos sería tirar I/O a la basura. El servicio devuelve `calculadoHace` y la card muestra la antigüedad del desglose en vez de fingir que es del segundo exacto.
+
+`services/diskStats.js` concentra todo. Detalles no obvios:
+- Usa **`bavail` y no `bfree`**: Linux reserva un porcentaje del filesystem para root, y `bfree` lo incluiría, mostrando más espacio libre del que la app realmente puede usar.
+- **No sigue symlinks** — un link que apunte hacia arriba haría recursión infinita. `isFile()` da false para symlinks, así que quedan afuera solos.
+- Los errores por entrada (permisos, archivo borrado entre el `readdir` y el `stat`) se saltean: es un panel informativo, no vale abortar el cálculo entero por un archivo.
+- `mongoose` se recibe por parámetro, no se importa, para poder testear el servicio sin base.
+
+**Degradación**: el cálculo va en su propio `try` dentro de la ruta y el endpoint devuelve `disk: null` si falla. Verificado con mongoose caído y con un objeto vacío: el bloque `db` reporta `disponible: false` y el volumen y las carpetas siguen calculándose. El monitor nunca pierde usuarios, RAM ni carga por un problema de disco.
+
+**Verificado** contra datos reales: 249 GB usados de 376 GB (66%), 127 GB libres; entregas 14.2 MB / 3 archivos; adjuntos 198.4 MB / 141 archivos; BD 932 KB / 2.369 documentos. Coincide con `du -sh`. Caché: 39 ms el primer llamado, **0 ms** el segundo. Suite **100/100**.
+
+**Observación para revisar aparte**: "Adjuntos y avatares" ocupa 198 MB en 141 archivos (~1,4 MB promedio). Probablemente haya imágenes de portada de curso sin comprimir. Ahora que la métrica es visible, conviene mirarlo. → ✅ **Resuelto**: era exactamente eso. Ver "Optimización automática de imágenes al subirlas (v1.0.7)" al principio del changelog.
+
+### 2026-07-28 — El ítem "Clases" del menú pasa a "Inicio" en roles administrativos
+
+**Consulta del usuario**: que el directivo entre directo a su panel al iniciar sesión, como admin y superadmin, en vez de caer en los cursos.
+
+**Hallazgo: eso ya funcionaba.** `server.js` (`app.get('/')`) redirige por rol —directivo → `/directivo`— y `public/js/login.js` manda a `/` tras autenticar. Verificado de punta a punta: login de un directivo termina en `/directivo`, título "Directivo - Classroom", sin pasar por `/courses`.
+
+**El problema real era el menú lateral**, y afectaba a los tres roles administrativos por igual. El primer ítem del drawer decía **"Clases" apuntando a `/`** — que para estos roles redirige a su propio panel. Resultado: dos entradas distintas al mismo destino (`Clases` y `Administración` / `Panel Directivo`), y un rótulo que prometía cursos y abría un panel. Admin y superadmin no lo hacían mejor: arrastraban el mismo ítem.
+
+**Fix** (`views/partials/header.ejs`): el rótulo y el ícono se resuelven según rol — `Inicio` + `home` para admin/superadmin/directivo, y **`Clases` + `school` sin cambios para docentes y alumnos**, donde `/` sí lleva a `/courses` y el nombre es exacto.
+
+Durante una suplantación `res.locals.user` es el usuario suplantado, así que el rótulo acompaña al rol que se está viendo — que es lo correcto.
+
+Se descartaron dos alternativas: apuntar "Clases" a `/courses` (un directivo que no dicta nada vería un dashboard vacío) y ocultar el ítem (quien sí dicte una materia perdería el acceso desde el menú).
+
+**Verificado**: admin, superadmin y directivo muestran "Inicio"; alumno y docente conservan "Clases" y su `/` sigue resolviendo a `/courses`. Suite **99/99**.
+
+### 2026-07-28 — Aviso para completar el perfil (alumnos y docentes)
+
+**Pedido**: replicar el aviso de "tareas pendientes" del dashboard para invitar a cargar los datos del perfil.
+
+**Cómo funciona**: `GET /courses` arma `profilePrompt` con los campos del perfil personal que faltan (`bio`, `interests`, `futureGoal`) y el dashboard muestra un banner que los nombra. No hace query extra — `getCachedUser` ya trae el usuario con `.select('-password')`.
+
+**Decisiones de diseño**:
+
+- **Azul informativo, NO el ámbar de `.pending-band`.** Una tarea que vence es urgente; completar el perfil es opcional. Si compartieran color, el alumno aprendería a ignorar los dos.
+- **No se piden teléfono ni redes.** Son datos de contacto y buena parte de los alumnos son menores: empujar por ellos desde un banner sería presionar por información sensible. Que los cargue quien quiera, desde el perfil, sin que el sistema insista.
+- **Descartable, con caducidad de 7 días.** El descarte vive en `localStorage` y no en la base: es una preferencia de presentación, no un dato del usuario. Caduca para que el aviso vuelva a aparecer una vez, en vez de perderse para siempre por un click distraído.
+- **Solo `student` y `teacher`.** Admin, superadmin y directivo aterrizan en sus propios paneles y el perfil no les aporta nada institucional.
+- El banner arranca con `display:none` y lo muestra el script si no fue descartado, para que no parpadee al cargar.
+
+**Desaparece solo al completarse**: `PATCH /profile/about` llama a `invalidateUser`, así que el usuario cacheado se refresca en el próximo request. Si faltara esa invalidación, el aviso seguiría apareciendo hasta que venciera el TTL de 45s — el smoke test lo cubre.
+
+**Verificado** con usuarios reales creados y borrados en la sesión: aparece con el perfil vacío; el descarte persiste al recargar; con fecha de hace 8 días vuelve a mostrarse; con el perfil completo el servidor ya no lo manda; faltando un solo campo menciona únicamente ese. Roles: admin `false`, docente `true`, alumno `true`. Suite **99/99**.
+
+**Nota**: `.pending-band` está declarado dos veces en `public/css/style.css` (líneas ~219 y ~1536) — duplicación preexistente, gana la segunda (ámbar). No se tocó.
+
+### 2026-07-28 — Perfil personal: presentación, intereses y proyecto a futuro
+
+**Pedido**: aprovechar el espacio vacío a la derecha de "Contacto y redes" en `/profile` con algo tipo gustos y preferencias.
+
+**Campos nuevos en `User`** (todos opcionales, aditivos, sin migración):
+- `bio` — presentación breve, máx. 280 caracteres.
+- `interests` — array de IDs de `config/interests.js`.
+- `futureGoal` — máx. 120. El label cambia según rol: alumnos ven *"Me gustaría dedicarme a…"*, el resto *"Formación o especialidad"*. Es un solo campo.
+
+El de mayor valor institucional es `futureGoal` en alumnos: es justamente el dato que necesita un Servicio de Orientación Escolar, y el rol `soe` existe en el sistema pero está vacío.
+
+#### Por qué los intereses son una lista cerrada y no texto libre
+
+`config/interests.js` define 22 opciones con `id` (lo que se guarda, estable) + `label` + `icon`. **El mismo array se usa en los dos lados**: el frontend pinta los chips y el backend valida contra él. Agregar una opción la hace aparecer en ambos.
+
+Es cerrada a propósito: los alumnos son menores y lo que cargan lo ve el equipo directivo, así que un campo abierto obligaría a moderar. Además permite agrupar a futuro ("alumnos con interés en tecnología"). Tope de 6 por persona — sin límite, un perfil con las 22 marcadas no comunica nada.
+
+**La validación server-side no es redundante**: un PATCH directo salteando la UI podría guardar texto arbitrario que después se renderiza en el panel del directivo. Los IDs desconocidos se descartan en silencio (si la lista cambia, el usuario no pierde el resto de lo que cargó) y hay smoke test que lo cubre.
+
+#### Visibilidad — decisión explícita
+
+Lo ve **el propio usuario y el equipo directivo**, igual que los datos de contacto. NO lo ven compañeros ni docentes. Se optó por el criterio ya vigente para no introducir una exposición nueva sobre datos de menores. El perfil se lo aclara al usuario con una nota al pie.
+
+Se implementa con `views/partials/about-info.ejs` (espejo de `contact-info`), incluido sólo en `directivo/student-detail`, `directivo/teacher-detail` y `admin/user-profile`. **Si en el futuro se incluye ese partial en una vista que vean alumnos, se cambia la decisión de privacidad sin querer.**
+
+Los diccionarios `INTEREST_LABELS`/`INTEREST_ICONS` van en `res.locals` globales (`server.js`) para que el partial funcione desde cualquier vista sin que cada ruta tenga que acordarse de pasarlos.
+
+#### UI
+
+`profile.ejs` pasa a dos columnas (`.profile-two-col`, colapsa a una bajo 900px): Contacto a la izquierda, Sobre mí a la derecha — que es el espacio que antes quedaba vacío por el `max-width:420px` de los inputs. Chips toggleables; al llegar al tope los no elegidos se atenúan, para que se entienda por qué dejan de responder al click. Contador de caracteres que avisa a partir de 250.
+
+**Verificado**: guardado válido; interés inventado descartado; tope de 6 → 400; bio de 281 → 400; duplicados deduplicados; el partial rendea labels legibles y no IDs crudos; el tope de chips y el contador probados con clicks reales. Suite **98/98**.
+
+### 2026-07-28 — Panel directivo: evolución docente mes a mes + vista por división
+
+**Pedido**: "características nuevas para el rol directivo, me gustaría que tuviera alguna visión sobre las tareas realizadas por los docentes… además de otras vistas".
+
+**Diagnóstico**: el panel mostraba **volumen, no práctica docente**, y todas las métricas eran fotos del momento contra ventanas fijas (30 días, 15 días). Sin tendencia, no se puede detectar al docente que arrancó bien y se apagó. Los datos para medirlo (`grades[].gradedAt`, `grades[].feedback`, `grades[].manual`) **ya existían en el modelo y `routes/directivo.js` nunca los leía**.
+
+Alcance elegido por el usuario: evolución mes a mes + vista por división. Descartó para esta tanda tiempo de corrección, entregas sin corregir y calidad de devolución. Queda pendiente el detalle de actividad.
+
+#### Serie temporal de actividad docente
+
+- **Ventana de 6 meses**, dos series: actividades creadas (`Activity.createdAt`) y correcciones hechas (`grades[].gradedAt`).
+- **`grades.manual: true` es obligatorio** en el filtro de correcciones: el autocalificador escribe `gradedAt` en el mismo momento de la entrega con `manual: false`, así que sin ese filtro un docente que usa plantillas interactivas aparecería con cientos de "correcciones" que nunca hizo.
+- **Atribución por `Activity.author`, no por `course.owner`.** Es un cambio semántico deliberado y sólo para la serie: la pregunta es "¿qué produjo este docente?", no "¿de quién es la materia?". Resuelve además que los co-docentes aparecieran con todo en cero. Las columnas viejas (`monthlyActs`/`overdueActs`/`avg`) **siguen atribuyendo por owner** para no alterar números que el directivo ya venía leyendo.
+- Índice nuevo `{ author: 1, createdAt: -1 }` en `models/Activity.js` — sin él el pipeline hacía collscan. Sirve también a `services/userActivityStats.js`, que ya hacía `$match {author}` sin índice.
+- Las etiquetas de meses se generan en JS y no desde los datos, para que **un mes sin actividad aparezca con cero en vez de faltar**: ver el bache es el objetivo.
+- Visualización con **barras CSS puras, sin librería de charting** (mismo criterio que `.bucket-bar` en grades.ejs): sparkline de 6 barras + ícono de tendencia en el listado, gráfico con las dos series en el perfil. Las barras en cero tienen `min-height: 2px` para no leerse como un hueco de renderizado.
+
+#### Buscador y orden en `/directivo/teachers`
+
+Antes `queryParams: {}` — sin búsqueda ni orden. **La escuela tiene 352 docentes**, así que el listado paginado de a 25 era inusable. Se agregó `filters-bar` (búsqueda por nombre + 4 órdenes), con `queryParams` para que la paginación conserve los filtros.
+
+#### Vista por división (nueva)
+
+- `GET /directivo/divisions` — materias, alumnos únicos, docentes únicos, actividades, tasa de entrega, promedio y vencidas sin calificar. **Los alumnos se cuentan únicos por división** (`$setUnion` sobre el `$reduce` de `students`): un alumno cursa varias materias del mismo año y sumar `students.length` lo contaría repetido. Ojo al leer: la suma de la columna Alumnos entre divisiones supera el total de la escuela, porque un alumno puede cursar materias de más de una división.
+- `GET /directivo/divisions/:id` — materias y alumnos, con links cruzados a sus detalles. Valida pertenencia a la escuela con 403.
+- Ítem nuevo en `directivo-nav.ejs` y la tarjeta "Cursos / Divisiones" del dashboard, que era un número muerto, ahora enlaza al listado.
+
+#### Smoke suite: 97/97 (antes 93/94 con un fallo permanente)
+
+Tres specs nuevos (`directivo-teachers-search`, `directivo-divisions-list`, `directivo-division-detail`) y **se arregló `directivo-sees-courses-with-metrics`**, que fallaba siempre contra una base espejada de producción: buscaba "Materia Smoke" en el listado sin filtrar, pero `/directivo/courses` pagina de a 25 ordenando por peor tasa y con 419 materias el curso nunca caía en la página 1. Ahora lo busca con `?search=`. El test era anterior a que se agregara esa paginación.
+
+**Deuda detectada, no arreglada** (fuera del alcance aprobado): las cuatro rutas `/:id` del panel devuelven **500 en vez de 404 con un ObjectId malformado** (`/directivo/courses/no-es-un-objectid`). Es preexistente y afecta por igual a las rutas viejas y a la nueva. Fix: `mongoose.isValidObjectId()` al entrar al handler.
+
+**Nota sobre los datos actuales**: la base tiene 53 actividades, todas de julio 2026 — la plataforma arrancó este mes. Los sparklines muestran hoy 5 meses vacíos y uno con datos; la métrica cobra valor con el tiempo.
 
 ### 2026-07-28 — Previsualización embebida de Google Drive / Docs / Sheets / Slides
 
@@ -327,10 +525,18 @@ Ese `exec` corre **dentro de un worker de PM2**, y el comando reinicia esos mism
 
 | Qué | De dónde sale | Tras el deploy roto |
 |---|---|---|
-| `public/js/*`, vistas `.ejs` | disco, en cada request | **nuevo** |
+| `public/js/*`, `public/css/*` (estáticos) | disco, en cada request | **nuevo** |
+| Vistas `.ejs` | memoria — `NODE_ENV=production` activa el view cache de Express | **viejo** |
 | `routes/`, `models/`, `APP_VERSION` | memoria, al arrancar el worker | **viejo** |
 
-No es solo "desactualizado": una vista nueva puede esperar variables que la ruta vieja en memoria todavía no provee (ej. `activityStats` en `views/admin/users.ejs`) y la página tira error de render. Los endpoints nuevos dan 404.
+> **Corrección (2026-07-28)**: una versión previa de esta nota decía que las vistas `.ejs`
+> se releen del disco en cada request. Es **falso con `NODE_ENV=production`** (que es el
+> valor tanto en producción como en el `.env` de desarrollo): Express cachea las plantillas
+> compiladas al primer render. Consecuencia práctica: **editar un `.ejs` no se refleja hasta
+> reiniciar el proceso**, y nodemon por defecto no vigila `.ejs` — hay que tocar un `.js`
+> para forzar el reinicio.
+
+Lo que queda desincronizado es entonces **los archivos estáticos contra todo lo demás**: el JS del navegador es nuevo y puede llamar endpoints que el servidor viejo no tiene (404), o esperar respuestas con una forma que las rutas viejas todavía no devuelven.
 
 **Pista diagnóstica**: en `pm2 list`, los contadores de restart (`↺`) quedan **desparejos entre workers** (se vio 12 y 8). En cluster mode PM2 reinicia de a uno; el comando alcanzaba a reiniciar el primero y moría antes del segundo.
 
@@ -795,6 +1001,10 @@ Materias, Alumnos y Docentes ahora paginan de a 25 (mismo `views/partials/pagina
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`). Resumen de lo pendiente:
 
 ### Correcciones / deuda técnica pendiente
+- **Correr el backfill de imágenes en producción** (`optimize-existing-images.js`). El optimizador ya está activo para las subidas nuevas, pero los ~198 MB históricos siguen en disco. Requiere backup + modo mantenimiento porque actualiza URLs en la base. Ver el changelog de v1.0.7.
+- **`npm install` en el servidor antes de desplegar v1.0.7**: `sharp` pasó de `devDependencies` a `dependencies` y el webhook de deploy no corre `npm install`. Sin eso la app arranca igual (degradación prevista) pero no optimiza nada.
+- Extender el optimizador a las **fotos en entregas de alumnos** (hoy 0 MB, pero va a crecer). Preset más conservador (2000 px, calidad 85) porque puede ser una foto de una hoja escrita que el docente necesita leer. El spec `entrega-pdf-no-se-toca` ya fija que los PDFs no se toquen.
+- El spec `suggestions-student-sees-answer-and-badge` depende de `suggestions-superadmin-can-respond` pero no declara su mismo `requiresEnv`: si se corre el smoke sin credenciales de superadmin, falla en cascada en vez de saltearse.
 - Limpieza de archivos huérfanos cuando se cancela el creador full-page sin guardar (los adjuntos ya subidos quedan en disco).
 - Relación `Subject` ↔ `Course` por texto (frágil ante renombrados). Migrar a ObjectId ref.
 - Eliminación de escuela sin cascada (`POST /superadmin/schools/:id/delete` deja usuarios/cursos huérfanos).

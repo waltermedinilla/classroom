@@ -9,7 +9,26 @@
 // Esta misma lista de escenarios (qué debe funcionar, por rol) es la que después se
 // reimplementa con Playwright para verificar además la UI real (ver README.md).
 
+// sharp es dependencia de la app (la usa el optimizador de imágenes), así que usarla acá
+// no agrega nada al proyecto. Sirve para FABRICAR las imágenes de prueba: los specs de
+// optimización necesitan subir una foto grande de verdad, y commitear binarios de varios
+// MB en el repo para eso sería absurdo.
+const sharp = require('sharp');
+
 const RUN_ID = Date.now().toString(36);
+
+// Genera un JPEG que se comporta como una foto real frente al compresor (ruido de baja
+// frecuencia escalado = gradientes con detalle). Un color plano se comprimiría a nada y
+// los specs de "esto adelgazó mucho" pasarían por accidente.
+async function fotoDePrueba(width, height) {
+  const s = 32;
+  const semilla = Buffer.alloc(s * s * 3);
+  for (let i = 0; i < semilla.length; i++) semilla[i] = Math.floor(Math.random() * 256);
+  return sharp(semilla, { raw: { width: s, height: s, channels: 3 } })
+    .resize(width, height, { kernel: 'cubic' })
+    .jpeg({ quality: 95 })
+    .toBuffer();
+}
 
 const teacher = {
   name:     'Smoke Teacher',
@@ -82,6 +101,76 @@ const specs = [
     },
   },
   {
+    id: 'profile-about-validation',
+    title: 'El perfil personal guarda bien y rechaza intereses fuera de la lista',
+    async run({ client, assert }) {
+      const { INTEREST_IDS, MAX_INTERESTS } = require('../../config/interests');
+      const valido = INTEREST_IDS[0];
+
+      // Guardado normal
+      const ok = await client.patch('student', '/courses/profile/about', {
+        body: { bio: 'Hola, soy alumno de smoke test.', interests: [valido], futureGoal: 'Programación' },
+        expectStatus: 200,
+      });
+      assert(ok.json.bio === 'Hola, soy alumno de smoke test.', 'debería guardar la presentación');
+      assert(ok.json.interests.length === 1 && ok.json.interests[0] === valido,
+        'debería guardar el interés válido');
+
+      // Un id que no está en config/interests.js se descarta en silencio. Sin esta defensa,
+      // un POST directo (salteando la UI) guardaría texto arbitrario que después se renderea
+      // en el panel del directivo.
+      const colado = await client.patch('student', '/courses/profile/about', {
+        body: { bio: '', interests: [valido, 'no-existe-este-interes'], futureGoal: '' },
+        expectStatus: 200,
+      });
+      assert(!colado.json.interests.includes('no-existe-este-interes'),
+        'un interés fuera de la lista curada NO debería guardarse');
+      assert(colado.json.interests.length === 1, 'el interés válido sí debería sobrevivir');
+
+      // Tope de cantidad y de largo
+      await client.patch('student', '/courses/profile/about', {
+        body: { bio: '', interests: INTEREST_IDS.slice(0, MAX_INTERESTS + 1), futureGoal: '' },
+        expectStatus: 400,
+      });
+      await client.patch('student', '/courses/profile/about', {
+        body: { bio: 'a'.repeat(281), interests: [], futureGoal: '' },
+        expectStatus: 400,
+      });
+    },
+  },
+  {
+    id: 'profile-prompt-lifecycle',
+    title: 'El aviso de completar perfil aparece con el perfil vacío y desaparece al completarlo',
+    async run({ client, assert }) {
+      const { INTEREST_IDS } = require('../../config/interests');
+
+      // El alumno recién registrado no tiene nada cargado → el aviso tiene que estar
+      const vacio = await client.get('student', '/courses', { expectStatus: 200 });
+      assert(vacio.text.includes('id="profileBand"'),
+        'con el perfil vacío el dashboard debería incluir el aviso');
+
+      // Al completar los tres campos, el servidor deja de mandarlo. Esto depende de que
+      // PATCH /profile/about invalide el cache de usuario — si no lo hiciera, el aviso
+      // seguiría apareciendo hasta que venciera el TTL.
+      await client.patch('student', '/courses/profile/about', {
+        body: { bio: 'Alumno de smoke.', interests: [INTEREST_IDS[0]], futureGoal: 'Algo' },
+        expectStatus: 200,
+      });
+      const completo = await client.get('student', '/courses', { expectStatus: 200 });
+      assert(!completo.text.includes('id="profileBand"'),
+        'con el perfil completo el aviso NO debería aparecer');
+
+      // Si se vacía un solo campo, vuelve
+      await client.patch('student', '/courses/profile/about', {
+        body: { bio: 'Alumno de smoke.', interests: [INTEREST_IDS[0]], futureGoal: '' },
+        expectStatus: 200,
+      });
+      const parcial = await client.get('student', '/courses', { expectStatus: 200 });
+      assert(parcial.text.includes('id="profileBand"'),
+        'faltando un campo el aviso debería volver');
+    },
+  },
+  {
     id: 'login-wrong-password',
     title: 'Login con contraseña incorrecta es rechazado (400)',
     async run({ client }) {
@@ -117,7 +206,11 @@ const specs = [
         body: { name: `SMOKE-${RUN_ID}` },
         expectStatus: 201,
       });
-      state.divisionId = res.json.division._id;
+      state.divisionId   = res.json.division._id;
+      // El nombre se guarda para poder BUSCAR la división en el panel directivo:
+      // la escuela real tiene ~39 divisiones y los listados cortan en 25, así que
+      // no alcanza con esperar que aparezca en la primera página.
+      state.divisionName = res.json.division.name;
     },
   },
   {
@@ -216,6 +309,185 @@ const specs = [
       });
     },
   },
+  // ── Optimización de imágenes (v1.0.7) ────────────────────────────────────
+  // Antes, multer guardaba en disco el archivo tal cual llegaba: 78 imágenes = 74,7 MB en
+  // el mirror local, con avatares de 3 MB mostrados en un círculo de 40 px. Ahora la imagen
+  // pasa por sharp antes de tocar el disco (512×512 WebP el avatar, 1600 px las demás).
+  // Estos specs verifican el flujo COMPLETO contra el server: que la URL guardada apunte a
+  // un .webp, que el archivo servido pese lo que tiene que pesar, y que la validación real
+  // (¿es una imagen?) rechace lo que no lo es.
+  {
+    id: 'avatar-upload-optimiza',
+    title: 'El avatar subido se guarda como WebP chico y se sirve correctamente',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const foto = await fotoDePrueba(2400, 1800);
+      assert(foto.length > 300 * 1024, 'la foto de prueba debería pesar cientos de KB');
+
+      const fd = new FormData();
+      fd.append('avatar', new Blob([foto], { type: 'image/jpeg' }), 'perfil.jpg');
+      const res = await client.post('scopedTeacher', '/courses/profile/avatar', {
+        form: fd, expectStatus: 200,
+      });
+
+      assert(res.json.avatar, 'debería devolver la URL del avatar');
+      assert(res.json.avatar.endsWith('.webp'),
+        `el avatar debería guardarse como .webp, quedó: ${res.json.avatar}`);
+      state.avatarUrl = res.json.avatar;
+
+      // El archivo servido: existe, es WebP, y pesa una fracción del original
+      const archivo = await client.get('scopedTeacher', res.json.avatar, { expectStatus: 200 });
+      const ct = archivo.headers.get('content-type') || '';
+      assert(ct.includes('webp'), `esperaba content-type webp, vino: ${ct}`);
+      assert(archivo.byteLength > 0, 'el archivo servido no debería estar vacío');
+      assert(archivo.byteLength < 100 * 1024,
+        `el avatar optimizado debería pesar menos de 100 KB, pesó ${archivo.byteLength}`);
+    },
+  },
+  {
+    id: 'avatar-upload-cambia-de-url',
+    title: 'Volver a subir el avatar genera una URL nueva (rompe el cache del navegador)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Con nombre fijo (`avatar.webp`) la URL no cambiaba al re-subir y el navegador
+      // seguía mostrando la foto anterior desde su cache. Por eso el sufijo único.
+      const foto = await fotoDePrueba(800, 800);
+      const fd = new FormData();
+      fd.append('avatar', new Blob([foto], { type: 'image/jpeg' }), 'perfil2.jpg');
+      const res = await client.post('scopedTeacher', '/courses/profile/avatar', {
+        form: fd, expectStatus: 200,
+      });
+
+      assert(res.json.avatar !== state.avatarUrl,
+        'la URL del avatar debería cambiar en cada subida');
+
+      // Y la anterior tiene que haber desaparecido del disco: si se acumularan, el ahorro
+      // se perdería con cada re-subida.
+      const vieja = await client.get('scopedTeacher', state.avatarUrl);
+      assert(vieja.status === 404,
+        `el avatar anterior debería borrarse del disco, respondió ${vieja.status}`);
+      state.avatarUrl = res.json.avatar;
+    },
+  },
+  {
+    id: 'avatar-rechaza-archivo-que-no-es-imagen',
+    title: 'Un archivo cualquiera renombrado a .jpg se rechaza (400)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // El fileFilter de multer solo mira la extensión y el Content-Type que declara el
+      // cliente — los dos falsificables. Decodificar con sharp es la validación de verdad;
+      // sin ella, esto terminaba escrito dentro de /public.
+      const fd = new FormData();
+      fd.append('avatar', new Blob(['#!/bin/sh\nrm -rf /\n'], { type: 'image/jpeg' }), 'payload.jpg');
+      const res = await client.post('scopedTeacher', '/courses/profile/avatar', {
+        form: fd, expectStatus: 400,
+      });
+      assert(res.json && res.json.error, 'debería devolver un error en JSON');
+    },
+  },
+  {
+    id: 'avatar-rechaza-extension-no-permitida',
+    title: 'Un .pdf en el campo de avatar se rechaza (400)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      const fd = new FormData();
+      fd.append('avatar', new Blob(['%PDF-1.4'], { type: 'application/pdf' }), 'documento.pdf');
+      await client.post('scopedTeacher', '/courses/profile/avatar', {
+        form: fd, expectStatus: 400,
+      });
+    },
+  },
+  {
+    id: 'header-upload-optimiza',
+    title: 'La portada de la materia se guarda optimizada como WebP',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const foto = await fotoDePrueba(3000, 2000);
+      const fd = new FormData();
+      fd.append('mode', 'image');
+      fd.append('color', '#1a73e8');
+      fd.append('image', new Blob([foto], { type: 'image/jpeg' }), 'portada.jpg');
+
+      const res = await client.post('scopedTeacher', `/courses/${state.courseId}/customize`, {
+        form: fd, expectStatus: 200,
+      });
+
+      assert(res.json.header && res.json.header.image, 'debería devolver la URL de la portada');
+      assert(res.json.header.image.endsWith('.webp'),
+        `la portada debería guardarse como .webp, quedó: ${res.json.header.image}`);
+      state.headerUrl = res.json.header.image;
+
+      const archivo = await client.get('scopedTeacher', res.json.header.image, { expectStatus: 200 });
+      assert(archivo.byteLength < 300 * 1024,
+        `la portada optimizada debería pesar menos de 300 KB, pesó ${archivo.byteLength}`);
+      assert(archivo.byteLength < foto.length / 3,
+        'la portada debería pesar bastante menos que el original');
+    },
+  },
+  {
+    id: 'header-upload-ajeno-sigue-403',
+    title: 'Un docente no puede personalizar (ni pisar la portada de) un curso ajeno',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Regresión histórica: el multer viejo borraba la portada anterior dentro de su
+      // callback `filename()`, que corre ANTES del handler — un docente ajeno recibía 403
+      // pero la portada de la víctima ya estaba borrada. Con la subida en memoria el
+      // borrado pasó al handler; este spec verifica el 403 Y que la imagen siga viva.
+      assert(state.headerUrl, 'este spec depende de la portada subida por header-upload-optimiza');
+
+      const foto = await fotoDePrueba(600, 400);
+      const fd = new FormData();
+      fd.append('mode', 'image');
+      fd.append('image', new Blob([foto], { type: 'image/jpeg' }), 'intruso.jpg');
+
+      // `student` es un usuario del Nivel 1, sin ninguna relación con este curso
+      await client.post('student', `/courses/${state.courseId}/customize`, {
+        form: fd, expectStatus: 403,
+      });
+
+      // Lo que de verdad importa: la portada de la víctima sigue en disco
+      await client.get('scopedTeacher', state.headerUrl, { expectStatus: 200 });
+    },
+  },
+  {
+    id: 'novedad-imagen-optimiza',
+    title: 'La imagen de una novedad se guarda optimizada como WebP',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const foto = await fotoDePrueba(2500, 1600);
+      const fd = new FormData();
+      fd.append('courseId', state.courseId);
+      fd.append('text', 'Novedad con imagen (smoke)');
+      fd.append('image', new Blob([foto], { type: 'image/jpeg' }), 'pizarron.jpg');
+
+      const res = await client.post('scopedTeacher', '/announcements/create', {
+        form: fd, expectStatus: 201,
+      });
+
+      const url = res.json.announcement.image;
+      assert(url, 'la novedad debería tener imagen');
+      assert(url.endsWith('.webp'), `la imagen debería guardarse como .webp, quedó: ${url}`);
+      state.novedadConImagenId = res.json.announcement._id;
+
+      const archivo = await client.get('scopedTeacher', url, { expectStatus: 200 });
+      assert(archivo.byteLength < 300 * 1024,
+        `la imagen optimizada debería pesar menos de 300 KB, pesó ${archivo.byteLength}`);
+    },
+  },
+  {
+    id: 'novedad-rechaza-archivo-que-no-es-imagen',
+    title: 'Una novedad con un archivo que no es imagen se rechaza (400)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const fd = new FormData();
+      fd.append('courseId', state.courseId);
+      fd.append('text', 'Novedad con payload');
+      fd.append('image', new Blob(['no soy una imagen'], { type: 'image/png' }), 'falso.png');
+      await client.post('scopedTeacher', '/announcements/create', {
+        form: fd, expectStatus: 400,
+      });
+    },
+  },
   {
     id: 'activity-create',
     title: 'El docente crea una actividad',
@@ -283,6 +555,24 @@ const specs = [
       });
       assert(submit.json.submission.files.length === 1, 'la entrega debería tener 1 archivo');
       assert(submit.json.submission.files[0].filename === upload.json.filename, 'el filename debería coincidir');
+    },
+  },
+  {
+    id: 'entrega-pdf-no-se-toca',
+    title: 'El optimizador no toca los adjuntos que no son imágenes (el PDF sigue siendo PDF)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Las entregas siguen en diskStorage y SIN optimizar (fuera del alcance de v1.0.7:
+      // ahí hay PDFs de hasta 50 MB que no tienen por qué pasar por RAM). Este spec fija
+      // ese límite — si algún día se extiende el optimizador a las entregas, que no se
+      // lleve puestos los PDFs por el camino.
+      const fd = new FormData();
+      fd.append('file', new Blob(['%PDF-1.4 smoke sin tocar'], { type: 'application/pdf' }), 'intacto.pdf');
+      const up = await client.post('scopedStudent', `/activities/${state.activityId}/upload-submission-file`, {
+        form: fd, expectStatus: 200,
+      });
+      assert(up.json.filename.endsWith('.pdf'),
+        `el PDF debería conservar su extensión, quedó: ${up.json.filename}`);
     },
   },
   {
@@ -1047,10 +1337,19 @@ const specs = [
     id: 'directivo-sees-courses-with-metrics',
     title: 'El directivo ve el listado de materias con tasa de entrega',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
-    async run({ client, state, assert }) {
+    async run({ client, assert }) {
+      // La vista tiene que renderear con sus métricas
       const res = await client.get('directivo', '/directivo/courses', { expectStatus: 200 });
-      // El curso de smoke debería aparecer (con 1 alumno y 1 actividad y 1 entrega = 100%)
-      assert(res.text.includes(`Materia Smoke`), 'el listado debería incluir el curso de smoke');
+      assert(res.text.includes('Tasa de entrega'), 'el listado debería mostrar la tasa de entrega');
+
+      // El curso de smoke se busca por nombre en vez de esperarlo en la primera página.
+      // Antes este test hacía `includes('Materia Smoke')` sobre el listado sin filtrar y
+      // fallaba SIEMPRE contra una base espejada de producción: /directivo/courses pagina
+      // de a 25 y ordena por peor tasa de entrega, y con 419 materias el curso de smoke
+      // nunca caía en la página 1. El test es anterior a que se agregara esa paginación.
+      const buscado = await client.get('directivo', '/directivo/courses?search=Materia+Smoke', { expectStatus: 200 });
+      assert(buscado.text.includes('Materia Smoke'),
+        'el curso de smoke debería aparecer al buscarlo por nombre');
     },
   },
   {
@@ -1114,8 +1413,31 @@ const specs = [
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, assert }) {
       const res = await client.get('directivo', '/directivo/teachers', { expectStatus: 200 });
-      assert(res.text.includes('Actividades últ. mes') || res.text.includes('Sin calificar'),
+      assert(res.text.includes('Actividades por mes') || res.text.includes('Sin calificar'),
         'la vista debería incluir métricas de actividad docente');
+    },
+  },
+  {
+    id: 'directivo-teachers-search',
+    title: 'El buscador de docentes filtra y la paginación conserva los filtros',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // Una búsqueda que no puede coincidir con nadie debe vaciar la tabla, no ignorarse:
+      // si el filtro no se aplicara, esto devolvería el listado completo.
+      const vacio = await client.get('directivo', '/directivo/teachers?search=zzzznoexistezzz', { expectStatus: 200 });
+      assert(vacio.text.includes('Sin resultados') || vacio.text.includes('Ningún docente coincide'),
+        'una búsqueda sin coincidencias debería mostrar el estado vacío');
+
+      // El sort no debe romper la vista
+      await client.get('directivo', '/directivo/teachers?sort=acts-asc', { expectStatus: 200 });
+
+      // Los links de paginación tienen que arrastrar search y sort, o pasar de página
+      // perdería el filtro (ver partials/pagination.ejs, que arma el query desde queryParams).
+      const conFiltro = await client.get('directivo', '/directivo/teachers?sort=name', { expectStatus: 200 });
+      if (conFiltro.text.includes('class="pagination"')) {
+        assert(conFiltro.text.includes('sort=name&amp;page=') || conFiltro.text.includes('sort=name&page='),
+          'los links de paginación deberían conservar el sort');
+      }
     },
   },
   {
@@ -1126,6 +1448,40 @@ const specs = [
       const res = await client.get('directivo', `/directivo/teachers/${state.scopedTeacherId}`, { expectStatus: 200 });
       assert(res.text.includes('Materias que dicta'),
         'el perfil debería tener "Materias que dicta"');
+      assert(res.text.includes('Evolución de los últimos'),
+        'el perfil debería incluir el gráfico de evolución mensual');
+    },
+  },
+  {
+    id: 'directivo-divisions-list',
+    title: 'El directivo ve el listado de divisiones con sus métricas',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('directivo', '/directivo/divisions', { expectStatus: 200 });
+      assert(res.text.includes('Tasa de entrega'), 'el listado debería mostrar la tasa de entrega');
+      // La división de smoke se busca por nombre para no depender de la paginación:
+      // la escuela real tiene ~39 divisiones y el listado corta en 25.
+      const buscada = await client.get('directivo', `/directivo/divisions?search=${encodeURIComponent(state.divisionName || '')}`, { expectStatus: 200 });
+      if (state.divisionName) {
+        assert(buscada.text.includes(state.divisionName),
+          'la división de smoke debería aparecer al buscarla por nombre');
+      }
+    },
+  },
+  {
+    id: 'directivo-division-detail',
+    title: 'El detalle de división lista materias y alumnos, y rechaza IDs de otra escuela',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      if (!state.divisionId) return;
+      const res = await client.get('directivo', `/directivo/divisions/${state.divisionId}`, { expectStatus: 200 });
+      assert(res.text.includes('Materias de la división'), 'debería listar las materias');
+      assert(res.text.includes('Alumnos de la división'), 'debería listar los alumnos');
+
+      // Un ObjectId válido pero inexistente no debe filtrar datos ni tirar 500
+      const inexistente = await client.get('directivo', '/directivo/divisions/000000000000000000000000');
+      assert(inexistente.status === 404,
+        `una división inexistente debería dar 404, dio ${inexistente.status}`);
     },
   },
   {
@@ -1156,6 +1512,39 @@ const specs = [
     async run({ client }) {
       await client.get('superadmin', '/superadmin/suggestions?page=1', { expectStatus: 200 });
       await client.get('superadmin', '/superadmin/suggestions?page=999', { expectStatus: 200 });
+    },
+  },
+  {
+    id: 'superadmin-monitor-disk',
+    title: 'El monitor reporta el uso de disco y el desglose de lo almacenado',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('superadmin', '/superadmin/monitor/stats', { expectStatus: 200 });
+      const d = res.json.disk;
+      assert(d, 'el payload debería incluir la sección disk');
+
+      // Espacio del volumen (fs.statfs). Si el sistema no lo soporta, disponible:false
+      // y el resto tiene que seguir viniendo igual.
+      if (d.volumen.disponible) {
+        assert(d.volumen.total > 0, 'el volumen debería reportar tamaño total');
+        assert(d.volumen.usado + d.volumen.libre <= d.volumen.total + 1,
+          'usado + libre no puede superar el total');
+        assert(d.volumen.porcentaje >= 0 && d.volumen.porcentaje <= 100,
+          `el porcentaje debería estar entre 0 y 100, fue ${d.volumen.porcentaje}`);
+      }
+
+      // Desglose de carpetas administradas por la app
+      assert(Array.isArray(d.carpetas) && d.carpetas.length >= 2,
+        'debería desglosar al menos entregas y materiales');
+      d.carpetas.forEach(c => {
+        assert(typeof c.bytes === 'number' && c.bytes >= 0, `${c.id}: bytes inválido`);
+        assert(typeof c.archivos === 'number' && c.archivos >= 0, `${c.id}: conteo inválido`);
+      });
+
+      // El resto del monitor no debe verse afectado por la sección nueva
+      ['users', 'memory', 'load', 'heap', 'uptime'].forEach(k => {
+        assert(k in res.json, `el monitor perdió la sección "${k}"`);
+      });
     },
   },
 

@@ -17,6 +17,7 @@ const School     = require('./models/School');
 const Suggestion = require('./models/Suggestion');
 const TemplateAssignment = require('./models/TemplateAssignment');
 const APP_VERSION = require('./package.json').version;
+const { INTEREST_LABELS, INTEREST_ICONS } = require('./config/interests');
 
 // Log del deploy automático (POST /deploy). Va a un archivo propio y no al logger de
 // winston a propósito: el proceso que escribe acá sobrevive al worker que lo lanzó
@@ -232,6 +233,11 @@ app.use((req, res, next) => {
     student:    'Alumno',
   };
   res.locals.appVersion = APP_VERSION;
+  // Diccionarios de intereses del perfil (config/interests.js). Van en locals globales
+  // para que partials/about-info.ejs funcione desde cualquier vista sin que cada ruta
+  // tenga que acordarse de pasarlos — es un include que se usa en varios paneles.
+  res.locals.INTEREST_LABELS = INTEREST_LABELS;
+  res.locals.INTEREST_ICONS  = INTEREST_ICONS;
   // Feature flags del gestor de plantillas de actividades. Ver plan
   // composed-launching-cray.md (fase 1). Los booleanos se resuelven una vez
   // por request para que las vistas puedan condicionar UI sin releer env vars.

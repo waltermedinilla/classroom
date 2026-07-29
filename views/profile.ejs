@@ -7,6 +7,42 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
   <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* Dos columnas para Contacto + Sobre mí. Aprovecha el espacio a la derecha que antes
+       quedaba vacío (los inputs de contacto tenían max-width:420px en una card full-width). */
+    .profile-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+    @media (max-width: 900px) { .profile-two-col { grid-template-columns: 1fr; } }
+
+    .about-label {
+      display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary);
+      text-transform: uppercase; letter-spacing: .3px; margin-bottom: 8px;
+    }
+    .about-textarea {
+      width: 100%; box-sizing: border-box; padding: 10px 12px; font-family: inherit;
+      font-size: 14px; line-height: 1.5; resize: vertical;
+      border: 1px solid var(--divider, #dadce0); border-radius: 8px;
+      background: var(--background); color: var(--text-primary);
+    }
+    .about-textarea:focus { outline: none; border-color: var(--primary); }
+    .about-counter { text-align: right; font-size: 11px; color: var(--text-hint); margin-top: 4px; }
+    .about-counter.limite { color: #ea8600; font-weight: 600; }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 6px 12px; border-radius: 20px; cursor: pointer;
+      border: 1px solid var(--divider, #dadce0); background: var(--surface);
+      color: var(--text-secondary); font-size: 13px; font-family: inherit;
+      transition: background .15s, border-color .15s, color .15s;
+    }
+    .chip .material-symbols-outlined { font-size: 16px; }
+    .chip:hover { background: var(--background); }
+    .chip-on {
+      background: #e8f0fe; border-color: var(--primary); color: var(--primary); font-weight: 500;
+    }
+    /* Al llegar al tope, los no elegidos se atenúan para que se entienda por qué no responden */
+    .chip.bloqueado { opacity: .4; cursor: not-allowed; }
+  </style>
 </head>
 <body>
   <%- include('partials/header') %>
@@ -106,34 +142,94 @@
       </div>
     </div>
 
-    <!-- Contacto y redes -->
-    <section class="section" style="margin-top:32px">
-      <div class="section-header">
-        <span class="material-symbols-outlined section-icon">contact_phone</span>
-        <h3>Contacto y redes</h3>
-      </div>
-      <div class="profile-action-card">
-        <div class="form-error" id="contactError"></div>
-        <div id="contactOk" style="display:none;background:#e6f4ea;color:#137333;padding:10px 14px;border-radius:8px;font-size:14px;margin-bottom:16px"></div>
-        <div style="display:flex;flex-direction:column;gap:14px;max-width:420px">
-          <div class="input-group">
-            <span class="material-symbols-outlined input-icon">call</span>
-            <input type="tel" id="contactPhone" placeholder="Celular" value="<%= user.phone || '' %>">
+    <!-- Contacto y redes + Sobre mí, lado a lado (colapsan a una columna en móvil) -->
+    <div class="profile-two-col" style="margin-top:32px">
+
+      <section class="section" style="margin-top:0">
+        <div class="section-header">
+          <span class="material-symbols-outlined section-icon">contact_phone</span>
+          <h3>Contacto y redes</h3>
+        </div>
+        <div class="profile-action-card">
+          <div class="form-error" id="contactError"></div>
+          <div id="contactOk" style="display:none;background:#e6f4ea;color:#137333;padding:10px 14px;border-radius:8px;font-size:14px;margin-bottom:16px"></div>
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div class="input-group">
+              <span class="material-symbols-outlined input-icon">call</span>
+              <input type="tel" id="contactPhone" placeholder="Celular" value="<%= user.phone || '' %>">
+            </div>
+            <div class="input-group">
+              <span class="material-symbols-outlined input-icon">photo_camera</span>
+              <input type="text" id="contactInstagram" placeholder="Instagram (usuario o link)" value="<%= user.instagram || '' %>">
+            </div>
+            <div class="input-group">
+              <span class="material-symbols-outlined input-icon">group</span>
+              <input type="text" id="contactFacebook" placeholder="Facebook (usuario o link)" value="<%= user.facebook || '' %>">
+            </div>
           </div>
-          <div class="input-group">
-            <span class="material-symbols-outlined input-icon">photo_camera</span>
-            <input type="text" id="contactInstagram" placeholder="Instagram (usuario o link)" value="<%= user.instagram || '' %>">
-          </div>
-          <div class="input-group">
-            <span class="material-symbols-outlined input-icon">group</span>
-            <input type="text" id="contactFacebook" placeholder="Facebook (usuario o link)" value="<%= user.facebook || '' %>">
+          <div style="margin-top:20px">
+            <button class="btn btn-primary" id="saveContactBtn" onclick="submitContact()">Guardar</button>
           </div>
         </div>
-        <div style="margin-top:20px">
-          <button class="btn btn-primary" id="saveContactBtn" onclick="submitContact()">Guardar</button>
+      </section>
+
+      <section class="section" style="margin-top:0">
+        <div class="section-header">
+          <span class="material-symbols-outlined section-icon">sentiment_satisfied</span>
+          <h3>Sobre mí</h3>
         </div>
-      </div>
-    </section>
+        <div class="profile-action-card">
+          <div class="form-error" id="aboutError"></div>
+          <div id="aboutOk" style="display:none;background:#e6f4ea;color:#137333;padding:10px 14px;border-radius:8px;font-size:14px;margin-bottom:16px"></div>
+
+          <label class="about-label" for="aboutBio">Presentación</label>
+          <textarea id="aboutBio" rows="3" maxlength="280" class="about-textarea"
+            placeholder="Contá algo sobre vos en pocas palabras..."><%= user.bio || '' %></textarea>
+          <div class="about-counter"><span id="bioCount"><%= (user.bio || '').length %></span>/280</div>
+
+          <label class="about-label" style="margin-top:18px">
+            Mis intereses
+            <span style="font-weight:400;color:var(--text-hint)">(hasta <%= MAX_INTERESTS %>)</span>
+          </label>
+          <div class="chips" id="interestChips">
+            <% INTERESTS.forEach(it => { %>
+              <button type="button"
+                class="chip <%= (user.interests || []).includes(it.id) ? 'chip-on' : '' %>"
+                data-interest="<%= it.id %>" onclick="toggleInterest(this)">
+                <span class="material-symbols-outlined"><%= it.icon %></span>
+                <%= it.label %>
+              </button>
+            <% }) %>
+          </div>
+
+          <label class="about-label" for="aboutGoal" style="margin-top:18px">
+            <% if (user.role === 'student') { %>
+              Me gustaría dedicarme a...
+            <% } else { %>
+              Formación o especialidad
+            <% } %>
+          </label>
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">
+              <%= user.role === 'student' ? 'rocket_launch' : 'workspace_premium' %>
+            </span>
+            <input type="text" id="aboutGoal" maxlength="120"
+              placeholder="<%= user.role === 'student' ? 'Ej: Ingeniería, música, oficios...' : 'Ej: Profesorado en Matemática' %>"
+              value="<%= user.futureGoal || '' %>">
+          </div>
+
+          <div style="margin-top:20px">
+            <button class="btn btn-primary" id="saveAboutBtn" onclick="submitAbout()">Guardar</button>
+          </div>
+          <p style="font-size:11px;color:var(--text-hint);margin-top:12px;line-height:1.5">
+            <span class="material-symbols-outlined" style="font-size:13px;vertical-align:-2px">lock</span>
+            Esta información la ves vos y el equipo directivo de la escuela. No la ven tus
+            compañeros.
+          </p>
+        </div>
+      </section>
+
+    </div>
 
     <!-- Stats -->
     <% if (user.role !== 'student') { %>
@@ -464,6 +560,78 @@
           setTimeout(() => { okBox.style.display = 'none'; }, 2500);
         } else {
           errBox.textContent = data.error || 'Error al guardar los datos de contacto';
+          errBox.classList.add('show');
+        }
+      } catch (e) {
+        errBox.textContent = 'Error de conexión. Intentá de nuevo.';
+        errBox.classList.add('show');
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = originalLabel;
+      }
+    }
+
+    /* ─── Sobre mí ─── */
+    const MAX_INTERESTS = <%= MAX_INTERESTS %>;
+
+    // Contador de caracteres de la presentación. maxlength ya impide pasarse, esto solo avisa.
+    const bioInput = document.getElementById('aboutBio');
+    bioInput.addEventListener('input', function () {
+      const n = this.value.length;
+      document.getElementById('bioCount').textContent = n;
+      document.querySelector('.about-counter').classList.toggle('limite', n > 250);
+    });
+
+    function interesesElegidos() {
+      return [...document.querySelectorAll('#interestChips .chip-on')].map(c => c.dataset.interest);
+    }
+
+    // Al llegar al tope se atenúan los no elegidos, para que se entienda por qué dejan de
+    // responder al click en vez de que parezca que la página se colgó.
+    function sincronizarTope() {
+      const enTope = interesesElegidos().length >= MAX_INTERESTS;
+      document.querySelectorAll('#interestChips .chip').forEach(c => {
+        c.classList.toggle('bloqueado', enTope && !c.classList.contains('chip-on'));
+      });
+    }
+
+    function toggleInterest(chip) {
+      const yaEsta = chip.classList.contains('chip-on');
+      if (!yaEsta && interesesElegidos().length >= MAX_INTERESTS) return;
+      chip.classList.toggle('chip-on');
+      sincronizarTope();
+    }
+    sincronizarTope();
+
+    async function submitAbout() {
+      const errBox  = document.getElementById('aboutError');
+      const okBox   = document.getElementById('aboutOk');
+      const saveBtn = document.getElementById('saveAboutBtn');
+      errBox.classList.remove('show');
+      okBox.style.display = 'none';
+
+      const bio        = document.getElementById('aboutBio').value.trim();
+      const futureGoal = document.getElementById('aboutGoal').value.trim();
+      const interests  = interesesElegidos();
+
+      saveBtn.disabled = true;
+      const originalLabel = saveBtn.textContent;
+      saveBtn.innerHTML = '<span class="upload-spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Guardando…';
+
+      try {
+        const res  = await fetch('/courses/profile/about', {
+          method:  'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ bio, interests, futureGoal }),
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          okBox.textContent = 'Perfil actualizado';
+          okBox.style.display = 'block';
+          setTimeout(() => { okBox.style.display = 'none'; }, 2500);
+        } else {
+          errBox.textContent = data.error || 'Error al guardar el perfil';
           errBox.classList.add('show');
         }
       } catch (e) {

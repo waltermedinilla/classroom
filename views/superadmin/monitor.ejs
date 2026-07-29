@@ -226,6 +226,46 @@
       </div>
     </div>
 
+    <!-- Almacenamiento -->
+    <div class="section-title">Almacenamiento</div>
+    <div class="monitor-grid" id="m-disk-section">
+      <div class="metric-card" style="grid-column: span 2">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <span class="material-symbols-outlined metric-icon" style="font-size:22px;color:#1a73e8">hard_drive</span>
+            <span class="metric-label">Disco del servidor</span>
+          </div>
+          <div style="text-align:right">
+            <span class="metric-value" style="font-size:24px" id="m-disk-used">—</span>
+            <span style="font-size:14px;color:var(--text-secondary)" id="m-disk-total"> / —</span>
+          </div>
+        </div>
+        <div class="bar-track">
+          <div class="bar-fill" id="m-disk-bar" style="width:0%;background:#1a73e8"></div>
+        </div>
+        <div class="metric-sub" id="m-disk-pct">—</div>
+      </div>
+      <div class="metric-card">
+        <span class="material-symbols-outlined metric-icon" style="color:#34a853">check_circle</span>
+        <div class="metric-label">Espacio libre</div>
+        <div class="metric-value" style="font-size:24px" id="m-disk-free">—</div>
+        <div class="metric-sub">disponible para la app</div>
+      </div>
+      <div class="metric-card">
+        <span class="material-symbols-outlined metric-icon" style="color:#9334e6">folder</span>
+        <div class="metric-label">Ocupa esta app</div>
+        <div class="metric-value" style="font-size:24px" id="m-app-total">—</div>
+        <div class="metric-sub" id="m-app-fresh">—</div>
+      </div>
+      <div class="metric-card" style="grid-column: span 2">
+        <span class="material-symbols-outlined metric-icon" style="color:#ea8600">inventory_2</span>
+        <div class="metric-label">Desglose de lo guardado</div>
+        <div id="m-disk-breakdown" style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
+          <div class="metric-sub">—</div>
+        </div>
+      </div>
+    </div>
+
     <!-- CPU / Carga -->
     <div class="section-title">Carga del sistema</div>
     <div class="monitor-grid">
@@ -305,6 +345,17 @@
       const gb = bytes / 1024 / 1024 / 1024;
       if (gb >= 1) return gb.toFixed(2) + ' GB acumulados';
       return (bytes / 1024 / 1024).toFixed(1) + ' MB acumulados';
+    }
+
+    // Bytes crudos → unidad legible. El servicio de disco devuelve todo en bytes;
+    // formatBytes() de arriba espera MB, así que no sirve acá.
+    function formatSize(bytes) {
+      if (!bytes && bytes !== 0) return '—';
+      const gb = bytes / 1024 / 1024 / 1024;
+      if (gb >= 1)  return gb.toFixed(2) + ' GB';
+      const mb = bytes / 1024 / 1024;
+      if (mb >= 1)  return mb.toFixed(1) + ' MB';
+      return Math.round(bytes / 1024) + ' KB';
     }
 
     function pushHistory(arr, value) {
@@ -389,6 +440,57 @@
         // Heap
         setText('m-heap-used',  formatBytes(data.heap.used));
         setText('m-heap-total', `${data.heap.total} MB total · ${data.heap.rss} MB RSS`);
+
+        // Almacenamiento
+        if (data.disk) {
+          const v = data.disk.volumen;
+          if (v.disponible) {
+            setText('m-disk-used',  formatSize(v.usado));
+            setText('m-disk-total', ' / ' + formatSize(v.total));
+            setText('m-disk-free',  formatSize(v.libre));
+            setText('m-disk-pct',   `${v.porcentaje}% ocupado · ${formatSize(v.libre)} libres`);
+            const diskBar = document.getElementById('m-disk-bar');
+            diskBar.style.width      = v.porcentaje + '%';
+            diskBar.style.background = barColor(v.porcentaje);
+          } else {
+            setText('m-disk-pct', 'No se pudo leer el espacio del volumen en este sistema');
+          }
+
+          setText('m-app-total', formatSize(data.disk.appTotal));
+          // El desglose sale de un cache de 60s (escanear el árbol de archivos es caro),
+          // así que se avisa la antigüedad en vez de fingir que es del segundo exacto.
+          setText('m-app-fresh', data.disk.calculadoHace < 5
+            ? 'recién calculado'
+            : `calculado hace ${data.disk.calculadoHace}s`);
+
+          // Desglose: cada carpeta + la base de datos, con barra proporcional al mayor
+          const filas = data.disk.carpetas.map(c => ({
+            label: c.label, bytes: c.bytes, extra: `${c.archivos} archivo${c.archivos === 1 ? '' : 's'}`,
+          }));
+          if (data.disk.db.disponible) {
+            filas.push({
+              label: 'Base de datos',
+              bytes: data.disk.db.storage,
+              extra: `${data.disk.db.documentos.toLocaleString('es-AR')} documentos · ${formatSize(data.disk.db.indices)} en índices`,
+            });
+          }
+          const mayor = Math.max(...filas.map(f => f.bytes), 1);
+          document.getElementById('m-disk-breakdown').innerHTML = filas.map(f => `
+            <div>
+              <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px">
+                <span>${f.label}</span>
+                <strong>${formatSize(f.bytes)}</strong>
+              </div>
+              <div class="bar-track" style="height:5px">
+                <div class="bar-fill" style="width:${Math.round((f.bytes / mayor) * 100)}%;background:#9334e6"></div>
+              </div>
+              <div style="font-size:11px;color:var(--text-hint);margin-top:2px">${f.extra}</div>
+            </div>
+          `).join('');
+        } else {
+          // El endpoint devuelve disk:null si el cálculo falló; el resto del monitor sigue vivo
+          setText('m-disk-pct', 'Datos de almacenamiento no disponibles');
+        }
 
         // Load
         setText('m-load1',    data.load.avg1);

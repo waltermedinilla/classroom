@@ -32,6 +32,29 @@
       text-align: center; padding: 40px; background: var(--surface);
       border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-secondary);
     }
+
+    /* Sparkline de la serie mensual. Barras CSS puras — el proyecto no usa librerías
+       de charting; mismo enfoque que .bucket-bar en grades.ejs y .rate-bar-fill en courses.ejs */
+    .spark { display: flex; align-items: flex-end; gap: 3px; height: 30px; }
+    .spark-bar {
+      width: 7px; background: var(--primary); border-radius: 2px 2px 0 0;
+      /* min-height para que un mes en cero se lea como "no hubo actividad" y no como
+         un hueco de renderizado. Sin esto, una fila vacía parece un bug. */
+      min-height: 2px; opacity: .85; transition: opacity .15s;
+    }
+    .spark-bar.cero { background: var(--border); }
+    .spark:hover .spark-bar { opacity: 1; }
+    .spark-wrap { display: flex; align-items: center; gap: 8px; justify-content: center; }
+    .trend { font-size: 18px; line-height: 1; }
+    .trend-sube    { color: #137333; }
+    .trend-baja    { color: #c5221f; }
+    .trend-estable { color: var(--text-hint); }
+    .trend-sin     { color: var(--border); }
+    .spark-labels {
+      display: flex; gap: 3px; margin-top: 3px;
+      font-size: 8px; color: var(--text-hint); text-transform: uppercase;
+    }
+    .spark-labels span { width: 7px; text-align: center; }
   </style>
 </head>
 <body>
@@ -44,10 +67,25 @@
       <div>
         <h2>Docentes</h2>
         <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
-          Actividad publicada, entregas pendientes de calificación y promedio de sus cursos
+          Actividad publicada, entregas pendientes de calificación y evolución de los últimos
+          <%= meses.length %> meses
         </p>
       </div>
     </div>
+
+    <form method="GET" class="filters-bar">
+      <input type="search" name="search" placeholder="Buscar docente por nombre..." value="<%= search %>">
+      <select name="sort">
+        <option value="overdue-desc" <%= sort === 'overdue-desc' ? 'selected' : '' %>>Más entregas sin calificar primero</option>
+        <option value="acts-asc"     <%= sort === 'acts-asc'     ? 'selected' : '' %>>Menos actividad reciente primero</option>
+        <option value="acts-desc"    <%= sort === 'acts-desc'    ? 'selected' : '' %>>Más actividad reciente primero</option>
+        <option value="name"         <%= sort === 'name'         ? 'selected' : '' %>>Nombre (A→Z)</option>
+      </select>
+      <button type="submit" class="btn btn-outline">
+        <span class="material-symbols-outlined">filter_alt</span>
+        Aplicar
+      </button>
+    </form>
 
     <div style="font-size:12px;color:var(--text-hint);margin-bottom:8px">
       <% if (total === 0) { %>
@@ -60,7 +98,12 @@
     <% if (!teachers.length) { %>
       <div class="empty-state">
         <span class="material-symbols-outlined" style="font-size:36px;color:var(--text-hint)">badge</span>
-        <p>No hay docentes registrados en esta escuela.</p>
+        <% if (search) { %>
+          <p>Ningún docente coincide con "<strong><%= search %></strong>".</p>
+          <a href="/directivo/teachers" class="btn btn-outline" style="margin-top:8px">Limpiar búsqueda</a>
+        <% } else { %>
+          <p>No hay docentes registrados en esta escuela.</p>
+        <% } %>
       </div>
     <% } else { %>
       <div style="overflow-x:auto">
@@ -70,7 +113,12 @@
               <th>Docente</th>
               <th style="text-align:center">Cursos</th>
               <th style="text-align:center">Alumnos</th>
-              <th style="text-align:center">Actividades últ. mes</th>
+              <th style="text-align:center" title="<%= mesesLabel.join(' · ') %>">
+                Actividades por mes
+                <div style="font-weight:400;text-transform:none;letter-spacing:0;font-size:9px">
+                  <%= mesesLabel[0] %> → <%= mesesLabel[mesesLabel.length - 1] %>
+                </div>
+              </th>
               <th style="text-align:center">Sin calificar (&gt;15d)</th>
               <th style="text-align:center">Promedio de notas</th>
             </tr>
@@ -85,7 +133,32 @@
                 </td>
                 <td style="text-align:center"><%= t.courseCount %></td>
                 <td style="text-align:center"><%= t.studentCount %></td>
-                <td style="text-align:center"><strong><%= t.monthlyActs %></strong></td>
+                <td>
+                  <%
+                    // Escala relativa a la propia fila: interesa la FORMA de la serie del
+                    // docente, no compararlo con el más productivo de la escuela (que
+                    // aplastaría visualmente a todos los demás).
+                    const maxFila = Math.max(...t.serieActs, 1);
+                  %>
+                  <div class="spark-wrap">
+                    <div>
+                      <div class="spark">
+                        <% t.serieActs.forEach((v, i) => { %>
+                          <div class="spark-bar <%= v === 0 ? 'cero' : '' %>"
+                            style="height:<%= v === 0 ? 2 : Math.max(3, Math.round((v / maxFila) * 30)) %>px"
+                            title="<%= mesesLabel[i] %>: <%= v %> actividad<%= v === 1 ? '' : 'es' %> · <%= t.serieCorr[i] %> <%= t.serieCorr[i] === 1 ? 'corrección' : 'correcciones' %>"></div>
+                        <% }) %>
+                      </div>
+                      <div class="spark-labels">
+                        <% mesesLabel.forEach(m => { %><span><%= m.charAt(0) %></span><% }) %>
+                      </div>
+                    </div>
+                    <span class="material-symbols-outlined trend trend-<%= t.tendencia === 'sin-datos' ? 'sin' : t.tendencia %>"
+                      title="<%= t.tendencia === 'sube' ? 'En aumento' : t.tendencia === 'baja' ? 'En descenso' : t.tendencia === 'estable' ? 'Estable' : 'Sin actividad en el período' %>">
+                      <%= t.tendencia === 'sube' ? 'trending_up' : t.tendencia === 'baja' ? 'trending_down' : t.tendencia === 'estable' ? 'trending_flat' : 'remove' %>
+                    </span>
+                  </div>
+                </td>
                 <td style="text-align:center">
                   <% if (t.overdueActs > 0) { %>
                     <span class="badge badge-warn"><%= t.overdueActs %></span>

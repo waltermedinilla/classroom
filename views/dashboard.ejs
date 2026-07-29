@@ -47,6 +47,45 @@
     </div>
     <% } %>
 
+    <%# Invitación a completar el perfil. Va DESPUÉS del aviso de tareas pendientes y en
+        azul informativo (no ámbar) para no competir con él: lo urgente es la tarea que vence,
+        esto es opcional. Arranca oculto y lo muestra el script de abajo si no fue descartado,
+        así no parpadea al cargar. %>
+    <% if (typeof profilePrompt !== 'undefined' && profilePrompt) { %>
+    <div class="profile-band" id="profileBand" style="display:none">
+      <span class="material-symbols-outlined">account_circle</span>
+      <span>
+        Contanos algo sobre vos: te falta agregar
+        <strong><%= profilePrompt.faltantes.join(', ').replace(/, ([^,]*)$/, ' y $1') %></strong>.
+      </span>
+      <a href="/courses/profile" class="profile-band-link">Completar perfil</a>
+      <button class="profile-band-close" onclick="descartarAvisoPerfil()" title="No mostrar por ahora"
+        aria-label="Cerrar aviso">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+    </div>
+    <script>
+      /* El descarte vive en localStorage y no en la base: es una preferencia de presentación,
+         no un dato del usuario. Caduca a los 7 días para que el aviso vuelva a aparecer una
+         vez, en vez de perderse para siempre con un solo click distraído. */
+      (function () {
+        var CLAVE = 'avisoPerfilDescartadoEl';
+        var DIAS  = 7;
+        var band  = document.getElementById('profileBand');
+        if (!band) return;
+
+        var descartadoEl = parseInt(localStorage.getItem(CLAVE) || '0', 10);
+        var vencido = !descartadoEl || (Date.now() - descartadoEl) > DIAS * 24 * 60 * 60 * 1000;
+        if (vencido) band.style.display = 'flex';
+
+        window.descartarAvisoPerfil = function () {
+          localStorage.setItem(CLAVE, String(Date.now()));
+          band.style.display = 'none';
+        };
+      })();
+    </script>
+    <% } %>
+
     <section class="section">
       <% if (courses.length === 0) { %>
         <div class="empty-state">

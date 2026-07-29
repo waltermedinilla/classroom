@@ -65,6 +65,31 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: null,
   },
+
+  // ── Perfil personal ────────────────────────────────────────────────────────
+  // Lo carga el propio usuario desde /profile y lo ve, además de él, el equipo
+  // directivo en sus paneles (mismo alcance que phone/instagram/facebook — ver
+  // views/partials/about-info.ejs). Decisión tomada explícitamente con el usuario:
+  // los alumnos son menores, así que no se expone a compañeros ni docentes.
+  bio: {
+    type: String,
+    trim: true,
+    maxlength: [280, 'La presentación no puede superar los 280 caracteres'],
+    default: null,      // Presentación breve escrita por el usuario
+  },
+  interests: {
+    type: [String],
+    default: [],        // IDs de config/interests.js — lista CERRADA, se valida en la ruta
+  },
+  futureGoal: {
+    type: String,
+    trim: true,
+    maxlength: [120, 'Este campo no puede superar los 120 caracteres'],
+    // Alumnos: a qué les gustaría dedicarse (dato de valor para Orientación Escolar).
+    // Docentes y demás roles: su formación o especialidad. El label cambia en la vista
+    // según el rol, pero el campo es uno solo.
+    default: null,
+  },
 }, { timestamps: true }); // Agrega createdAt y updatedAt automáticamente
 
 // Índice único compuesto school+dni: evita DNI duplicados dentro de la misma escuela

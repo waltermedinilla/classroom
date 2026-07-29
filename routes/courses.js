@@ -1,7 +1,5 @@
 const express  = require('express');
-const multer   = require('multer');
 const path     = require('path');
-const fs       = require('fs');
 const Course   = require('../models/Course');
 const Division = require('../models/Division');
 const User     = require('../models/User');
@@ -13,68 +11,18 @@ const { requireAuth } = require('../middleware/auth');
 const { invalidateUser } = require('../middleware/cache');
 const { logAudit } = require('../middleware/audit');
 const { SYSTEM_OWNER_EMAIL } = require('../config/maintenance');
+// Lista cerrada de intereses del perfil. Se pasa a la vista para pintar los chips y se
+// reusa en PATCH /profile/about para validar lo que llega (ver config/interests.js).
+const { INTERESTS, MAX_INTERESTS } = require('../config/interests');
+// Subida de imágenes: multer en memoria + redimensionado/compresión a WebP antes de
+// escribir en disco (ver middleware/image-upload.js y config/imagePresets.js).
+const {
+  subirImagen, guardarImagenOptimizada, borrarPorUrlPublica, ImagenInvalidaError,
+} = require('../middleware/image-upload');
 
 const router = express.Router();
 
-const HEADERS_BASE = path.join(__dirname, '../public/archivos');
-const AVATARS_BASE = path.join(__dirname, '../public/archivos');
-
-// Configuración multer para imágenes de portada del curso
-const headerUpload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => {
-      const schoolId = req.res?.locals?.user?.school?.toString() || 'general';
-      const dir = path.join(HEADERS_BASE, schoolId, 'headers', req.params.id);
-      fs.mkdirSync(dir, { recursive: true });
-      req._headerDir = dir;
-      cb(null, dir);
-    },
-    filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname).toLowerCase();
-      try {
-        if (req._headerDir && fs.existsSync(req._headerDir)) {
-          fs.readdirSync(req._headerDir)
-            .filter(f => /^header\.(jpg|jpeg|png|webp)$/.test(f))
-            .forEach(f => fs.unlinkSync(path.join(req._headerDir, f)));
-        }
-      } catch {}
-      cb(null, 'header' + ext);
-    },
-  }),
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    cb(null, ['.jpg', '.jpeg', '.png', '.webp'].includes(path.extname(file.originalname).toLowerCase()));
-  },
-});
-
-// Configuración multer para avatar de usuario
-const avatarUpload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => {
-      const schoolId = req.res?.locals?.user?.school?.toString() || 'general';
-      const userId   = req.res?.locals?.user?._id?.toString() || 'unknown';
-      const dir = path.join(AVATARS_BASE, schoolId, 'avatars', userId);
-      fs.mkdirSync(dir, { recursive: true });
-      req._avatarDir = dir;
-      cb(null, dir);
-    },
-    filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname).toLowerCase();
-      try {
-        if (req._avatarDir && fs.existsSync(req._avatarDir)) {
-          fs.readdirSync(req._avatarDir)
-            .filter(f => /^avatar\.(jpg|jpeg|png|webp)$/.test(f))
-            .forEach(f => fs.unlinkSync(path.join(req._avatarDir, f)));
-        }
-      } catch {}
-      cb(null, 'avatar' + ext);
-    },
-  }),
-  limits: { fileSize: 3 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    cb(null, ['.jpg', '.jpeg', '.png', '.webp'].includes(path.extname(file.originalname).toLowerCase()));
-  },
-});
+const ARCHIVOS_BASE = path.join(__dirname, '../public/archivos');
 
 // GET /courses — Dashboard
 router.get('/', requireAuth, async (req, res) => {
@@ -121,7 +69,31 @@ router.get('/', requireAuth, async (req, res) => {
       if (pending.length > 0) pendingSummary = { total: pending.length, dueToday };
     }
 
-    res.render('dashboard', { courses, pendingSummary });
+    // Aviso para completar el perfil personal (bio / intereses / proyecto).
+    // Solo alumnos y docentes: admin, superadmin y directivo aterrizan en sus propios
+    // paneles y para ellos el perfil no aporta nada institucional.
+    //
+    // A propósito NO se pide teléfono ni redes: son datos de contacto y buena parte de los
+    // alumnos son menores. Empujar por ellos desde un banner sería presionar por información
+    // sensible; que los cargue quien quiera, desde el perfil, sin que el sistema insista.
+    //
+    // El aviso desaparece solo al completar los campos: PATCH /profile/about llama a
+    // invalidateUser, así que el user cacheado se refresca en el próximo request.
+    let profilePrompt = null;
+    const u = res.locals.user;
+    if (u && ['student', 'teacher'].includes(u.role)) {
+      const faltantes = [];
+      if (!u.bio)                                 faltantes.push('una breve presentación');
+      if (!u.interests || u.interests.length === 0) faltantes.push('tus intereses');
+      if (!u.futureGoal) {
+        faltantes.push(u.role === 'student' ? 'a qué te gustaría dedicarte' : 'tu formación');
+      }
+      if (faltantes.length > 0) {
+        profilePrompt = { faltantes, total: 3, completos: 3 - faltantes.length };
+      }
+    }
+
+    res.render('dashboard', { courses, pendingSummary, profilePrompt });
   } catch (err) {
     res.status(500).send('Error del servidor');
   }
@@ -241,7 +213,7 @@ router.get('/profile', requireAuth, async (req, res) => {
       const joinedCourses = await Course.find({ students: req.userId })
         .populate('owner', 'name email')
         .populate('division', 'name');
-      return res.render('profile', { joinedCourses, createdCourses: [], activityCount: 0, totalStudents: 0, systemOwnerEmail: SYSTEM_OWNER_EMAIL });
+      return res.render('profile', { joinedCourses, createdCourses: [], activityCount: 0, totalStudents: 0, systemOwnerEmail: SYSTEM_OWNER_EMAIL, INTERESTS, MAX_INTERESTS });
     }
     const [createdCourses, activityCount] = await Promise.all([
       // Incluye materias co-dictadas (ver Course.coTeachers), mismo motivo que en GET /courses.
@@ -251,24 +223,33 @@ router.get('/profile', requireAuth, async (req, res) => {
       Activity.countDocuments({ author: req.userId }),
     ]);
     const totalStudents = createdCourses.reduce((sum, c) => sum + c.students.length, 0);
-    res.render('profile', { createdCourses, activityCount, totalStudents, joinedCourses: [], systemOwnerEmail: SYSTEM_OWNER_EMAIL });
+    res.render('profile', { createdCourses, activityCount, totalStudents, joinedCourses: [], systemOwnerEmail: SYSTEM_OWNER_EMAIL, INTERESTS, MAX_INTERESTS });
   } catch (err) {
     res.status(500).send('Error del servidor');
   }
 });
 
 // POST /courses/profile/avatar
-router.post('/profile/avatar', requireAuth, avatarUpload.single('avatar'), async (req, res) => {
+// La imagen llega en memoria y se guarda ya optimizada (preset 'avatar': 512×512 WebP).
+// El nombre lleva un sufijo único por subida, así que la URL cambia y el navegador no
+// muestra el avatar anterior de su cache. Las versiones previas las borra
+// guardarImagenOptimizada() DESPUÉS de escribir la nueva.
+router.post('/profile/avatar', requireAuth, subirImagen('avatar'), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'No se recibió ninguna imagen' });
+    if (!req.file) return res.status(400).json({ error: 'Formato no permitido (JPG, PNG, WebP o GIF)' });
     const schoolId = res.locals.user?.school?.toString() || 'general';
     const userId   = res.locals.user._id.toString();
-    const avatarUrl = `/archivos/${schoolId}/avatars/${userId}/${req.file.filename}`;
+    const dir      = path.join(ARCHIVOS_BASE, schoolId, 'avatars', userId);
+
+    const guardada = await guardarImagenOptimizada(req.file, { preset: 'avatar', dir, base: 'avatar' });
+
+    const avatarUrl = `/archivos/${schoolId}/avatars/${userId}/${guardada.filename}`;
     await User.findByIdAndUpdate(userId, { avatar: avatarUrl });
     invalidateUser(userId);
     res.json({ avatar: avatarUrl });
   } catch (err) {
-    if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }
+    // El archivo nunca llegó al disco (memoryStorage), así que no hay nada que limpiar.
+    if (err instanceof ImagenInvalidaError) return res.status(400).json({ error: err.message });
     res.status(500).json({ error: 'Error al guardar el avatar' });
   }
 });
@@ -278,7 +259,7 @@ router.delete('/profile/avatar', requireAuth, async (req, res) => {
   try {
     const user = res.locals.user;
     if (user.avatar) {
-      try { fs.unlinkSync(path.join(__dirname, '../public', user.avatar)); } catch {}
+      borrarPorUrlPublica(user.avatar);
       await User.findByIdAndUpdate(user._id, { avatar: null });
       invalidateUser(user._id);
     }
@@ -401,6 +382,59 @@ router.patch('/profile/contact', requireAuth, async (req, res) => {
 
     res.json({ ok: true, phone: user.phone, instagram: user.instagram, facebook: user.facebook });
   } catch {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// PATCH /courses/profile/about
+// El propio usuario actualiza su perfil personal: presentación, intereses y proyecto/formación.
+// Va separada de /profile/contact a propósito: son datos de naturaleza distinta y el usuario
+// puede guardar una sección sin tocar la otra.
+//
+// Los intereses se validan contra la lista CERRADA de config/interests.js. No alcanza con
+// validar en el frontend: un POST directo podría mandar cualquier string y quedaría guardado
+// y renderizado en el panel del directivo.
+router.patch('/profile/about', requireAuth, async (req, res) => {
+  try {
+    const { INTEREST_IDS, MAX_INTERESTS } = require('../config/interests');
+
+    const bio        = typeof req.body.bio === 'string' ? req.body.bio.trim() : '';
+    const futureGoal = typeof req.body.futureGoal === 'string' ? req.body.futureGoal.trim() : '';
+
+    if (bio.length > 280) {
+      return res.status(400).json({ error: 'La presentación no puede superar los 280 caracteres' });
+    }
+    if (futureGoal.length > 120) {
+      return res.status(400).json({ error: 'El proyecto o especialidad no puede superar los 120 caracteres' });
+    }
+
+    // Se filtra contra la whitelist y se deduplica: cualquier id desconocido se descarta
+    // en silencio en vez de rechazar todo el formulario (si la lista cambió, el usuario no
+    // pierde el resto de lo que cargó).
+    const recibidos = Array.isArray(req.body.interests) ? req.body.interests : [];
+    const interests = [...new Set(recibidos.filter(i => INTEREST_IDS.includes(i)))];
+
+    if (interests.length > MAX_INTERESTS) {
+      return res.status(400).json({ error: `Podés elegir hasta ${MAX_INTERESTS} intereses` });
+    }
+
+    const user = await User.findByIdAndUpdate(req.userId, {
+      bio:        bio || null,
+      interests,
+      futureGoal: futureGoal || null,
+    }, { new: true, runValidators: true });
+    invalidateUser(user._id);
+
+    logAudit(req, 'user.contact_change',
+      [{ type: 'user', id: user._id, name: user.name }],
+      { seccion: 'perfil personal' },
+    );
+
+    res.json({ ok: true, bio: user.bio, interests: user.interests, futureGoal: user.futureGoal });
+  } catch (err) {
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
+    }
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -617,11 +651,13 @@ router.get('/:id/data', requireAuth, async (req, res) => {
 });
 
 // POST /courses/:id/customize
-// El chequeo de ownership va ANTES del multer a propósito: sin este middleware previo,
-// headerUpload borraría el header anterior del curso en su callback `filename()` — incluso
-// cuando la request viene de alguien que no es el owner — antes de que el handler pudiera
-// rechazarla con 403. Un docente A podría, con esa vulnerabilidad, borrar la portada del
-// curso de un docente B iterando sobre IDs. Por eso: primero validamos, después multer.
+// El chequeo de ownership va ANTES del multer. Históricamente era OBLIGATORIO: el multer
+// viejo borraba la portada anterior dentro de su callback `filename()`, que corre antes
+// que el handler, así que un docente A podía borrar la portada del curso de un docente B
+// iterando sobre IDs — la request terminaba en 403, pero el archivo ya no estaba.
+// Hoy la subida es en memoria y el borrado ocurre dentro del handler (después de validar),
+// con lo cual el agujero está cerrado por diseño. Este middleware queda igual: validar
+// antes de leer 8 MB de multipart sigue siendo lo correcto, y es defensa en profundidad.
 router.post('/:id/customize', requireAuth, async (req, res, next) => {
   try {
     // select incluye coTeachers: si solo trajéramos 'owner', isTeacher() no podría ver a
@@ -635,7 +671,7 @@ router.post('/:id/customize', requireAuth, async (req, res, next) => {
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
   }
-}, headerUpload.single('image'), async (req, res) => {
+}, subirImagen('image'), async (req, res) => {
   try {
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
@@ -646,19 +682,18 @@ router.post('/:id/customize', requireAuth, async (req, res, next) => {
       newHeader.color  = color  || '#1a73e8';
       newHeader.color2 = null;
       if (req.file) {
-        newHeader.image = `/archivos/${schoolId}/headers/${req.params.id}/${req.file.filename}`;
+        // preset 'header': 1600×600 con fit 'inside' — la portada se ve completa, sin recorte
+        const dir = path.join(ARCHIVOS_BASE, schoolId, 'headers', req.params.id);
+        const guardada = await guardarImagenOptimizada(req.file, { preset: 'header', dir, base: 'header' });
+        newHeader.image = `/archivos/${schoolId}/headers/${req.params.id}/${guardada.filename}`;
       } else if (removeImage === 'true') {
-        if (course.header?.image) {
-          try { fs.unlinkSync(path.join(__dirname, '../public', course.header.image)); } catch {}
-        }
+        borrarPorUrlPublica(course.header?.image);
         newHeader.image = null;
       } else {
         newHeader.image = course.header?.image || null;
       }
     } else {
-      if (course.header?.image) {
-        try { fs.unlinkSync(path.join(__dirname, '../public', course.header.image)); } catch {}
-      }
+      borrarPorUrlPublica(course.header?.image);
       newHeader.color  = color  || '#1a73e8';
       newHeader.color2 = color2 || null;
       newHeader.image  = null;
@@ -666,7 +701,7 @@ router.post('/:id/customize', requireAuth, async (req, res, next) => {
     await Course.findByIdAndUpdate(req.params.id, { $set: { header: newHeader } });
     res.json({ header: newHeader });
   } catch (err) {
-    if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }
+    if (err instanceof ImagenInvalidaError) return res.status(400).json({ error: err.message });
     res.status(500).json({ error: 'Error al guardar la personalización' });
   }
 });

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Divisiones — Panel Directivo</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .div-table {
+      width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+    }
+    .div-table th, .div-table td {
+      padding: 10px 14px; text-align: left; font-size: 13px;
+      border-bottom: 1px solid var(--border);
+    }
+    .div-table th {
+      background: var(--background); font-weight: 600; font-size: 11px;
+      text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary);
+    }
+    .div-table tr:last-child td { border-bottom: none; }
+    .div-table tr:hover td { background: var(--background); }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; }
+    .badge-warn { background: #fef4e5; color: #e67e00; }
+    .badge-ok { background: #e6f4ea; color: #137333; }
+    a.name-link { color: var(--text-primary); text-decoration: none; font-weight: 500; }
+    a.name-link:hover { color: var(--primary); text-decoration: underline; }
+    /* Barra de tasa de entrega — misma construcción que en courses.ejs */
+    .rate-bar {
+      display: inline-block; width: 60px; height: 6px; background: var(--border);
+      border-radius: 3px; overflow: hidden; vertical-align: middle; margin-right: 6px;
+    }
+    .rate-bar-fill { display: block; height: 100%; border-radius: 3px; }
+    .empty-state {
+      text-align: center; padding: 40px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-secondary);
+    }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/directivo-nav', { activePage: 'divisions' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Divisiones</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Cada división con sus materias, alumnos, tasa de entrega y promedio
+        </p>
+      </div>
+    </div>
+
+    <form method="GET" class="filters-bar">
+      <input type="search" name="search" placeholder="Buscar división..." value="<%= search %>">
+      <select name="sort">
+        <option value="name"      <%= sort === 'name'      ? 'selected' : '' %>>Nombre (A→Z)</option>
+        <option value="rate-asc"  <%= sort === 'rate-asc'  ? 'selected' : '' %>>Peor tasa de entrega primero</option>
+        <option value="rate-desc" <%= sort === 'rate-desc' ? 'selected' : '' %>>Mejor tasa de entrega primero</option>
+        <option value="alumnos"   <%= sort === 'alumnos'   ? 'selected' : '' %>>Más alumnos primero</option>
+      </select>
+      <button type="submit" class="btn btn-outline">
+        <span class="material-symbols-outlined">filter_alt</span>
+        Aplicar
+      </button>
+    </form>
+
+    <div style="font-size:12px;color:var(--text-hint);margin-bottom:8px">
+      <% if (total === 0) { %>
+        Sin resultados
+      <% } else { %>
+        Mostrando <%= (page - 1) * 25 + 1 %>–<%= Math.min(page * 25, total) %> de <strong><%= total %></strong> división<%= total === 1 ? '' : 'es' %>
+      <% } %>
+    </div>
+
+    <% if (!divisions.length) { %>
+      <div class="empty-state">
+        <span class="material-symbols-outlined" style="font-size:36px;color:var(--text-hint)">school</span>
+        <% if (search) { %>
+          <p>Ninguna división coincide con "<strong><%= search %></strong>".</p>
+          <a href="/directivo/divisions" class="btn btn-outline" style="margin-top:8px">Limpiar búsqueda</a>
+        <% } else { %>
+          <p>No hay divisiones registradas en esta escuela.</p>
+        <% } %>
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="div-table">
+          <thead>
+            <tr>
+              <th>División</th>
+              <th style="text-align:center">Materias</th>
+              <th style="text-align:center">Alumnos</th>
+              <th style="text-align:center">Docentes</th>
+              <th style="text-align:center">Actividades</th>
+              <th>Tasa de entrega</th>
+              <th style="text-align:center">Promedio</th>
+              <th style="text-align:center">Sin calificar</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% divisions.forEach(d => { %>
+              <tr>
+                <td>
+                  <a href="/directivo/divisions/<%= d._id %>" class="name-link"><%= d.name %></a>
+                </td>
+                <td style="text-align:center"><%= d.materias %></td>
+                <td style="text-align:center"><%= d.alumnos %></td>
+                <td style="text-align:center"><%= d.docentes %></td>
+                <td style="text-align:center"><%= d.actividades %></td>
+                <td>
+                  <% if (d.tasa === null) { %>
+                    <span style="color:var(--text-hint)">—</span>
+                  <% } else { %>
+                    <span class="rate-bar">
+                      <span class="rate-bar-fill" style="width:<%= Math.min(100, d.tasa) %>%;background:<%= d.tasa >= 80 ? '#34a853' : d.tasa >= 50 ? '#ea8600' : '#ea4335' %>"></span>
+                    </span>
+                    <strong style="color:<%= d.tasa >= 80 ? '#34a853' : d.tasa >= 50 ? '#ea8600' : '#ea4335' %>"><%= d.tasa %>%</strong>
+                    <span style="color:var(--text-hint);font-size:11px"><%= d.entregas %>/<%= d.esperadas %></span>
+                  <% } %>
+                </td>
+                <td style="text-align:center">
+                  <% if (d.promedio === null) { %>
+                    <span style="color:var(--text-hint)">—</span>
+                  <% } else { %>
+                    <strong style="color:<%= d.promedio < 6 ? '#ea4335' : d.promedio < 8 ? '#ea8600' : '#34a853' %>"><%= d.promedio %></strong>
+                  <% } %>
+                </td>
+                <td style="text-align:center">
+                  <% if (d.vencidasSinCalificar > 0) { %>
+                    <span class="badge badge-warn"><%= d.vencidasSinCalificar %></span>
+                  <% } else { %>
+                    <span class="badge badge-ok">0</span>
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <%- include('../partials/pagination') %>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

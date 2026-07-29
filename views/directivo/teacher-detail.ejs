@@ -56,6 +56,40 @@
     .badge-warn   { background: #fef4e5; color: #e67e00; }
     .badge-ok     { background: #e6f4ea; color: #137333; }
     .badge-muted  { background: var(--border); color: var(--text-secondary); }
+
+    /* Gráfico de la serie mensual. Barras CSS puras, sin librería de charting
+       (mismo criterio que .bucket-bar en grades.ejs y el sparkline de teachers.ejs). */
+    .serie-box {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 18px 20px; margin-bottom: 8px;
+    }
+    .serie-legend {
+      display: flex; gap: 18px; font-size: 12px; color: var(--text-secondary);
+      margin-bottom: 14px;
+    }
+    .serie-legend .dot {
+      display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+      margin-right: 5px; vertical-align: -1px;
+    }
+    .dot-creadas { background: #1a73e8; }
+    .dot-corr    { background: #34a853; }
+    /* overflow-x: el gráfico nunca debe empujar el ancho de la página en móvil */
+    .serie-grid { display: flex; gap: 10px; align-items: flex-end; overflow-x: auto; padding-bottom: 4px; }
+    .serie-col  { flex: 1; min-width: 44px; text-align: center; }
+    .serie-bars { display: flex; gap: 4px; align-items: flex-end; justify-content: center; height: 124px; }
+    .serie-bar  {
+      width: 16px; border-radius: 3px 3px 0 0; position: relative;
+      min-height: 2px; /* un mes en cero se ve como línea, no como hueco */
+    }
+    .bar-creadas { background: #1a73e8; }
+    .bar-corr    { background: #34a853; }
+    .serie-num {
+      position: absolute; top: -15px; left: 50%; transform: translateX(-50%);
+      font-size: 10px; font-weight: 700; color: var(--text-secondary);
+    }
+    .serie-mes {
+      margin-top: 6px; font-size: 11px; color: var(--text-hint); text-transform: uppercase;
+    }
   </style>
 </head>
 <body>
@@ -81,6 +115,7 @@
           Alta: <%= new Date(teacher.createdAt).toLocaleDateString('es-AR', {day:'numeric', month:'long', year:'numeric'}) %>
         </div>
         <%- include('../partials/contact-info', { person: teacher }) %>
+        <%- include('../partials/about-info', { person: teacher }) %>
       </div>
     </div>
 
@@ -97,6 +132,47 @@
         <div class="mini-stat-value"><%= stats.totalActivities %></div>
         <div class="mini-stat-label">Actividades publicadas</div>
       </div>
+    </div>
+
+    <div class="section-h">
+      <span class="material-symbols-outlined" style="color:#1a73e8">insights</span>
+      Evolución de los últimos <%= serie.meses.length %> meses
+    </div>
+    <%
+      // Escala común a las dos series para que sean comparables entre sí dentro del gráfico.
+      const maxSerie = Math.max(...serie.creadas, ...serie.corregidas, 1);
+      const sinDatos = serie.creadas.every(v => v === 0) && serie.corregidas.every(v => v === 0);
+    %>
+    <div class="serie-box">
+      <% if (sinDatos) { %>
+        <div style="text-align:center;color:var(--text-secondary);padding:16px 0">
+          Sin actividad registrada en este período.
+        </div>
+      <% } else { %>
+        <div class="serie-legend">
+          <span><i class="dot dot-creadas"></i> Actividades creadas</span>
+          <span><i class="dot dot-corr"></i> Correcciones hechas</span>
+        </div>
+        <div class="serie-grid">
+          <% serie.meses.forEach((m, i) => { %>
+            <div class="serie-col">
+              <div class="serie-bars">
+                <div class="serie-bar bar-creadas"
+                  style="height:<%= serie.creadas[i] === 0 ? 2 : Math.max(4, Math.round((serie.creadas[i] / maxSerie) * 110)) %>px"
+                  title="<%= m %>: <%= serie.creadas[i] %> creadas">
+                  <% if (serie.creadas[i] > 0) { %><span class="serie-num"><%= serie.creadas[i] %></span><% } %>
+                </div>
+                <div class="serie-bar bar-corr"
+                  style="height:<%= serie.corregidas[i] === 0 ? 2 : Math.max(4, Math.round((serie.corregidas[i] / maxSerie) * 110)) %>px"
+                  title="<%= m %>: <%= serie.corregidas[i] %> <%= serie.corregidas[i] === 1 ? 'corrección' : 'correcciones' %>">
+                  <% if (serie.corregidas[i] > 0) { %><span class="serie-num"><%= serie.corregidas[i] %></span><% } %>
+                </div>
+              </div>
+              <div class="serie-mes"><%= m %></div>
+            </div>
+          <% }) %>
+        </div>
+      <% } %>
     </div>
 
     <div class="section-h">

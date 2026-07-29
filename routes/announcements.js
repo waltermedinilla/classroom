@@ -1,48 +1,21 @@
 const express  = require('express');
-const multer   = require('multer');
 const path     = require('path');
 const Announcement = require('../models/Announcement');
 const Course   = require('../models/Course');
 const { requireAuth } = require('../middleware/auth');
 const { logAudit }    = require('../middleware/audit');
 const { uploadLimiter } = require('../middleware/rate-limits');
+// La imagen se recibe en memoria y se guarda ya redimensionada y en WebP
+// (preset 'novedad': 1600 px de lado mayor). Ver middleware/image-upload.js.
+const {
+  subirImagen, guardarImagenOptimizada, ImagenInvalidaError,
+} = require('../middleware/image-upload');
 
-const fs = require('fs');
 const router = express.Router();
 
 // Base para los archivos de novedades (dentro de /public → acceso estático)
-const ARCHIVOS_BASE = path.join(__dirname, '../public/archivos');
-
-// Configuración de almacenamiento de imágenes de novedades
 // Destino: public/archivos/{schoolId}/novedades/{courseId}/
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    // schoolId viene del usuario autenticado; courseId viene del body del formulario
-    const schoolId = req.res?.locals?.user?.school?.toString() || 'general';
-    const courseId = req.body.courseId || 'general';
-    const dir = path.join(ARCHIVOS_BASE, schoolId, 'novedades', courseId);
-    fs.mkdirSync(dir, { recursive: true }); // Crea la carpeta si no existe
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    // Nombre único: timestamp + número aleatorio + extensión original
-    const uniqueName = Date.now() + '-' + Math.round(Math.random() * 1E9) + path.extname(file.originalname);
-    cb(null, uniqueName);
-  },
-});
-
-// Multer: solo acepta imágenes (jpeg, jpg, png, gif, webp) de hasta 5 MB
-const upload = multer({
-  storage,
-  fileFilter: (req, file, cb) => {
-    const allowed = /jpeg|jpg|png|gif|webp/;
-    const extOk  = allowed.test(path.extname(file.originalname).toLowerCase());
-    const mimeOk = allowed.test(file.mimetype);
-    if (extOk && mimeOk) return cb(null, true);
-    cb(new Error('Solo se permiten imágenes (jpeg, jpg, png, gif, webp)'));
-  },
-  limits: { fileSize: 5 * 1024 * 1024 },
-});
+const ARCHIVOS_BASE = path.join(__dirname, '../public/archivos');
 
 // GET /announcements/course/:courseId
 // Devuelve todas las novedades de un curso, con autor y comentarios populados
@@ -103,7 +76,7 @@ router.post('/:id/comment', requireAuth, async (req, res) => {
 // Crea una nueva novedad en un curso; opcionalmente con imagen adjunta
 // multipart/form-data: { courseId, text, image? }
 // Retorna: { announcement } con autor populado
-router.post('/create', requireAuth, uploadLimiter, upload.single('image'), async (req, res) => {
+router.post('/create', requireAuth, uploadLimiter, subirImagen('image'), async (req, res) => {
   try {
     const { courseId, text } = req.body;
 
@@ -117,14 +90,22 @@ router.post('/create', requireAuth, uploadLimiter, upload.single('image'), async
       return res.status(403).json({ error: 'Acceso denegado' });
     }
 
-    // Si se subió imagen, construye la URL pública; si no, guarda null
+    // Si se subió imagen, se optimiza, se escribe en disco y se arma la URL pública.
+    // Sin `base`: cada novedad tiene su propia imagen, no reemplaza a ninguna anterior.
+    // El permiso ya está validado arriba, así que recién acá se toca el disco.
+    const schoolId = res.locals.user.school?.toString() || 'general';
+    let imageUrl = null;
+    if (req.file) {
+      const dir = path.join(ARCHIVOS_BASE, schoolId, 'novedades', courseId);
+      const guardada = await guardarImagenOptimizada(req.file, { preset: 'novedad', dir });
+      imageUrl = `/archivos/${schoolId}/novedades/${courseId}/${guardada.filename}`;
+    }
+
     const announcement = await Announcement.create({
       course: courseId,
       author: req.userId,
       text,
-      image: req.file
-        ? `/archivos/${res.locals.user.school?.toString() || 'general'}/novedades/${courseId}/${req.file.filename}`
-        : null,
+      image: imageUrl,
     });
 
     // Populamos el autor para que el frontend pueda mostrar el nombre inmediatamente
@@ -142,6 +123,9 @@ router.post('/create', requireAuth, uploadLimiter, upload.single('image'), async
 
     res.status(201).json({ announcement: populated });
   } catch (err) {
+    if (err instanceof ImagenInvalidaError) {
+      return res.status(400).json({ error: err.message });
+    }
     if (err.name === 'ValidationError') {
       const messages = Object.values(err.errors).map(e => e.message);
       return res.status(400).json({ error: messages.join(', ') });

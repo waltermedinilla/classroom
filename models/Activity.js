@@ -68,4 +68,10 @@ const activitySchema = new mongoose.Schema({
 activitySchema.index({ course: 1, availableFrom: 1 });
 activitySchema.index({ course: 1, dueDate: 1 });
 
+// Producción por AUTOR (no por dueño del curso): lo usan la serie temporal de actividad
+// docente del panel directivo (routes/directivo.js, GET /teachers) y getUserActivityStats
+// (services/userActivityStats.js) para las columnas Nov/Act/Msg de admin y superadmin.
+// Sin este índice, ambos hacen collscan sobre `activities`.
+activitySchema.index({ author: 1, createdAt: -1 });
+
 module.exports = mongoose.model('Activity', activitySchema);

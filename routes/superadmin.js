@@ -1,7 +1,10 @@
 const express = require('express');
 const multer  = require('multer');
 const XLSX    = require('xlsx');
-const os      = require('os');
+const os       = require('os');
+const mongoose = require('mongoose');
+// Almacenamiento del monitor. El escaneo de carpetas viene cacheado desde el servicio.
+const { getDiskStats } = require('../services/diskStats');
 const School  = require('../models/School');
 const User    = require('../models/User');
 const Course  = require('../models/Course');
@@ -792,6 +795,17 @@ router.get('/monitor/stats', async (req, res) => {
     const loadavg  = os.loadavg();
     const cpuCount = os.cpus().length;
 
+    // Almacenamiento. El escaneo de carpetas está cacheado 60s dentro del servicio
+    // (ver services/diskStats.js) porque este endpoint se llama cada 5 segundos.
+    // Se aísla en su propio try: si falla (permisos, statfs no soportado), el monitor
+    // tiene que seguir mostrando usuarios, RAM y carga igual.
+    let disk = null;
+    try {
+      disk = await getDiskStats(mongoose);
+    } catch {
+      disk = null;
+    }
+
     res.json({
       users:   { now: connectedNow, byRole, active: activeUsers, total: totalUsers },
       schools: totalSchools,
@@ -818,6 +832,7 @@ router.get('/monitor/stats', async (req, res) => {
         process: Math.round(process.uptime()),
         system:  Math.round(os.uptime()),
       },
+      disk,
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
