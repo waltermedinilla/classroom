@@ -251,5 +251,9 @@
     }
     _applyTheme(localStorage.getItem('theme') || 'light');
   </script>
+
+  <%# Colapsa las solapas de sección detrás de un botón en pantallas chicas. Va acá porque
+      el footer es el único partial que incluyen TODAS las vistas del proyecto. %>
+  <script src="/js/nav-responsive.js"></script>
 </body>
 </html>

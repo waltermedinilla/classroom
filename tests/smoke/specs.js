@@ -17,6 +17,14 @@ const sharp = require('sharp');
 
 const RUN_ID = Date.now().toString(36);
 
+// DNI de prueba, único por corrida y por índice. El DNI pasó a ser OBLIGATORIO en toda
+// alta de usuario el 2026-07-30 (ver services/dni.js), así que cada spec que crea una
+// cuenta necesita uno propio: el índice {school, dni} es único, y dos specs con el mismo
+// número se pisarían entre sí. Los 6 dígitos del reloj + 2 del índice dan los 8 que valida
+// normalizeDni y hacen la colisión entre corridas prácticamente imposible.
+const DNI_BASE = Date.now() % 1000000;
+const dniSmoke = (n) => `${String(DNI_BASE).padStart(6, '0')}${String(n).padStart(2, '0')}`;
+
 // Genera un JPEG que se comporta como una foto real frente al compresor (ruido de baja
 // frecuencia escalado = gradientes con detalle). Un color plano se comprimiría a nada y
 // los specs de "esto adelgazó mucho" pasarían por accidente.
@@ -43,6 +51,18 @@ const student = {
 const coTeacher = {
   name:     'Smoke CoTeacher',
   email:    `smoke.coteacher.${RUN_ID}@example.com`,
+  password: 'SmokeTest1234',
+};
+const preceptor = {
+  name:     'Smoke Preceptor',
+  email:    `smoke.preceptor.${RUN_ID}@example.com`,
+  password: 'SmokeTest1234',
+};
+// Alumno dado de alta POR el preceptor (no por el admin), para verificar que su alta
+// matricula igual que la del panel de administración.
+const preceptorStudent = {
+  name:     'Smoke Preceptor Student',
+  email:    `smoke.preceptor.student.${RUN_ID}@example.com`,
   password: 'SmokeTest1234',
 };
 
@@ -83,7 +103,7 @@ const specs = [
     title: 'Un docente puede autoregistrarse',
     async run({ client, state }) {
       const res = await client.post('teacher', '/register', {
-        body: { name: teacher.name, email: teacher.email, password: teacher.password, role: 'teacher' },
+        body: { name: teacher.name, email: teacher.email, password: teacher.password, role: 'teacher', dni: dniSmoke(1) },
         expectStatus: 201,
       });
       state.teacherId = res.json.user._id;
@@ -94,7 +114,7 @@ const specs = [
     title: 'Un alumno puede autoregistrarse',
     async run({ client, state }) {
       const res = await client.post('student', '/register', {
-        body: { name: student.name, email: student.email, password: student.password, role: 'student' },
+        body: { name: student.name, email: student.email, password: student.password, role: 'student', dni: dniSmoke(2) },
         expectStatus: 201,
       });
       state.studentId = res.json.user._id;
@@ -219,7 +239,7 @@ const specs = [
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state }) {
       const res = await client.post('admin', '/admin/users/create', {
-        body: { name: teacher.name, email: `scoped.${teacher.email}`, password: teacher.password, role: 'teacher' },
+        body: { name: teacher.name, email: `scoped.${teacher.email}`, password: teacher.password, role: 'teacher', dni: dniSmoke(3) },
         expectStatus: 201,
       });
       state.scopedTeacherId    = res.json.user._id;
@@ -232,7 +252,7 @@ const specs = [
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state }) {
       const res = await client.post('admin', '/admin/users/create', {
-        body: { name: student.name, email: `scoped.${student.email}`, password: student.password, role: 'student' },
+        body: { name: student.name, email: `scoped.${student.email}`, password: student.password, role: 'student', dni: dniSmoke(4) },
         expectStatus: 201,
       });
       state.scopedStudentId    = res.json.user._id;
@@ -276,13 +296,30 @@ const specs = [
     },
   },
   {
-    id: 'course-join',
-    title: 'El alumno se une al curso con el código',
+    id: 'course-add-student',
+    title: 'El docente matricula al alumno en su curso',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state }) {
+      // Antes esto se hacía con `POST /courses/join` y el código de clase. Esa vía se
+      // eliminó el 2026-07-30 (ver routes/courses.js): matricular es una acción
+      // administrativa, y esta ruta es la que quedó para sumar a alguien a una materia
+      // suelta. El resto de la cadena (entregas, calificación, gradebook) depende de que
+      // el alumno quede inscripto acá.
+      await client.post('scopedTeacher', `/courses/${state.courseId}/add-student`, {
+        body: { email: state.scopedStudentEmail },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'course-join-route-is-gone',
+    title: 'La matriculación por código ya no existe (404)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // 404 y no 403: la ruta se eliminó del router, no quedó detrás de un flag.
       await client.post('scopedStudent', '/courses/join', {
         body: { code: state.courseCode },
-        expectStatus: 200,
+        expectStatus: 404,
       });
     },
   },
@@ -630,7 +667,7 @@ const specs = [
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state }) {
       const res = await client.post('admin', '/admin/users/create', {
-        body: { name: coTeacher.name, email: coTeacher.email, password: coTeacher.password, role: 'teacher' },
+        body: { name: coTeacher.name, email: coTeacher.email, password: coTeacher.password, role: 'teacher', dni: dniSmoke(5) },
         expectStatus: 201,
       });
       state.coTeacherId = res.json.user._id;
@@ -695,7 +732,7 @@ const specs = [
     async run({ client, state }) {
       const email = `smoke.coteacher.student.${RUN_ID}@example.com`;
       const res = await client.post('admin', '/admin/users/create', {
-        body: { name: 'Smoke CoTeacher Student', email, password: 'SmokeTest1234', role: 'student' },
+        body: { name: 'Smoke CoTeacher Student', email, password: 'SmokeTest1234', role: 'student', dni: dniSmoke(6) },
         expectStatus: 201,
       });
       state.coTeacherStudentId    = res.json.user._id;
@@ -805,6 +842,7 @@ const specs = [
           email,
           password: 'SmokeTest1234',
           role: 'student',
+          dni: dniSmoke(10),
           divisionId: state.divisionId,
         },
         expectStatus: 201,
@@ -889,6 +927,57 @@ const specs = [
   // a un alumno, el sistema NO debe crear una cuenta nueva — debe usar la existente y
   // matricularla solo en las materias del Curso que todavía le falten.
   {
+    id: 'dni-required-on-create',
+    title: 'El alta de usuario rechaza un DNI ausente o inválido (400)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      // Sin DNI
+      await client.post('admin', '/admin/users/create', {
+        body: { name: 'Sin DNI', email: `sindni.${RUN_ID}@example.com`, password: 'SmokeTest1234', role: 'student' },
+        expectStatus: 400,
+      });
+      // DNI demasiado corto
+      await client.post('admin', '/admin/users/create', {
+        body: { name: 'DNI Corto', email: `dnicorto.${RUN_ID}@example.com`, password: 'SmokeTest1234', role: 'student', dni: '123' },
+        expectStatus: 400,
+      });
+      // Solo letras → al quedarse sin dígitos se trata como ausente
+      await client.post('admin', '/admin/users/create', {
+        body: { name: 'DNI Letras', email: `dniletras.${RUN_ID}@example.com`, password: 'SmokeTest1234', role: 'student', dni: 'abcdefgh' },
+        expectStatus: 400,
+      });
+    },
+  },
+  {
+    id: 'dni-normalized-on-create',
+    title: 'El DNI se guarda normalizado a solo dígitos ("40.123.456" → "40123456")',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const digitos = dniSmoke(14);
+      const conPuntos = `${digitos.slice(0, 2)}.${digitos.slice(2, 5)}.${digitos.slice(5)}`;
+      const res = await client.post('admin', '/admin/users/create', {
+        body: {
+          name: 'Alumno DNI Con Puntos', email: `dnipuntos.${RUN_ID}@example.com`,
+          password: 'SmokeTest1234', role: 'student', dni: conPuntos,
+        },
+        expectStatus: 201,
+      });
+      state.dniNormalizedId = res.json.user._id;
+      assert(res.json.user.dni === digitos,
+        `el DNI debería guardarse como ${digitos} (sin puntos), quedó ${res.json.user.dni}`);
+    },
+  },
+  {
+    id: 'dni-required-on-self-register',
+    title: 'El auto-registro también exige DNI (400)',
+    async run({ client }) {
+      await client.post(null, '/register', {
+        body: { name: 'Registro Sin DNI', email: `regsindni.${RUN_ID}@example.com`, password: 'SmokeTest1234', role: 'student' },
+        expectStatus: 400,
+      });
+    },
+  },
+  {
     id: 'dni-existing-setup-second-course',
     title: 'Se crea una segunda materia en el mismo Curso (para probar matrícula parcial)',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
@@ -906,7 +995,7 @@ const specs = [
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state }) {
       const email = `dni.partial.${RUN_ID}@example.com`;
-      const dni   = `p1-${RUN_ID}`;
+      const dni   = dniSmoke(12);
       const res = await client.post('admin', '/admin/users/create', {
         body: { name: 'Alumno DNI Partial', email, password: 'SmokeTest1234', role: 'student', dni },
         expectStatus: 201,
@@ -960,7 +1049,7 @@ const specs = [
     title: 'Se crea un docente de prueba con DNI conocido',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state }) {
-      const dni = `p2-${RUN_ID}`;
+      const dni = dniSmoke(13);
       const res = await client.post('admin', '/admin/users/create', {
         body: { name: 'Docente Con DNI', email: `docente.dni.${RUN_ID}@example.com`, password: 'SmokeTest1234', role: 'teacher', dni },
         expectStatus: 201,
@@ -1308,7 +1397,7 @@ const specs = [
     async run({ client, state }) {
       const email = `smoke.directivo.${state.courseId || Date.now()}@example.com`;
       const res = await client.post('admin', '/admin/users/create', {
-        body: { name: 'Smoke Directivo', email, password: 'SmokeTest1234', role: 'directivo' },
+        body: { name: 'Smoke Directivo', email, password: 'SmokeTest1234', role: 'directivo', dni: dniSmoke(7) },
         expectStatus: 201,
       });
       state.directivoId    = res.json.user._id;
@@ -1691,7 +1780,259 @@ const specs = [
     },
   },
 
+  // ── Preceptoría: alcance por divisiones y administración de alumnos ──────
+  // El preceptor solo ve/administra las divisiones que un admin le asignó. Lo que se
+  // verifica acá es sobre todo la BARRERA: que un id fuera de su alcance devuelva 403 en
+  // lectura y en escritura, porque es lo único que separa a un preceptor de los datos de
+  // los cursos que no tiene a cargo.
+  {
+    id: 'admin-create-second-division',
+    title: 'El admin crea una segunda división (quedará FUERA del alcance del preceptor)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const res = await client.post('admin', '/admin/divisions/create', {
+        body: { name: `SMOKE-B-${RUN_ID}` },
+        expectStatus: 201,
+      });
+      state.otherDivisionId = res.json.division._id;
+    },
+  },
+  {
+    id: 'admin-create-third-division',
+    title: 'El admin crea una tercera división (SÍ asignada al preceptor, como destino de traslados)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const res = await client.post('admin', '/admin/divisions/create', {
+        body: { name: `SMOKE-C-${RUN_ID}` },
+        expectStatus: 201,
+      });
+      state.thirdDivisionId = res.json.division._id;
+    },
+  },
+  {
+    id: 'admin-create-preceptor',
+    title: 'El admin da de alta un preceptor con una sola división a cargo',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('admin', '/admin/users/create', {
+        body: {
+          name: preceptor.name, email: `scoped.${preceptor.email}`,
+          password: preceptor.password, role: 'preceptor', dni: dniSmoke(8),
+          allDivisions: false, divisionIds: [state.divisionId, state.thirdDivisionId],
+        },
+        expectStatus: 201,
+      });
+      state.preceptorId    = res.json.user._id;
+      state.preceptorEmail = `scoped.${preceptor.email}`;
+      assert(res.json.user.assignedDivisions.length === 2,
+        `el preceptor debería quedar con 2 divisiones asignadas, tiene ${res.json.user.assignedDivisions.length}`);
+      assert(res.json.user.allDivisions === false, 'allDivisions debería quedar en false');
+    },
+  },
+  {
+    id: 'preceptor-login',
+    title: 'El preceptor inicia sesión',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.post('preceptor', '/login', {
+        body: { email: state.preceptorEmail, password: preceptor.password },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'preceptor-sees-only-assigned-divisions',
+    title: 'El panel del preceptor muestra solo la división asignada',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('preceptor', '/preceptor', { expectStatus: 200 });
+      assert(res.text.includes(`SMOKE-${RUN_ID}`), 'debería listar la división asignada');
+      assert(!res.text.includes(`SMOKE-B-${RUN_ID}`), 'NO debería listar la división ajena');
+    },
+  },
+  {
+    id: 'preceptor-opens-assigned-division',
+    title: 'El preceptor abre su división y ve materias y alumnos',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('preceptor', `/preceptor/divisions/${state.divisionId}`, { expectStatus: 200 });
+      assert(res.text.includes('Materias y docentes'), 'debería mostrar la tabla de materias con sus docentes');
+      assert(res.text.includes('Agregar alumno'), 'debería ofrecer el alta de alumno');
+    },
+  },
+  {
+    id: 'preceptor-blocked-outside-scope',
+    title: 'El preceptor recibe 403 en una división fuera de su alcance (lectura y escritura)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.get('preceptor', `/preceptor/divisions/${state.otherDivisionId}`, { expectStatus: 403 });
+      await client.post('preceptor', `/preceptor/divisions/${state.otherDivisionId}/students`, {
+        body: { name: 'No debería crearse', email: `intruso.${RUN_ID}@example.com`, password: 'SmokeTest1234' },
+        expectStatus: 403,
+      });
+    },
+  },
+  {
+    id: 'preceptor-blocked-from-other-panels',
+    title: 'El preceptor no entra a los paneles de admin ni de directivo',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      await client.get('preceptor', '/admin/users', { expectStatus: 403 });
+      await client.get('preceptor', '/directivo',   { expectStatus: 403 });
+    },
+  },
+  {
+    id: 'preceptor-cannot-create-course',
+    title: 'El preceptor no puede crear materias',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.post('preceptor', '/courses/create', {
+        body: { name: `Materia trucha ${RUN_ID}`, divisionId: state.divisionId },
+        expectStatus: 403,
+      });
+    },
+  },
+  {
+    id: 'preceptor-creates-student',
+    title: 'El preceptor da de alta un alumno y queda matriculado en las materias de la división',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('preceptor', `/preceptor/divisions/${state.divisionId}/students`, {
+        body: {
+          name: preceptorStudent.name, email: preceptorStudent.email,
+          password: preceptorStudent.password, dni: dniSmoke(11),
+        },
+        expectStatus: 201,
+      });
+      state.preceptorStudentId = res.json.user._id;
+      assert(res.json.user.role === 'student', `el alta del preceptor debe crear un alumno, creó ${res.json.user.role}`);
+      // El curso del smoke vive en esta división, así que la matrícula tiene que haberlo alcanzado.
+      assert(res.json.enrolledIn >= 1, `debería quedar inscripto en al menos 1 materia, quedó en ${res.json.enrolledIn}`);
+    },
+  },
+  {
+    id: 'preceptor-blocked-unenroll-with-submissions',
+    title: 'El preceptor NO puede sacar del curso a un alumno que ya entregó (409)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // scopedStudent entregó en la actividad del smoke (spec activity-submit), y su curso
+      // está en la división que el preceptor tiene a cargo. Mismo criterio que rige para
+      // los docentes en DELETE /courses/:id/students/:studentId.
+      if (!state.scopedStudentId) return;
+      await client.post('preceptor', `/preceptor/students/${state.scopedStudentId}/unenroll`, {
+        body: { divisionId: state.divisionId },
+        expectStatus: 409,
+      });
+      // El destino tiene que estar dentro del alcance, si no la ruta corta antes con 403
+      // y nunca se llega a evaluar la guarda de entregas, que es lo que este spec prueba.
+      await client.post('preceptor', `/preceptor/students/${state.scopedStudentId}/move`, {
+        body: { fromDivisionId: state.divisionId, toDivisionId: state.thirdDivisionId },
+        expectStatus: 409,
+      });
+    },
+  },
+  {
+    id: 'preceptor-unenroll-rejects-outside-scope',
+    title: 'Sacar o mover hacia un curso fuera del alcance devuelve 403',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // otherDivisionId existe pero NO está asignada al preceptor (ver admin-create-preceptor).
+      await client.post('preceptor', `/preceptor/students/${state.preceptorStudentId}/unenroll`, {
+        body: { divisionId: state.otherDivisionId },
+        expectStatus: 403,
+      });
+      await client.post('preceptor', `/preceptor/students/${state.preceptorStudentId}/move`, {
+        body: { fromDivisionId: state.divisionId, toDivisionId: state.otherDivisionId },
+        expectStatus: 403,
+      });
+    },
+  },
+  {
+    id: 'preceptor-edits-and-disables-student',
+    title: 'El preceptor edita los datos de su alumno y deshabilita la cuenta',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.post('preceptor', `/preceptor/students/${state.preceptorStudentId}/edit`, {
+        body: {
+          name: 'Smoke Preceptor Student EDITADO', email: preceptorStudent.email,
+          dni: dniSmoke(11), phone: '2615550000',
+        },
+        expectStatus: 200,
+      });
+      const res = await client.post('preceptor', `/preceptor/students/${state.preceptorStudentId}/toggle-active`,
+        { expectStatus: 200 });
+      assert(res.json.active === false, 'la cuenta debería quedar deshabilitada');
+    },
+  },
+  {
+    id: 'preceptor-unenrolls-student',
+    title: 'El preceptor saca del curso a un alumno sin entregas y la cuenta sobrevive',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('preceptor', `/preceptor/students/${state.preceptorStudentId}/unenroll`, {
+        body: { divisionId: state.divisionId },
+        expectStatus: 200,
+      });
+      assert(res.json.removed >= 1, `debería salir de al menos 1 materia, salió de ${res.json.removed}`);
+
+      // Sacarlo del curso NO borra la cuenta: la ficha tiene que seguir abriendo... salvo
+      // que al quedarse sin materias caiga fuera del alcance del preceptor, que es
+      // justamente lo que pasa. El admin sí la sigue viendo.
+      await client.get('admin', `/admin/users/${state.preceptorStudentId}`, { expectStatus: 200 });
+    },
+  },
+  {
+    id: 'preceptor-cannot-touch-student-outside-scope',
+    title: 'El preceptor no puede editar un alumno que no está en sus divisiones',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // OJO con elegir el alumno de prueba acá: scopedStudent NO sirve, porque el spec
+      // course-add-student lo matricula en el curso del smoke, que vive en la división
+      // asignada al preceptor — o sea, está legítimamente dentro de su alcance.
+      // Un alumno sin ninguna matrícula no pertenece a ninguna división, y ese es el caso
+      // que hay que probar. `dniNormalizedId` se crea sin divisionId más arriba.
+      if (!state.dniNormalizedId) return;
+      const ajeno = state.dniNormalizedId;
+      await client.get('preceptor', `/preceptor/students/${ajeno}`, { expectStatus: 403 });
+      await client.post('preceptor', `/preceptor/students/${ajeno}/edit`, {
+        body: { name: 'No debería cambiar', email: `dnipuntos.${RUN_ID}@example.com`, dni: dniSmoke(14) },
+        expectStatus: 403,
+      });
+      await client.post('preceptor', `/preceptor/students/${ajeno}/toggle-active`, { expectStatus: 403 });
+    },
+  },
+  {
+    id: 'preceptor-role-not-self-assignable',
+    title: 'Nadie puede auto-registrarse como preceptor (queda como alumno)',
+    async run({ client, state, assert }) {
+      const res = await client.post(null, '/register', {
+        body: {
+          name: 'Smoke Fake Preceptor', email: `fake.preceptor.${RUN_ID}@example.com`,
+          password: 'SmokeTest1234', role: 'preceptor', dni: dniSmoke(9),
+        },
+        expectStatus: 201,
+      });
+      // Queda sin escuela, igual que los usuarios de Nivel 1: el admin no puede borrarlo
+      // (su delete exige misma escuela), así que se limpia junto a ellos desde Mongo.
+      state.fakePreceptorId = res.json.user._id;
+      assert(res.json.user.role === 'student',
+        `el rol preceptor no debe ser auto-asignable, quedó como ${res.json.user.role}`);
+    },
+  },
+
   // ── Limpieza (Nivel 2): borra todo lo que creó esta corrida ───────────────
+  {
+    id: 'cleanup-preceptor',
+    title: 'Limpieza: el admin borra el preceptor, su alumno y la segunda división',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      if (state.preceptorStudentId) await client.post('admin', `/admin/users/${state.preceptorStudentId}/delete`, { expectStatus: 200 });
+      if (state.preceptorId)        await client.post('admin', `/admin/users/${state.preceptorId}/delete`, { expectStatus: 200 });
+      if (state.dniNormalizedId)    await client.post('admin', `/admin/users/${state.dniNormalizedId}/delete`, { expectStatus: 200 });
+      if (state.otherDivisionId)    await client.post('admin', `/admin/divisions/${state.otherDivisionId}/delete`, { expectStatus: 200 });
+      if (state.thirdDivisionId)    await client.post('admin', `/admin/divisions/${state.thirdDivisionId}/delete`, { expectStatus: 200 });
+    },
+  },
   {
     id: 'cleanup-course',
     title: 'Limpieza: el admin borra el curso de prueba (cascada)',
@@ -1760,6 +2101,8 @@ const specs = [
           state.courseId, state.divisionId, state.activityId,
           state.announcementId, state.teacherId, state.studentId,
           state.coTeacherId, state.coTeacherStudentId, state.coTeacherActivityId,
+          state.preceptorId, state.preceptorStudentId, state.otherDivisionId,
+          state.fakePreceptorId, state.dniNormalizedId, state.thirdDivisionId,
         ].filter(Boolean);
         const ids = idStrings.map(s => new ObjectId(s));
 

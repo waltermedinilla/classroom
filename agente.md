@@ -17,7 +17,7 @@
 | `admin` | Administrador | Acceso total, panel de administración |
 | `directivo` | Directivo | Directivo institucional |
 | `teacher` | Docente | Puede ser dueño de cursos |
-| `preceptor` | Preceptor | Preceptor |
+| `preceptor` | Preceptor | Panel propio en `/preceptor`, acotado a las divisiones que un admin le asigna. Ve materias, docentes y alumnos de esos cursos, y administra a los alumnos (alta, edición, baja lógica). **No es auto-asignable** |
 | `soe` | SOE | SOE |
 | `student` | Alumno | Puede unirse a cursos |
 
@@ -290,6 +290,69 @@ Variables CSS para colores, sombras, radios. Componentes:
 ---
 
 ## Historial de Cambios (Changelog)
+
+### 2026-07-29 — Se elimina el tipo de actividad "Examen": quedan 3 tipos
+
+**Pedido**: "Evaluación" y "Examen" eran lo mismo en la práctica. Queda solo **Evaluación**, así los tipos de actividad son tres **hasta nuevo aviso**: `Tarea`, `Evaluación`, `Trabajo Práctico`.
+
+**Impacto en la base: prácticamente nulo.** El tipo es un simple string en `Activity.type` — no hay colección aparte, ni índice por tipo, ni referencias desde otros modelos. Y el conteo previo al cambio dio **cero exámenes**, verificado en las dos puntas:
+
+```
+mirror local → [ { _id: 'tarea', n: 82 }, { _id: 'tp', n: 2 } ]
+producción   → [ { _id: 'tarea', n: 82 }, { _id: 'tp', n: 2 } ]
+```
+
+Ni `examen` ni `evaluacion` se habían usado nunca. (De paso quedó confirmado que el mirror local está sincronizado con producción.)
+
+**Archivos tocados:**
+
+| Archivo | Cambio |
+|---|---|
+| `models/Activity.js` | `'examen'` fuera del `enum` de `type` |
+| `public/js/course.js` | entrada `examen` fuera de `TYPE_CONFIG` |
+| `views/activities/new.ejs` | `<option>` eliminado |
+| `views/course.ejs` | `<option>` eliminado en los dos modales (crear y editar) |
+| `migrate-examen-to-evaluacion.js` | **nuevo** — `npm run migrate:examen[:dry]` |
+
+**Por qué existe un script de migración si hay 0 registros.** Porque un documento con `type:'examen'` que sobreviva al cambio **no es inofensivo**. Se verificó experimentalmente contra la base:
+
+1. **Se lee perfecto** — Mongoose no valida en lectura.
+2. **Pero `activity.save()` tira `ValidationError` en `type`.** Eso rompe **calificar** (`POST /:id/grade`), **editar la actividad** (`PUT /:id`) y **recibir entregas** (`POST /:id/submit`). La actividad quedaría de solo lectura y el docente no podría ponerle nota.
+3. Además la tarjeta se vería como **"Tarea"**, porque `typeConfig()` cae al fallback con un tipo desconocido (confirmado en el navegador: `typeConfig('examen').label === 'Tarea'`).
+
+La ventana de riesgo es real aunque chica: entre el conteo y el deploy, un docente todavía puede crear un "Examen" con la UI vieja. Por eso el script se corre **después** de desplegar, que es cuando la UI ya no puede generar más. Es idempotente.
+
+**Verificado**: los tres `<select>` de tipo (`activityType`, `editType`, `sType`) muestran exactamente las 3 opciones; `TYPE_CONFIG` quedó con 3 claves; `POST /activities/create` con `type: 'examen'` responde **400** (`is not a valid enum value`); el script probado en seco y en serio con 2 exámenes sembrados (los convirtió y verificó que no quedara ninguno) y sobre la base limpia (informa "Nada para migrar"). Sin errores de consola.
+
+### 2026-07-29 — "Unirse por código" deshabilitado: ahora se pide por solicitud
+
+**Pedido**: deshabilitar **temporalmente** que el alumno se una a una materia con el código de 6 caracteres. En su lugar, un botón "Enviar solicitud para unirme" que abre un modal pidiendo **DNI y nombre completo del alumno**, y manda eso como una sugerencia común al superadmin.
+
+**Killswitch, no borrado.** Todo el flujo por código queda intacto detrás del flag `JOIN_BY_CODE_ENABLED` (default: **apagado**). Se reactiva poniendo `JOIN_BY_CODE_ENABLED=true` en el `.env` y reiniciando, sin tocar una línea de código. Es la misma idea que el `TASK_TEMPLATES_ENABLED` de plantillas.
+
+**El flag gatea las dos capas**, no solo la vista:
+
+| Capa | Archivo | Con el flag apagado |
+|---|---|---|
+| Botón + modal | `views/dashboard.ejs` | "Enviar solicitud para unirme" en vez de "Unirse a clase"; se renderiza `#requestModal` y no `#joinModal` |
+| Endpoint | `routes/courses.js` — `POST /courses/join` | responde **403** con el motivo |
+| Vacío de alumno | `views/dashboard.ejs` | "Usá el botón «Enviar solicitud para unirme»" en vez de "Pedile el código a tu docente" |
+
+Gatear el endpoint y no solo el botón es deliberado: esconder un botón no cierra nada, cualquiera con la URL podía seguir posteando el código.
+
+**La solicitud es una sugerencia común.** El modal arma un texto de tres líneas y lo manda a `POST /suggestions`, el mismo endpoint que usa el botón de sugerencias del footer:
+
+```
+Solicitud para unirse a una materia
+DNI del alumno: 40123456
+Nombre completo: Juan Pérez
+```
+
+Aparece en `/superadmin/suggestions` junto al resto, con su estado (pendiente/revisada/respondida) y la posibilidad de responder. **No hubo cambios en el modelo `Suggestion` ni en ningún esquema** — no requiere tocar la base de producción. El DNI se normaliza a dígitos (`40.123.456` → `40123456`) igual que en `/register/lookup`, para que el superadmin pueda buscarlo tal cual en el panel de usuarios.
+
+**Detalle de implementación**: solo uno de los dos modales existe en el DOM a la vez, así que `public/js/dashboard.js` ahora chequea que el nodo exista antes de tocarlo. Sin eso, el modal ausente tiraba un `TypeError` que se llevaba puesto también al de crear clase. Se agregó `.form-success` a `style.css` (contraparte de `.form-error`, con variante dark).
+
+**Verificado en el navegador** con la cuenta de administrador: el botón nuevo aparece, el modal pide los dos campos, un DNI corto corta con "Ingresá un DNI válido (mínimo 6 dígitos)", el envío devuelve **201** y la sugerencia queda con el texto y el DNI normalizado. `POST /courses/join` responde **403**. Prendiendo el flag vuelve todo al comportamiento viejo (botón "Unirse a clase", `#joinModal`, y el endpoint contestando 404 en vez de 403). Sin errores de consola en ninguno de los dos estados.
 
 ### 2026-07-29 — Fix: el deploy nunca instalaba dependencias, y `prepare` lo abortaba
 
@@ -1034,6 +1097,170 @@ Materias, Alumnos y Docentes ahora paginan de a 25 (mismo `views/partials/pagina
 
 ---
 
+## Rol Preceptor — panel `/preceptor` (2026-07-30)
+
+**Pedido**: que el preceptor controle y vea los cursos a cargo; que al entrar a un curso encuentre las materias con sus profesores y el listado de alumnos actuales; que pueda dar de alta alumnos nuevos; y que al crear un preceptor se defina qué cursos ve (o todos).
+
+**Vocabulario**: lo que la escuela llama "curso" (1°1°, 2°3°) es una `Division` en el código; `Course` es una materia dictada dentro de una división. El panel usa el lenguaje de la escuela en la UI y el del código por dentro.
+
+### Alcance (scope) — dos campos nuevos en `User`
+```
+assignedDivisions: [ObjectId → Division]   // divisiones concretas a cargo
+allDivisions:      Boolean                  // true = todas las de su escuela
+```
+**Fail-closed a propósito**: NO existe la convención "array vacío = todas". El rol `preceptor` se puede asignar por caminos que no preguntan por divisiones (cambio de rol individual desde el perfil o el listado, cambio en lote del superadmin), y en todos ellos el usuario queda sin ver nada hasta que un admin le defina el alcance. Si "vacío" significara "todas", esos caminos entregarían la escuela entera por omisión.
+
+Cambio **aditivo**: no requiere migración de la base. Los usuarios existentes toman los defaults.
+
+`middleware/preceptor.js` resuelve el alcance una vez por request en `req.scopeDivisionIds`, filtrando **siempre** por escuela — incluso sobre `assignedDivisions`, porque `POST /superadmin/users/:id/school` no desvincula nada al mover un usuario de escuela y le quedarían divisiones viejas pegadas en el array.
+
+### Rutas
+| Ruta | Qué hace |
+|---|---|
+| `GET /preceptor` | Grilla de tarjetas, una por curso a cargo (materias / alumnos / docentes). Sin alcance → pantalla "todavía no tenés cursos asignados" |
+| `GET /preceptor/divisions/:id` | Materias con su docente **y co-docentes**, más la nómina de alumnos con entregas y promedio |
+| `POST /preceptor/divisions/:id/students` | Alta de alumno + matrícula en todas las materias del curso |
+| `GET /preceptor/students/:id` | Ficha del alumno: datos editables, materias, actividades y notas |
+| `POST /preceptor/students/:id/edit` | Nombre, correo, DNI, teléfono |
+| `POST /preceptor/students/:id/toggle-active` | Baja lógica / rehabilitación |
+| `POST /preceptor/students/:id/unenroll` | Lo saca de todas las materias de un curso (no borra la cuenta) |
+| `POST /preceptor/students/:id/move` | Lo pasa de un curso a otro: sale de todas las del viejo, entra en todas las del nuevo |
+
+**Toda** ruta con `:id` valida contra el alcance en el servidor. Las tres rutas `/students/:id` además exigen que el alumno esté matriculado en alguna materia de una división del alcance (`alumnoEnAlcance`): el chequeo de escuela solo —que es lo que hacen las rutas read-only del directivo— no alcanza cuando hay escritura.
+
+**Fuera del rol por diseño**: crear/editar materias, tocar docentes, borrar alumnos definitivamente, resetear contraseñas.
+
+### Gestión de la matriculación (2026-07-30)
+Desde la ficha del alumno, un bloque **Matriculación** con una tarjeta por curso donde está inscripto:
+- **Sacar del curso** — lo desmatricula de todas las materias de esa división. La cuenta y sus datos quedan intactos; se lo puede volver a matricular.
+- **Mover a otro curso** — lo saca del viejo y lo inscribe en todas las materias del nuevo. El destino tiene que estar también a cargo del preceptor: mover a alguien a un curso que no administra sería sacárselo de encima hacia donde no puede seguirlo.
+
+**Guarda de entregas**: ambas acciones se bloquean con 409 si el alumno ya entregó algo en ese curso, y la tarjeta ni siquiera muestra los botones (explica por qué). Es el mismo criterio que ya rige para los docentes en `DELETE /courses/:id/students/:studentId` — que el sistema se comporte igual para los dos roles evita la sorpresa de "a mí me deja y a vos no". Sacarlo escondería su trabajo y la corrección del docente sin dejar rastro.
+
+Detalles: al desmatricular se borra también su entrada en `enrollmentDates` (si se lo reinscribe, la fecha que vale es la nueva). En el traslado el orden es **primero sacar, después inscribir** — al revés, si las dos divisiones compartieran una materia, el alta la sumaría y la baja la volvería a quitar. Todo queda auditado con `course.remove_student` / `course.add_student` y un `via` que distingue el flujo (`preceptor-sacar-del-curso`, `preceptor-mover-origen`, `preceptor-mover-destino`).
+
+### Asignación de cursos (panel admin)
+- Alta: al elegir rol Preceptor aparece el checkbox "Todos los cursos" + la lista de divisiones. ⚠️ **El alta de usuario está DUPLICADA en dos vistas** y hay que tocar las dos: el modal de `views/admin/users.ejs` (al que llega el nav "Nuevo usuario" → `/admin/users?create=1`, y es el camino que se usa en la práctica) y la página completa `views/admin/user-form.ejs` (`/admin/users/create`). Ambas postean al mismo `POST /admin/users/create`.
+- Reasignación: bloque "Cursos a cargo" en `/admin/users/:id` con `POST /admin/users/:id/divisions`. Muestra un **aviso ámbar** si el preceptor quedó sin cursos — es el único lugar donde el admin se entera de que un usuario convertido a preceptor desde el listado no ve nada.
+- Ambos caminos validan las divisiones contra la escuela (`resolveScopeDivisions`) y llaman a `invalidateUser`: el alcance se resuelve desde el doc cacheado (TTL 45s) y sin invalidar seguiría vigente el alcance viejo.
+
+### Endurecimiento asociado
+- **`preceptor` salió del auto-registro** (`POST /register` y `POST /register/invite/:token`, y del select de la vista de invitación). Cualquiera con el link de invitación de la escuela podía asignarse el rol; era inocuo mientras el rol no hacía nada, dejó de serlo al darle permisos sobre alumnos. Ahora lo crea un admin, igual que `admin`.
+- **`POST /courses/create` rechaza al preceptor** (403) y el botón "Crear clase" se le oculta en `/courses`. Sin eso podía crear una materia, quedar como `owner` y por `isTeacher()` calificar y gestionar alumnos de esa materia. ⚠️ Esa ruta **sigue sin validar el rol para el resto** — un alumno logueado puede hacer el mismo POST. Agujero preexistente, pendiente de arreglo aparte.
+
+### Refactors (extracciones sin cambio de lógica)
+- `services/enrollment.js` ← `enrollStudentInDivisionCourses`, que vivía en `routes/admin.js`. El alta del admin y la del preceptor tienen que matricular igual (incluido el `enrollmentDates` que oculta las tareas ya vencidas y el caso "el DNI ya existe").
+- `services/divisionDetail.js` ← el cuerpo de `GET /directivo/divisions/:id`. Lo consumen los dos paneles para que no puedan divergir en los números. Suma `coTeachers` (la vista del directivo sigue mostrando solo el titular).
+
+### Redirección e ingreso
+`GET /` manda al preceptor a `/preceptor`. El drawer le muestra "Mis cursos" y también "Mis clases" (`/courses`), porque puede estar matriculado en materias como cualquier usuario y el redirect ya no lo lleva ahí.
+
+### Auditoría
+Reusa `user.create` y `course.add_student` con `via: 'preceptor'` en la metadata, para que las altas del preceptor aparezcan en el mismo timeline que las del admin pero distinguibles. Acciones nuevas: `user.edit` y `user.assign_divisions`.
+
+### Cobertura
+16 specs en `tests/smoke/specs.js`, centrados en la barrera: 403 en lectura y escritura fuera del alcance, 403 en los paneles de admin y directivo, 403 al crear materias, no poder tocar un alumno ajeno, y que el rol no sea auto-asignable. Más los caminos felices: alta con matrícula, edición, baja, sacar del curso y mover.
+
+⚠️ **Trampa al escribir estos specs**: para probar el 409 de "mover con entregas" el destino tiene que estar **dentro** del alcance del preceptor, si no la ruta corta antes con 403 y la guarda de entregas nunca se evalúa. Por eso el smoke crea tres divisiones: una con el curso, una asignada como destino válido, y una NO asignada para probar el fuera-de-alcance.
+
+### Arreglo colateral en `tests/smoke/lib.js`
+El spec `backup-download-produces-valid-tarball` fallaba con "archivo demasiado chico (null bytes)" aunque la descarga funcionara perfecto (258 MB, headers correctos). Causa: el cliente hacía `arrayBuffer()` sobre la respuesta binaria, cargando los 258 MB **enteros en memoria**; en una máquina con poca RAM libre eso falla, el `catch {}` se lo come y `byteLength` queda en `null`. Ahora se usa `Content-Length` cuando está declarado y se cancela el stream, sin bufferear. **130/130.**
+
+---
+
+## DNI obligatorio y fin de la matriculación por código (2026-07-30)
+
+### DNI obligatorio en toda alta y edición
+Validación centralizada en `services/dni.js` (`normalizeDni`), aplicada en las **6 rutas** que crean o editan usuarios: `POST /admin/users/create`, `POST /superadmin/users/create`, `POST /preceptor/divisions/:id/students`, `POST /preceptor/students/:id/edit`, `POST /register` y `POST /register/invite/:token`.
+
+**Por qué NO es `required: true` en el schema**: al momento del cambio había **118 cuentas sin DNI** (109 alumnos, 8 docentes, el superadmin). Marcarlo requerido en el modelo haría fallar *cualquier* `.save()` sobre ellas — incluso operaciones que no tocan el DNI, como deshabilitar la cuenta o cambiar la contraseña. Validando en las rutas, esas cuentas siguen operativas y el dato se exige recién cuando alguien las edita. Si algún día se quiere apretar la tuerca, primero hay que completar esas 118.
+
+**Normalización**: se guarda solo dígitos (`40.123.456` → `40123456`), que es como lo indexa `{school, dni}` y como lo busca `/register/lookup`. Se aceptan 7 a 9 dígitos.
+
+El alta por invitación además chequea el DNI duplicado **antes** de insertar, para devolver un mensaje que hable del documento en vez del 11000 crudo, que hablaría del correo aunque el choque real sea otro.
+
+### Matriculación por código: ELIMINADA
+Estuvo apagada por el flag `JOIN_BY_CODE_ENABLED` desde el 2026-07-29; ahora se quitó del todo. Se eliminaron: la ruta `POST /courses/join`, el flag y su `res.locals.joinByCodeEnabled`, el modal "Unirse a clase", `showJoinModal`/`hideJoinModal`/`copyCode` en `public/js/dashboard.js`, y la visualización del código en **8 vistas** (`course.ejs` ×2, `dashboard.ejs`, `admin/courses.ejs`, `admin/subject-detail.ejs`, `admin/user-profile.ejs`, `profile.ejs`, `superadmin/school-profile.ejs`). También salió de la metadata de auditoría de `course.create`.
+
+**El campo `Course.code` sigue en el modelo** (se autogenera, con su índice único) pero ya no se usa ni se muestra. Dejarlo es reversible y no requiere migración sobre las 419 materias; borrarlo sería irreversible y no aporta nada.
+
+Los alumnos se matriculan ahora solo por vías administrativas, que dejan registro de quién los inscribió: el alta con Curso desde `/admin/users/create` o desde preceptoría (ambas vía `services/enrollment.js`), y `POST /courses/:id/add-student` para una materia suelta. El botón "Enviar solicitud para unirme" sigue: manda una sugerencia al superadmin, no matricula.
+
+### Efecto lateral: la suite de smoke quedó en verde
+Los 9 specs que fallaban desde el 2026-07-29 dependían de que el alumno se inscribiera por código. El spec `course-join` se reemplazó por `course-add-student` (el docente lo matricula) más `course-join-route-is-gone` (verifica el 404). **126/126 pasan.**
+
+Dos detalles que aparecieron al arreglarlos, útiles como advertencia:
+- Varios specs usaban DNIs con letras (`p1-${RUN_ID}`, y `RUN_ID` es base36): `normalizeDni` descarta lo que no sea dígito, así que quedaban vacíos. Ahora hay un helper `dniSmoke(n)` que genera DNIs numéricos únicos por corrida.
+- `preceptor-cannot-touch-student-outside-scope` **pasaba por accidente**: usaba al alumno del smoke, que nunca llegaba a inscribirse porque el `join` fallaba. Al arreglar la matrícula, ese alumno quedó legítimamente dentro del alcance del preceptor y el spec empezó a fallar — correctamente. Ahora usa un alumno sin ninguna matrícula, que es el caso que de verdad hay que probar.
+
+---
+
+## Solapa "Otros" — Sanar la base de datos (2026-07-30)
+
+Panel en `/superadmin/otros`: tarjetas con problemas de integridad detectados, cada una con su conteo, la vista previa de a quiénes afecta y —cuando corresponde— un botón que aplica el arreglo.
+
+**Acceso**: misma doble capa que Backup (rol superadmin **+** `SYSTEM_OWNER_EMAIL`). Estos arreglos escriben en masa y no se deshacen; el chequeo de rol solo no alcanza si mañana hay otro superadmin.
+
+### La regla de oro de `services/dbFixes.js`
+Un arreglo solo es `aplicable: true` si existe **una respuesta correcta derivable de los datos**. Si hace falta criterio humano, se queda en diagnóstico y deriva al panel que corresponda. **Inventar el dato es peor que no arreglarlo.** Por eso 3 de los 6 son solo diagnóstico:
+
+| Arreglo | Aplicable | Por qué |
+|---|---|---|
+| Matrícula parcial | ✅ | Regla inequívoca: si estás en una materia del curso, van todas |
+| Cuentas sin escuela | ✅ | Hay una sola escuela; el campo no depende de nada más |
+| Preceptores sin cursos | ✅ | "Todos los cursos" es una acción concreta y reversible |
+| Alumnos en varios cursos | ❌ | Nada dice cuál de los dos cursos es el correcto; desmatricular del equivocado borraría entregas |
+| Cuentas sin DNI | ❌ | El DNI no se deduce de ningún campo. Se probó extraerlo del email: los únicos con dígitos son **fechas de nacimiento**, no documentos |
+| Alumnos sin ninguna materia | ❌ | Matricular exige saber a qué curso va cada uno, y no tienen división ni DNI que cruzar |
+
+### El arreglo principal: matrícula parcial
+Alumnos que figuran en 1 o 2 materias de su curso en vez de en todas (quedaron así de las altas viejas), así que no ven la mayoría de sus tareas. En la base había **50 alumnos y 438 inscripciones faltantes en 162 materias**.
+
+Garantías, verificadas aplicando de verdad y comparando contra un snapshot: **0 inscripciones perdidas, 0 duplicados**. Las materias donde el alumno ya figura no se tocan — conserva sus entregas y sus notas. Usa `$addToSet` (idempotente si se corre dos veces) y escribe `enrollmentDates = ahora` en cada inscripción nueva, para que las tareas ya vencidas no le aparezcan como pendientes.
+
+**Exclusión clave**: deja afuera a los alumnos que figuran en más de una división. Son 50, y hay casos de uno en **5 cursos distintos** (`1° 6° + 3° 1° + 3° 3° + 3° 4° + 5° 3°`) — completarlos habría multiplicado el problema en vez de arreglarlo. Van al diagnóstico `alumnos-en-varios-cursos` para resolverse a mano; una vez que quedan en un solo curso, el arreglo automático los completa.
+
+### Notas de implementación
+- `calcularMatriculaParcial()` se comparte entre `diagnosticar()` y `aplicar()`: recorrer las 419 materias dos veces por request sería tirar trabajo.
+- Después de aplicar se llama a `invalidateAll()`: varios arreglos tocan documentos de `User` que viven cacheados 45 s por worker.
+- Cada aplicación registra `system.db_fix` en auditoría con el arreglo, cuántos se detectaron, cuántos se afectaron y los parámetros usados.
+- Un arreglo que falla al diagnosticar no tumba la pantalla: su tarjeta muestra el error y el resto sigue funcionando.
+
+---
+
+## Rediseño responsive unificado (2026-07-30)
+
+**Pedido**: desfasajes de ancho en todos los roles, letras que no se achican, solapas interminables en el celular, mucho espacio vacío al scrollear. Y: "cuando sea posible ocultar varios menúes en algún botón".
+
+### La causa raíz era una sola
+`.admin-nav` es un flex **sin wrap ni scroll y sin ningún media query**. Con 11 solapas medía **1356 px** y, al no poder envolver, estiraba el `<body>` entero a **1372 px en un viewport de 375**. Ese único elemento producía el scroll horizontal y el "desfasaje de ancho" en *todas* las páginas de panel — no era un problema por vista.
+
+Medido antes del arreglo: `/superadmin` body 1372 px · `/admin/users` 1132 px · `/directivo/courses` 804 px.
+
+### Solución
+**`public/js/nav-responsive.js`** — bajo 900 px las solapas colapsan en un botón que muestra la sección actual y despliega el resto en un panel. Es genérico sobre `.admin-nav`, la clase que comparten los cuatro partials de navegación, así que no hubo que tocar ninguna vista ni mantener cuatro variantes. Se carga desde `partials/footer.ejs`, el único partial que incluyen todas las vistas.
+
+⚠️ **Degradación deliberada**: el CSS que oculta el nav exige el atributo `[data-responsive-listo]`, que pone el JS *después* de inyectar el botón. Si el script falla o queda cacheado viejo, el nav **no se oculta** y sigue siendo navegable (en fila, con scroll propio). Sin esa guarda, un error de JS dejaría al usuario sin ninguna forma de cambiar de sección.
+
+### Resto del trabajo (sección "RESPONSIVE UNIFICADO" al final de `style.css`)
+- **Contención de ancho**: `overflow-x: hidden` en `html, body` como red de seguridad, para que un elemento ancho nuevo no reintroduzca el problema sin que nadie lo note.
+- **`.users-table-card` tenía `overflow: hidden`** para recortar al radio de la tarjeta, pero eso **recortaba la tabla**: en `/admin/users` medía 1050 px y las columnas de la derecha eran inaccesibles, sin scroll posible. Ahora `overflow-x: auto` (conserva el radio y devuelve el scroll).
+- **Tipografía fluida** con `clamp()` en vez de saltos por breakpoint, para que no haya escalón justo en el límite del media query.
+- **Densidad**: `.card-banner` bajó de `min-height:140px` a 92 px, y las grillas pasan a **dos columnas desde 360 px** (antes una sola hasta 768). En `/preceptor` con 39 cursos la página pasó de **8356 px a 3871 px (−54 %)**.
+- Filtros apilados, paginación con wrap, tablas compactas, barra de suplantación que ya no tapa el encabezado.
+
+### Verificación
+**24 rutas medidas a 375 px en los cuatro roles: cero desbordes.** Escritorio (1265 px) sin cambios: solapas en fila, h2 a 28 px, contenido a 1100 px. Suite en **130/130**.
+
+| Vista | Antes | Después |
+|---|---|---|
+| `/superadmin` | body 1372 px | 375 px |
+| `/admin/users` | body 1132 px, tabla recortada | 375 px, tabla con scroll propio |
+| `/directivo/courses` | body 804 px | 375 px |
+| `/preceptor` | 8356 px de alto, 1 columna | 3871 px, 2 columnas |
+
+---
+
 ## Plan de Futuras Actualizaciones (Roadmap)
 
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`). Resumen de lo pendiente:
@@ -1043,10 +1270,15 @@ Materias, Alumnos y Docentes ahora paginan de a 25 (mismo `views/partials/pagina
 - **`npm install` en el servidor antes de desplegar v1.0.7**: `sharp` pasó de `devDependencies` a `dependencies` y el webhook de deploy no corre `npm install`. Sin eso la app arranca igual (degradación prevista) pero no optimiza nada.
 - Extender el optimizador a las **fotos en entregas de alumnos** (hoy 0 MB, pero va a crecer). Preset más conservador (2000 px, calidad 85) porque puede ser una foto de una hoja escrita que el docente necesita leer. El spec `entrega-pdf-no-se-toca` ya fija que los PDFs no se toquen.
 - El spec `suggestions-student-sees-answer-and-badge` depende de `suggestions-superadmin-can-respond` pero no declara su mismo `requiresEnv`: si se corre el smoke sin credenciales de superadmin, falla en cascada en vez de saltearse.
+- **`POST /courses/create` no valida el rol del llamante**: cualquier usuario autenticado con escuela (incluido un alumno) puede crear una materia por POST directo y queda como `owner`, lo que por `isTeacher()` le habilita calificar y gestionar alumnos de esa materia. El botón está oculto en la vista para alumnos y docentes, pero esconder el botón no cierra el endpoint — mismo criterio que se aplicó al apagar "unirse por código". Ya se bloqueó explícitamente para `preceptor`; falta el resto.
+- ✅ **RESUELTO (2026-07-30)** — los 9 specs que fallaban por `JOIN_BY_CODE_ENABLED` quedaron arreglados al eliminar la matriculación por código. Baseline actual: **126/126**.
+- **Completar el DNI de las 118 cuentas que no lo tienen** (109 alumnos, 8 docentes, el superadmin). Hasta que estén todas, el DNI no puede marcarse `required` en el schema. Falta decidir si se hace con un listado en `/admin` o con un script de backfill contra los padrones de la escuela.
 - Limpieza de archivos huérfanos cuando se cancela el creador full-page sin guardar (los adjuntos ya subidos quedan en disco).
 - Relación `Subject` ↔ `Course` por texto (frágil ante renombrados). Migrar a ObjectId ref.
 - Eliminación de escuela sin cascada (`POST /superadmin/schools/:id/delete` deja usuarios/cursos huérfanos).
 - Terminología confusa en admin-nav ("Cursos" → Divisions, "Materias" → Courses, "Catálogo" → Subjects).
+- **Alta de usuario duplicada en dos vistas**: el modal de `views/admin/users.ejs` y la página `views/admin/user-form.ejs` son el mismo formulario mantenido por separado (mismos campos, mismo `POST /admin/users/create`, JS casi idéntico con prefijo `u` en los ids del modal). Cualquier campo nuevo hay que agregarlo dos veces o queda a medias. Unificar en un partial.
+- **`NODE_ENV=production` en el `.env` local**: activa el view cache de Express, así que los cambios en `.ejs` NO se reflejan sin reiniciar el proceso (nodemon tampoco vigila `.ejs`). Es una trampa al desarrollar vistas — parece que el cambio "no se aplicó".
 
 ### Funcionalidades faltantes — rápidas
 - Editar / eliminar novedades y comentarios (no existen `PUT`/`DELETE` en `Announcement`).

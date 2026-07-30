@@ -63,7 +63,19 @@ class SmokeClient {
     } else {
       // Binario (ej. el .tar.gz del backup) — leer como texto rompería/sería carísimo
       // con archivos grandes. Solo se necesita saber cuánto pesó la respuesta.
-      try { byteLength = (await res.arrayBuffer()).byteLength; } catch {}
+      //
+      // Se prefiere Content-Length antes que bufferear: el backup ya pesa ~258 MB y
+      // `arrayBuffer()` lo carga ENTERO en memoria. En una máquina con poca RAM libre eso
+      // falla, el catch se lo come y byteLength queda en null — el test reportaba "archivo
+      // demasiado chico" cuando en realidad la descarga estaba perfecta.
+      const declarado = parseInt(res.headers.get('content-length') || '', 10);
+      if (Number.isFinite(declarado)) {
+        byteLength = declarado;
+        // El cuerpo igual hay que drenarlo o cancelarlo, si no la conexión queda abierta.
+        try { await res.body?.cancel(); } catch {}
+      } else {
+        try { byteLength = (await res.arrayBuffer()).byteLength; } catch {}
+      }
     }
 
     if (expectStatus !== undefined) {

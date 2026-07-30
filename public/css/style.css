@@ -82,6 +82,7 @@
 [data-theme="dark"] .course-card:hover { filter: brightness(0.93); }
 [data-theme="dark"] .empty-state { color: var(--text-secondary); }
 [data-theme="dark"] .form-error { background: #3a1e1e; }
+[data-theme="dark"] .form-success { background: #1e3a26; color: #81c995; }
 [data-theme="dark"] .impersonation-bar { background: #2e2000; border-color: #5a3e00; }
 [data-theme="dark"] .auth-body {
   background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 50%, #16162a 100%);
@@ -433,6 +434,13 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
 /* ─── Form Error ─── */
 .form-error { color: var(--danger); font-size: 13px; display: none; padding: 8px 12px; background: #fce8e6; border-radius: var(--radius-xs); }
 .form-error.show { display: block; }
+
+/* ─── Form Success ─── */
+/* Contraparte de .form-error para confirmaciones dentro de un formulario (ej. el modal
+   "Enviar solicitud para unirme"). Mismo alto y radio, para que mostrar uno u otro no
+   sacuda el layout del modal. */
+.form-success { color: var(--success, #137333); font-size: 13px; display: none; padding: 8px 12px; background: #e6f4ea; border-radius: var(--radius-xs); }
+.form-success.show { display: block; }
 
 /* ─── Modal ─── */
 .modal-overlay {
@@ -2065,4 +2073,172 @@ select, .select-input {
 /* Dark mode overrides — task builder / runner */
 @media (prefers-color-scheme: dark) {
   .qtype-card:hover, .run-mc-option:hover, .run-fill-input:focus { background: rgba(26,115,232,.15); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE UNIFICADO (2026-07-30)
+   ═══════════════════════════════════════════════════════════════════════════
+   Corrige cuatro problemas medidos en viewport de 375 px:
+
+   1. DESFASAJE DE ANCHO — `.admin-nav` es un flex sin wrap con hasta 11 solapas.
+      Medía 1356 px y estiraba el <body> a 1372 px, provocando scroll horizontal en
+      TODAS las páginas del panel. Ahora colapsa en un botón (ver js/nav-responsive.js).
+   2. SOLAPAS INTERMINABLES — mismo origen.
+   3. ESPACIO VACÍO AL SCROLLEAR — /preceptor medía 8356 px de alto: 39 tarjetas de
+      ~214 px en una sola columna, por el min-height:140px del banner.
+   4. LETRAS QUE NO SE ACHICAN — solo `.dashboard-topbar h2` tenía media query.
+
+   Va al final del archivo a propósito: estas reglas tienen que ganarle a las de arriba
+   sin subir la especificidad a mano ni ensuciar los bloques originales.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ─── Contención de ancho ───────────────────────────────────────────────────
+   Red de seguridad: ningún hijo debería poder estirar la página. Es lo que evita
+   que un elemento ancho nuevo (una tabla, un nav, un <pre>) reintroduzca el
+   scroll horizontal sin que nadie se dé cuenta. */
+html, body { max-width: 100%; overflow-x: hidden; }
+.main-content { width: 100%; box-sizing: border-box; }
+/* Las tablas anchas scrollean DENTRO de su contenedor, nunca empujando la página.
+   Varias vistas ya envuelven la tabla en un div con overflow-x:auto; esto cubre a
+   las que no (p. ej. la de /admin/users, cuyo contenedor tenía overflow:hidden y
+   directamente recortaba las columnas de la derecha). */
+.table-wrap, .table-container, .simple-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table { max-width: 100%; }
+/* `.users-table-card` usa overflow:hidden para recortar las esquinas al radio de la
+   tarjeta, pero eso RECORTABA la tabla: en /admin/users medía 1050 px y las columnas de
+   la derecha quedaban inaccesibles, sin scroll posible. overflow-x:auto conserva el
+   clipping vertical (el radio se sigue viendo) y devuelve el scroll horizontal. */
+.users-table-card { overflow-x: auto; }
+
+/* ─── Botón que reemplaza a las solapas en pantallas chicas ───────────────── */
+.nav-toggle {
+  display: none; /* solo aparece bajo el breakpoint; ver media query */
+  width: 100%; align-items: center; gap: 10px;
+  padding: 12px 16px; margin-bottom: 16px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); cursor: pointer;
+  font-size: 14px; font-weight: 600; color: var(--text);
+  font-family: inherit; text-align: left;
+}
+.nav-toggle:hover { background: var(--background); }
+.nav-toggle .nav-toggle-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-toggle .material-symbols-outlined { font-size: 20px; color: var(--text-secondary); flex-shrink: 0; }
+.nav-toggle-chevron { transition: transform .18s ease; }
+
+@media (max-width: 900px) {
+  .nav-toggle { display: flex; }
+
+  /* Las solapas pasan a ser un panel desplegable. Sin `display:none` el nav seguiría
+     ocupando ancho aunque no se viera, que era el problema original.
+     
+     El selector exige [data-responsive-listo], que lo pone js/nav-responsive.js DESPUÉS
+     de inyectar el botón: si el JS no corre (error, script bloqueado, caché viejo), el nav
+     NO se oculta y el panel sigue siendo navegable. Sin esta guarda, un fallo del JS
+     dejaría al usuario sin ninguna forma de cambiar de sección. */
+  .admin-nav[data-responsive-listo] {
+    display: none;
+    flex-direction: column; gap: 2px;
+    border-bottom: none; margin-bottom: 20px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 6px;
+    max-height: 60vh; overflow-y: auto;
+  }
+  .admin-nav[data-responsive-listo].nav-abierto { display: flex; }
+
+  /* Degradación sin JS: el nav se queda en fila pero scrollea solo, en vez de estirar
+     el body. Peor que el botón, pero usable y sin romper el ancho de la página. */
+  .admin-nav:not([data-responsive-listo]) {
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    max-width: 100%; flex-wrap: nowrap;
+  }
+  .admin-nav:not([data-responsive-listo]) .admin-nav-item { flex-shrink: 0; }
+  .admin-nav-item {
+    width: 100%; box-sizing: border-box;
+    padding: 12px 14px; border-bottom: none; margin-bottom: 0;
+    border-radius: var(--radius-xs);
+  }
+  .admin-nav-item.active { background: rgba(26,115,232,.1); border-bottom-color: transparent; }
+}
+
+/* ─── Tipografía fluida ─────────────────────────────────────────────────────
+   clamp() en vez de saltos por breakpoint: el tamaño acompaña al ancho de forma
+   continua, sin el escalón feo justo en el límite del media query. */
+@media (max-width: 900px) {
+  .main-content h2, .dashboard-topbar h2 { font-size: clamp(18px, 4.6vw, 24px); line-height: 1.25; }
+  .main-content h3 { font-size: clamp(15px, 3.9vw, 18px); }
+  .main-content h4 { font-size: clamp(14px, 3.4vw, 16px); }
+  .section-h { font-size: clamp(14px, 3.6vw, 16px); }
+  .stat-value, .mini-stat-value { font-size: clamp(19px, 5.2vw, 26px); }
+  .fix-count-num { font-size: clamp(22px, 6vw, 30px); }
+}
+
+/* ─── Densidad en pantallas chicas ──────────────────────────────────────────
+   El objetivo es que entre más contenido por pantallazo: menos scroll muerto y
+   menos aire entre bloques. */
+@media (max-width: 900px) {
+  .main-content { padding: 14px 14px 32px; }
+
+  /* Tarjetas de curso: el banner de 140px era casi todo el alto de la tarjeta.
+     A 92px siguen leyéndose bien y la grilla entra en dos columnas. */
+  .card-banner { min-height: 92px; padding: 14px 16px 12px; }
+  .card-banner h4 { font-size: 16px; }
+  .card-body   { padding: 12px 16px; }
+  .card-footer { padding: 8px 16px; }
+
+  /* Métricas: de una tira que ocupa 253px de alto a una grilla compacta. */
+  .mini-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; margin: 12px 0 18px; }
+  .mini-stat  { min-width: 0; padding: 10px 12px; }
+  .mini-stat-label { font-size: 10px; }
+  .stats-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .stat-card  { padding: 14px; gap: 12px; }
+
+  .section { margin-bottom: 20px; }
+  .dashboard-topbar { margin-bottom: 16px; gap: 10px; }
+  .admin-section-cards { grid-template-columns: 1fr; gap: 10px; margin-top: 18px; }
+  .admin-section-card  { padding: 14px 16px; gap: 12px; }
+}
+
+/* Dos columnas de tarjetas ya desde un teléfono común: una sola columna desperdicia la
+   mitad del ancho y duplica el scroll. Medido en /preceptor con 39 cursos: en una columna
+   la página daba 6582 px; en dos, la mitad.
+   El umbral son 360 px porque a ese ancho todavía entran dos tarjetas de ~150 px con el
+   padding lateral y el gap. Por debajo (teléfonos muy angostos) se apilan, que es lo
+   correcto: dos columnas ahí cortarían los nombres de las materias. */
+@media (min-width: 360px) and (max-width: 900px) {
+  .course-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .card-banner h4 { font-size: 15px; }
+  .card-banner p  { font-size: 11.5px; }
+  .card-stat      { font-size: 12px; }
+}
+
+@media (max-width: 359px) {
+  .course-grid { grid-template-columns: 1fr; gap: 10px; }
+  .main-content { padding: 12px 12px 28px; }
+  .mini-stats { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ─── Tablas en móvil ───────────────────────────────────────────────────────
+   Se mantienen como tabla (convertirlas en tarjetas rompería la comparación entre
+   filas, que es justamente para lo que se usan), pero más compactas y con el scroll
+   contenido. */
+@media (max-width: 900px) {
+  .simple-table th, .simple-table td { padding: 8px 10px; font-size: 12.5px; }
+  .simple-table th { font-size: 10px; }
+  .data-table th, .data-table td { padding: 8px 10px; font-size: 12.5px; }
+}
+
+/* ─── Filtros y barras de acción ────────────────────────────────────────────
+   En móvil los filtros en fila obligan a scroll horizontal; apilados ocupan el
+   ancho completo y se usan con el pulgar. */
+@media (max-width: 900px) {
+  .filters-bar { flex-direction: column; align-items: stretch; gap: 10px; }
+  .filters-bar > * { width: 100%; }
+  .dashboard-actions { flex-wrap: wrap; gap: 8px; }
+  .dashboard-actions .btn { flex: 1 1 auto; justify-content: center; }
+  .pagination { flex-wrap: wrap; gap: 6px; }
+}
+
+/* La barra de suplantación es fija y en móvil tapaba el encabezado. */
+@media (max-width: 900px) {
+  .impersonation-bar { font-size: 12px; padding: 8px 12px; flex-wrap: wrap; gap: 6px; }
 }
