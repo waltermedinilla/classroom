@@ -291,6 +291,33 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ## Historial de Cambios (Changelog)
 
+### 2026-07-29 — Fix: el deploy nunca instalaba dependencias, y `prepare` lo abortaba
+
+**Síntoma**: tras pushear la v1.0.8, producción seguía sirviendo código viejo. `/health` consultado varias veces devolvía versiones **distintas según el worker**:
+
+```
+{"version":"1.0.8","pid":228830,"uptime":286}      ← recargado
+{"version":"1.0.6","pid":209945,"uptime":147023}   ← 40 h sin recargar, se salteó la v1.0.7 entera
+```
+
+Es el mismo Frankenstein del 2026-07-28 (archivos nuevos en disco + código viejo en memoria), pero por causas nuevas. El `git pull` decía "Ya está actualizado": el push **sí** había llegado.
+
+**Causa 1 — `"prepare": "husky"` rompía cualquier install en el server.** husky es una `devDependency`, así que con `npm install --omit=dev` no se instala; npm igual corre el script `prepare` de postinstall, `husky` no existe y el install muere con código 127. Como el comando de deploy manual encadenaba todo con `&&`, **el `pm2 restart` posterior nunca llegaba a ejecutarse**. Fix: `"prepare": "husky || true"` (el workaround que documenta husky v9 para entornos sin devDependencies). Verificado: sin husky sale 0, con husky instalado sigue instalando los hooks normalmente.
+
+**Causa 2 — el webhook nunca corría `npm install`.** El `deployCmd` era `git pull && pm2 reload`, sin ningún paso de dependencias. Consecuencia: **una dependencia nueva agregada en un commit nunca llegaba sola a producción** — exactamente lo que pasó con `sharp` en la v1.0.7. Fix: se agregó `npm install --omit=dev --no-audit --no-fund` entre el pull y el reload.
+
+**Causa 3 (operativa) — `pm2` corrido como `root`.** PM2 mantiene un daemon **por usuario**. Los workers son de `walter`, así que `pm2 list` como root devuelve la tabla vacía y cualquier `pm2 restart` como root no toca la app real. Siempre `sudo -u walter -H /usr/local/bin/pm2 …`.
+
+**Cada paso reporta su propio error.** Antes todo iba unido con `&&`; con esa forma, el fallo de un paso disparaba el mensaje de error del *siguiente* y `deploy.log` mentía sobre la causa. Ahora cada paso lleva su `|| { echo "ERROR deploy: <paso> fallo"; exit 1; }`.
+
+**⚠️ Prerequisito antes de pushear esto**: en el server hay carpetas dentro de `node_modules` con dueño `root` (resaca de un `npm install` corrido como root durante el diagnóstico). El nuevo paso de install falla con `EACCES` sobre ellas y —por diseño— **aborta el deploy antes del reload** para no dejar workers sin dependencias. Hay que correr **una vez**:
+
+```bash
+chown -R walter:walter /home/walter/classroom
+```
+
+**⚠️ Bootstrap**: el primer push con este cambio lo procesa el webhook **viejo** que está en memoria (el que no instala dependencias). Va a recargar bien el código nuevo, pero sin `npm install`. Recién a partir del push siguiente el paso de dependencias corre solo.
+
 ### 2026-07-28 — Optimización automática de imágenes al subirlas (v1.0.7)
 
 **Pedido**: que las imágenes se redimensionen apenas se suben y se guarden pesando mucho menos, con la herramienta conviviendo en el mismo servidor. Alcance acordado: avatares de perfil, portadas de materia e imágenes de novedades.

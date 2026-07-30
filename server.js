@@ -24,6 +24,11 @@ const { INTEREST_LABELS, INTEREST_ICONS } = require('./config/interests');
 // (ver el spawn detached en /deploy), así que no puede depender del logger de la app.
 const DEPLOY_LOG = path.join(__dirname, 'logs', 'deploy.log');
 
+// Raíz del repo en el server de producción. Es la carpeta sobre la que opera el deploy
+// (git pull / npm install). Va como constante y no repetida en cada paso del comando
+// para que un cambio de ruta no deje la mitad de los pasos apuntando al lugar viejo.
+const APP_DIR = '/home/walter/classroom';
+
 const authRoutes         = require('./routes/auth');
 const courseRoutes       = require('./routes/courses');
 const announcementRoutes = require('./routes/announcements');
@@ -172,15 +177,28 @@ app.post('/deploy', express.raw({ type: 'application/json' }), (req, res) => {
   // efecto y quedó el Frankenstein (archivos nuevos + código viejo). En ese caso deja un
   // ERROR bien visible en deploy.log en lugar de fallar en silencio, que fue exactamente
   // lo que hizo que este bug pasara días sin detectarse.
+  //
+  // El `npm install` NO es opcional: sin él, una dependencia nueva agregada en un commit
+  // (por ejemplo sharp en v1.0.7) nunca llega al server y los workers recargan contra un
+  // node_modules viejo. Corre con el mismo usuario que el worker (walter), así que los
+  // permisos de node_modules tienen que ser suyos — un `npm install` corrido como root
+  // deja carpetas de root adentro y todos los deploys posteriores fallan con EACCES.
+  //
+  // Cada paso lleva su propio `|| { echo; exit 1; }` en vez de encadenar todo con `&&`:
+  // así deploy.log dice QUÉ paso falló. Con un `&&` plano, el fallo de un paso disparaba
+  // el mensaje de error del siguiente y el log mentía sobre la causa.
   const deployCmd = [
-    'git -C /home/walter/classroom pull',
-    '/usr/local/bin/pm2 reload classroom --update-env',
+    `cd ${APP_DIR} || { echo "ERROR deploy: no se pudo entrar a ${APP_DIR}"; exit 1; }`,
+    'git pull || { echo "ERROR deploy: git pull fallo"; exit 1; }',
+    'npm install --omit=dev --no-audit --no-fund || ' +
+      '{ echo "ERROR deploy: npm install fallo, NO se recargan los workers para no dejarlos sin dependencias"; exit 1; }',
+    '/usr/local/bin/pm2 reload classroom --update-env || { echo "ERROR deploy: pm2 reload fallo"; exit 1; }',
     'sleep 5', // dale tiempo a los workers a levantar antes de consultarlos
-    `DISK=$(node -p "require('/home/walter/classroom/package.json').version")`,
+    `DISK=$(node -p "require('${APP_DIR}/package.json').version")`,
     `MEM=$(curl -sS http://localhost:${PORT}/health | node -p "JSON.parse(require('fs').readFileSync(0)).version")`,
     'if [ "$DISK" = "$MEM" ]; then echo "OK deploy verificado: v$MEM"; ' +
       'else echo "ERROR deploy NO recargo: disco=v$DISK memoria=v$MEM"; exit 1; fi',
-  ].join(' && ');
+  ].join('\n');
 
   const child = spawn('sh', ['-c', `{ date; ${deployCmd}; } >> ${DEPLOY_LOG} 2>&1`], {
     detached: true,

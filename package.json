@@ -17,7 +17,7 @@
     "test:images": "node --test tests/images/*.test.js",
     "optimize:images": "node optimize-existing-images.js",
     "optimize:images:dry": "node optimize-existing-images.js --dry-run",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
