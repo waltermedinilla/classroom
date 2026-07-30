@@ -298,7 +298,7 @@ const _activeTheme = (function() {
         // Durante una suplantación, res.locals.user es el usuario suplantado, así que el
         // rótulo acompaña al rol que se está viendo. Es lo correcto.
         const _rolAdministrativo = typeof user !== 'undefined' && user
-          && ['admin', 'superadmin', 'directivo'].includes(user.role);
+          && ['admin', 'superadmin', 'directivo', 'preceptor'].includes(user.role);
       %>
       <a href="/" class="drawer-item">
         <span class="material-symbols-outlined"><%= _rolAdministrativo ? 'home' : 'school' %></span>
@@ -320,6 +320,18 @@ const _activeTheme = (function() {
         <a href="/directivo" class="drawer-item">
           <span class="material-symbols-outlined">supervisor_account</span>
           <span>Panel Directivo</span>
+        </a>
+      <% } %>
+      <% if (typeof user !== 'undefined' && user && user.role === 'preceptor' && !impersonating) { %>
+        <a href="/preceptor" class="drawer-item">
+          <span class="material-symbols-outlined">school</span>
+          <span>Mis cursos</span>
+        </a>
+        <%# El preceptor puede además estar matriculado en materias como cualquier usuario;
+            "/" ya no lo lleva ahí, así que el acceso a sus clases va explícito. %>
+        <a href="/courses" class="drawer-item">
+          <span class="material-symbols-outlined">menu_book</span>
+          <span>Mis clases</span>
         </a>
       <% } %>
       <% if (typeof user !== 'undefined' && user && user.role === 'admin' && !impersonating) { %>

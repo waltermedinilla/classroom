@@ -36,7 +36,9 @@ const activityRoutes     = require('./routes/activities');
 const adminRoutes        = require('./routes/admin');
 const superadminRoutes   = require('./routes/superadmin');
 const directivoRoutes    = require('./routes/directivo');
+const preceptorRoutes    = require('./routes/preceptor');
 const backupRoutes       = require('./routes/backup');
+const dbFixesRoutes      = require('./routes/dbFixes');
 const suggestionRoutes   = require('./routes/suggestions');
 const auditRoutes        = require('./routes/audit');
 const tasksRoutes        = require('./routes/tasks');
@@ -357,6 +359,11 @@ app.get('/', (req, res) => {
   // El directivo cae directo en su panel institucional (no en /courses, donde
   // solo vería los cursos donde alguien lo haya inscripto explícitamente).
   if (res.locals.user.role === 'directivo') return res.redirect('/directivo');
+  // El preceptor cae en su panel de cursos a cargo. Igual que el directivo: en /courses
+  // solo vería las materias donde alguien lo haya inscripto explícitamente, que no es su
+  // trabajo. /courses le sigue quedando accesible desde el menú por si está matriculado
+  // en alguna materia.
+  if (res.locals.user.role === 'preceptor') return res.redirect('/preceptor');
   // Admin/superadmin caen en su propio panel, no en /courses — ese dashboard
   // ("Tus clases") es para docente/alumno. Antes, si el admin también era
   // dueño de alguna materia (Course.owner puede serlo, ver routes/admin.js),
@@ -382,6 +389,9 @@ app.use('/admin',      adminRoutes);
 // Montado ANTES de /superadmin para que Express lo intercepte primero sin ambigüedad
 // (aunque hoy superadmin.js no tiene rutas que choquen con /backup/*).
 app.use('/superadmin/backup', backupRoutes);
+// Mismo criterio de montaje que /backup: va ANTES de /superadmin para que Express lo
+// intercepte sin ambigüedad (superadmin.js no conoce estas rutas y caerían en su 404).
+app.use('/superadmin/otros', dbFixesRoutes);
 // Mismo criterio: /superadmin/tasks va antes de /superadmin para que Express lo
 // intercepte sin ambigüedad. El feature flag se chequea dentro del router.
 if (process.env.TASK_TEMPLATES_ENABLED !== 'false') {
@@ -389,6 +399,7 @@ if (process.env.TASK_TEMPLATES_ENABLED !== 'false') {
 }
 app.use('/superadmin',  superadminRoutes);
 app.use('/directivo',   directivoRoutes);
+app.use('/preceptor',   preceptorRoutes);
 app.use('/suggestions', suggestionRoutes);
 
 // ── Manejador de errores global ──────────────────────────────────────────────

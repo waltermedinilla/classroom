@@ -7,6 +7,8 @@ const Activity = require('../models/Activity');
 const Submission = require('../models/Submission');
 const { requireAuth }      = require('../middleware/auth');
 const { requireDirectivo } = require('../middleware/directivo');
+// Detalle de división (materias + nómina + métricas). Compartido con routes/preceptor.js.
+const { getDivisionDetail } = require('../services/divisionDetail');
 
 const router = express.Router();
 router.use(requireAuth, requireDirectivo);
@@ -1034,101 +1036,17 @@ router.get('/divisions', async (req, res) => {
 router.get('/divisions/:id', async (req, res) => {
   const school = res.locals.user.school;
   try {
-    const division = await Division.findById(req.params.id);
-    if (!division) return res.status(404).send('División no encontrada');
-    if (school && division.school?.toString() !== school.toString()) {
+    const detalle = await getDivisionDetail(req.params.id);
+    if (!detalle) return res.status(404).send('División no encontrada');
+    if (school && detalle.division.school?.toString() !== school.toString()) {
       return res.status(403).send('Acceso denegado');
     }
 
-    const courses = await Course.find({ division: division._id })
-      .populate('owner', 'name email active')
-      .select('_id name owner students');
-    const courseIds = courses.map(c => c._id);
-
-    const activities = await Activity.find({ course: { $in: courseIds } })
-      .select('_id course dueDate grades points');
-
-    const entregas = await Submission.aggregate([
-      { $match: { activity: { $in: activities.map(a => a._id) } } },
-      { $group: { _id: '$activity', count: { $sum: 1 }, alumnos: { $addToSet: '$student' } } },
-    ]);
-    const entregasPorAct = Object.fromEntries(entregas.map(e => [e._id.toString(), e.count]));
-
-    // Entregas por alumno: se cuenta a nivel alumno para la tabla de abajo.
-    const entregasPorAlumno = {};
-    for (const e of entregas) {
-      for (const sid of e.alumnos) {
-        const k = sid.toString();
-        entregasPorAlumno[k] = (entregasPorAlumno[k] || 0) + 1;
-      }
-    }
-
-    const now = new Date();
-    const actsPorCurso = {};
-    activities.forEach(a => {
-      const k = a.course.toString();
-      if (!actsPorCurso[k]) actsPorCurso[k] = { total: 0, vencidasSinCalificar: 0, entregas: 0 };
-      actsPorCurso[k].total++;
-      actsPorCurso[k].entregas += entregasPorAct[a._id.toString()] || 0;
-      if (a.dueDate && a.dueDate < now && a.grades.length === 0) actsPorCurso[k].vencidasSinCalificar++;
-    });
-
-    const courseRows = courses.map(c => {
-      const bag = actsPorCurso[c._id.toString()] || { total: 0, vencidasSinCalificar: 0, entregas: 0 };
-      const esperadas = bag.total * c.students.length;
-      return {
-        _id: c._id, name: c.name,
-        teacher: c.owner?.name || '—',
-        teacherActive: c.owner?.active !== false,
-        students: c.students.length,
-        activities: bag.total,
-        entregas: bag.entregas,
-        esperadas,
-        tasa: esperadas > 0 ? Math.round((bag.entregas / esperadas) * 100) : null,
-        vencidasSinCalificar: bag.vencidasSinCalificar,
-      };
-    }).sort((a, b) => a.name.localeCompare(b.name, 'es'));
-
-    // Alumnos únicos de la división (un alumno cursa varias materias del mismo año).
-    const alumnoIds = [...new Set(courses.flatMap(c => c.students.map(s => s.toString())))];
-    const alumnos = await User.find({ _id: { $in: alumnoIds } })
-      .select('_id name email dni').sort({ name: 1 }).lean();
-
-    // Promedio normalizado por alumno dentro de esta división.
-    const notas = await Activity.aggregate([
-      { $match: { course: { $in: courseIds }, points: { $ne: null, $gt: 0 } } },
-      { $unwind: '$grades' },
-      { $group: {
-          _id: '$grades.student',
-          sum:   { $sum: { $multiply: [{ $divide: ['$grades.points', '$points'] }, 10] } },
-          count: { $sum: 1 },
-      } },
-    ]);
-    const promPorAlumno = Object.fromEntries(
-      notas.map(n => [n._id.toString(), Math.round((n.sum / n.count) * 10) / 10]),
-    );
-
-    const totalActividades = activities.length;
-    const studentRows = alumnos.map(a => ({
-      _id: a._id, name: a.name, email: a.email, dni: a.dni,
-      entregas: entregasPorAlumno[a._id.toString()] || 0,
-      promedio: promPorAlumno[a._id.toString()] ?? null,
-    }));
-
-    const totalEntregas  = Object.values(entregasPorAct).reduce((x, y) => x + y, 0);
-    const totalEsperadas = courseRows.reduce((acc, c) => acc + c.esperadas, 0);
-
     res.render('directivo/division-detail', {
-      division,
-      courses: courseRows,
-      students: studentRows,
-      stats: {
-        materias:    courses.length,
-        alumnos:     alumnos.length,
-        docentes:    new Set(courses.map(c => c.owner?._id?.toString()).filter(Boolean)).size,
-        actividades: totalActividades,
-        tasa:        totalEsperadas > 0 ? Math.round((totalEntregas / totalEsperadas) * 100) : null,
-      },
+      division: detalle.division,
+      courses:  detalle.courses,
+      students: detalle.students,
+      stats:    detalle.stats,
       activePage: 'divisions',
     });
   } catch (err) {

@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= division.name %> — Preceptoría</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .back-link {
+      display: inline-flex; align-items: center; gap: 4px; font-size: 13px;
+      color: var(--text-secondary); text-decoration: none; margin-bottom: 10px;
+    }
+    .back-link:hover { color: var(--primary); }
+    .mini-stats { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0 24px; }
+    .mini-stat {
+      flex: 1; min-width: 120px; background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 14px 16px;
+    }
+    .mini-stat-value { font-size: 24px; font-weight: 700; color: var(--text-primary); line-height: 1; }
+    .mini-stat-label { font-size: 11px; color: var(--text-secondary); margin-top: 5px; text-transform: uppercase; letter-spacing: .3px; }
+    .section-h {
+      display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 600;
+      margin: 24px 0 10px;
+    }
+    .simple-table {
+      width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+    }
+    .simple-table th, .simple-table td {
+      padding: 10px 14px; text-align: left; font-size: 13px;
+      border-bottom: 1px solid var(--border);
+    }
+    .simple-table th {
+      background: var(--background); font-weight: 600; font-size: 11px;
+      text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary);
+    }
+    .simple-table tr:last-child td { border-bottom: none; }
+    .simple-table tr:hover td { background: var(--background); }
+    a.name-link { color: var(--text-primary); text-decoration: none; font-weight: 500; }
+    a.name-link:hover { color: var(--primary); text-decoration: underline; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; }
+    .badge-red  { background: #fce8e6; color: #c5221f; }
+    .badge-warn { background: #fef4e5; color: #e67e00; }
+    .badge-ok   { background: #e6f4ea; color: #137333; }
+    .coteacher { font-size: 11px; color: var(--text-hint); display: block; margin-top: 2px; }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/preceptor-nav', { activePage: 'dashboard' }) %>
+
+    <a href="/preceptor" class="back-link">
+      <span class="material-symbols-outlined" style="font-size:18px">arrow_back</span>
+      Volver a mis cursos
+    </a>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2><%= division.name %></h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Materias, docentes y alumnos de este curso
+        </p>
+      </div>
+      <div class="dashboard-actions">
+        <button class="btn btn-primary" onclick="abrirModalAlumno()">
+          <span class="material-symbols-outlined">person_add</span>
+          Agregar alumno
+        </button>
+      </div>
+    </div>
+
+    <div class="mini-stats">
+      <div class="mini-stat">
+        <div class="mini-stat-value"><%= stats.materias %></div>
+        <div class="mini-stat-label">Materias</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value"><%= stats.alumnos %></div>
+        <div class="mini-stat-label">Alumnos</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value"><%= stats.docentes %></div>
+        <div class="mini-stat-label">Docentes</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value"><%= stats.actividades %></div>
+        <div class="mini-stat-label">Actividades</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value" style="color:<%= stats.tasa === null ? 'var(--text-hint)' : stats.tasa >= 80 ? '#34a853' : stats.tasa >= 50 ? '#ea8600' : '#ea4335' %>">
+          <%= stats.tasa === null ? '—' : stats.tasa + '%' %>
+        </div>
+        <div class="mini-stat-label">Tasa de entrega</div>
+      </div>
+    </div>
+
+    <div class="section-h">
+      <span class="material-symbols-outlined" style="color:#1a73e8">menu_book</span>
+      Materias y docentes
+    </div>
+    <% if (!courses.length) { %>
+      <div style="padding:20px;text-align:center;color:var(--text-secondary);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)">
+        Este curso no tiene materias cargadas todavía.
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="simple-table">
+          <thead>
+            <tr>
+              <th>Materia</th>
+              <th>Docente</th>
+              <th style="text-align:center">Alumnos</th>
+              <th style="text-align:center">Actividades</th>
+              <th style="text-align:center">Sin calificar</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% courses.forEach(c => { %>
+              <tr>
+                <td><strong><%= c.name %></strong></td>
+                <td>
+                  <%= c.teacher %>
+                  <% if (!c.teacherActive) { %><span class="badge badge-red" style="margin-left:4px">Deshabilitado</span><% } %>
+                  <%# Co-docentes: tienen los mismos permisos sobre la materia que el titular,
+                      así que para el preceptor son igual de válidos a la hora de contactar. %>
+                  <% if (c.coTeachers && c.coTeachers.length) { %>
+                    <span class="coteacher">
+                      También:
+                      <%= c.coTeachers.map(t => t.name).join(', ') %>
+                    </span>
+                  <% } %>
+                </td>
+                <td style="text-align:center"><%= c.students %></td>
+                <td style="text-align:center"><%= c.activities %></td>
+                <td style="text-align:center">
+                  <% if (c.vencidasSinCalificar > 0) { %>
+                    <span class="badge badge-warn"><%= c.vencidasSinCalificar %></span>
+                  <% } else { %>
+                    <span class="badge badge-ok">0</span>
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+
+    <div class="section-h">
+      <span class="material-symbols-outlined" style="color:#1a73e8">group</span>
+      Alumnos (<%= students.length %>)
+    </div>
+    <% if (!students.length) { %>
+      <div style="padding:20px;text-align:center;color:var(--text-secondary);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)">
+        No hay alumnos inscriptos en las materias de este curso.
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="simple-table">
+          <thead>
+            <tr>
+              <th>Alumno</th>
+              <th>DNI</th>
+              <th>Teléfono</th>
+              <th style="text-align:center">Entregas</th>
+              <th style="text-align:center">Promedio</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <% students.forEach(s => { %>
+              <tr>
+                <td>
+                  <a href="/preceptor/students/<%= s._id %>" class="name-link"><%= s.name %></a>
+                  <% if (s.active === false) { %><span class="badge badge-red" style="margin-left:4px">Deshabilitado</span><% } %>
+                  <div style="font-size:11px;color:var(--text-hint)"><%= s.email %></div>
+                </td>
+                <td><%= s.dni || '—' %></td>
+                <td><%= s.phone || '—' %></td>
+                <td style="text-align:center"><%= s.entregas %></td>
+                <td style="text-align:center">
+                  <% if (s.promedio === null) { %>
+                    <span style="color:var(--text-hint)">—</span>
+                  <% } else { %>
+                    <strong style="color:<%= s.promedio < 6 ? '#ea4335' : s.promedio < 8 ? '#ea8600' : '#34a853' %>"><%= s.promedio %></strong>
+                  <% } %>
+                </td>
+                <td style="text-align:right;white-space:nowrap">
+                  <%# Las acciones de matriculación (sacar del curso, mover) viven en la ficha
+                      del alumno: ahí se ve si tiene entregas, que es lo que las habilita o no.
+                      Acá solo el acceso, para no repetir esa lógica en dos lugares. %>
+                  <a href="/preceptor/students/<%= s._id %>" class="btn btn-outline"
+                     style="padding:4px 12px;font-size:12px">
+                    <span class="material-symbols-outlined" style="font-size:15px">manage_accounts</span>
+                    Gestionar
+                  </a>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </main>
+
+  <!-- Modal: alta de alumno. Se lo inscribe en TODAS las materias de este curso. -->
+  <div id="modalAlumno" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2000;align-items:center;justify-content:center">
+    <div style="background:var(--surface);border-radius:12px;padding:32px;width:100%;max-width:460px;margin:16px;box-shadow:0 8px 32px rgba(0,0,0,.2)">
+      <h3 style="margin:0 0 6px;font-size:18px;display:flex;align-items:center;gap:8px">
+        <span class="material-symbols-outlined" style="color:#1a73e8">person_add</span>
+        Agregar alumno a <%= division.name %>
+      </h3>
+      <p style="font-size:13px;color:var(--text-secondary);margin:0 0 20px">
+        Queda inscripto en las <%= stats.materias %> materia<%= stats.materias !== 1 ? 's' : '' %> de este curso.
+      </p>
+
+      <div class="form-error" id="alumnoError" style="margin-bottom:14px"></div>
+      <div id="alumnoOk" style="display:none;background:#e6f4ea;color:#137333;padding:10px 14px;border-radius:8px;font-size:14px;margin-bottom:14px"></div>
+
+      <form id="formAlumno">
+        <div class="input-group">
+          <span class="material-symbols-outlined input-icon">badge</span>
+          <input type="text" id="alumnoName" placeholder="Nombre completo" required>
+        </div>
+        <div class="input-group" style="margin-top:16px">
+          <span class="material-symbols-outlined input-icon">fingerprint</span>
+          <input type="text" id="alumnoDni" placeholder="DNI" inputmode="numeric" autocomplete="off" required>
+        </div>
+        <div class="input-group" style="margin-top:16px">
+          <span class="material-symbols-outlined input-icon">email</span>
+          <input type="email" id="alumnoEmail" placeholder="Correo electrónico" required>
+        </div>
+        <div class="input-group" style="margin-top:16px">
+          <span class="material-symbols-outlined input-icon">lock</span>
+          <input type="password" id="alumnoPassword" placeholder="Contraseña (mín. 5 caracteres)" required>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:22px">
+          <button type="button" class="btn btn-outline" style="flex:1" onclick="cerrarModalAlumno()">Cancelar</button>
+          <button type="submit" class="btn btn-primary" style="flex:1">
+            <span class="material-symbols-outlined">check</span>
+            Agregar
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <%- include('../partials/footer') %>
+  <script>
+    const DIVISION_ID = '<%= division._id %>';
+
+    function abrirModalAlumno() {
+      document.getElementById('modalAlumno').style.display = 'flex';
+      document.getElementById('alumnoName').focus();
+    }
+    function cerrarModalAlumno() {
+      document.getElementById('modalAlumno').style.display = 'none';
+      document.getElementById('alumnoError').classList.remove('show');
+      document.getElementById('alumnoOk').style.display = 'none';
+    }
+
+    document.getElementById('formAlumno').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById('alumnoError');
+      const okEl    = document.getElementById('alumnoOk');
+      errorEl.classList.remove('show');
+      okEl.style.display = 'none';
+
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.disabled  = true;
+      btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Guardando...';
+
+      const res = await fetch('/preceptor/divisions/' + DIVISION_ID + '/students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name:     document.getElementById('alumnoName').value,
+          dni:      document.getElementById('alumnoDni').value.trim() || undefined,
+          email:    document.getElementById('alumnoEmail').value,
+          password: document.getElementById('alumnoPassword').value,
+        }),
+      });
+      const data = await res.json();
+
+      btn.disabled  = false;
+      btn.innerHTML = '<span class="material-symbols-outlined">check</span> Agregar';
+
+      if (!res.ok) {
+        errorEl.textContent = data.error;
+        errorEl.classList.add('show');
+        return;
+      }
+
+      /* El backend distingue dos casos: alumno nuevo, o alumno que YA existía con ese DNI
+         y al que solo se le completó la matrícula. El mensaje lo dice explícitamente para
+         que el preceptor no crea que creó una cuenta duplicada. */
+      okEl.textContent = data.existedAlready
+        ? 'Ese DNI ya tenía cuenta de alumno. Se lo inscribió en ' + data.enrolledIn + ' materia' + (data.enrolledIn === 1 ? '' : 's') + '.'
+        : 'Alumno creado e inscripto en ' + data.enrolledIn + ' materia' + (data.enrolledIn === 1 ? '' : 's') + '.';
+      okEl.style.display = 'block';
+      setTimeout(() => window.location.reload(), 1200);
+    });
+  </script>
+</body>
+</html>

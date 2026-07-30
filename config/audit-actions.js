@@ -43,7 +43,10 @@ const ACTIONS = {
 
   // ── Usuarios ──────────────────────────────────────────────────────────────
   'user.create':          { label: 'creó un usuario',          icon: 'person_add',           color: '#137333', category: 'user' },
+  'user.edit':            { label: 'editó los datos de',       icon: 'edit',                 color: '#1a73e8', category: 'user' },
   'user.delete':          { label: 'eliminó un usuario',       icon: 'person_remove',        color: '#ea4335', category: 'user' },
+  // Alcance del preceptor: qué divisiones puede ver y administrar (ver models/User.js)
+  'user.assign_divisions': { label: 'asignó cursos a',          icon: 'checklist',           color: '#1a73e8', category: 'user' },
   'user.role_change':     { label: 'cambió el rol de',         icon: 'admin_panel_settings', color: '#9334e6', category: 'user' },
   'user.toggle_active':   { label: 'cambió el estado de',      icon: 'toggle_on',            color: '#ea8600', category: 'user' },
   'user.reset_password':  { label: 'reseteó la contraseña de', icon: 'lock_reset',           color: '#ea8600', category: 'user' },
@@ -81,6 +84,8 @@ const ACTIONS = {
   'system.restore':          { label: 'restauró un backup',         icon: 'restore',        color: '#ea4335', category: 'system' },
   'system.maintenance_on':   { label: 'activó modo mantenimiento',  icon: 'engineering',    color: '#ea8600', category: 'system' },
   'system.maintenance_off':  { label: 'desactivó modo mantenimiento', icon: 'engineering',  color: '#137333', category: 'system' },
+  // Arreglos directos a la base desde /superadmin/otros (ver services/dbFixes.js)
+  'system.db_fix':           { label: 'aplicó un arreglo a la base', icon: 'healing',       color: '#9334e6', category: 'system' },
 };
 
 const CATEGORIES = {

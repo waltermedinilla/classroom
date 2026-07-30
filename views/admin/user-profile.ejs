@@ -103,6 +103,52 @@
     </div>
     <% } %>
 
+    <%# Alcance del preceptor. Va acá y no en el alta porque el rol se puede asignar por
+        varios caminos que no preguntan por cursos (cambio individual, cambio en lote del
+        superadmin): este bloque es el único lugar donde el admin se entera de que el
+        preceptor quedó sin nada asignado. El aviso ámbar es deliberado — un preceptor sin
+        cursos no ve absolutamente nada y eso parece un error de la aplicación. %>
+    <% if (target.role === 'preceptor') { %>
+    <div class="profile-actions">
+      <div class="profile-action-card">
+        <h4>Cursos a cargo</h4>
+        <% const _sinAlcance = !target.allDivisions && assignedDivisionIds.length === 0; %>
+        <% if (_sinAlcance) { %>
+          <div style="background:#fef4e5;color:#e67e00;padding:10px 14px;border-radius:8px;font-size:13px;margin-top:12px;display:flex;gap:8px;align-items:flex-start">
+            <span class="material-symbols-outlined" style="font-size:18px">warning</span>
+            <span>Este preceptor todavía no tiene cursos asignados: al entrar no ve ningún curso ni alumno.</span>
+          </div>
+        <% } %>
+
+        <% if (!schoolDivisions.length) { %>
+          <p style="font-size:13px;color:var(--text-hint);margin-top:12px">
+            <%= target.school ? 'La escuela no tiene cursos cargados todavía.' : 'El usuario no está asignado a ninguna escuela.' %>
+          </p>
+        <% } else { %>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:14px 0 12px;cursor:pointer">
+            <input type="checkbox" id="allDivisions" <%= target.allDivisions ? 'checked' : '' %> onchange="toggleScopeList()">
+            <strong>Todos los cursos de la escuela</strong>
+          </label>
+          <div id="scopeList" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:10px">
+            <% schoolDivisions.forEach(d => { %>
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0;cursor:pointer">
+                <input type="checkbox" class="scope-division" value="<%= d._id %>"
+                  <%= assignedDivisionIds.includes(d._id.toString()) ? 'checked' : '' %>>
+                <%= d.name %>
+              </label>
+            <% }) %>
+          </div>
+          <div class="form-error" id="scopeError" style="margin-top:8px"></div>
+          <div id="scopeOk" style="display:none;background:#e6f4ea;color:#137333;padding:8px 12px;border-radius:8px;font-size:13px;margin-top:8px"></div>
+          <button type="button" class="btn btn-primary" id="scopeSaveBtn" style="margin-top:14px">
+            <span class="material-symbols-outlined">save</span>
+            Guardar cursos
+          </button>
+        <% } %>
+      </div>
+    </div>
+    <% } %>
+
     <div class="section" style="margin-top:32px">
       <div class="section-header">
         <span class="material-symbols-outlined section-icon">star</span>
@@ -122,7 +168,6 @@
                   <% } %>
                 </div>
               </div>
-              <div class="card-footer"><span class="card-code"><%= c.code %></span></div>
             </a>
           <% }) %>
         </div>
@@ -182,6 +227,49 @@
       if (!res.ok) { errorEl.textContent = data.error; errorEl.classList.add('show'); return; }
       location.reload();
     });
+
+    // ── Alcance del preceptor ────────────────────────────────────────────────
+    // Los elementos solo existen si el usuario es preceptor Y la escuela tiene divisiones
+    // cargadas, así que todo va detrás de una guarda de existencia.
+    function toggleScopeList() {
+      const todos = document.getElementById('allDivisions').checked;
+      const list  = document.getElementById('scopeList');
+      list.style.opacity       = todos ? '.45' : '1';
+      list.style.pointerEvents = todos ? 'none' : '';
+    }
+
+    if (document.getElementById('scopeSaveBtn')) {
+      toggleScopeList(); // sincronizar el estado visual al cargar
+
+      document.getElementById('scopeSaveBtn').addEventListener('click', async () => {
+        const errorEl = document.getElementById('scopeError');
+        const okEl    = document.getElementById('scopeOk');
+        const btn     = document.getElementById('scopeSaveBtn');
+        errorEl.classList.remove('show');
+        okEl.style.display = 'none';
+        btn.disabled = true;
+
+        const todos = document.getElementById('allDivisions').checked;
+        const res = await fetch('/admin/users/<%= target._id %>/divisions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            allDivisions: todos,
+            divisionIds: [...document.querySelectorAll('.scope-division:checked')].map(c => c.value),
+          }),
+        });
+        const data = await res.json();
+        btn.disabled = false;
+
+        if (!res.ok) { errorEl.textContent = data.error; errorEl.classList.add('show'); return; }
+        okEl.textContent = data.allDivisions
+          ? 'Ahora ve todos los cursos de la escuela.'
+          : 'Cursos guardados: ' + data.count + '.';
+        okEl.style.display = 'block';
+        // Recarga para que el aviso de "sin cursos asignados" se actualice.
+        setTimeout(() => location.reload(), 1000);
+      });
+    }
 
     document.getElementById('impersonateBtn').addEventListener('click', async () => {
       if (!confirm('¿Ver la plataforma como <%= target.name %>? Podrás volver desde la barra superior.')) return;

@@ -66,6 +66,32 @@ const userSchema = new mongoose.Schema({
     default: null,
   },
 
+  // ── Alcance del preceptor ──────────────────────────────────────────────────
+  // Qué divisiones (los "cursos" 1°1°, 2°3°… del lenguaje de la escuela) puede ver y
+  // administrar un preceptor. Solo se leen cuando role === 'preceptor'; en cualquier
+  // otro rol quedan en su default y se ignoran.
+  //
+  // FAIL-CLOSED A PROPÓSITO: no existe la convención "array vacío = todas". El rol
+  // 'preceptor' se puede asignar por varios caminos que no preguntan por divisiones
+  // (cambio de rol individual o en lote desde /admin y /superadmin), y en todos ellos
+  // el usuario queda con allDivisions:false + assignedDivisions:[] — es decir, sin ver
+  // nada hasta que un admin le asigne el alcance explícitamente. Si "vacío" significara
+  // "todas", esos mismos caminos entregarían la escuela entera por omisión.
+  //
+  // Ambos campos los escribe únicamente routes/admin.js (alta de usuario y
+  // POST /admin/users/:id/divisions). Al modificarlos hay que llamar a invalidateUser():
+  // el doc de usuario vive cacheado 45s en middleware/cache.js y el scope se resuelve
+  // desde ahí en cada request (ver middleware/preceptor.js).
+  assignedDivisions: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Division',
+    default: [],
+  }],
+  allDivisions: {
+    type: Boolean,
+    default: false,   // true = todas las divisiones de su escuela, sin enumerarlas
+  },
+
   // ── Perfil personal ────────────────────────────────────────────────────────
   // Lo carga el propio usuario desde /profile y lo ve, además de él, el equipo
   // directivo en sus paneles (mismo alcance que phone/instagram/facebook — ver

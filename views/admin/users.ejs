@@ -126,7 +126,7 @@
           </div>
           <div class="input-group" style="margin-top:16px">
             <span class="material-symbols-outlined input-icon">fingerprint</span>
-            <input type="text" id="uDni" placeholder="DNI (opcional)">
+            <input type="text" id="uDni" placeholder="DNI" inputmode="numeric" autocomplete="off" required>
           </div>
           <div class="input-group" style="margin-top:16px">
             <span class="material-symbols-outlined input-icon">email</span>
@@ -160,6 +160,36 @@
               <% }) %>
             </select>
           </div>
+          <!-- Alcance del preceptor: qué cursos va a ver y administrar. Solo visible con
+               rol Preceptor. Si no se marca nada, queda creado sin cursos y al entrar ve una
+               pantalla que se lo dice — nunca la escuela entera (ver models/User.js).
+               Este bloque está DUPLICADO en views/admin/user-form.ejs, que es el mismo alta
+               en versión página completa (/admin/users/create). Tocar los dos. -->
+          <div id="uScopeField" style="margin-top:20px;display:none">
+            <label style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;margin-bottom:10px">
+              <span class="material-symbols-outlined" style="font-size:18px;color:#1a73e8">checklist</span>
+              Cursos a cargo
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:12px;cursor:pointer">
+              <input type="checkbox" id="uAllDivisions" onchange="toggleUserScopeList()">
+              Todos los cursos de la escuela
+            </label>
+            <div id="uScopeList" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:10px">
+              <% if (!divisions || !divisions.length) { %>
+                <p style="font-size:12px;color:var(--text-hint);margin:0">
+                  La escuela todavía no tiene cursos cargados.
+                </p>
+              <% } else { %>
+                <% divisions.forEach(d => { %>
+                  <label style="display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0;cursor:pointer">
+                    <input type="checkbox" class="u-scope-division" value="<%= d._id %>">
+                    <%= d.name %>
+                  </label>
+                <% }) %>
+              <% } %>
+            </div>
+          </div>
+
           <div class="form-error" id="userFormError" style="margin-top:16px"></div>
           <div id="userFormSuccess" style="display:none;margin-top:16px;padding:10px 14px;background:#e6f4ea;color:#137333;border-radius:8px;font-size:13px"></div>
           <button type="submit" class="btn btn-primary btn-full" style="margin-top:20px">
@@ -201,6 +231,20 @@
       const hasDivisions = field.querySelectorAll('option').length > 1; // > 1: siempre está la opción vacía
       field.style.display = (role === 'student' && hasDivisions) ? '' : 'none';
       if (role !== 'student') document.getElementById('uDivisionId').value = '';
+
+      // El bloque de alcance es exclusivo del preceptor: es el único rol acotado a
+      // divisiones concretas.
+      document.getElementById('uScopeField').style.display = (role === 'preceptor') ? '' : 'none';
+    }
+
+    // "Todos los cursos" y la lista son excluyentes: si se marca todos, elegir algunos
+    // sueltos no significaría nada (el backend ignora divisionIds en ese caso).
+    function toggleUserScopeList() {
+      const todos = document.getElementById('uAllDivisions').checked;
+      const list  = document.getElementById('uScopeList');
+      list.style.opacity       = todos ? '.45' : '1';
+      list.style.pointerEvents = todos ? 'none' : '';
+      if (todos) document.querySelectorAll('.u-scope-division').forEach(c => { c.checked = false; });
     }
 
     document.getElementById('createUserForm').addEventListener('submit', async (e) => {
@@ -222,6 +266,8 @@
           password: document.getElementById('uPassword').value,
           role: document.getElementById('uRole').value,
           divisionId: document.getElementById('uDivisionId').value || undefined,
+          allDivisions: document.getElementById('uAllDivisions').checked,
+          divisionIds: [...document.querySelectorAll('.u-scope-division:checked')].map(c => c.value),
         }),
       });
       const data = await res.json();

@@ -15,6 +15,11 @@ const { requireAuth }  = require('../middleware/auth');
 const { requireAdmin } = require('../middleware/admin');
 const { invalidateUser, invalidateSchool } = require('../middleware/cache');
 const { logAudit } = require('../middleware/audit');
+// Matrícula de alumnos en las materias de una división. Extraída a services/ porque el
+// panel de preceptoría (routes/preceptor.js) da de alta alumnos con la misma semántica.
+const { enrollStudentInDivisionCourses } = require('../services/enrollment');
+// DNI obligatorio en toda alta/edición desde 2026-07-30 (ver services/dni.js).
+const { normalizeDni } = require('../services/dni');
 const School   = require('../models/School');
 const THEMES   = require('../config/themes');
 const ActivityTemplate   = require('../models/ActivityTemplate');
@@ -176,38 +181,13 @@ router.get('/users/create', async (req, res) => {
   res.render('admin/user-form', { user: null, divisions });
 });
 
-// Inscribe a `student` en las materias del Curso `divisionId` donde todavía no figura.
-// Usado tanto para un alumno recién creado como para uno que ya existía (encontrado por
-// DNI) — en ambos casos la regla es la misma: completar lo que le falta, sin duplicar.
-// Devuelve la cantidad de materias NUEVAS en las que quedó inscripto.
-async function enrollStudentInDivisionCourses(req, student, divisionId, school, via) {
-  if (!divisionId || !school) return 0;
-  // Valida que la división pertenezca a la misma escuela (defensa en profundidad,
-  // aunque el select del formulario solo muestra las de la escuela del admin).
-  const division = await Division.findOne({ _id: divisionId, school }).select('_id name');
-  if (!division) return 0;
-
-  const courses = await Course.find({ division: division._id, school }).select('_id name students enrollmentDates');
-  const now = new Date();
-  let enrolledIn = 0;
-  for (const c of courses) {
-    if (c.students.some(s => s.toString() === student._id.toString())) continue; // ya inscripto: no duplicar
-    c.students.push(student._id);
-    c.enrollmentDates.set(student._id.toString(), now);
-    await c.save({ validateModifiedOnly: true });
-    enrolledIn++;
-  }
-
-  if (enrolledIn > 0) {
-    logAudit(req, 'course.add_student',
-      [
-        { type: 'division', id: division._id, name: division.name },
-        { type: 'user',     id: student._id,  name: student.name },
-      ],
-      { materias: enrolledIn, via },
-    );
-  }
-  return enrolledIn;
+// Filtra una lista de ids de división dejando solo las que existen y son de `school`.
+// Se usa al asignarle el alcance a un preceptor (alta y reasignación): sin este filtro,
+// un POST armado a mano podría dejarle divisiones de otra escuela en el array.
+async function resolveScopeDivisions(divisionIds, school) {
+  if (!Array.isArray(divisionIds) || !divisionIds.length || !school) return [];
+  const validas = await Division.find({ _id: { $in: divisionIds }, school }).select('_id').lean();
+  return validas.map(d => d._id);
 }
 
 // Nombres de rol en español, solo para el mensaje de error de DNI-en-otro-rol de acá abajo
@@ -220,11 +200,15 @@ const ROLE_LABEL = {
 
 router.post('/users/create', async (req, res) => {
   try {
-    const { name, email, password, role, dni, divisionId } = req.body;
+    const { name, email, password, role, dni, divisionId, divisionIds, allDivisions } = req.body;
     if (role === 'superadmin') return res.status(403).json({ error: 'No permitido' });
 
     const school = res.locals.user.school;
-    const trimmedDni = dni ? String(dni).trim() : '';
+
+    // DNI obligatorio para cualquier rol. Se normaliza a solo dígitos antes de guardarlo,
+    // que es como lo indexa {school, dni} y como lo busca /register/lookup.
+    const { value: trimmedDni, error: dniError } = normalizeDni(dni);
+    if (dniError) return res.status(400).json({ error: dniError });
 
     // ── Alumno con DNI: puede ser una persona que YA existe en el sistema ──────
     // El índice único {school,dni} solo permite UNA cuenta por DNI en la escuela, así
@@ -233,7 +217,7 @@ router.post('/users/create', async (req, res) => {
     // Se chequea ANTES de intentar crear — antes esto fallaba con el error 11000 del
     // índice, devolviendo el mensaje engañoso "El correo ya está registrado" aunque el
     // email fuera distinto y el verdadero choque fuera el DNI.
-    if (role === 'student' && trimmedDni && school) {
+    if (role === 'student' && school) {
       const existing = await User.findOne({ school, dni: trimmedDni });
       if (existing) {
         if (existing.role !== 'student') {
@@ -248,8 +232,18 @@ router.post('/users/create', async (req, res) => {
       }
     }
 
-    const userData = { name, email, password, role, school };
-    if (trimmedDni) userData.dni = trimmedDni;
+    const userData = { name, email, password, role, school, dni: trimmedDni };
+
+    // Preceptor: además del alta hay que definir su alcance (qué cursos ve y administra).
+    // Se valida contra la escuela del admin — un id de otra escuela se descarta acá, no
+    // se guarda para que después lo filtre el middleware.
+    if (role === 'preceptor') {
+      userData.allDivisions = allDivisions === true;
+      userData.assignedDivisions = userData.allDivisions
+        ? []
+        : await resolveScopeDivisions(divisionIds, school);
+    }
+
     const user = await User.create(userData);
 
     logAudit(req, 'user.create',
@@ -285,7 +279,66 @@ router.get('/users/:id', async (req, res) => {
     Course.find({ owner:    target._id }).populate('owner', 'name email').populate('school', 'name').populate('division', 'name'),
     Course.find({ students: target._id }).populate('owner', 'name email').populate('school', 'name').populate('division', 'name'),
   ]);
-  res.render('admin/user-profile', { target, createdCourses, joinedCourses, PROTECTED_ADMIN_EMAIL });
+
+  // Alcance del preceptor: la vista muestra el bloque de asignación de cursos solo si el
+  // usuario ES preceptor. Se carga siempre que haya escuela para que, al cambiarle el rol
+  // a preceptor desde esta misma pantalla, el bloque ya tenga las divisiones y no haya que
+  // recargar. Sin esto, un usuario convertido a preceptor desde el listado quedaba sin
+  // ningún lugar visible donde asignarle cursos.
+  const schoolDivisions = target.school
+    ? await Division.find({ school: target.school }).sort({ name: 1 }).select('_id name').lean()
+    : [];
+
+  res.render('admin/user-profile', {
+    target, createdCourses, joinedCourses, PROTECTED_ADMIN_EMAIL,
+    schoolDivisions,
+    assignedDivisionIds: (target.assignedDivisions || []).map(d => d.toString()),
+  });
+});
+
+// POST /users/:id/divisions — define el alcance de un preceptor (qué cursos ve/administra).
+//
+// Body: { allDivisions: Boolean, divisionIds: String[] }
+// allDivisions:true ignora divisionIds y vacía el array: el alcance pasa a resolverse
+// dinámicamente contra las divisiones de la escuela (ver middleware/preceptor.js), así que
+// las divisiones que se creen después quedan incluidas sin tener que volver acá.
+router.post('/users/:id/divisions', async (req, res) => {
+  try {
+    const school = res.locals.user.school;
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ error: 'Usuario no encontrado' });
+    if (school && target.school?.toString() !== school.toString()) {
+      return res.status(403).json({ error: 'Sin acceso' });
+    }
+    if (target.role !== 'preceptor') {
+      return res.status(400).json({ error: 'Solo los preceptores tienen cursos a cargo' });
+    }
+
+    const todos = req.body.allDivisions === true;
+    target.allDivisions      = todos;
+    target.assignedDivisions = todos
+      ? []
+      : await resolveScopeDivisions(req.body.divisionIds, target.school);
+    await target.save({ validateModifiedOnly: true });
+
+    // El alcance se resuelve en cada request desde el doc cacheado (TTL 45s): sin
+    // invalidar, el preceptor seguiría viendo los cursos viejos hasta que expire.
+    invalidateUser(target._id);
+
+    logAudit(req, 'user.assign_divisions',
+      [{ type: 'user', id: target._id, name: target.name }],
+      todos ? { alcance: 'todos los cursos' } : { cursos: target.assignedDivisions.length },
+      { schoolId: target.school || null },
+    );
+
+    res.json({
+      ok: true,
+      allDivisions: target.allDivisions,
+      count: target.assignedDivisions.length,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
 });
 
 router.post('/users/:id/role', async (req, res) => {
@@ -496,7 +549,7 @@ router.post('/courses/create', async (req, res) => {
         { type: 'division', id: division._id, name: division.name },
         { type: 'user',     id: teacher._id,  name: teacher.name },
       ],
-      { codigo: course.code },
+      {},
     );
 
     res.status(201).json({ course });

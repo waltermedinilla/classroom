@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= student.name %> — Preceptoría</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .back-link {
+      display: inline-flex; align-items: center; gap: 4px; font-size: 13px;
+      color: var(--text-secondary); text-decoration: none; margin-bottom: 10px;
+    }
+    .back-link:hover { color: var(--primary); }
+    .mini-stats { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0 24px; }
+    .mini-stat {
+      flex: 1; min-width: 120px; background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 14px 16px;
+    }
+    .mini-stat-value { font-size: 24px; font-weight: 700; color: var(--text-primary); line-height: 1; }
+    .mini-stat-label { font-size: 11px; color: var(--text-secondary); margin-top: 5px; text-transform: uppercase; letter-spacing: .3px; }
+    .section-h {
+      display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 600;
+      margin: 24px 0 10px;
+    }
+    .simple-table {
+      width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+    }
+    .simple-table th, .simple-table td {
+      padding: 10px 14px; text-align: left; font-size: 13px;
+      border-bottom: 1px solid var(--border);
+    }
+    .simple-table th {
+      background: var(--background); font-weight: 600; font-size: 11px;
+      text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary);
+    }
+    .simple-table tr:last-child td { border-bottom: none; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; }
+    .badge-red  { background: #fce8e6; color: #c5221f; }
+    .badge-warn { background: #fef4e5; color: #e67e00; }
+    .badge-ok   { background: #e6f4ea; color: #137333; }
+    .edit-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px; margin-top: 16px;
+    }
+    .edit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+    .enroll-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px 18px; margin-bottom: 12px;
+    }
+    .enroll-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .enroll-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+    .enroll-move { display: flex; gap: 8px; align-items: center; }
+    .enroll-select {
+      padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface); color: var(--text-primary); font-size: 13px;
+    }
+    .enroll-danger { border-color: #ea4335; color: #ea4335; }
+    .enroll-lock {
+      display: flex; gap: 8px; align-items: flex-start; margin-top: 12px;
+      background: #fef4e5; color: #a86200; border-radius: 8px;
+      padding: 10px 12px; font-size: 12.5px; line-height: 1.5;
+    }
+    .enroll-result { font-size: 13px; margin-top: 12px; padding: 10px 12px; border-radius: 8px; display: none; }
+    .enroll-result.ok    { background: #e6f4ea; color: #137333; }
+    .enroll-result.error { background: #fce8e6; color: #c5221f; }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/preceptor-nav', { activePage: 'dashboard' }) %>
+
+    <a href="javascript:history.back()" class="back-link">
+      <span class="material-symbols-outlined" style="font-size:18px">arrow_back</span>
+      Volver
+    </a>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>
+          <%= student.name %>
+          <span id="estadoBadge" class="badge <%= student.active === false ? 'badge-red' : 'badge-ok' %>" style="vertical-align:middle;margin-left:8px">
+            <%= student.active === false ? 'Deshabilitado' : 'Activo' %>
+          </span>
+        </h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px"><%= student.email %></p>
+      </div>
+      <div class="dashboard-actions">
+        <button class="btn btn-outline" id="toggleActiveBtn"
+          style="border-color:<%= student.active === false ? '#34a853' : '#ea4335' %>;color:<%= student.active === false ? '#34a853' : '#ea4335' %>">
+          <span class="material-symbols-outlined"><%= student.active === false ? 'check_circle' : 'block' %></span>
+          <span id="toggleActiveLabel"><%= student.active === false ? 'Habilitar cuenta' : 'Deshabilitar cuenta' %></span>
+        </button>
+      </div>
+    </div>
+
+    <div class="mini-stats">
+      <div class="mini-stat">
+        <div class="mini-stat-value"><%= courses.length %></div>
+        <div class="mini-stat-label">Materias</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value"><%= stats.entregadas %> / <%= stats.totalActividades %></div>
+        <div class="mini-stat-label">Entregas</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value" style="color:<%= stats.tardias > 0 ? '#ea8600' : 'var(--text-primary)' %>"><%= stats.tardias %></div>
+        <div class="mini-stat-label">Tardías</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value" style="color:<%= stats.avg === null ? 'var(--text-hint)' : stats.avg < 6 ? '#ea4335' : stats.avg < 8 ? '#ea8600' : '#34a853' %>">
+          <%= stats.avg === null ? '—' : stats.avg %>
+        </div>
+        <div class="mini-stat-label">Promedio</div>
+      </div>
+    </div>
+
+    <div class="section-h">
+      <span class="material-symbols-outlined" style="color:#1a73e8">edit</span>
+      Datos del alumno
+    </div>
+    <div class="edit-card">
+      <div class="form-error" id="editError" style="margin-bottom:14px"></div>
+      <div id="editOk" style="display:none;background:#e6f4ea;color:#137333;padding:10px 14px;border-radius:8px;font-size:14px;margin-bottom:14px"></div>
+      <form id="formEdit">
+        <div class="edit-grid">
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">badge</span>
+            <input type="text" id="editName" value="<%= student.name %>" placeholder="Nombre completo" required>
+          </div>
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">email</span>
+            <input type="email" id="editEmail" value="<%= student.email %>" placeholder="Correo electrónico" required>
+          </div>
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">fingerprint</span>
+            <input type="text" id="editDni" value="<%= student.dni || '' %>" placeholder="DNI" inputmode="numeric" autocomplete="off" required>
+          </div>
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">phone</span>
+            <input type="text" id="editPhone" value="<%= student.phone || '' %>" placeholder="Teléfono">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:18px">
+          <span class="material-symbols-outlined">save</span>
+          Guardar cambios
+        </button>
+      </form>
+    </div>
+
+    <div class="section-h">
+      <span class="material-symbols-outlined" style="color:#1a73e8">swap_horiz</span>
+      Matriculación
+    </div>
+    <% if (!matriculacion.length) { %>
+      <div style="padding:20px;text-align:center;color:var(--text-secondary);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)">
+        No está matriculado en ninguno de tus cursos.
+      </div>
+    <% } else { %>
+      <% matriculacion.forEach(d => { %>
+        <div class="enroll-card" data-division="<%= d._id %>">
+          <div class="enroll-head">
+            <div>
+              <strong style="font-size:15px"><%= d.name %></strong>
+              <div style="font-size:12px;color:var(--text-secondary);margin-top:3px">
+                Inscripto en <%= d.materias %> de <%= d.totalMaterias %> materia<%= d.totalMaterias !== 1 ? 's' : '' %>
+                <% if (d.materias < d.totalMaterias) { %>
+                  <span class="badge badge-warn" style="margin-left:6px">Matrícula incompleta</span>
+                <% } %>
+              </div>
+            </div>
+            <% if (d.bloqueado) { %>
+              <span class="badge badge-warn" title="Ya entregó trabajos en este curso">
+                <%= d.entregas %> entrega<%= d.entregas !== 1 ? 's' : '' %>
+              </span>
+            <% } %>
+          </div>
+
+          <% if (d.bloqueado) { %>
+            <%# Con entregas no se ofrece ninguna acción: mismo criterio que rige para los
+                docentes al quitar un alumno de una materia. %>
+            <div class="enroll-lock">
+              <span class="material-symbols-outlined" style="font-size:17px">lock</span>
+              <span>
+                No se puede sacar ni mover: ya tiene <%= d.entregas %> entrega(s) en
+                <%= d.materiasConEntrega %> materia(s) de este curso. Sacarlo dejaría ese trabajo
+                fuera de su legajo. Si igual hay que hacerlo, tiene que resolverlo un administrador.
+              </span>
+            </div>
+          <% } else { %>
+            <div class="enroll-actions">
+              <button class="btn btn-outline enroll-danger" data-sacar>
+                <span class="material-symbols-outlined">person_remove</span>
+                Sacar del curso
+              </button>
+              <% if (destinos.length) { %>
+                <div class="enroll-move">
+                  <select data-destino class="enroll-select">
+                    <option value="">Mover a…</option>
+                    <% destinos.forEach(t => { %>
+                      <option value="<%= t._id %>"><%= t.name %></option>
+                    <% }) %>
+                  </select>
+                  <button class="btn btn-outline" data-mover>
+                    <span class="material-symbols-outlined">swap_horiz</span>
+                    Mover
+                  </button>
+                </div>
+              <% } %>
+            </div>
+          <% } %>
+          <div class="enroll-result" data-result></div>
+        </div>
+      <% }) %>
+    <% } %>
+
+    <div class="section-h">
+      <span class="material-symbols-outlined" style="color:#1a73e8">menu_book</span>
+      Materias que cursa
+    </div>
+    <% if (!courses.length) { %>
+      <div style="padding:20px;text-align:center;color:var(--text-secondary);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)">
+        No está inscripto en materias de tus cursos.
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="simple-table">
+          <thead>
+            <tr><th>Materia</th><th>Docente</th><th>Curso</th></tr>
+          </thead>
+          <tbody>
+            <% courses.forEach(c => { %>
+              <tr>
+                <td><strong><%= c.name %></strong></td>
+                <td><%= c.teacher %></td>
+                <td><%= c.division %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+
+    <div class="section-h">
+      <span class="material-symbols-outlined" style="color:#1a73e8">assignment</span>
+      Actividades (<%= entries.length %>)
+    </div>
+    <% if (!entries.length) { %>
+      <div style="padding:20px;text-align:center;color:var(--text-secondary);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)">
+        Sus materias no tienen actividades cargadas todavía.
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="simple-table">
+          <thead>
+            <tr>
+              <th>Actividad</th>
+              <th>Materia</th>
+              <th>Vencimiento</th>
+              <th style="text-align:center">Estado</th>
+              <th style="text-align:center">Nota</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% entries.forEach(e => { %>
+              <tr>
+                <td><%= e.activityTitle %></td>
+                <td><%= e.courseName %></td>
+                <td><%= e.dueDate ? new Date(e.dueDate).toLocaleDateString('es-AR') : '—' %></td>
+                <td style="text-align:center">
+                  <% if (!e.submitted) { %>
+                    <span class="badge badge-red">Sin entregar</span>
+                  <% } else if (e.late) { %>
+                    <span class="badge badge-warn">Tardía</span>
+                  <% } else { %>
+                    <span class="badge badge-ok">Entregada</span>
+                  <% } %>
+                </td>
+                <td style="text-align:center">
+                  <% if (e.normalized === null) { %>
+                    <span style="color:var(--text-hint)">—</span>
+                  <% } else { %>
+                    <strong style="color:<%= e.normalized < 6 ? '#ea4335' : e.normalized < 8 ? '#ea8600' : '#34a853' %>"><%= e.normalized %></strong>
+                    <span style="font-size:11px;color:var(--text-hint)">(<%= e.points %>/<%= e.maxPoints %>)</span>
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+  <script>
+    const STUDENT_ID = '<%= student._id %>';
+
+    document.getElementById('formEdit').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById('editError');
+      const okEl    = document.getElementById('editOk');
+      errorEl.classList.remove('show');
+      okEl.style.display = 'none';
+
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.disabled  = true;
+      btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Guardando...';
+
+      const res = await fetch('/preceptor/students/' + STUDENT_ID + '/edit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name:  document.getElementById('editName').value,
+          email: document.getElementById('editEmail').value,
+          dni:   document.getElementById('editDni').value.trim() || undefined,
+          phone: document.getElementById('editPhone').value.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+
+      btn.disabled  = false;
+      btn.innerHTML = '<span class="material-symbols-outlined">save</span> Guardar cambios';
+
+      if (!res.ok) {
+        errorEl.textContent = data.error;
+        errorEl.classList.add('show');
+        return;
+      }
+      okEl.textContent = 'Datos actualizados.';
+      okEl.style.display = 'block';
+    });
+
+    // ── Matriculación: sacar del curso / mover a otro ────────────────────────
+    // Las tarjetas solo existen si el alumno está matriculado en algún curso del alcance,
+    // y los botones solo si ese curso no tiene entregas suyas (ver el bloque EJS de arriba).
+    const NOMBRE_ALUMNO = <%- JSON.stringify(student.name) %>;
+
+    document.querySelectorAll('.enroll-card').forEach(card => {
+      const divisionId = card.dataset.division;
+      const result     = card.querySelector('[data-result]');
+
+      function mostrar(clase, texto) {
+        result.className = 'enroll-result ' + clase;
+        result.textContent = texto;
+        result.style.display = 'block';
+      }
+
+      async function ejecutar(btn, url, body, etiquetaOriginal) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Aplicando...';
+        result.style.display = 'none';
+        try {
+          const res  = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            mostrar('error', data.error || 'No se pudo completar la operación.');
+            btn.disabled = false;
+            btn.innerHTML = etiquetaOriginal;
+            return;
+          }
+          mostrar('ok', data.mensaje);
+          // Recarga para que se actualicen las materias, las actividades y los promedios,
+          // que cambian por completo al mover o sacar del curso.
+          setTimeout(() => location.reload(), 1400);
+        } catch (err) {
+          mostrar('error', 'Error de red: ' + err.message);
+          btn.disabled = false;
+          btn.innerHTML = etiquetaOriginal;
+        }
+      }
+
+      card.querySelector('[data-sacar]')?.addEventListener('click', (e) => {
+        const btn = e.currentTarget;
+        const etiqueta = btn.innerHTML;
+        if (!confirm(`¿Sacar a ${NOMBRE_ALUMNO} de todas las materias de este curso?\n\n` +
+                     'La cuenta sigue existiendo y se lo puede volver a matricular.')) return;
+        ejecutar(btn, '/preceptor/students/' + STUDENT_ID + '/unenroll', { divisionId }, etiqueta);
+      });
+
+      card.querySelector('[data-mover]')?.addEventListener('click', (e) => {
+        const btn      = e.currentTarget;
+        const etiqueta = btn.innerHTML;
+        const destino  = card.querySelector('[data-destino]').value;
+        if (!destino) { mostrar('error', 'Elegí a qué curso moverlo.'); return; }
+        const nombreDestino = card.querySelector('[data-destino]').selectedOptions[0].text;
+        if (!confirm(`¿Mover a ${NOMBRE_ALUMNO} a ${nombreDestino}?\n\n` +
+                     'Sale de todas las materias del curso actual y queda inscripto en todas las del nuevo.')) return;
+        ejecutar(btn, '/preceptor/students/' + STUDENT_ID + '/move',
+          { fromDivisionId: divisionId, toDivisionId: destino }, etiqueta);
+      });
+    });
+
+    document.getElementById('toggleActiveBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('toggleActiveBtn');
+      btn.disabled = true;
+      const res  = await fetch('/preceptor/students/' + STUDENT_ID + '/toggle-active', { method: 'POST' });
+      const data = await res.json();
+      btn.disabled = false;
+      if (!res.ok) { alert(data.error || 'No se pudo cambiar el estado'); return; }
+
+      /* Se refresca en el lugar en vez de recargar: el preceptor suele alternar el estado
+         mientras revisa la ficha, y perder el scroll en cada click era molesto. */
+      const badge = document.getElementById('estadoBadge');
+      badge.textContent = data.active ? 'Activo' : 'Deshabilitado';
+      badge.className   = 'badge ' + (data.active ? 'badge-ok' : 'badge-red');
+      document.getElementById('toggleActiveLabel').textContent =
+        data.active ? 'Deshabilitar cuenta' : 'Habilitar cuenta';
+      btn.querySelector('.material-symbols-outlined').textContent = data.active ? 'block' : 'check_circle';
+      btn.style.borderColor = data.active ? '#ea4335' : '#34a853';
+      btn.style.color       = data.active ? '#ea4335' : '#34a853';
+    });
+  </script>
+</body>
+</html>

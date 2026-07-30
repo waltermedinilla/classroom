@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mis cursos - Preceptoría - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/preceptor-nav', { activePage: 'dashboard' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Mis cursos</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          <%= totals.cursos %> curso<%= totals.cursos !== 1 ? 's' : '' %> a cargo ·
+          <%= totals.alumnos %> alumno<%= totals.alumnos !== 1 ? 's' : '' %>
+          <% if (scopeAll) { %>
+            <span class="badge" style="background:#e8f0fe;color:#1a73e8;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;margin-left:6px">TODOS LOS CURSOS</span>
+          <% } %>
+        </p>
+      </div>
+    </div>
+
+    <div class="course-grid">
+      <% divisions.forEach(d => { %>
+        <a href="/preceptor/divisions/<%= d._id %>" class="course-card" style="--card-color:#1a73e8">
+          <div class="card-banner">
+            <div class="card-banner-content">
+              <h4><%= d.name %></h4>
+              <p><%= d.materias %> materia<%= d.materias !== 1 ? 's' : '' %></p>
+            </div>
+            <div class="card-banner-deco">
+              <span class="material-symbols-outlined">school</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="card-stat">
+              <span class="material-symbols-outlined">group</span>
+              <span><%= d.alumnos %> alumno<%= d.alumnos !== 1 ? 's' : '' %></span>
+            </div>
+            <div class="card-stat">
+              <span class="material-symbols-outlined">badge</span>
+              <span><%= d.docentes %> docente<%= d.docentes !== 1 ? 's' : '' %></span>
+            </div>
+          </div>
+        </a>
+      <% }) %>
+    </div>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>
