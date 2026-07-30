@@ -5,6 +5,7 @@ const os       = require('os');
 const mongoose = require('mongoose');
 // Almacenamiento del monitor. El escaneo de carpetas viene cacheado desde el servicio.
 const { getDiskStats } = require('../services/diskStats');
+const { normalizeDni } = require('../services/dni');
 const School  = require('../models/School');
 const User    = require('../models/User');
 const Course  = require('../models/Course');
@@ -238,9 +239,14 @@ router.post('/schools/:id/revoke-invite', async (req, res) => {
 router.post('/users/create', async (req, res) => {
   try {
     const { name, email, password, role, school, dni } = req.body;
-    const userData = { name, email, password, role, school: school || null };
-    if (dni) userData.dni = dni;
-    const user = await User.create(userData);
+    // DNI obligatorio en toda alta desde 2026-07-30 (ver services/dni.js). Vale también
+    // para el superadmin: si el alta desde acá pudiera saltearlo, la regla no sería tal.
+    const { value: dniValue, error: dniError } = normalizeDni(dni);
+    if (dniError) return res.status(400).json({ error: dniError });
+
+    const user = await User.create({
+      name, email, password, role, school: school || null, dni: dniValue,
+    });
 
     logAudit(req, 'user.create',
       [{ type: 'user', id: user._id, name: user.name }],

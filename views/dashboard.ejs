@@ -15,16 +15,19 @@
     <div class="dashboard-topbar">
       <h2>Tus clases</h2>
       <div class="dashboard-actions">
-        <% /* Los docentes ya no pueden unirse por código ni crear materias desde acá
-              (decisión del usuario 2026-07-25) — se ocultan los botones, el código y
-              las rutas quedan intactos para no romper al resto de los roles. */ %>
+        <% /* Unirse por código se ELIMINÓ (decisión del usuario, 2026-07-30). La única vía
+              del alumno para pedir el alta es la solicitud, que llega como sugerencia al
+              superadmin; matricular es siempre una acción administrativa. Los docentes
+              tampoco crean materias desde acá (decisión del 2026-07-25). */ %>
         <% if (user.role !== 'teacher') { %>
-        <button class="btn btn-outline" onclick="showJoinModal()">
-          <span class="material-symbols-outlined">group_add</span>
-          Unirse a clase
-        </button>
+          <button class="btn btn-outline" onclick="showRequestModal()">
+            <span class="material-symbols-outlined">outgoing_mail</span>
+            Enviar solicitud para unirme
+          </button>
         <% } %>
-        <% if (user.role !== 'student' && user.role !== 'teacher') { %>
+        <% /* El preceptor tampoco: no dicta materias, las administra desde /preceptor.
+              El endpoint POST /courses/create además lo rechaza por rol. */ %>
+        <% if (user.role !== 'student' && user.role !== 'teacher' && user.role !== 'preceptor') { %>
         <button class="btn btn-primary" onclick="showCreateModal()">
           <span class="material-symbols-outlined">add</span>
           Crear clase
@@ -92,9 +95,11 @@
           <div class="empty-icon"><span class="material-symbols-outlined">school</span></div>
           <% if (user.role === 'student') { %>
             <p><span class="badge-unmatriculated" style="font-size:13px;padding:4px 12px">(Sin Matricular)</span></p>
-            <p style="margin-top:10px;color:var(--text-secondary);font-size:14px">No estás matriculado en ningún curso. Pedile el código de clase a tu docente.</p>
+            <p style="margin-top:10px;color:var(--text-secondary);font-size:14px">
+              No estás matriculado en ningún curso. Usá el botón «Enviar solicitud para unirme» y el administrador te va a matricular.
+            </p>
           <% } else { %>
-            <p>Aún no tenés clases. Creá una o unite con un código.</p>
+            <p>Aún no tenés clases. Creá una para empezar.</p>
           <% } %>
         </div>
       <% } %>
@@ -146,10 +151,6 @@
                   <span class="material-symbols-outlined">assignment</span>
                 </button>
               </div>
-              <button class="icon-btn card-icon-btn" title="Copiar código de clase"
-                onclick="event.preventDefault();event.stopPropagation();copyCode('<%= course.code %>')">
-                <span class="material-symbols-outlined">more_vert</span>
-              </button>
             </div>
           </a>
         <% }) %>
@@ -198,28 +199,36 @@
     </div>
   </div>
 
-  <div class="modal-overlay" id="joinModal">
+  <%# Única vía del alumno para pedir el alta: junta DNI y nombre completo y los manda como
+      una sugerencia común, que el superadmin ve en /superadmin/suggestions junto al resto.
+      No matricula ni toca la base más que creando esa sugerencia. %>
+  <div class="modal-overlay" id="requestModal">
     <div class="modal">
       <div class="modal-header">
         <div class="modal-header-left">
-          <span class="material-symbols-outlined modal-header-icon">group_add</span>
-          <h3>Unirse a clase</h3>
+          <span class="material-symbols-outlined modal-header-icon">outgoing_mail</span>
+          <h3>Enviar solicitud para unirme</h3>
         </div>
-        <button class="icon-btn" onclick="hideJoinModal()">
+        <button class="icon-btn" onclick="hideRequestModal()">
           <span class="material-symbols-outlined">close</span>
         </button>
       </div>
       <div class="modal-body">
-        <p class="modal-desc">Pide el código de la clase a tu profesor e ingrésalo aquí.</p>
-        <form id="joinForm">
+        <p class="modal-desc">Completá los datos del alumno. La solicitud le llega al administrador, que se encarga de matricularte.</p>
+        <form id="requestForm">
           <div class="input-group">
-            <span class="material-symbols-outlined input-icon">vpn_key</span>
-            <input type="text" id="classCode" placeholder="Código de la clase" required>
+            <span class="material-symbols-outlined input-icon">badge</span>
+            <input type="text" id="requestDni" placeholder="DNI del alumno" inputmode="numeric" autocomplete="off" required>
           </div>
-          <div class="form-error" id="joinError"></div>
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">person</span>
+            <input type="text" id="requestName" placeholder="Nombre completo del alumno" autocomplete="off" required>
+          </div>
+          <div class="form-error" id="requestError"></div>
+          <div class="form-success" id="requestOk"></div>
           <button type="submit" class="btn btn-primary btn-full">
-            <span class="material-symbols-outlined">arrow_forward</span>
-            Unirse
+            <span class="material-symbols-outlined">send</span>
+            Enviar solicitud
           </button>
         </form>
       </div>

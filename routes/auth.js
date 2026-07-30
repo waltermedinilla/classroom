@@ -2,6 +2,8 @@ const express = require('express');
 const jwt    = require('jsonwebtoken');
 const User   = require('../models/User');
 const School = require('../models/School');
+// DNI obligatorio en toda alta desde 2026-07-30 (ver services/dni.js).
+const { normalizeDni } = require('../services/dni');
 
 const router = express.Router();
 
@@ -36,14 +38,22 @@ router.get('/register', (req, res) => {
 });
 
 // POST /register — crea un nuevo usuario y abre sesión inmediatamente
-// Body: { name, email, password, role }
+// Body: { name, email, password, role, dni }
 // Retorna: { user } con 201, o error 400 si email duplicado / validación falla
 router.post('/register', async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
-    const allowedRoles = ['student', 'teacher', 'preceptor', 'soe', 'directivo'];
+    const { name, email, password, role, dni } = req.body;
+    // DNI obligatorio también acá: la regla es que nadie entra al sistema sin DNI, sin
+    // importar por qué puerta (ver services/dni.js).
+    const { value: dniValue, error: dniError } = normalizeDni(dni);
+    if (dniError) return res.status(400).json({ error: dniError });
+    // 'preceptor' NO está en la lista: desde que el rol administra alumnos (alta, edición
+    // de datos, baja de cuentas) dejó de ser un rol que uno pueda auto-asignarse, igual
+    // que 'admin'. Lo crea un administrador desde /admin/users/create, que es donde además
+    // se le define qué cursos tiene a cargo.
+    const allowedRoles = ['student', 'teacher', 'soe', 'directivo'];
     const userRole = allowedRoles.includes(role) ? role : 'student';
-    const user = await User.create({ name, email, password, role: userRole });
+    const user = await User.create({ name, email, password, role: userRole, dni: dniValue });
 
     const token = createToken(user._id);
     res.cookie('token', token, cookieOpts);
@@ -100,7 +110,9 @@ router.get('/register/invite/:token', async (req, res) => {
   if (res.locals.user) return res.redirect('/');
   try {
     const school = await School.findOne({ inviteToken: req.params.token });
-    const roles = User.getRoles().filter(r => !['superadmin', 'admin'].includes(r));
+    // Misma lista que valida el POST de abajo: 'preceptor' quedó fuera al pasar a ser un
+    // rol con permisos de administración sobre alumnos.
+    const roles = User.getRoles().filter(r => !['superadmin', 'admin', 'preceptor'].includes(r));
     // school=null indica enlace inválido; la vista maneja ambos casos
     res.render('invite-register', { school: school || null, token: req.params.token, roles });
   } catch (err) {
@@ -109,19 +121,35 @@ router.get('/register/invite/:token', async (req, res) => {
 });
 
 // POST /register/invite/:token — crea el usuario y lo asocia a la escuela del enlace
-// Body: { name, email, password, role }
+// Body: { name, email, password, role, dni }
 // Retorna: { user } 201 o error 400
 router.post('/register/invite/:token', async (req, res) => {
   try {
     const school = await School.findOne({ inviteToken: req.params.token });
     if (!school) return res.status(400).json({ error: 'El enlace no es válido o fue revocado.' });
 
-    const { name, email, password, role } = req.body;
-    // Solo roles no privilegiados pueden auto-registrarse por invitación
-    const allowed = ['student', 'teacher', 'preceptor', 'soe', 'directivo'];
+    const { name, email, password, role, dni } = req.body;
+    // Solo roles no privilegiados pueden auto-registrarse por invitación.
+    // 'preceptor' salió de la lista: administra alumnos, así que lo crea un admin.
+    const allowed = ['student', 'teacher', 'soe', 'directivo'];
     const userRole = allowed.includes(role) ? role : 'student';
 
-    const user = await User.create({ name, email, password, role: userRole, school: school._id });
+    const { value: dniValue, error: dniError } = normalizeDni(dni);
+    if (dniError) return res.status(400).json({ error: dniError });
+
+    // El DNI es único por escuela ({school, dni}). Acá SÍ se conoce la escuela (la del
+    // enlace), así que se chequea antes para dar un mensaje claro en vez del 11000 crudo,
+    // que hablaría del correo aunque el choque real sea el documento.
+    const yaExiste = await User.findOne({ school: school._id, dni: dniValue }).select('name');
+    if (yaExiste) {
+      return res.status(409).json({
+        error: 'Ya existe una cuenta con ese DNI en esta escuela. Si es tuya, iniciá sesión o pedí que te restablezcan la contraseña.',
+      });
+    }
+
+    const user = await User.create({
+      name, email, password, role: userRole, school: school._id, dni: dniValue,
+    });
     const token = createToken(user._id);
     res.cookie('token', token, cookieOpts);
     res.status(201).json({ user });

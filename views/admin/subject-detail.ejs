@@ -67,7 +67,6 @@
                 <th>Docente</th>
                 <th>Alumnos</th>
                 <th>Escuela</th>
-                <th>Código</th>
               </tr>
             </thead>
             <tbody>
@@ -88,11 +87,6 @@
                     <% } else { %>
                       <span class="badge-unmatriculated">(Sin Matricular)</span>
                     <% } %>
-                  </td>
-                  <td>
-                    <code style="background:#f0f4f8;padding:3px 10px;border-radius:var(--radius-xs);font-size:13px;letter-spacing:1px">
-                      <%= c.code %>
-                    </code>
                   </td>
                 </tr>
               <% }) %>

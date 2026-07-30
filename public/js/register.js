@@ -13,6 +13,7 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name: document.getElementById('name').value,
+      dni: document.getElementById('dni').value,
       email: document.getElementById('email').value,
       password: document.getElementById('password').value,
       role: document.getElementById('role').value,

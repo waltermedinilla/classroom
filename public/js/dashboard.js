@@ -29,22 +29,34 @@ function hideCreateModal() {
   document.getElementById('createError').classList.remove('show');
 }
 
-function showJoinModal() {
-  document.getElementById('joinModal').classList.add('show');
+// El modal "Unirse a clase" (código de 6 caracteres) se eliminó junto con la ruta
+// POST /courses/join el 2026-07-30. Queda solo "Enviar solicitud para unirme", que manda
+// una sugerencia al superadmin en vez de matricular.
+//
+// Las guardas `if (!modal) return` y los `?.` de los listeners se mantienen: el modal de
+// solicitud no existe en el DOM para los docentes (ver dashboard.ejs), y sin la guarda el
+// TypeError se llevaba puesto también al modal de crear clase.
+function showRequestModal() {
+  const modal = document.getElementById('requestModal');
+  if (!modal) return;
+  modal.classList.add('show');
   document.body.style.overflow = 'hidden';
 }
 
-function hideJoinModal() {
-  document.getElementById('joinModal').classList.remove('show');
+function hideRequestModal() {
+  const modal = document.getElementById('requestModal');
+  if (!modal) return;
+  modal.classList.remove('show');
   document.body.style.overflow = '';
-  document.getElementById('joinForm').reset();
-  document.getElementById('joinError').classList.remove('show');
+  document.getElementById('requestForm').reset();
+  document.getElementById('requestError').classList.remove('show');
+  document.getElementById('requestOk').classList.remove('show');
 }
 
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
     hideCreateModal();
-    hideJoinModal();
+    hideRequestModal();
   }
 });
 
@@ -79,46 +91,69 @@ document.getElementById('createForm').addEventListener('submit', async (e) => {
   window.location.href = '/courses/' + data.course._id;
 });
 
-document.getElementById('joinForm').addEventListener('submit', async (e) => {
+document.getElementById('createModal').addEventListener('click', function(e) {
+  if (e.target === this) hideCreateModal();
+});
+document.getElementById('requestModal')?.addEventListener('click', function(e) {
+  if (e.target === this) hideRequestModal();
+});
+
+// Solicitud para unirse a una materia. No matricula: arma un texto con DNI + nombre y lo
+// manda a POST /suggestions, el mismo endpoint que el botón de sugerencias del footer, así
+// aparece en /superadmin/suggestions junto a todo lo demás y sin tocar el modelo.
+document.getElementById('requestForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const errorEl = document.getElementById('joinError');
+  const errorEl = document.getElementById('requestError');
+  const okEl    = document.getElementById('requestOk');
+  const btn     = e.target.querySelector('button[type="submit"]');
   errorEl.classList.remove('show');
-  const btn = e.target.querySelector('button[type="submit"]');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Uniendo...';
+  okEl.classList.remove('show');
 
-  const res = await fetch('/courses/join', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code: document.getElementById('classCode').value }),
-  });
+  // El DNI se normaliza a dígitos igual que en /register/lookup, para que el superadmin
+  // reciba siempre el mismo formato y pueda buscarlo tal cual en el panel de usuarios.
+  const dni  = document.getElementById('requestDni').value.replace(/\D/g, '');
+  const name = document.getElementById('requestName').value.trim();
 
-  const data = await res.json();
-  btn.disabled = false;
-  btn.innerHTML = '<span class="material-symbols-outlined">arrow_forward</span> Unirse';
-
-  if (!res.ok) {
-    errorEl.textContent = data.error;
+  if (dni.length < 6) {
+    errorEl.textContent = 'Ingresá un DNI válido (mínimo 6 dígitos)';
+    errorEl.classList.add('show');
+    return;
+  }
+  if (!name) {
+    errorEl.textContent = 'Ingresá el nombre completo del alumno';
     errorEl.classList.add('show');
     return;
   }
 
-  window.location.href = '/courses/' + data.course._id;
-});
+  btn.disabled = true;
+  btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Enviando...';
 
-document.getElementById('createModal').addEventListener('click', function(e) {
-  if (e.target === this) hideCreateModal();
-});
-document.getElementById('joinModal').addEventListener('click', function(e) {
-  if (e.target === this) hideJoinModal();
-});
+  try {
+    const res = await fetch('/suggestions', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        text: 'Solicitud para unirse a una materia\nDNI del alumno: ' + dni + '\nNombre completo: ' + name,
+      }),
+    });
+    const data = await res.json();
 
-function copyCode(code) {
-  navigator.clipboard.writeText(code).then(() => {
-    const toast = document.createElement('div');
-    toast.className = 'card-copied-toast';
-    toast.textContent = 'Código copiado: ' + code;
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 2200);
-  });
-}
+    if (!res.ok) {
+      errorEl.textContent = data.error || 'No se pudo enviar la solicitud';
+      errorEl.classList.add('show');
+      return;
+    }
+
+    okEl.textContent = '¡Solicitud enviada! El administrador la va a revisar.';
+    okEl.classList.add('show');
+    document.getElementById('requestDni').value  = '';
+    document.getElementById('requestName').value = '';
+    setTimeout(hideRequestModal, 2000);
+  } catch {
+    errorEl.textContent = 'Error de conexión. Intentá de nuevo.';
+    errorEl.classList.add('show');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<span class="material-symbols-outlined">send</span> Enviar solicitud';
+  }
+});

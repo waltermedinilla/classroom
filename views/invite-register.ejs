@@ -72,6 +72,10 @@
             <input type="text" id="name" placeholder="Nombre completo" required autocomplete="name">
           </div>
           <div class="input-group">
+            <span class="material-symbols-outlined input-icon">fingerprint</span>
+            <input type="text" id="dni" placeholder="DNI" inputmode="numeric" required autocomplete="off">
+          </div>
+          <div class="input-group">
             <span class="material-symbols-outlined input-icon">email</span>
             <input type="email" id="email" placeholder="Correo electrónico" required autocomplete="email">
           </div>
@@ -123,6 +127,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name:     document.getElementById('name').value.trim(),
+          dni:      document.getElementById('dni').value.trim(),
           email:    document.getElementById('email').value.trim(),
           password: document.getElementById('password').value,
           role:     document.getElementById('role').value,

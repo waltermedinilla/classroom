@@ -115,6 +115,14 @@ router.get('/divisions', requireAuth, async (req, res) => {
 router.post('/create', requireAuth, async (req, res) => {
   try {
     const { name, divisionId, room } = req.body;
+    // El preceptor no dicta materias: su rol es administrar los cursos a cargo desde
+    // /preceptor. Sin este chequeo podría crear una materia y quedar como owner, lo que
+    // por isTeacher() le habilitaría calificar y gestionar alumnos de esa materia.
+    // NOTA: esta ruta no valida el rol para el resto de los usuarios — un alumno logueado
+    // puede hacer el mismo POST. Es un agujero preexistente, pendiente de arreglo aparte.
+    if (res.locals.user?.role === 'preceptor') {
+      return res.status(403).json({ error: 'Tu rol no puede crear materias' });
+    }
     const school = res.locals.user?.school;
     if (!school) {
       return res.status(400).json({ error: 'Tu cuenta no está asignada a ninguna escuela' });
@@ -135,7 +143,7 @@ router.post('/create', requireAuth, async (req, res) => {
         { type: 'course',   id: course._id,   name: course.name },
         { type: 'division', id: division._id, name: division.name },
       ],
-      { codigo: course.code, ...(course.room ? { aula: course.room } : {}) },
+      { ...(course.room ? { aula: course.room } : {}) },
     );
 
     res.status(201).json({ course });
@@ -148,38 +156,17 @@ router.post('/create', requireAuth, async (req, res) => {
   }
 });
 
-// POST /courses/join — El alumno se une con un código de 6 caracteres
-router.post('/join', requireAuth, async (req, res) => {
-  try {
-    const { code } = req.body;
-    const course = await Course.findOne({ code: code.toUpperCase() });
-    if (!course) {
-      return res.status(404).json({ error: 'No se encontró un curso con ese código' });
-    }
-    if (course.isTeacher(req.userId)) {
-      return res.status(400).json({ error: 'No puedes unirte a tu propio curso' });
-    }
-    if (course.students.includes(req.userId)) {
-      return res.status(400).json({ error: 'Ya estás en este curso' });
-    }
-    const userSchool   = res.locals.user?.school?.toString();
-    const courseSchool = course.school?.toString();
-    if (userSchool && courseSchool && userSchool !== courseSchool) {
-      return res.status(403).json({ error: 'Este curso no pertenece a tu institución' });
-    }
-    course.students.push(req.userId);
-    await course.save();
-
-    logAudit(req, 'course.join',
-      [{ type: 'course', id: course._id, name: course.name }],
-      { codigo: course.code },
-    );
-
-    res.json({ course });
-  } catch (err) {
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-});
+// La matriculación por código de clase fue ELIMINADA (pedido del usuario, 2026-07-30).
+// Estuvo deshabilitada por el flag JOIN_BY_CODE_ENABLED desde el 2026-07-29 y ahora se
+// quitó del todo: ya no existe `POST /courses/join` ni el flag.
+//
+// Los alumnos se matriculan por las vías administrativas, que son las que dejan registro
+// de quién los inscribió: el alta con Curso desde /admin/users/create o desde el panel de
+// preceptoría (ambas usan services/enrollment.js), y `POST /courses/:id/add-student` para
+// sumar a alguien a una materia suelta. El botón "Enviar solicitud para unirme" del
+// dashboard sigue existiendo: manda una sugerencia al superadmin, no matricula.
+//
+// El campo `Course.code` sigue en el modelo pero ya no se usa ni se muestra en ningún lado.
 
 // Limpia un celular: conserva dígitos, +, espacios, guiones y paréntesis; exige 7-20 caracteres.
 function sanitizePhone(raw) {

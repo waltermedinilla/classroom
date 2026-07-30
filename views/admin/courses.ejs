@@ -63,7 +63,6 @@
               <th>Curso / División</th>
               <th>Docente</th>
               <th>Alumnos</th>
-              <th>Código</th>
               <th>Acciones</th>
             </tr>
           </thead>
@@ -93,7 +92,6 @@
                 </div>
               </td>
               <td><%= c.students.length %></td>
-              <td><code style="background:#f0f4f8;padding:2px 8px;border-radius:4px;font-size:12px;letter-spacing:1px"><%= c.code %></code></td>
               <td>
                 <div style="display:flex;gap:6px">
                   <a href="/admin/courses/<%= c._id %>/edit" class="btn btn-outline" style="padding:4px 10px;font-size:12px">

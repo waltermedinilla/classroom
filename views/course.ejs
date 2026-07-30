@@ -31,12 +31,6 @@
         <% if (_courseSubtitle) { %>
           <p class="course-section"><%= _courseSubtitle %></p>
         <% } %>
-        <div class="course-meta">
-          <div class="course-code-badge">
-            <span class="material-symbols-outlined">vpn_key</span>
-            <span><%= course.code %></span>
-          </div>
-        </div>
       </div>
       <div class="course-owner">
         <div class="avatar" style="width:48px;height:48px;font-size:22px;background:rgba(255,255,255,0.3)"><%= featuredTeacher.name.charAt(0).toUpperCase() %></div>
@@ -82,20 +76,8 @@
 
         <!-- Sidebar izquierda -->
         <aside class="stream-aside">
-          <div class="stream-aside-card">
-            <div class="stream-code-header">
-              <span class="stream-code-label">Código de clase</span>
-              <button class="icon-btn" onclick="navigator.clipboard.writeText('<%= course.code %>')" title="Copiar código">
-                <span class="material-symbols-outlined">more_vert</span>
-              </button>
-            </div>
-            <div class="stream-code-value">
-              <span><%= course.code %></span>
-              <button class="icon-btn" onclick="navigator.clipboard.writeText('<%= course.code %>')" title="Copiar">
-                <span class="material-symbols-outlined" style="font-size:18px!important">open_in_full</span>
-              </button>
-            </div>
-          </div>
+          <%# La tarjeta "Código de clase" se eliminó junto con la matriculación por código
+              (2026-07-30). Los alumnos los matricula un admin o un preceptor. %>
           <div class="stream-aside-card">
             <div class="stream-upcoming-title">Próximas entregas</div>
             <div id="upcomingList">
@@ -315,7 +297,6 @@
               <option value="tarea">Tarea</option>
               <option value="evaluacion">Evaluación</option>
               <option value="tp">Trabajo Práctico</option>
-              <option value="examen">Examen</option>
             </select>
           </div>
         </div>
@@ -408,7 +389,6 @@
               <option value="tarea">Tarea</option>
               <option value="evaluacion">Evaluación</option>
               <option value="tp">Trabajo Práctico</option>
-              <option value="examen">Examen</option>
             </select>
           </div>
         </div>
