@@ -42,5 +42,11 @@
     <span class="material-symbols-outlined">backup</span>
     Backup
   </a>
+  <%# "Otros" queda bajo la misma restricción que Backup: sus arreglos escriben en masa
+      sobre la base y no se deshacen (ver routes/dbFixes.js). %>
+  <a href="/superadmin/otros" class="admin-nav-item <%= activePage === 'otros' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">healing</span>
+    Otros
+  </a>
   <% } %>
 </nav>

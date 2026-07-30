@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Otros - Superadmin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .fix-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px; margin-bottom: 16px;
+      border-left: 4px solid var(--border);
+    }
+    .fix-card.sev-alta  { border-left-color: #ea4335; }
+    .fix-card.sev-media { border-left-color: #ea8600; }
+    .fix-card.sev-baja  { border-left-color: #1a73e8; }
+    .fix-card.limpio    { border-left-color: #34a853; opacity: .72; }
+    .fix-head { display: flex; align-items: flex-start; gap: 12px; }
+    .fix-icon {
+      width: 40px; height: 40px; border-radius: 10px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--background); color: var(--text-secondary);
+    }
+    .fix-title { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+    .fix-desc  { font-size: 13px; color: var(--text-secondary); line-height: 1.55; margin: 0; }
+    .fix-count {
+      margin-left: auto; text-align: right; flex-shrink: 0; padding-left: 12px;
+    }
+    .fix-count-num { font-size: 30px; font-weight: 700; line-height: 1; }
+    .fix-count-lbl { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .4px; }
+    .fix-nota {
+      font-size: 12px; background: var(--background); border-radius: 8px;
+      padding: 10px 12px; margin-top: 12px; color: var(--text-secondary); line-height: 1.5;
+    }
+    .fix-actions { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+    .fix-preview {
+      margin-top: 12px; border: 1px solid var(--border); border-radius: 8px;
+      max-height: 280px; overflow-y: auto; display: none;
+    }
+    .fix-preview table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    .fix-preview td { padding: 7px 12px; border-bottom: 1px solid var(--border); }
+    .fix-preview tr:last-child td { border-bottom: none; }
+    .fix-preview .col-sec { color: var(--text-hint); font-size: 11.5px; }
+    .fix-preview .col-extra { color: var(--text-secondary); text-align: right; white-space: nowrap; }
+    .solo-diag {
+      display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700;
+      background: #e8f0fe; color: #1a73e8; padding: 3px 10px; border-radius: 10px;
+    }
+    .fix-result { font-size: 13px; margin-top: 12px; padding: 10px 14px; border-radius: 8px; display: none; }
+    .fix-result.ok    { background: #e6f4ea; color: #137333; }
+    .fix-result.error { background: #fce8e6; color: #c5221f; }
+    .fix-param { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+    .fix-param select { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-primary); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/superadmin-nav', { activePage: 'otros' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Sanar la base de datos</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          <% if (pendientes === 0) { %>
+            No se detectaron problemas de integridad.
+          <% } else { %>
+            <%= pendientes %> problema<%= pendientes !== 1 ? 's' : '' %> detectado<%= pendientes !== 1 ? 's' : '' %>.
+            Revisá el detalle antes de aplicar: estos cambios escriben directo en la base y no se deshacen.
+          <% } %>
+        </p>
+      </div>
+    </div>
+
+    <% fixes.forEach(fix => { %>
+      <div class="fix-card <%= fix.error ? '' : (fix.total === 0 ? 'limpio' : 'sev-' + fix.severidad) %>" data-fix="<%= fix.id %>">
+        <div class="fix-head">
+          <div class="fix-icon">
+            <span class="material-symbols-outlined"><%= fix.icono %></span>
+          </div>
+          <div style="flex:1;min-width:0">
+            <h3 class="fix-title">
+              <%= fix.titulo %>
+              <% if (!fix.aplicable) { %>
+                <span class="solo-diag" title="No hay una regla automática que lo resuelva sin inventar datos">
+                  <span class="material-symbols-outlined" style="font-size:13px">visibility</span>
+                  Solo diagnóstico
+                </span>
+              <% } %>
+            </h3>
+            <p class="fix-desc"><%= fix.descripcion %></p>
+          </div>
+          <div class="fix-count">
+            <% if (fix.error) { %>
+              <div class="fix-count-num" style="color:#ea4335;font-size:20px">error</div>
+            <% } else { %>
+              <div class="fix-count-num" data-total style="color:<%= fix.total === 0 ? '#34a853' : fix.severidad === 'alta' ? '#ea4335' : '#ea8600' %>">
+                <%= fix.total %>
+              </div>
+              <div class="fix-count-lbl">afectados</div>
+            <% } %>
+          </div>
+        </div>
+
+        <% if (fix.error) { %>
+          <div class="fix-nota" style="color:#c5221f">No se pudo diagnosticar: <%= fix.error %></div>
+        <% } else { %>
+          <% if (fix.nota) { %>
+            <div class="fix-nota" data-nota><%= fix.nota %></div>
+          <% } else { %>
+            <div class="fix-nota" data-nota style="display:none"></div>
+          <% } %>
+
+          <div class="fix-preview" data-preview>
+            <table>
+              <tbody data-preview-body>
+                <% fix.muestra.forEach(m => { %>
+                  <tr>
+                    <td>
+                      <div><%= m.principal %></div>
+                      <% if (m.secundario) { %><div class="col-sec"><%= m.secundario %></div><% } %>
+                    </td>
+                    <td class="col-extra"><%= m.extra || '' %></td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="fix-actions">
+            <% if (fix.total > 0) { %>
+              <button class="btn btn-outline" data-toggle-preview style="font-size:13px;padding:7px 16px">
+                <span class="material-symbols-outlined">visibility</span>
+                Ver a quiénes afecta
+              </button>
+
+              <% fix.parametros.forEach(p => { %>
+                <div class="fix-param">
+                  <label for="param-<%= fix.id %>-<%= p.name %>"><%= p.label %>:</label>
+                  <select id="param-<%= fix.id %>-<%= p.name %>" data-param="<%= p.name %>">
+                    <% p.opciones.forEach(o => { %>
+                      <option value="<%= o.value %>"><%= o.label %></option>
+                    <% }) %>
+                  </select>
+                </div>
+              <% }) %>
+
+              <% if (fix.aplicable) { %>
+                <button class="btn btn-primary" data-aplicar style="font-size:13px;padding:7px 18px">
+                  <span class="material-symbols-outlined">healing</span>
+                  Aplicar arreglo
+                </button>
+              <% } %>
+            <% } else { %>
+              <span style="font-size:13px;color:#137333;display:flex;align-items:center;gap:6px">
+                <span class="material-symbols-outlined" style="font-size:18px">check_circle</span>
+                Sin casos pendientes
+              </span>
+            <% } %>
+          </div>
+
+          <div class="fix-result" data-result></div>
+        <% } %>
+      </div>
+    <% }) %>
+  </main>
+
+  <%- include('../partials/footer') %>
+  <script>
+    document.querySelectorAll('.fix-card').forEach(card => {
+      const id      = card.dataset.fix;
+      const preview = card.querySelector('[data-preview]');
+      const result  = card.querySelector('[data-result]');
+
+      card.querySelector('[data-toggle-preview]')?.addEventListener('click', (e) => {
+        const abierto = preview.style.display === 'block';
+        preview.style.display = abierto ? 'none' : 'block';
+        e.currentTarget.querySelector('.material-symbols-outlined').textContent =
+          abierto ? 'visibility' : 'visibility_off';
+      });
+
+      card.querySelector('[data-aplicar]')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Aplicando...';
+        result.style.display = 'none';
+
+        // Los <select> de parámetros del arreglo (por ejemplo, a qué escuela asignar)
+        const body = {};
+        card.querySelectorAll('[data-param]').forEach(sel => { body[sel.dataset.param] = sel.value; });
+
+        try {
+          const res  = await fetch('/superadmin/otros/' + id + '/aplicar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          const data = await res.json();
+
+          if (!res.ok) {
+            result.className = 'fix-result error';
+            result.textContent = data.error || 'No se pudo aplicar.';
+            result.style.display = 'block';
+            btn.disabled = false;
+            btn.innerHTML = '<span class="material-symbols-outlined">healing</span> Aplicar arreglo';
+            return;
+          }
+
+          result.className = 'fix-result ok';
+          result.textContent = data.mensaje + (data.restantes > 0
+            ? ` Quedan ${data.restantes} caso(s) que este arreglo no cubre.`
+            : '');
+          result.style.display = 'block';
+
+          // El contador se refresca con el diagnóstico posterior al arreglo, para que se
+          // vea el efecto sin recargar. Si quedó en cero, la tarjeta pasa a "limpio".
+          card.querySelector('[data-total]').textContent = data.restantes;
+          if (data.restantes === 0) {
+            card.className = 'fix-card limpio';
+            card.querySelector('[data-total]').style.color = '#34a853';
+            preview.style.display = 'none';
+            btn.remove();
+            card.querySelector('[data-toggle-preview]')?.remove();
+            card.querySelectorAll('.fix-param').forEach(p => p.remove());
+          } else {
+            btn.disabled = false;
+            btn.innerHTML = '<span class="material-symbols-outlined">healing</span> Aplicar arreglo';
+          }
+        } catch (err) {
+          result.className = 'fix-result error';
+          result.textContent = 'Error de red: ' + err.message;
+          result.style.display = 'block';
+          btn.disabled = false;
+          btn.innerHTML = '<span class="material-symbols-outlined">healing</span> Aplicar arreglo';
+        }
+      });
+    });
+  </script>
+</body>
+</html>
