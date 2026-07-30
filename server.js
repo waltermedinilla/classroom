@@ -204,9 +204,46 @@ app.post('/deploy', express.raw({ type: 'application/json' }), (req, res) => {
     '/usr/local/bin/pm2 reload classroom --update-env || { echo "ERROR deploy: pm2 reload fallo"; exit 1; }',
     'sleep 5', // dale tiempo a los workers a levantar antes de consultarlos
     `DISK=$(node -p "require('${APP_DIR}/package.json').version")`,
-    `MEM=$(curl -sS http://localhost:${PORT}/health | node -p "JSON.parse(require('fs').readFileSync(0)).version")`,
-    'if [ "$DISK" = "$MEM" ]; then echo "OK deploy verificado: v$MEM"; ' +
-      'else echo "ERROR deploy NO recargo: disco=v$DISK memoria=v$MEM"; exit 1; fi',
+
+    // Verificación de TODOS los workers, no de uno.
+    //
+    // Antes esto hacía UN solo `curl /health`. En cluster ese request cae en un worker
+    // cualquiera: si caía en el que sí había recargado, DISK y MEM coincidían y el deploy
+    // escribía "OK deploy verificado" aunque el otro siguiera con el código viejo. Pasó el
+    // 2026-07-30 (v1.0.15): un worker quedó 22 h con la versión anterior y el log dio OK.
+    // La red de seguridad no podía detectar el fallo que existía para detectar.
+    //
+    // 20 requests alcanzan para tocar los 2 workers del cluster con margen holgado
+    // (PM2 reparte round-robin). Se juntan las versiones DISTINTAS que se vieron: si hay
+    // más de una, o la única no es la del disco, el reload quedó a medias.
+    // El `echo "$V"` es imprescindible y no es redundante: /health responde el JSON SIN
+    // salto de línea final, y sed no agrega uno propio en ese caso. Encadenando 20
+    // respuestas directo al pipe salía UNA sola línea "1.0.151.0.15…" que `sort -u` no
+    // podía deduplicar, y la comparación fallaba SIEMPRE — incluso con los workers al día.
+    'ver_versiones() { for i in $(seq 1 20); do ' +
+      `V=$(curl -sS --max-time 5 http://localhost:${PORT}/health 2>/dev/null ` +
+      '| sed -n \'s/.*"version":"\\([^"]*\\)".*/\\1/p\'); ' +
+      '[ -n "$V" ] && echo "$V"; done | sort -u; }',
+    'VISTAS=$(ver_versiones)',
+    'CUANTAS=$(echo "$VISTAS" | grep -c .)',
+
+    // Recuperación automática: `reload` levanta de a uno y a veces no completa el segundo.
+    // `restart` es más contundente (los baja a todos y los sube), así que sirve de segundo
+    // intento. Antes esto exigía intervención manual y producción quedaba a medias sin
+    // que nadie se enterara.
+    'if [ "$CUANTAS" != "1" ] || [ "$VISTAS" != "$DISK" ]; then',
+    '  echo "AVISO deploy: reload quedo a medias (disco=v$DISK, en memoria: $(echo $VISTAS)). Reintentando con restart..."',
+    '  /usr/local/bin/pm2 restart classroom --update-env || { echo "ERROR deploy: pm2 restart fallo"; exit 1; }',
+    '  sleep 6',
+    '  VISTAS=$(ver_versiones)',
+    '  CUANTAS=$(echo "$VISTAS" | grep -c .)',
+    'fi',
+
+    'if [ "$CUANTAS" = "1" ] && [ "$VISTAS" = "$DISK" ]; then',
+    '  echo "OK deploy verificado en todos los workers: v$DISK"',
+    'else',
+    '  echo "ERROR deploy NO recargo: disco=v$DISK, en memoria: $(echo $VISTAS)"; exit 1',
+    'fi',
   ].join('\n');
 
   const child = spawn('sh', ['-c', `{ date; ${deployCmd}; } >> ${DEPLOY_LOG} 2>&1`], {
