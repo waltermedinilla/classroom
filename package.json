@@ -17,6 +17,8 @@
     "test:images": "node --test tests/images/*.test.js",
     "optimize:images": "node optimize-existing-images.js",
     "optimize:images:dry": "node optimize-existing-images.js --dry-run",
+    "migrate:examen": "node migrate-examen-to-evaluacion.js",
+    "migrate:examen:dry": "node migrate-examen-to-evaluacion.js --dry-run",
     "prepare": "husky || true"
   },
   "dependencies": {

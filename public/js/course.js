@@ -12,7 +12,6 @@ const TYPE_CONFIG = {
   tarea:      { label: 'Tarea',            icon: 'assignment', color: null },
   evaluacion: { label: 'Evaluación',       icon: 'quiz',       color: '#f9ab00' },
   tp:         { label: 'Trabajo Práctico', icon: 'science',    color: '#0f9d58' },
-  examen:     { label: 'Examen',           icon: 'school',     color: '#e53935' },
 };
 
 // Devuelve la config del tipo de actividad (fallback a 'tarea' si el valor es desconocido)
@@ -1140,7 +1139,7 @@ async function loadActivitiesTab() {
 }
 
 // Filtra las tarjetas de actividades en tiempo real según el texto ingresado
-// Busca en título y en el label de tipo (ej: "Examen", "Trabajo Práctico")
+// Busca en título y en el label de tipo (ej: "Evaluación", "Trabajo Práctico")
 // Muestra un mensaje si ninguna tarjeta coincide con la búsqueda
 function filterActivities(query) {
   const q      = query.trim().toLowerCase();

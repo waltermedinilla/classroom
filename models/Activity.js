@@ -50,8 +50,15 @@ const activitySchema = new mongoose.Schema({
   grades:  [gradeSchema],
   // Array de adjuntos del docente (archivos + links)
   attachments: [attachmentSchema],
-  // Clasificación de la actividad; afecta el ícono y color de la tarjeta
-  type: { type: String, enum: ['tarea', 'evaluacion', 'tp', 'examen'], default: 'tarea' },
+  // Clasificación de la actividad; afecta el ícono y color de la tarjeta.
+  //
+  // 'examen' se retiró el 2026-07-29: era indistinguible de 'evaluacion' para el docente y
+  // no lo había usado nadie (0 registros en producción, verificado antes del cambio). Los
+  // tipos quedan en tres HASTA NUEVO AVISO. Si alguna vez quedara un documento histórico con
+  // type:'examen', se LEE sin problema (Mongoose no valida en lectura) pero cualquier
+  // activity.save() falla con ValidationError — y eso rompe calificar, editar y recibir
+  // entregas. Para eso está migrate-examen-to-evaluacion.js.
+  type: { type: String, enum: ['tarea', 'evaluacion', 'tp'], default: 'tarea' },
   // Flag que habilita entregas fuera de término (lo activa/desactiva el docente con toggle-late)
   allowLateSubmissions: { type: Boolean, default: false },
   // Flag que permite al alumno editar/reenviar su entrega después de la primera vez
