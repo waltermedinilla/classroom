@@ -308,6 +308,17 @@ Es el mismo Frankenstein del 2026-07-28 (archivos nuevos en disco + código viej
 
 **Causa 3 (operativa) — `pm2` corrido como `root`.** PM2 mantiene un daemon **por usuario**. Los workers son de `walter`, así que `pm2 list` como root devuelve la tabla vacía y cualquier `pm2 restart` como root no toca la app real. Siempre `sudo -u walter -H /usr/local/bin/pm2 …`.
 
+**Causa 4 — `package-lock.json` sucio abortaba el `git pull`.** Apareció al pushear la v1.0.9: el webhook disparó bien y trajo los commits, pero el pull murió con
+
+```
+error: Los cambios locales de los siguientes archivos serán sobrescritos al fusionar:
+        package-lock.json
+```
+
+`npm install` **reescribe** ese archivo, así que basta un install manual en el server para dejarlo modificado; a partir de ahí git se niega a fusionar y **el deploy entero muere antes del reload**, con producción quedándose dos versiones atrás. Fix: el deploy ahora hace `git checkout -- package-lock.json` antes del pull. Es un archivo generado — la versión válida es siempre la del repo.
+
+**Diagnóstico honesto**: la primera hipótesis fue que `.git/` tenía archivos con dueño root (por un `git pull` corrido como root). Era falsa — `find /home/walter/classroom -user root` volvió vacío. Lo que resolvió el caso fue `logs/deploy.log`, que tenía el error textual. **Mirar ese log primero, antes de teorizar.**
+
 **Cada paso reporta su propio error.** Antes todo iba unido con `&&`; con esa forma, el fallo de un paso disparaba el mensaje de error del *siguiente* y `deploy.log` mentía sobre la causa. Ahora cada paso lleva su `|| { echo "ERROR deploy: <paso> fallo"; exit 1; }`.
 
 **⚠️ Prerequisito antes de pushear esto**: en el server hay carpetas dentro de `node_modules` con dueño `root` (resaca de un `npm install` corrido como root durante el diagnóstico). El nuevo paso de install falla con `EACCES` sobre ellas y —por diseño— **aborta el deploy antes del reload** para no dejar workers sin dependencias. Hay que correr **una vez**:

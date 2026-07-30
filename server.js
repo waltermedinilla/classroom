@@ -189,6 +189,13 @@ app.post('/deploy', express.raw({ type: 'application/json' }), (req, res) => {
   // el mensaje de error del siguiente y el log mentía sobre la causa.
   const deployCmd = [
     `cd ${APP_DIR} || { echo "ERROR deploy: no se pudo entrar a ${APP_DIR}"; exit 1; }`,
+    // package-lock.json es un archivo GENERADO, y `npm install` lo reescribe. Si quedó
+    // modificado en el server (basta un npm install manual), el `git pull` de acá aborta
+    // con "Los cambios locales serán sobrescritos al fusionar" y el deploy entero muere
+    // antes de recargar. Pasó el 2026-07-29 y dejó producción dos versiones atrasada.
+    // La versión válida siempre es la del repo, así que se descarta la local sin más.
+    // `|| true` porque si el archivo está limpio (el caso normal) igual queremos seguir.
+    'git checkout -- package-lock.json 2>/dev/null || true',
     'git pull || { echo "ERROR deploy: git pull fallo"; exit 1; }',
     'npm install --omit=dev --no-audit --no-fund || ' +
       '{ echo "ERROR deploy: npm install fallo, NO se recargan los workers para no dejarlos sin dependencias"; exit 1; }',
