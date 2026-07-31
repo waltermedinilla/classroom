@@ -246,7 +246,32 @@ app.post('/deploy', express.raw({ type: 'application/json' }), (req, res) => {
     'fi',
   ].join('\n');
 
-  const child = spawn('sh', ['-c', `{ date; ${deployCmd}; } >> ${DEPLOY_LOG} 2>&1`], {
+  // ⚠️ DOBLE FORK — `detached: true` SOLO NO ALCANZA, y esto costó tres deploys rotos.
+  //
+  // `detached` llama a setsid(): pone al hijo en su propio GRUPO DE PROCESOS, lo que lo
+  // protege de las señales dirigidas al grupo del worker. Pero NO cambia quién es su padre:
+  // el `sh` sigue colgando por PPID del worker que atendió este webhook. Cuando PM2 recarga
+  // ESE worker, se lleva puesto al script — y con él al proceso `pm2` que estaba pidiendo
+  // el reload, que muere antes de mandar el del segundo worker.
+  //
+  // Los dos deploys del 2026-07-31 lo dejaron por escrito en deploy.log, cada uno cortado
+  // justo en el reload de SU worker padre:
+  //   v1.0.16 → cortó después de "[classroom](0) ✓"  (colgaba del worker 1)
+  //   v1.0.17 → cortó antes de "(0) ✓"               (colgaba del worker 0)
+  // Resultado: un worker en cada versión, y la verificación de los 20 requests —que existe
+  // justamente para detectar esto— nunca llegó a correr, porque va DESPUÉS del reload.
+  //
+  // `( … ) &` es el doble fork clásico: el sh externo lanza la subshell en background y
+  // termina de inmediato, así el trabajo real queda huérfano y el kernel lo reparenta a
+  // init (PPID 1). A partir de ahí no está en el árbol de ningún worker y ningún reload
+  // puede alcanzarlo. `detached` se mantiene por las señales de grupo: son dos problemas
+  // distintos y hacen falta las dos cosas.
+  //
+  // Cómo saber si esto quedó bien: deploy.log tiene que terminar en
+  // "OK deploy verificado en todos los workers". Si vuelve a cortarse en el reload, el
+  // script sigue muriendo y el doble fork no surtió efecto.
+  const deployScript = `{ date; ${deployCmd}; } >> ${DEPLOY_LOG} 2>&1`;
+  const child = spawn('sh', ['-c', `( ${deployScript} ) &`], {
     detached: true,
     stdio:    'ignore',
   });
