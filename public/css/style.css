@@ -1268,6 +1268,18 @@ select, .select-input {
    líneas se leerían como dos cursos distintos. La tabla ya scrollea dentro de su tarjeta
    (ver .users-table-card), así que el nowrap no puede desbordar la página. */
 .td-curso { white-space: nowrap; font-size: 13.5px; }
+
+/* Vistas con tablas anchas que no entran en los 1100 px del contenedor normal — hoy el
+   listado de usuarios del superadmin, que suma 8 columnas más dos selects editables y
+   necesita 1207 px. Con el ancho de siempre la columna Acciones quedaba fuera de la
+   pantalla y no había forma de llegar al botón sin scrollear la tabla a ciegas.
+   El `100%` del min() la deja igual de contenida que antes en pantallas chicas: solo usa
+   el espacio que sobra cuando de verdad sobra. */
+.main-content-ancho { max-width: min(1400px, 100%); }
+/* Los dos selects se dimensionaban por su opción más larga ("Superadministrador",
+   "Escuela 4118 San José") y entre los dos se comían 300 px. Recortarlos no esconde nada:
+   el valor elegido se sigue leyendo, y el desplegable se abre a su ancho natural. */
+.users-table .select-input { max-width: 140px; }
 .cb-cell { width: 44px; padding: 14px 8px 14px 16px !important; }
 .row-cb, #selectAll { width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary); }
 .users-table tr.selected td { background: var(--primary-light); }

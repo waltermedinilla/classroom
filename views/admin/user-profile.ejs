@@ -12,9 +12,25 @@
   <%- include('../partials/header') %>
 
   <main class="main-content">
-    <%- include('../partials/admin-nav', { activePage: 'users' }) %>
+    <%
+      /* Esta pantalla la comparten el admin y el superadmin: `requireAdmin` acepta los dos
+         roles y desde el 2026-07-31 el listado de /superadmin/users enlaza acá.
 
-    <a href="/admin/users" class="btn btn-outline" style="margin-bottom:24px">
+         Sin este condicional, el superadmin entraba y salía con las solapas del panel de
+         ADMINISTRADOR, y el botón de volver lo dejaba en /admin/users: desde ahí ninguna
+         solapa vuelve a /superadmin, así que quedaba encerrado en el panel de admin y
+         parecía que había perdido el rol (reportado por el usuario). El rol nunca cambió
+         —no hay nada que lo escriba— pero la navegación decía otra cosa. */
+      const esSuper  = user.role === 'superadmin';
+      const volverA  = esSuper ? '/superadmin/users' : '/admin/users';
+    %>
+    <% if (esSuper) { %>
+      <%- include('../partials/superadmin-nav', { activePage: 'users' }) %>
+    <% } else { %>
+      <%- include('../partials/admin-nav', { activePage: 'users' }) %>
+    <% } %>
+
+    <a href="<%= volverA %>" class="btn btn-outline" style="margin-bottom:24px">
       <span class="material-symbols-outlined">arrow_back</span>
       Volver a usuarios
     </a>

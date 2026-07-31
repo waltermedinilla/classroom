@@ -11,7 +11,10 @@
 <body>
   <%- include('../partials/header') %>
 
-  <main class="main-content">
+  <%# Esta tabla tiene 8 columnas y dos selects editables: necesita 1207 px y el ancho útil
+      normal es 1036 (max-width 1100 menos el padding), así que la columna Acciones quedaba
+      fuera de la pantalla. Se le da más ancho SOLO a esta vista; ver .main-content-ancho. %>
+  <main class="main-content main-content-ancho">
     <%- include('../partials/superadmin-nav', { activePage: 'users' }) %>
 
     <div class="dashboard-topbar">
@@ -104,7 +107,11 @@
               <th>Usuario</th>
               <th>Email</th>
               <th>Rol</th>
-              <th>Escuela</th>
+              <%# La columna Escuela se quitó: mostraba exactamente lo mismo que el <select>
+                  de escuela de la columna Acciones, y era la celda más ancha de la tabla
+                  ("Escuela 4118 San José"). Con ella, el mínimo de la tabla era 1206 px y la
+                  columna Acciones quedaba fuera de pantalla. El Rol sí se conserva por
+                  duplicado: el badge de color se barre de un vistazo, un select no. %>
               <th title="Novedades publicadas · Actividades creadas · Mensajes escritos">Nov·Act·Msg</th>
               <th>Acciones</th>
             </tr>
@@ -126,16 +133,6 @@
                 <td class="td-email"><%= u.email %></td>
                 <td><span class="role-badge role-<%= u.role %>"><%= roleNames[u.role] || u.role %></span></td>
                 <td>
-                  <% if (u.school) { %>
-                    <span style="display:inline-flex;align-items:center;gap:6px;font-size:13px">
-                      <span style="width:10px;height:10px;border-radius:50%;background:<%= u.school.color %>;display:inline-block;flex-shrink:0"></span>
-                      <%= u.school.name %>
-                    </span>
-                  <% } else { %>
-                    <span style="color:var(--text-hint);font-size:13px">—</span>
-                  <% } %>
-                </td>
-                <td>
                   <%- include('../partials/user-activity-stats', { stats: activityStats.get(u._id.toString()) }) %>
                 </td>
                 <td>
@@ -151,6 +148,22 @@
                         <option value="<%= r %>" <%= u.role===r?'selected':'' %>><%= roleNames[r]||r %></option>
                       <% }) %>
                     </select>
+                    <%
+                      /* Apunta a /admin/users/:id y no a una vista propia del superadmin: esa
+                         pantalla ya existe y es la única que tiene "Ver como este usuario",
+                         deshabilitar cuenta y restablecer contraseña. requireAdmin acepta
+                         'superadmin', y su check de escuela es `school && ...` — con school:null
+                         no filtra, así que abre el perfil de cualquier escuela.
+
+                         Hasta ahora había que escribir la URL a mano o dar la vuelta por
+                         /admin/users, que sí tiene el botón en cada fila. */
+                    %>
+                    <a href="/admin/users/<%= u._id %>" class="btn btn-outline"
+                       style="padding:5px 12px;font-size:12px;white-space:nowrap"
+                       title="Abrir el perfil: ver como este usuario, deshabilitar, restablecer contraseña">
+                      <span class="material-symbols-outlined" style="font-size:16px">person</span>
+                      Ver perfil
+                    </a>
                   </div>
                 </td>
               </tr>

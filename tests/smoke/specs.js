@@ -1720,6 +1720,34 @@ const specs = [
     },
   },
   {
+    id: 'superadmin-users-link-to-profile',
+    title: 'El listado de usuarios del superadmin lleva al perfil, y ahí puede suplantar',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // El listado del superadmin solo tenía los selectores inline de rol y escuela: para
+      // llegar al perfil (única pantalla con "Ver como este usuario", deshabilitar cuenta y
+      // restablecer contraseña) había que dar la vuelta por /admin/users o escribir la URL.
+      const lista = await client.get('superadmin', '/superadmin/users', { expectStatus: 200 });
+      const ids = [...(lista.text || '').matchAll(/href="\/admin\/users\/([a-f0-9]{24})"/g)].map(m => m[1]);
+      assert(ids.length > 0, 'cada fila del listado del superadmin debería enlazar al perfil del usuario');
+
+      // Y el link tiene que ABRIR: /admin/users/:id corta por escuela con `school && ...`,
+      // que con el school:null del superadmin no filtra. Si eso cambiara, el botón daría 403.
+      const perfil = await client.get('superadmin', `/admin/users/${ids[0]}`, { expectStatus: 200 });
+      assert((perfil.text || '').includes('Ver como este usuario'),
+        'el perfil debería ofrecer la suplantación');
+
+      // El perfil es una vista del panel de admin que ahora comparten los dos roles. Si le
+      // pinta al superadmin las solapas de administrador, sale de ahí a /admin/users y queda
+      // encerrado: ninguna solapa de ese panel vuelve a /superadmin, y parece que perdió el
+      // rol. Por eso se verifica que la navegación sea la SUYA.
+      assert((perfil.text || '').includes('href="/superadmin/schools"'),
+        'el superadmin debería ver SUS solapas en el perfil, no las del panel de administrador');
+      assert((perfil.text || '').includes('href="/superadmin/users" class="btn btn-outline"'),
+        'el botón de volver debería devolverlo al listado del superadmin');
+    },
+  },
+  {
     id: 'superadmin-suggestions-paginated',
     title: 'El panel de sugerencias del superadmin pagina correctamente',
     requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
