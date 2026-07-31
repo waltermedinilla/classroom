@@ -26,11 +26,13 @@
 // alumno, cuál es el DNI de esta persona), el arreglo se queda en diagnóstico y deriva al
 // panel que corresponda. Inventar el dato es peor que no arreglarlo.
 
-const mongoose = require('mongoose');
-const User     = require('../models/User');
-const Course   = require('../models/Course');
-const School   = require('../models/School');
-const Division = require('../models/Division');
+const mongoose   = require('mongoose');
+const User       = require('../models/User');
+const Course     = require('../models/Course');
+const School     = require('../models/School');
+const Division   = require('../models/Division');
+const Activity   = require('../models/Activity');
+const Submission = require('../models/Submission');
 
 // Cuántas filas se mandan a la vista previa. El resto queda en el conteo.
 const MUESTRA_MAX = 50;
@@ -133,6 +135,148 @@ async function calcularMatriculaParcial() {
   }
 
   return { faltantes, porAlumno, esAlumno, enVariasDivisiones, divisionesPorAlumno };
+}
+
+// DNI normalizado para COMPARAR dos cuentas. El índice único { school, dni } del modelo
+// compara el string crudo, así que "12.345.678", "12345678" y "012345678" conviven en la
+// base sin que Mongo se queje — y son la misma persona. Devuelve '' si no queda ningún
+// dígito (DNI vacío, "-", "s/d"): esos no se comparan con nadie.
+//
+// NO es normalizeDni() de services/dni.js, a propósito: aquél valida un DNI que se está
+// cargando (rechaza los que no tienen entre 7 y 9 dígitos) y no saca los ceros a la
+// izquierda. Acá hay que comparar lo que YA está guardado, incluida la data vieja fuera de
+// rango — descartarla haría que un duplicado real pase desapercibido.
+function normalizarDni(dni) {
+  if (dni == null) return '';
+  return String(dni).replace(/\D/g, '').replace(/^0+/, '');
+}
+
+// Dos cuentas de alumno distintas con el mismo DNI dentro del mismo curso: siempre es la
+// misma persona cargada dos veces (alta manual + importación, o registro público sobre una
+// cuenta que ya existía). El docente la ve duplicada en la lista y en el gradebook, y las
+// entregas quedan repartidas entre las dos.
+//
+// "Curso" acá es la División (1°1°, 2°3°…), no la materia: el duplicado se busca entre
+// TODOS los alumnos de todas las materias de la división, porque una misma persona puede
+// estar con una cuenta en Matemática y con la otra en Historia del mismo curso.
+//
+// Lo comparten diagnosticar() y aplicar(), como en calcularMatriculaParcial().
+// Devuelve { grupos: [{ divisionId, dni, materias, conservar, sacar, ambigua }] }.
+async function calcularDniDuplicados() {
+  const cursos = await Course.find().select('_id name division students').lean();
+
+  // Solo alumnos: un docente que quedó dentro de students[] por un error viejo no es un
+  // duplicado de alumno, y sacarlo del curso no es lo que este arreglo tiene que hacer.
+  const idsEnCursos = [...new Set(cursos.flatMap(c => (c.students || []).map(String)))];
+  const alumnos = await User.find({ _id: { $in: idsEnCursos }, role: 'student' })
+    .select('_id name email dni active lastSeen createdAt').lean();
+  const porId = new Map(alumnos.map(a => [a._id.toString(), a]));
+
+  const porDivision = new Map();
+  for (const c of cursos) {
+    const k = c.division?.toString();
+    if (!k) continue; // materia sin división: no pertenece a ningún curso
+    if (!porDivision.has(k)) porDivision.set(k, []);
+    porDivision.get(k).push(c);
+  }
+
+  const crudos = [];
+  for (const [divisionId, materias] of porDivision) {
+    const porDni = new Map(); // dni normalizado → Map(studentId → user)
+    for (const mat of materias) {
+      for (const s of new Set((mat.students || []).map(String))) {
+        const u = porId.get(s);
+        if (!u) continue;
+        const dni = normalizarDni(u.dni);
+        if (!dni) continue; // sin DNI no hay con qué comparar (ver 'usuarios-sin-dni')
+        if (!porDni.has(dni)) porDni.set(dni, new Map());
+        porDni.get(dni).set(s, u);
+      }
+    }
+    for (const [dni, cuentas] of porDni) {
+      if (cuentas.size < 2) continue;
+      crudos.push({ divisionId, dni, materias, cuentas: [...cuentas.values()] });
+    }
+  }
+
+  if (!crudos.length) return { grupos: [] };
+
+  // Qué cuenta tiene trabajo hecho en el curso: es lo único que decide cuál se conserva.
+  // Se mide sobre las dos fuentes donde vive, porque una nota puede existir sin entrega
+  // (el docente califica en papel y la carga) y una entrega sin nota (todavía sin corregir).
+  const materiaIds = [...new Set(crudos.flatMap(g => g.materias.map(m => m._id.toString())))]
+    .map(id => new mongoose.Types.ObjectId(id));
+  const alumnoIds = [...new Set(crudos.flatMap(g => g.cuentas.map(u => u._id.toString())))];
+  const esCandidato = new Set(alumnoIds);
+
+  const actividades = await Activity.find({ course: { $in: materiaIds } })
+    .select('_id course grades.student').lean();
+  const cursoDeActividad = new Map(actividades.map(a => [a._id.toString(), a.course.toString()]));
+
+  const trabajo = new Map(); // `${studentId}|${courseId}` → cuántas señales de actividad
+  const sumar = (studentId, courseId) => {
+    const k = studentId + '|' + courseId;
+    trabajo.set(k, (trabajo.get(k) || 0) + 1);
+  };
+
+  for (const a of actividades) {
+    for (const g of (a.grades || [])) {
+      const s = g.student?.toString();
+      if (s && esCandidato.has(s)) sumar(s, a.course.toString());
+    }
+  }
+
+  const entregas = await Submission.find({
+    activity: { $in: actividades.map(a => a._id) },
+    student:  { $in: alumnoIds.map(id => new mongoose.Types.ObjectId(id)) },
+  }).select('activity student').lean();
+  for (const e of entregas) {
+    const courseId = cursoDeActividad.get(e.activity.toString());
+    if (courseId) sumar(e.student.toString(), courseId);
+  }
+
+  const grupos = crudos.map(g => {
+    const cuentas = g.cuentas.map(u => {
+      const id = u._id.toString();
+      return {
+        u,
+        trabajos: g.materias.reduce(
+          (acc, m) => acc + (trabajo.get(id + '|' + m._id.toString()) || 0), 0),
+        materiasEn: g.materias.filter(m => (m.students || []).some(s => s.toString() === id)).length,
+      };
+    });
+
+    const conTrabajo = cuentas.filter(c => c.trabajos > 0);
+
+    // DOS cuentas con entregas o notas propias = las dos tienen datos que se perderían de
+    // vista al desmatricular una. Cuál es la buena y qué se hace con el trabajo de la otra
+    // lo decide una persona: el grupo queda marcado como ambiguo y aplicar() lo saltea.
+    if (conTrabajo.length > 1) {
+      return { ...g, cuentas, conservar: null, sacar: [], ambigua: true };
+    }
+
+    // Si hay exactamente una con trabajo, esa es la real y las demás están vacías en este
+    // curso. Si ninguna tiene trabajo, ninguna tiene nada que perder: se conserva la que
+    // más "vive" — habilitada, en más materias, con conexión más reciente y más antigua.
+    const conservar = conTrabajo.length === 1
+      ? conTrabajo[0]
+      : [...cuentas].sort((a, b) =>
+          (b.u.active !== false) - (a.u.active !== false) ||
+          b.materiasEn - a.materiasEn ||
+          (b.u.lastSeen ? new Date(b.u.lastSeen) : 0) - (a.u.lastSeen ? new Date(a.u.lastSeen) : 0) ||
+          new Date(a.u.createdAt || 0) - new Date(b.u.createdAt || 0)
+        )[0];
+
+    return {
+      ...g,
+      cuentas,
+      conservar,
+      sacar: cuentas.filter(c => c !== conservar),
+      ambigua: false,
+    };
+  });
+
+  return { grupos };
 }
 
 const FIXES = [
@@ -274,6 +418,111 @@ const FIXES = [
 
   /* ─────────────────────────────────────────────────────────────────────── */
   {
+    id: 'dni-duplicado-en-curso',
+    titulo: 'Dos alumnos con el mismo DNI en un curso',
+    descripcion:
+      'Es la misma persona cargada dos veces (alta manual + importación, o registro público ' +
+      'sobre una cuenta que ya existía): el docente la ve repetida en la lista y en el ' +
+      'gradebook. El arreglo saca del curso la cuenta vacía y conserva la que tiene las ' +
+      'entregas y las notas. NO borra ninguna cuenta ni ninguna entrega. Si las dos tienen ' +
+      'trabajo hecho, el caso se deja para revisar a mano.',
+    icono: 'group_remove',
+    severidad: 'alta',
+    aplicable: true,
+    parametros: [],
+
+    async diagnosticar() {
+      const { grupos } = await calcularDniDuplicados();
+      const divisiones = await Division.find().select('_id name').lean();
+      const nombreDivision = Object.fromEntries(divisiones.map(d => [d._id.toString(), d.name]));
+
+      const ambiguos = grupos.filter(g => g.ambigua).length;
+      const cuentasASacar = grupos.reduce((acc, g) => acc + g.sacar.length, 0);
+
+      const filas = grupos.map(g => {
+        const curso = nombreDivision[g.divisionId] || 'curso';
+        const etiqueta = c => `${c.u.name} (${c.u.email})`;
+        return {
+          principal: `${curso} · DNI ${g.dni}`,
+          secundario: g.ambigua
+            ? g.cuentas.map(c => `${etiqueta(c)} — ${c.trabajos} entrega(s)/nota(s)`).join('  ·  ')
+            : `Se conserva ${etiqueta(g.conservar)}` +
+              `${g.conservar.trabajos ? ` — ${g.conservar.trabajos} entrega(s)/nota(s)` : ' — sin trabajo cargado'}` +
+              `  ·  Se saca del curso ${g.sacar.map(etiqueta).join(', ')}`,
+          extra: g.ambigua ? 'revisar a mano' : `−${g.sacar.length} cuenta(s)`,
+          fecha: null,
+          _orden: g.ambigua ? 1 : 0,
+        };
+      }).sort((a, b) => b._orden - a._orden || a.principal.localeCompare(b.principal, 'es'));
+
+      return {
+        total: grupos.length,
+        muestra: filas.slice(0, MUESTRA_MAX),
+        nota: grupos.length
+          ? `Se van a sacar ${cuentasASacar} cuenta(s) de las materias del curso donde están duplicadas. ` +
+            'Las cuentas NO se borran: quedan sin ese curso y se las puede deshabilitar o eliminar ' +
+            'después desde el panel de administración. Tampoco se toca nada fuera de ese curso. ' +
+            (ambiguos
+              ? `${ambiguos} caso(s) quedan afuera porque las dos cuentas tienen entregas o notas propias: ` +
+                'ahí hay que decidir con qué cuenta se queda el alumno antes de sacar la otra.'
+              : '')
+          : null,
+      };
+    },
+
+    async aplicar() {
+      const { grupos } = await calcularDniDuplicados();
+      const resolubles = grupos.filter(g => !g.ambigua);
+      if (!resolubles.length) {
+        return {
+          afectados: 0,
+          mensaje: grupos.length
+            ? 'No se aplicó nada: los duplicados que quedan tienen entregas o notas en las dos ' +
+              'cuentas y hay que resolverlos a mano.'
+            : 'No había DNI duplicados en ningún curso.',
+        };
+      }
+
+      const ops = [];
+      let cuentas = 0;
+      for (const g of resolubles) {
+        for (const c of g.sacar) {
+          const sid = c.u._id.toString();
+          cuentas++;
+          for (const mat of g.materias) {
+            // Solo las materias donde esta cuenta figura: no tiene sentido mandar un update
+            // por cada materia del curso cuando la duplicada estaba en una sola.
+            if (!(mat.students || []).some(s => s.toString() === sid)) continue;
+            ops.push({
+              updateOne: {
+                filter: { _id: mat._id },
+                update: {
+                  // $pull saca TODAS las apariciones, así que también limpia el caso del
+                  // mismo alumno cargado dos veces en el array de una misma materia.
+                  $pull:  { students: new mongoose.Types.ObjectId(sid) },
+                  // Sin esto quedaría una fecha de inscripción huérfana en el Map, que
+                  // volvería a aplicarse si alguna vez se rematricula a esa cuenta.
+                  $unset: { [`enrollmentDates.${sid}`]: '' },
+                },
+              },
+            });
+          }
+        }
+      }
+
+      await Course.bulkWrite(ops, { ordered: false });
+      const cursos = new Set(resolubles.map(g => g.divisionId)).size;
+      return {
+        afectados: cuentas,
+        mensaje: `${cuentas} cuenta(s) duplicada(s) sacadas de ${ops.length} materia(s) en ` +
+                 `${cursos} curso(s). Las cuentas siguen existiendo y no se borró ninguna ` +
+                 'entrega ni nota: si además hay que darlas de baja, se hace desde el panel de administración.',
+      };
+    },
+  },
+
+  /* ─────────────────────────────────────────────────────────────────────── */
+  {
     id: 'usuarios-sin-escuela',
     titulo: 'Cuentas sin escuela asignada',
     descripcion:
@@ -378,14 +627,20 @@ const FIXES = [
     titulo: 'Alumnos activos sin ninguna materia',
     descripcion:
       'Cuentas de alumno habilitadas que no figuran en ninguna materia: entran al sistema y ven ' +
-      'el dashboard vacío. Puede ser que se hayan registrado solos y nadie los matriculó todavía.',
+      'el dashboard vacío. Puede ser que se hayan registrado solos y nadie los matriculó todavía. ' +
+      'Desde el 31/07/2026 se resuelve solo: al entrar, el alumno elige su curso una sola vez y ' +
+      'queda inscripto en todas sus materias. Esta lista se vacía sola a medida que van entrando.',
     icono: 'person_off',
     severidad: 'alta',
     // SIN arreglo automático: matricular exige saber A QUÉ CURSO va cada alumno, y ese dato
     // no está en ningún lado (no tienen división, ni DNI que cruzar contra un padrón).
     // Inscribirlos a todos en un curso elegido a dedo sería meter alumnos donde no van.
-    // El camino correcto es el alta con Curso del panel de administración o de preceptoría,
-    // que matricula uno por uno con criterio.
+    //
+    // El dato que falta lo tiene el alumno, y desde el 2026-07-31 se lo pedimos a él: elige
+    // su curso una sola vez desde su panel (services/selfEnroll.js). Por eso este arreglo
+    // sigue siendo solo diagnóstico incluso ahora — el que aporta el dato es el alumno, no
+    // un botón del superadmin. Las otras dos vías siguen siendo el alta con Curso del panel
+    // de administración y la de preceptoría.
     aplicable: false,
     parametros: [],
 
@@ -394,10 +649,13 @@ const FIXES = [
         (await Course.find().distinct('students')).map(String)
       );
       const alumnos = await User.find({ role: 'student', active: true })
-        .select('name email dni school createdAt')
+        .select('name email dni school createdAt lastSeen')
         .lean();
       const sueltos = alumnos.filter(a => !matriculados.has(a._id.toString()));
       const sinEscuela = sueltos.filter(a => !a.school).length;
+      // Nadie que no se haya conectado nunca pudo haber elegido su curso: separarlos explica
+      // por qué el número no baja solo tan rápido como uno esperaría.
+      const nuncaEntraron = sueltos.filter(a => !a.lastSeen).length;
 
       return {
         total: sueltos.length,
@@ -410,10 +668,16 @@ const FIXES = [
             extra: a.dni ? `DNI ${a.dni}` : 'sin DNI',
             fecha: a.createdAt,
           })),
-        nota: sinEscuela
-          ? `${sinEscuela} de ellos tampoco tienen escuela, así que ni siquiera aparecen en el panel ` +
-            'de administración para poder matricularlos. Ese arreglo va primero.'
-          : 'Todos tienen escuela: se los puede matricular desde el panel de administración o de preceptoría.',
+        nota: sueltos.length
+          ? (sinEscuela
+              ? `${sinEscuela} de ellos tampoco tienen escuela, así que ni siquiera aparecen en el panel ` +
+                'de administración para poder matricularlos. Ese arreglo va primero. '
+              : 'Todos tienen escuela: se los puede matricular desde el panel de administración o de preceptoría. ') +
+            (nuncaEntraron
+              ? `${nuncaEntraron} nunca se conectaron: hasta que entren no pueden elegir su curso, ` +
+                'así que a esos hay que matricularlos a mano o esperar a que entren.'
+              : 'Todos se conectaron alguna vez, así que ya pueden elegir su curso desde su panel.')
+          : null,
       };
     },
   },

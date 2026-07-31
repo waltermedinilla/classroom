@@ -1,4 +1,8 @@
-<nav class="admin-nav">
+<%# Dos filas: hasta Monitor arriba, el resto abajo. Es el único nav con 11 solapas y en
+    una sola fila obligaba a scrollear horizontalmente incluso en escritorio. El corte es
+    fijo (no depende del ancho) para que las solapas no se muevan de fila entre pantallas:
+    lo marca .admin-nav-break, ver "Admin Nav" en style.css. %>
+<nav class="admin-nav admin-nav-2filas">
   <a href="/superadmin" class="admin-nav-item <%= activePage === 'dashboard' ? 'active' : '' %>">
     <span class="material-symbols-outlined">dashboard</span>
     Resumen
@@ -33,6 +37,7 @@
     <span class="material-symbols-outlined">monitor_heart</span>
     Monitor
   </a>
+  <span class="admin-nav-break" aria-hidden="true"></span>
   <a href="/superadmin/audit" class="admin-nav-item <%= activePage === 'audit' ? 'active' : '' %>">
     <span class="material-symbols-outlined">history</span>
     Auditoría

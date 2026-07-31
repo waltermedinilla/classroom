@@ -111,13 +111,57 @@ const specs = [
   },
   {
     id: 'register-student',
-    title: 'Un alumno puede autoregistrarse',
-    async run({ client, state }) {
+    title: 'Un alumno se autoregistra eligiendo su curso y queda matriculado',
+    async run({ client, state, assert }) {
+      // Desde el 2026-07-31 el alumno elige Curso al registrarse (automatrícula temporal,
+      // ver services/selfEnroll.js). El id se saca del formulario mismo, que es de donde
+      // lo saca una persona: si el <select> deja de pintarse, el spec falla acá y no en
+      // un 400 críptico del POST.
+      const page   = await client.get(null, '/register', { expectStatus: 200 });
+      const bloque = (page.text || '').split('id="divisionId"')[1] || '';
+      const opcion = bloque.match(/<option value="([a-f0-9]{24})"/i);
+      assert(opcion, 'el formulario de registro no ofrece ningún curso para elegir');
+      state.selfEnrollDivisionId = opcion[1];
+
       const res = await client.post('student', '/register', {
-        body: { name: student.name, email: student.email, password: student.password, role: 'student', dni: dniSmoke(2) },
+        body: {
+          name: student.name, email: student.email, password: student.password,
+          role: 'student', dni: dniSmoke(2), divisionId: opcion[1],
+        },
         expectStatus: 201,
       });
       state.studentId = res.json.user._id;
+      assert(res.json.materias > 0,
+        `debería haber quedado inscripto en las materias del curso, quedó en ${res.json.materias}`);
+      assert(res.json.user.school,
+        'elegir curso también tiene que asignarle la escuela; quedó sin escuela');
+    },
+  },
+  {
+    id: 'register-student-requires-curso',
+    title: 'El alumno que no elige curso no se puede registrar (400)',
+    async run({ client }) {
+      // Es la razón de ser de la automatrícula: que no vuelvan a nacer cuentas de alumno
+      // sin escuela y sin ninguna materia, que es lo que diagnostica /superadmin/otros.
+      await client.post(null, '/register', {
+        body: {
+          name: 'Smoke Sin Curso', email: `sincurso.${RUN_ID}@example.com`,
+          password: 'SmokeTest1234', role: 'student', dni: dniSmoke(15),
+        },
+        expectStatus: 400,
+      });
+    },
+  },
+  {
+    id: 'self-enroll-only-once',
+    title: 'El alumno ya matriculado no puede volver a elegir curso (409)',
+    async run({ client, state }) {
+      // "Una sola vez" no es un flag: la ruta mira si hoy está en alguna materia. El
+      // alumno del spec anterior ya lo está, así que este pedido tiene que rebotar.
+      await client.post('student', '/courses/self-enroll', {
+        body: { divisionId: state.selfEnrollDivisionId },
+        expectStatus: 409,
+      });
     },
   },
   {
@@ -308,6 +352,87 @@ const specs = [
       await client.post('scopedTeacher', `/courses/${state.courseId}/add-student`, {
         body: { email: state.scopedStudentEmail },
         expectStatus: 200,
+      });
+    },
+  },
+  {
+    // ── Automatrícula desde el panel del alumno (TEMPORAL, ver services/selfEnroll.js) ──
+    // Cubre al alumno que YA tenía cuenta cuando se agregó la función: el admin lo dio de
+    // alta sin Curso, así que entra y no ve ninguna materia. Es el caso que alimenta el
+    // diagnóstico 'alumnos-sin-matricular' de /superadmin/otros.
+    id: 'self-enroll-setup-student-without-course',
+    title: 'El admin da de alta un alumno SIN curso (queda sin ninguna materia)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const email = `sinmateria.${RUN_ID}@example.com`;
+      const res = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke Sin Materia ${RUN_ID}`, email, password: student.password, role: 'student', dni: dniSmoke(16) },
+        expectStatus: 201,
+      });
+      state.loneStudentId    = res.json.user._id;
+      state.loneStudentEmail = email;
+      await client.post('loneStudent', '/login', { body: { email, password: student.password }, expectStatus: 200 });
+    },
+  },
+  {
+    id: 'self-enroll-panel-offers-curso',
+    title: 'El alumno sin materias ve el selector de curso en su panel',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('loneStudent', '/courses', { expectStatus: 200 });
+      assert((res.text || '').includes('autoMatriculaCurso'),
+        'el panel del alumno sin materias debería ofrecerle elegir su curso');
+      assert((res.text || '').includes(state.divisionId),
+        'el curso de prueba debería estar entre las opciones ofrecidas');
+    },
+  },
+  {
+    id: 'self-enroll-student-picks-course',
+    title: 'El alumno elige su curso y queda inscripto en sus materias',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('loneStudent', '/courses/self-enroll', {
+        body: { divisionId: state.divisionId },
+        expectStatus: 200,
+      });
+      assert(res.json.materias >= 1,
+        `debería haber quedado en al menos una materia, quedó en ${res.json.materias}`);
+
+      // Y el selector desaparece: la elección es una sola vez, y lo que la cierra es el
+      // estado (ya tiene materias), no un flag que alguien pueda olvidarse de escribir.
+      const panel = await client.get('loneStudent', '/courses', { expectStatus: 200 });
+      assert(!(panel.text || '').includes('autoMatriculaCurso'),
+        'después de matricularse, el panel no debería seguir ofreciendo elegir curso');
+    },
+  },
+  {
+    id: 'admin-users-curso-column',
+    title: 'El listado de usuarios del admin muestra el Curso de cada alumno',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Se busca por RUN_ID para no depender de la paginación: el listado corta en 25 y
+      // la escuela real tiene cientos de usuarios.
+      const res = await client.get('admin', `/admin/users?search=${encodeURIComponent(RUN_ID)}`, { expectStatus: 200 });
+      assert(res.text.includes('<th>Curso</th>'),
+        'la tabla debería tener la columna Curso entre Rol y Nov·Act·Msg');
+      assert(res.text.includes(state.divisionName),
+        `el alumno matriculado debería mostrar su curso (${state.divisionName}) en la columna`);
+
+      // La celda queda vacía para los que no son alumnos: el docente de smoke aparece en
+      // este mismo listado y no tiene curso que mostrar.
+      const filaDocente = (res.text.split(state.scopedTeacherEmail)[1] || '').split('</tr>')[0];
+      assert(filaDocente && !filaDocente.includes(state.divisionName),
+        'la fila del docente no debería mostrar ningún curso');
+    },
+  },
+  {
+    id: 'self-enroll-rejects-non-student',
+    title: 'Un docente no puede usar la automatrícula (403)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.post('scopedTeacher', '/courses/self-enroll', {
+        body: { divisionId: state.divisionId },
+        expectStatus: 403,
       });
     },
   },
@@ -2009,6 +2134,9 @@ const specs = [
         body: {
           name: 'Smoke Fake Preceptor', email: `fake.preceptor.${RUN_ID}@example.com`,
           password: 'SmokeTest1234', role: 'preceptor', dni: dniSmoke(9),
+          // Cae a rol alumno, y el alumno necesita curso para registrarse: sin esto el
+          // POST devolvería 400 y el spec no llegaría a probar lo que quiere probar.
+          divisionId: state.selfEnrollDivisionId,
         },
         expectStatus: 201,
       });
@@ -2049,6 +2177,7 @@ const specs = [
     async run({ client, state }) {
       if (state.scopedTeacherId) await client.post('admin', `/admin/users/${state.scopedTeacherId}/delete`, { expectStatus: 200 });
       if (state.scopedStudentId) await client.post('admin', `/admin/users/${state.scopedStudentId}/delete`, { expectStatus: 200 });
+      if (state.loneStudentId)   await client.post('admin', `/admin/users/${state.loneStudentId}/delete`, { expectStatus: 200 });
       if (state.divisionId)      await client.post('admin', `/admin/divisions/${state.divisionId}/delete`, { expectStatus: 200 });
     },
   },
@@ -2065,6 +2194,37 @@ const specs = [
       try {
         await client.connect();
         await client.db().collection('suggestions').deleteMany({ text: { $regex: RUN_ID } });
+      } finally {
+        await client.close();
+      }
+    },
+  },
+  {
+    // Los usuarios de Nivel 1 se autoregistran (no los crea el admin), así que no hay
+    // ruta que los borre: el DELETE del admin exige misma escuela y hasta el 2026-07-31
+    // estos quedaban sin ninguna. Ahora el alumno elige curso al registrarse, así que
+    // además de la cuenta hay que sacarlo de las materias REALES donde quedó inscripto —
+    // si no, el docente ve un alumno de prueba en su lista de la base local.
+    id: 'cleanup-self-registered-db',
+    title: 'Limpieza: borra los usuarios autoregistrados y su matrícula',
+    requiresEnv: ['MONGODB_URI'],
+    async run({ env, state }) {
+      const { MongoClient, ObjectId } = require('mongodb');
+      const ids = [state.teacherId, state.studentId, state.fakePreceptorId]
+        .filter(Boolean).map(s => new ObjectId(s));
+      if (!ids.length) return;
+
+      const client = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await client.connect();
+        await client.db().collection('courses').updateMany(
+          { students: { $in: ids } },
+          {
+            $pull:  { students: { $in: ids } },
+            $unset: Object.fromEntries(ids.map(id => [`enrollmentDates.${id}`, ''])),
+          },
+        );
+        await client.db().collection('users').deleteMany({ _id: { $in: ids } });
       } finally {
         await client.close();
       }

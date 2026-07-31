@@ -77,6 +77,40 @@
             <option value="teacher">Docente</option>
           </select>
         </div>
+
+        <%
+          /* Curso del alumno — FUNCIÓN TEMPORAL (ver services/selfEnroll.js).
+             Solo se despliega con el rol Alumno; el docente no se matricula en cursos.
+             Si la automatrícula está apagada, `cursos` llega vacío y este bloque
+             desaparece entero sin dejar un campo muerto en el formulario. */
+          const escuelasDeCursos = [...new Set(cursos.map(c => c.escuela))];
+        %>
+        <% if (cursos.length) { %>
+          <div class="input-group" id="cursoGroup">
+            <span class="material-symbols-outlined input-icon">school</span>
+            <select id="divisionId" class="select-input">
+              <option value="">Elegí tu curso</option>
+              <% if (escuelasDeCursos.length > 1) { %>
+                <% escuelasDeCursos.forEach(esc => { %>
+                  <optgroup label="<%= esc %>">
+                    <% cursos.filter(c => c.escuela === esc).forEach(c => { %>
+                      <option value="<%= c._id %>"><%= c.name %></option>
+                    <% }) %>
+                  </optgroup>
+                <% }) %>
+              <% } else { %>
+                <% cursos.forEach(c => { %>
+                  <option value="<%= c._id %>"><%= c.name %></option>
+                <% }) %>
+              <% } %>
+            </select>
+          </div>
+          <p id="cursoHint" style="font-size:12px;color:var(--text-secondary);margin:-6px 0 14px;line-height:1.45">
+            Vas a quedar inscripto en todas las materias de ese curso. Si te equivocás, pedile al
+            administrador que te cambie.
+          </p>
+        <% } %>
+
         <div class="form-error" id="registerError"></div>
         <button type="submit" class="btn btn-primary btn-full">
           <span class="material-symbols-outlined">person_add</span>

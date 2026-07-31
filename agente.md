@@ -1202,11 +1202,12 @@ Panel en `/superadmin/otros`: tarjetas con problemas de integridad detectados, c
 **Acceso**: misma doble capa que Backup (rol superadmin **+** `SYSTEM_OWNER_EMAIL`). Estos arreglos escriben en masa y no se deshacen; el chequeo de rol solo no alcanza si mañana hay otro superadmin.
 
 ### La regla de oro de `services/dbFixes.js`
-Un arreglo solo es `aplicable: true` si existe **una respuesta correcta derivable de los datos**. Si hace falta criterio humano, se queda en diagnóstico y deriva al panel que corresponda. **Inventar el dato es peor que no arreglarlo.** Por eso 3 de los 6 son solo diagnóstico:
+Un arreglo solo es `aplicable: true` si existe **una respuesta correcta derivable de los datos**. Si hace falta criterio humano, se queda en diagnóstico y deriva al panel que corresponda. **Inventar el dato es peor que no arreglarlo.** Por eso 3 de los 7 son solo diagnóstico:
 
 | Arreglo | Aplicable | Por qué |
 |---|---|---|
 | Matrícula parcial | ✅ | Regla inequívoca: si estás en una materia del curso, van todas |
+| DNI duplicado en un curso | ✅ *(parcial)* | Se conserva la cuenta con entregas o notas y se saca la vacía. Si las dos tienen trabajo, ese caso queda para revisar a mano |
 | Cuentas sin escuela | ✅ | Hay una sola escuela; el campo no depende de nada más |
 | Preceptores sin cursos | ✅ | "Todos los cursos" es una acción concreta y reversible |
 | Alumnos en varios cursos | ❌ | Nada dice cuál de los dos cursos es el correcto; desmatricular del equivocado borraría entregas |
@@ -1258,6 +1259,88 @@ Medido antes del arreglo: `/superadmin` body 1372 px · `/admin/users` 1132 px �
 | `/admin/users` | body 1132 px, tabla recortada | 375 px, tabla con scroll propio |
 | `/directivo/courses` | body 804 px | 375 px |
 | `/preceptor` | 8356 px de alto, 1 columna | 3871 px, 2 columnas |
+
+---
+
+## Arreglo nuevo: dos alumnos con el mismo DNI en un curso (2026-07-31)
+
+Séptima tarjeta de `/superadmin/otros` (`dni-duplicado-en-curso`, severidad alta). Detecta la misma persona cargada dos veces —alta manual + importación, o registro público sobre una cuenta que ya existía—: el docente la ve repetida en la lista y en el gradebook, y las entregas quedan repartidas entre las dos cuentas.
+
+### Por qué el índice único no lo evita
+`models/User.js` ya tiene `{ school: 1, dni: 1 }` único, pero compara el **string crudo**. `"40.123.456"`, `"40123456"` y `"040123456"` conviven sin que Mongo se queje, y son la misma persona. El arreglo compara con `normalizarDni()` — solo dígitos, sin ceros a la izquierda. También cubre los duplicados anteriores a que existiera el índice.
+
+### "Curso" = División, no materia
+La búsqueda es por División (1°1°, 2°3°…), no por `Course`: una misma persona puede estar con una cuenta en Matemática y con la otra en Historia del mismo curso, y por materia eso no se ve. Coherente con `alumnos-en-varios-cursos`, que también razona por división.
+
+### Cómo elige cuál conservar
+Mide el **trabajo hecho por cuenta dentro de ese curso** en las dos fuentes donde vive, porque puede haber una sin la otra: `Submission` (entregó) y `Activity.grades[]` (el docente calificó en papel y lo cargó).
+
+- **Una sola cuenta con trabajo** → esa se conserva; las otras están vacías en ese curso y se sacan.
+- **Ninguna con trabajo** → ninguna tiene nada que perder. Se conserva la que más "vive": habilitada > en más materias > conexión más reciente > más antigua.
+- **Dos o más con trabajo** → **ambiguo, no se toca**. Aparece como "revisar a mano": cuál es la buena y qué se hace con el trabajo de la otra lo decide una persona. `aplicar()` los saltea y el conteo posterior los deja visibles.
+
+### Qué escribe exactamente
+`$pull` del `students[]` y `$unset` de `enrollmentDates.<id>`, **solo en las materias de ese curso donde la cuenta duplicada figura**. No borra cuentas, no borra entregas ni notas, no toca nada fuera de ese curso. Dar de baja la cuenta sobrante, si corresponde, es una decisión aparte desde el panel de administración. Como `$pull` saca todas las apariciones, de paso limpia el caso del mismo alumno cargado dos veces en el array de una misma materia.
+
+### Verificación
+Base descartable con los tres escenarios (duplicado con formato distinto donde la que entregó no es la del nombre "real", duplicado sin trabajo con una cuenta deshabilitada, y duplicado con entrega de un lado y nota del otro): detecta 3, aplica 2, deja 1 para revisión manual, no pierde ninguna entrega y no borra ninguna cuenta. Controles que **no** debe marcar: alumno sin duplicado, y dos alumnos sin DNI en el mismo curso (sin DNI no hay con qué comparar — eso es `usuarios-sin-dni`).
+
+En el espejo local: **0 casos**, diagnóstico en 95 ms. El panel completo con las 7 tarjetas carga en 208 ms.
+
+---
+
+## El alumno elige su curso una sola vez (2026-07-31) — TEMPORAL
+
+**Pedido**: que el alumno pueda elegir su curso y automatricularse, tanto al registrarse como desde su panel si ya tiene cuenta y no está en ninguna materia. Explícitamente temporal, pero disponible.
+
+⚠️ **Va contra la decisión del 2026-07-30**, a sabiendas: ese día se eliminó "unirse por código" para que matricular fuera siempre una acción administrativa, y al alumno le quedó la vía de "enviar solicitud". Esto reabre la puerta. Por eso vive concentrado en `services/selfEnroll.js`:
+
+- **Apagarla**: `AUTOMATRICULA_ACTIVA = false`. Las dos pantallas dejan de ofrecer el curso y las dos rutas rechazan el pedido. Nada más que tocar.
+- **Borrarla**: eliminar ese archivo y sus usos en `routes/auth.js`, `routes/courses.js`, `views/register.ejs`, `views/dashboard.ejs` y `public/js/register.js` (listados en la cabecera del propio archivo).
+
+### Las dos puertas
+| Dónde | Quién | Qué pasa |
+|---|---|---|
+| `/register` | El que se registra como **Alumno** | El `<select>` de Curso se despliega al elegir el rol Alumno y es **obligatorio** |
+| `/courses` (su panel) | Alumno **sin ninguna materia** | Bloque "Elegí tu curso" en el estado vacío, con confirmación antes de escribir |
+
+En las dos, elegir el curso lo inscribe en **todas** las materias de ese curso, por el mismo `enrollStudentInDivisionCourses()` que usan el alta del admin y la de preceptoría — incluido el `enrollmentDates` que evita que le aparezcan como pendientes las tareas ya vencidas.
+
+### "Una sola vez" es estado, no un flag
+`POST /courses/self-enroll` solo acepta al alumno que **hoy no está en ninguna materia**. Una vez matriculado, el mismo pedido devuelve 409 y el bloque desaparece del panel. No hay un campo `yaEligió` que alguien pueda olvidarse de escribir, y es también lo que impide que se sume cursos de a uno hasta quedar en varios.
+
+Lo demás que no puede hacer aunque manipule el request: cambiarse de escuela (si su cuenta ya tiene una, solo ve cursos de esa), elegir un curso sin materias (lo dejaría igual de huérfano), o auto-asignarse otro rol.
+
+### Efectos colaterales buscados
+- **El curso define la escuela.** `POST /register` creaba las cuentas con `school: null` — ése es el origen de las 127 cuentas del arreglo `usuarios-sin-escuela`. Ahora el alumno que elige curso nace con escuela. A los que ya existían, elegir curso se las asigna.
+- **Chequeo de DNI duplicado en el registro.** Conocida la escuela, se puede chequear `{school, dni}` antes de crear y devolver un 409 claro en vez del 11000 que hablaba del correo. Es la puerta por donde se colaban los duplicados que detecta `dni-duplicado-en-curso`.
+- **`alumnos-sin-matricular` se vacía solo.** El arreglo sigue siendo solo diagnóstico —el dato que falta lo tiene el alumno, no un botón del superadmin— pero ahora la nota separa a los que nunca se conectaron, que son los únicos que siguen necesitando alta manual. En el espejo local los 60 se conectaron alguna vez: todos pueden resolverse solos.
+
+### Verificación
+**137/137 en la suite de smoke** (eran 130), con 6 specs nuevos o reescritos:
+
+| Spec | Qué prueba |
+|---|---|
+| `register-student` | Saca el id del curso **del propio formulario**: si el `<select>` deja de pintarse, falla acá |
+| `register-student-requires-curso` | Alumno sin curso → 400 (no vuelven a nacer cuentas huérfanas) |
+| `self-enroll-only-once` | El ya matriculado que insiste → 409 |
+| `self-enroll-setup-student-without-course` | Alta por admin sin curso: el caso de los alumnos que ya existían |
+| `self-enroll-panel-offers-curso` / `…-picks-course` | El selector aparece, matricula, y **desaparece** después |
+| `self-enroll-rejects-non-student` | Un docente que llama a la ruta → 403 |
+
+Se agregó además la limpieza `cleanup-self-registered-db`: los usuarios de Nivel 1 ahora quedan inscriptos en materias reales de la base local, así que hay que sacarlos de ahí además de borrar la cuenta.
+
+---
+
+## Columna "Curso" en el listado de usuarios del admin (2026-07-31)
+
+`/admin/users`, entre **Rol** y **Nov·Act·Msg**. Solo se llena para alumnos: los demás roles no se matriculan (el preceptor tiene cursos *a cargo*, que es otra cosa y se ve en su perfil), así que la celda queda **vacía** en vez de mostrar un guion que se leería como "está sin curso". El alumno sin matricular sí muestra `—`.
+
+**Es un array, no un string**: un alumno mal cargado puede figurar en materias de dos cursos distintos (el diagnóstico `alumnos-en-varios-cursos` de `/superadmin/otros`) y se muestran los dos separados por `+`. Elegir uno al azar escondería el problema justo en la pantalla donde se arregla.
+
+Sin queries nuevas: la consulta que ya armaba el badge "(Sin Matricular)" ahora trae también `division` y se popula el nombre. De paso se acotó a los alumnos **de la página**: `course.students` trae todos los de la materia, así que se estaban construyendo entradas de gente que no se muestra.
+
+Cubierto por el spec `admin-users-curso-column` (la columna existe, el alumno matriculado muestra su curso, y la fila del docente no muestra ninguno). **138/138 en el smoke.**
 
 ---
 

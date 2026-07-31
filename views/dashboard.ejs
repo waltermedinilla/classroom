@@ -94,10 +94,98 @@
         <div class="empty-state">
           <div class="empty-icon"><span class="material-symbols-outlined">school</span></div>
           <% if (user.role === 'student') { %>
+            <%
+              /* Elegir el curso una sola vez — FUNCIÓN TEMPORAL (ver services/selfEnroll.js).
+                 Con la automatrícula apagada la lista llega vacía y el alumno ve el texto de
+                 siempre: pedir el alta por solicitud. */
+              const cursosAuto = locals.autoMatricula || [];
+              const escuelasAuto = [...new Set(cursosAuto.map(c => c.escuela))];
+            %>
             <p><span class="badge-unmatriculated" style="font-size:13px;padding:4px 12px">(Sin Matricular)</span></p>
-            <p style="margin-top:10px;color:var(--text-secondary);font-size:14px">
-              No estás matriculado en ningún curso. Usá el botón «Enviar solicitud para unirme» y el administrador te va a matricular.
-            </p>
+            <% if (cursosAuto.length) { %>
+              <p style="margin-top:10px;color:var(--text-secondary);font-size:14px;max-width:460px">
+                Todavía no estás en ninguna materia. Elegí tu curso y quedás inscripto en todas
+                sus materias. <strong>Se elige una sola vez</strong>: si después no es el que te
+                corresponde, el cambio lo hace el administrador.
+              </p>
+              <div id="autoMatriculaBox" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;align-items:center;margin-top:16px">
+                <div class="input-group" style="margin-bottom:0;min-width:210px">
+                  <span class="material-symbols-outlined input-icon">school</span>
+                  <select id="autoMatriculaCurso" class="select-input">
+                    <option value="">Elegí tu curso</option>
+                    <% if (escuelasAuto.length > 1) { %>
+                      <% escuelasAuto.forEach(esc => { %>
+                        <optgroup label="<%= esc %>">
+                          <% cursosAuto.filter(c => c.escuela === esc).forEach(c => { %>
+                            <option value="<%= c._id %>"><%= c.name %></option>
+                          <% }) %>
+                        </optgroup>
+                      <% }) %>
+                    <% } else { %>
+                      <% cursosAuto.forEach(c => { %>
+                        <option value="<%= c._id %>"><%= c.name %></option>
+                      <% }) %>
+                    <% } %>
+                  </select>
+                </div>
+                <button class="btn btn-primary" id="autoMatriculaBtn" onclick="confirmarAutoMatricula()">
+                  <span class="material-symbols-outlined">how_to_reg</span>
+                  Matricularme
+                </button>
+              </div>
+              <div class="form-error" id="autoMatriculaError" style="margin-top:10px"></div>
+              <p style="margin-top:14px;color:var(--text-secondary);font-size:12.5px">
+                ¿No encontrás tu curso? Usá «Enviar solicitud para unirme» y te matricula el administrador.
+              </p>
+              <script>
+                async function confirmarAutoMatricula() {
+                  const sel   = document.getElementById('autoMatriculaCurso');
+                  const btn   = document.getElementById('autoMatriculaBtn');
+                  const error = document.getElementById('autoMatriculaError');
+                  error.classList.remove('show');
+                  error.textContent = '';
+
+                  if (!sel.value) {
+                    error.textContent = 'Elegí tu curso de la lista.';
+                    error.classList.add('show');
+                    return;
+                  }
+                  /* Se elige una sola vez y lo hace el propio alumno: vale preguntarle antes
+                     de escribir, porque deshacerlo ya no está en sus manos. */
+                  const curso = sel.options[sel.selectedIndex].text;
+                  if (!confirm('Vas a quedar inscripto en todas las materias de ' + curso +
+                               '. Después solo el administrador puede cambiarte. ¿Confirmás?')) return;
+
+                  btn.disabled = true;
+                  btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Matriculando...';
+                  try {
+                    const res = await fetch('/courses/self-enroll', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ divisionId: sel.value }),
+                    });
+                    const data = await res.json();
+                    if (!res.ok) {
+                      error.textContent = data.error || 'No se pudo matricular.';
+                      error.classList.add('show');
+                      btn.disabled = false;
+                      btn.innerHTML = '<span class="material-symbols-outlined">how_to_reg</span> Matricularme';
+                      return;
+                    }
+                    window.location.reload(); // ya tiene materias: el panel se pinta con ellas
+                  } catch {
+                    error.textContent = 'Error de conexión. Intentá de nuevo.';
+                    error.classList.add('show');
+                    btn.disabled = false;
+                    btn.innerHTML = '<span class="material-symbols-outlined">how_to_reg</span> Matricularme';
+                  }
+                }
+              </script>
+            <% } else { %>
+              <p style="margin-top:10px;color:var(--text-secondary);font-size:14px">
+                No estás matriculado en ningún curso. Usá el botón «Enviar solicitud para unirme» y el administrador te va a matricular.
+              </p>
+            <% } %>
           <% } else { %>
             <p>Aún no tenés clases. Creá una para empezar.</p>
           <% } %>

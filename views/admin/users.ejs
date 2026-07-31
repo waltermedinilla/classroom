@@ -63,6 +63,7 @@
               <th>Usuario</th>
               <th>Email</th>
               <th>Rol</th>
+              <th>Curso</th>
               <th title="Novedades publicadas · Actividades creadas · Mensajes escritos">Nov·Act·Msg</th>
               <th>Registro</th>
               <th>Acciones</th>
@@ -90,6 +91,21 @@
                 </td>
                 <td class="td-email"><%= u.email %></td>
                 <td><span class="role-badge role-<%= u.role %>"><%= roleNames[u.role] || u.role %></span></td>
+                <%
+                  /* Curso: solo tiene sentido para el alumno. El resto de los roles no se
+                     matricula (el preceptor tiene cursos A CARGO, que es otra cosa y se ve
+                     en su perfil), así que la celda queda vacía en vez de mostrar un guion
+                     que se leería como "está sin curso". */
+                  const cursosDelAlumno = u.role === 'student' ? (cursoMap[u._id.toString()] || []) : null;
+                %>
+                <td class="td-curso">
+                  <% if (cursosDelAlumno === null) { %>
+                  <% } else if (!cursosDelAlumno.length) { %>
+                    <span style="color:var(--text-hint)">—</span>
+                  <% } else { %>
+                    <%= cursosDelAlumno.join(' + ') %>
+                  <% } %>
+                </td>
                 <td>
                   <%- include('../partials/user-activity-stats', { stats: activityStats.get(u._id.toString()) }) %>
                 </td>

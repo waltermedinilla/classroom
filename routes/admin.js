@@ -152,9 +152,28 @@ router.get('/users', async (req, res) => {
 
   const studentIds = users.filter(u => u.role === 'student').map(u => u._id);
   const enrolledMap = {};
+  // Curso (División) de cada alumno para la columna "Curso". Es un array y no un string
+  // porque la matrícula por materia no garantiza uno solo: un alumno mal cargado puede
+  // figurar en materias de dos cursos distintos (es el diagnóstico 'alumnos-en-varios-cursos'
+  // de /superadmin/otros). Mostrar los dos hace visible el problema en vez de esconderlo
+  // eligiendo uno al azar.
+  const cursoMap = {};
   if (studentIds.length) {
-    const courses = await Course.find({ students: { $in: studentIds } }).select('students');
-    courses.forEach(c => c.students.forEach(sid => { enrolledMap[sid.toString()] = true; }));
+    const enLaPagina = new Set(studentIds.map(String));
+    const courses = await Course.find({ students: { $in: studentIds } })
+      .select('students division')
+      .populate('division', 'name');
+    courses.forEach(c => c.students.forEach(sid => {
+      const k = sid.toString();
+      // c.students trae TODOS los alumnos de la materia, no solo los de esta página.
+      if (!enLaPagina.has(k)) return;
+      enrolledMap[k] = true;
+      if (!c.division?.name) return;
+      (cursoMap[k] = cursoMap[k] || new Set()).add(c.division.name);
+    }));
+    for (const k of Object.keys(cursoMap)) {
+      cursoMap[k] = [...cursoMap[k]].sort((a, b) => a.localeCompare(b, 'es'));
+    }
   }
 
   // Divisiones para el combobox del modal "Nuevo usuario" (solo se muestra con rol Alumno)
@@ -168,7 +187,7 @@ router.get('/users', async (req, res) => {
 
   const totalPages  = Math.ceil(total / LIMIT);
   const queryParams = { ...(role && { role }), ...(search && { search }) };
-  res.render('admin/users', { users, enrolledMap, activityStats, divisions, currentRole: role || '', search: search || '', page, totalPages, total, queryParams });
+  res.render('admin/users', { users, enrolledMap, cursoMap, activityStats, divisions, currentRole: role || '', search: search || '', page, totalPages, total, queryParams });
 });
 
 router.get('/users/create', async (req, res) => {

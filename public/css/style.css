@@ -1264,6 +1264,10 @@ select, .select-input {
 .users-table tr:hover td { background: #fafafa; }
 .td-email { color: var(--text-secondary); }
 .td-date { color: var(--text-hint); font-size: 13px; }
+/* Columna "Curso" de /admin/users: nombres cortos y fijos ("1° 1°"), que partidos en dos
+   líneas se leerían como dos cursos distintos. La tabla ya scrollea dentro de su tarjeta
+   (ver .users-table-card), así que el nowrap no puede desbordar la página. */
+.td-curso { white-space: nowrap; font-size: 13.5px; }
 .cb-cell { width: 44px; padding: 14px 8px 14px 16px !important; }
 .row-cb, #selectAll { width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary); }
 .users-table tr.selected td { background: var(--primary-light); }
@@ -1397,6 +1401,30 @@ select, .select-input {
 .admin-nav-item:hover { color: var(--text); background: rgba(0,0,0,0.03); }
 .admin-nav-item.active { color: var(--primary); border-bottom-color: var(--primary); }
 .admin-nav-item .material-symbols-outlined { font-size: 20px; }
+
+/* Nav de dos filas — hoy solo el de superadmin, el único con 11 solapas: en una sola fila
+   no entraba ni en escritorio y había que scrollear horizontalmente para llegar a las
+   últimas. El corte NO se deja librado al ancho disponible (las solapas saltarían de fila
+   según la pantalla, y uno las busca donde las vio la última vez): lo fija el separador
+   .admin-nav-break, que ocupa una fila entera de alto cero y empuja lo que sigue abajo.
+
+   row-gap 2px compensa el margin-bottom:-2px de las solapas, que si no encimaría la
+   segunda fila contra la primera. Las de la fila de abajo conservan ese -2px y siguen
+   apoyando sobre el borde del nav, así que la subrayada azul de la solapa activa se ve
+   igual que en un nav de una sola fila. */
+.admin-nav-2filas { flex-wrap: wrap; row-gap: 2px; }
+/* El corte fijo se aplica solo cuando las 8 primeras solapas entran en una fila. Debajo de
+   ese ancho la primera fila ya envuelve sola, y forzar el corte igual dejaba a "Monitor"
+   solo en una fila del medio: tres filas donde alcanzaban dos. Sin el corte, el reparto
+   natural la manda junto al resto y quedan dos.
+
+   El umbral sale de una medición, no a ojo: la fila de 8 mide 1000 px, y el ancho útil es
+   `min(viewport, 1100) - 64` por el padding de .main-content — o sea que entra a partir de
+   un viewport de 1064 px. 1090 deja margen para la barra de scroll. */
+.admin-nav-break { display: none; }
+@media (min-width: 1090px) {
+  .admin-nav-break { display: block; flex-basis: 100%; height: 0; margin: 0; padding: 0; }
+}
 
 /* ─── Admin Section Cards ─── */
 .admin-section-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-top: 32px; }

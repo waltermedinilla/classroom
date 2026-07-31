@@ -19,6 +19,8 @@ const { INTERESTS, MAX_INTERESTS } = require('../config/interests');
 const {
   subirImagen, guardarImagenOptimizada, borrarPorUrlPublica, ImagenInvalidaError,
 } = require('../middleware/image-upload');
+// Automatrícula del alumno — TEMPORAL, ver la cabecera de services/selfEnroll.js.
+const { cursosDisponibles, automatricular } = require('../services/selfEnroll');
 
 const router = express.Router();
 
@@ -93,7 +95,14 @@ router.get('/', requireAuth, async (req, res) => {
       }
     }
 
-    res.render('dashboard', { courses, pendingSummary, profilePrompt });
+    // Alumno que no está en ninguna materia: puede elegir su curso una sola vez y quedar
+    // matriculado (TEMPORAL, ver services/selfEnroll.js). Se calcula con joined y no con
+    // courses porque un alumno nunca es owner: si tuviera una sola materia, ya no aplica.
+    const autoMatricula = res.locals.user?.role === 'student' && joined.length === 0
+      ? await cursosDisponibles(res.locals.user.school || null)
+      : [];
+
+    res.render('dashboard', { courses, pendingSummary, profilePrompt, autoMatricula });
   } catch (err) {
     res.status(500).send('Error del servidor');
   }
@@ -106,6 +115,45 @@ router.get('/divisions', requireAuth, async (req, res) => {
     if (!school) return res.json({ divisions: [] });
     const divisions = await Division.find({ school }).sort({ name: 1 });
     res.json({ divisions });
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /courses/self-enroll — el alumno elige su curso y queda matriculado
+//
+// FUNCIÓN TEMPORAL (ver services/selfEnroll.js). Va ANTES de cualquier ruta /:id para que
+// "self-enroll" no se lea como un id de materia.
+//
+// "Una sola vez" es literal y se apoya en el estado, no en un flag: la ruta solo acepta al
+// alumno que HOY no está en ninguna materia. Después de matricularse, el mismo pedido
+// devuelve 409 y el bloque desaparece del panel. Es también lo que evita que se sume cursos
+// de a uno hasta quedar en varios: para eso está el alta administrativa.
+router.post('/self-enroll', requireAuth, async (req, res) => {
+  try {
+    if (res.locals.user?.role !== 'student') {
+      return res.status(403).json({ error: 'Solo los alumnos pueden elegir su curso.' });
+    }
+    const yaTieneMaterias = await Course.exists({ students: req.userId });
+    if (yaTieneMaterias) {
+      return res.status(409).json({
+        error: 'Ya estás matriculado. Si el curso no es el que te corresponde, pedile el cambio al administrador.',
+      });
+    }
+
+    // Documento real y no el user cacheado: automatricular() puede tener que guardarle la
+    // escuela (las cuentas del registro público viejo la tienen en null).
+    const student = await User.findById(req.userId);
+    if (!student) return res.status(404).json({ error: 'No se encontró tu cuenta.' });
+
+    const r = await automatricular(req, student, req.body.divisionId, 'panel-alumno-automatricula');
+    if (!r.ok) return res.status(400).json({ error: r.error });
+
+    // El doc de usuario vive cacheado 45 s por worker y puede haber cambiado su escuela:
+    // sin invalidar, seguiría viéndose como "sin escuela" hasta que expire el TTL.
+    invalidateUser(req.userId);
+
+    res.json({ ok: true, materias: r.materias, curso: r.curso });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
   }

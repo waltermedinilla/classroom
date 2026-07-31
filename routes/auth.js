@@ -4,6 +4,10 @@ const User   = require('../models/User');
 const School = require('../models/School');
 // DNI obligatorio en toda alta desde 2026-07-30 (ver services/dni.js).
 const { normalizeDni } = require('../services/dni');
+// Automatrícula del alumno — TEMPORAL, ver la cabecera de services/selfEnroll.js.
+const {
+  AUTOMATRICULA_ACTIVA, cursosDisponibles, cursoElegible, automatricular,
+} = require('../services/selfEnroll');
 
 const router = express.Router();
 
@@ -32,17 +36,22 @@ router.get('/login', (req, res) => {
 
 // GET /register — muestra el formulario de registro
 // Pasa los roles disponibles excluyendo 'admin' (los admins solo los crea el superadmin)
-router.get('/register', (req, res) => {
+router.get('/register', async (req, res) => {
   if (res.locals.user) return res.redirect('/');
-  res.render('register', { roles: User.getRoles().filter(r => r !== 'admin') });
+  res.render('register', {
+    roles: User.getRoles().filter(r => r !== 'admin'),
+    // Lista para el select de Curso que se despliega al elegir el rol Alumno. Con la
+    // automatrícula apagada vuelve vacía y la vista no pinta el campo.
+    cursos: await cursosDisponibles(),
+  });
 });
 
 // POST /register — crea un nuevo usuario y abre sesión inmediatamente
-// Body: { name, email, password, role, dni }
-// Retorna: { user } con 201, o error 400 si email duplicado / validación falla
+// Body: { name, email, password, role, dni, divisionId? }
+// Retorna: { user, materias } con 201, o error 400 si email duplicado / validación falla
 router.post('/register', async (req, res) => {
   try {
-    const { name, email, password, role, dni } = req.body;
+    const { name, email, password, role, dni, divisionId } = req.body;
     // DNI obligatorio también acá: la regla es que nadie entra al sistema sin DNI, sin
     // importar por qué puerta (ver services/dni.js).
     const { value: dniValue, error: dniError } = normalizeDni(dni);
@@ -53,11 +62,46 @@ router.post('/register', async (req, res) => {
     // se le define qué cursos tiene a cargo.
     const allowedRoles = ['student', 'teacher', 'soe', 'directivo'];
     const userRole = allowedRoles.includes(role) ? role : 'student';
-    const user = await User.create({ name, email, password, role: userRole, dni: dniValue });
+
+    // ── Curso elegido por el alumno (TEMPORAL, ver services/selfEnroll.js) ──────────
+    // Se resuelve ANTES de crear la cuenta porque de él sale la escuela, y la escuela es
+    // la que define contra qué índice {school, dni} hay que chequear el DNI duplicado.
+    let curso = null;
+    if (userRole === 'student' && AUTOMATRICULA_ACTIVA) {
+      curso = await cursoElegible(divisionId);
+      if (!curso) {
+        return res.status(400).json({ error: 'Elegí tu curso de la lista para poder ver tus materias.' });
+      }
+      // Sin este chequeo, una segunda cuenta con el mismo DNI se crearía igual (el índice
+      // único la frenaría con un 11000 que habla del correo) o, peor, entraría al mismo
+      // curso y sería exactamente el duplicado que detecta 'dni-duplicado-en-curso'.
+      const yaExiste = await User.findOne({ school: curso.school, dni: dniValue }).select('name');
+      if (yaExiste) {
+        return res.status(409).json({
+          error: 'Ya existe una cuenta con ese DNI en esta escuela. Si es tuya, iniciá sesión o ' +
+                 'buscá tus datos de acceso con el DNI acá arriba.',
+        });
+      }
+    }
+
+    const user = await User.create({
+      name, email, password, role: userRole, dni: dniValue,
+      school: curso ? curso.school : null,
+    });
+
+    let materias = 0;
+    if (curso) {
+      // El actor de la auditoría es el propio alumno que se acaba de registrar. Se setea
+      // a mano porque checkUser corrió antes de que la cuenta existiera y res.locals.user
+      // está vacío: sin esto el evento quedaría sin actor ni escuela.
+      res.locals.user = user;
+      const r = await automatricular(req, user, curso._id, 'registro-automatricula');
+      materias = r.materias || 0;
+    }
 
     const token = createToken(user._id);
     res.cookie('token', token, cookieOpts);
-    res.status(201).json({ user });
+    res.status(201).json({ user, materias });
   } catch (err) {
     // Error 11000 = índice único violado → email ya registrado
     if (err.code === 11000) {
