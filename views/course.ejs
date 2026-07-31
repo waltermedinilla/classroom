@@ -31,6 +31,20 @@
         <% if (_courseSubtitle) { %>
           <p class="course-section"><%= _courseSubtitle %></p>
         <% } %>
+
+        <%# Código de clase — solo para el docente, que es quien lo dicta. Al alumno no se le
+            muestra: ya está en la materia, y verlo solo le daría algo para reenviar. Con la
+            función apagada (services/joinByCode.js) el bloque desaparece entero. %>
+        <% if (locals.joinByCode && course.isTeacher(user._id)) { %>
+          <div class="course-code" title="Los alumnos de este curso pueden unirse tipeando este código">
+            <span class="material-symbols-outlined">key</span>
+            <span>Código:</span>
+            <strong id="codigoClase"><%= course.code %></strong>
+            <button type="button" class="course-code-copy" onclick="copiarCodigoClase(this)" aria-label="Copiar código">
+              <span class="material-symbols-outlined">content_copy</span>
+            </button>
+          </div>
+        <% } %>
       </div>
       <div class="course-owner">
         <div class="avatar" style="width:48px;height:48px;font-size:22px;background:rgba(255,255,255,0.3)"><%= featuredTeacher.name.charAt(0).toUpperCase() %></div>
@@ -43,6 +57,31 @@
       </button>
       <% } %>
     </div>
+
+    <% if (locals.joinByCode && course.isTeacher(user._id)) { %>
+    <script>
+      function copiarCodigoClase(btn) {
+        const codigo = document.getElementById('codigoClase').textContent.trim();
+        const icono  = btn.querySelector('.material-symbols-outlined');
+        const listo  = () => { icono.textContent = 'check'; setTimeout(() => { icono.textContent = 'content_copy'; }, 1600); };
+
+        /* navigator.clipboard solo existe en contextos seguros (https o localhost). El sitio
+           se sirve por HTTPS, pero si alguien entra por la IP de Tailscale en http queda
+           undefined y el botón no haría nada: de ahí el camino alternativo. */
+        if (navigator.clipboard?.writeText) {
+          navigator.clipboard.writeText(codigo).then(listo).catch(() => {});
+          return;
+        }
+        const tmp = document.createElement('textarea');
+        tmp.value = codigo;
+        tmp.style.cssText = 'position:fixed;opacity:0';
+        document.body.appendChild(tmp);
+        tmp.select();
+        try { document.execCommand('copy'); listo(); } catch {}
+        tmp.remove();
+      }
+    </script>
+    <% } %>
 
     <div class="tabs">
       <button class="tab active" data-tab="stream">

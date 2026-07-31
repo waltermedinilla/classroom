@@ -437,14 +437,109 @@ const specs = [
     },
   },
   {
-    id: 'course-join-route-is-gone',
-    title: 'La matriculación por código ya no existe (404)',
+    // ── Código de clase (repuesto el 2026-07-31, ver services/joinByCode.js) ──────────
+    // Reemplaza al viejo spec `course-join-route-is-gone`, que verificaba el 404 de cuando
+    // la ruta estuvo eliminada (2026-07-30 → 2026-07-31).
+    id: 'course-join-by-code',
+    title: 'El alumno se suma con el código a una materia de SU curso',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Materia nueva en la MISMA división donde el alumno ya cursa: es el caso de uso real
+      // (el docente crea una materia después de que los alumnos ya estaban matriculados).
+      const nueva = await client.post('scopedTeacher', '/courses/create', {
+        body: { name: `Materia Codigo ${RUN_ID}`, divisionId: state.divisionId, room: '103' },
+        expectStatus: 201,
+      });
+      state.joinCourseId = nueva.json.course._id;
+      const code = nueva.json.course.code;
+      assert(code && code.length === 6, 'la materia nueva debería traer su código de 6 caracteres');
+
+      // En minúscula y con espacios, como lo tipea alguien a quien se lo dictaron.
+      const res = await client.post('scopedStudent', '/courses/join', {
+        body: { code: ` ${code.toLowerCase()} ` },
+        expectStatus: 200,
+      });
+      assert(res.json.materia._id === state.joinCourseId,
+        'debería haber quedado en la materia del código');
+
+      // Repetirlo no duplica ni rompe: avisa que ya está.
+      await client.post('scopedStudent', '/courses/join', { body: { code }, expectStatus: 400 });
+
+      // El código tiene que estar A LA VISTA del docente, que es quien lo dicta: si no se
+      // pinta, la función existe pero nadie puede usarla. Y NO al alumno, que ya está en la
+      // materia y solo tendría algo para reenviar.
+      const vistaDocente = await client.get('scopedTeacher', `/courses/${state.courseId}`, { expectStatus: 200 });
+      assert(vistaDocente.text.includes('id="codigoClase"') && vistaDocente.text.includes(state.courseCode),
+        'el docente debería ver el código de su materia en el encabezado');
+      const vistaAlumno = await client.get('scopedStudent', `/courses/${state.courseId}`, { expectStatus: 200 });
+      assert(!vistaAlumno.text.includes('id="codigoClase"'),
+        'al alumno no se le muestra el código de la materia');
+
+      const panel = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
+      assert(panel.text.includes('showJoinModal'),
+        'el alumno debería tener el botón para unirse con un código en su panel');
+
+      // ⚠️ Se borra ACÁ y no en la limpieza del final: varios specs posteriores
+      // (enrolldiv-*, dni-existing-completes-missing-course) cuentan las materias de esta
+      // división y esperan que haya UNA sola. Dejar la del código viva les cambia el
+      // resultado a 2 y los hace fallar por un motivo que no tiene que ver con lo que
+      // prueban. El id se limpia para que la limpieza del final no intente borrarla de
+      // nuevo; si este spec falla antes de llegar acá, sigue ahí como red de seguridad.
+      await client.post('admin', `/admin/courses/${state.joinCourseId}/delete`, { expectStatus: 200 });
+      state.joinCourseId = null;
+    },
+  },
+  {
+    id: 'course-join-rejects-other-division',
+    title: 'El código de una materia de OTRO curso no sirve (400)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Es la guarda que hace segura a esta función: sin ella, un código reenviado por
+      // WhatsApp mete al alumno en materias de otro año — el desorden que diagnostica
+      // 'alumnos-en-varios-cursos' en /superadmin/otros.
+      const div = await client.post('admin', '/admin/divisions/create', {
+        body: { name: `SMOKE-AJENA-${RUN_ID}` },
+        expectStatus: 201,
+      });
+      state.joinOtherDivisionId = div.json.division._id;
+
+      const ajena = await client.post('scopedTeacher', '/courses/create', {
+        body: { name: `Materia Ajena ${RUN_ID}`, divisionId: state.joinOtherDivisionId, room: '104' },
+        expectStatus: 201,
+      });
+      state.joinOtherCourseId = ajena.json.course._id;
+
+      const res = await client.post('scopedStudent', '/courses/join', {
+        body: { code: ajena.json.course.code },
+        expectStatus: 400,
+      });
+      assert(/curso/i.test(res.json.error || ''),
+        `el error debería explicar que la materia es de otro curso, dijo: ${res.json.error}`);
+
+      // Autocontenido, igual que el spec anterior: la materia va primero porque una división
+      // con materias adentro no se puede borrar.
+      await client.post('admin', `/admin/courses/${state.joinOtherCourseId}/delete`, { expectStatus: 200 });
+      await client.post('admin', `/admin/divisions/${state.joinOtherDivisionId}/delete`, { expectStatus: 200 });
+      state.joinOtherCourseId = null;
+      state.joinOtherDivisionId = null;
+    },
+  },
+  {
+    id: 'course-join-rejects-unknown-code',
+    title: 'Un código inexistente es rechazado (400)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      await client.post('scopedStudent', '/courses/join', { body: { code: 'ZZZZZZ' }, expectStatus: 400 });
+    },
+  },
+  {
+    id: 'course-join-rejects-teacher',
+    title: 'Un docente no puede usar el código de clase (403)',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state }) {
-      // 404 y no 403: la ruta se eliminó del router, no quedó detrás de un flag.
-      await client.post('scopedStudent', '/courses/join', {
+      await client.post('scopedTeacher', '/courses/join', {
         body: { code: state.courseCode },
-        expectStatus: 404,
+        expectStatus: 403,
       });
     },
   },
@@ -2194,6 +2289,10 @@ const specs = [
     title: 'Limpieza: el admin borra el curso de prueba (cascada)',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state }) {
+      // Las materias del código de clase van primero: la división ajena no se puede borrar
+      // mientras tenga una materia adentro, y su limpieza está en el spec de abajo.
+      if (state.joinCourseId)      await client.post('admin', `/admin/courses/${state.joinCourseId}/delete`, { expectStatus: 200 });
+      if (state.joinOtherCourseId) await client.post('admin', `/admin/courses/${state.joinOtherCourseId}/delete`, { expectStatus: 200 });
       if (!state.courseId) return;
       await client.post('admin', `/admin/courses/${state.courseId}/delete`, { expectStatus: 200 });
     },
@@ -2207,6 +2306,7 @@ const specs = [
       if (state.scopedStudentId) await client.post('admin', `/admin/users/${state.scopedStudentId}/delete`, { expectStatus: 200 });
       if (state.loneStudentId)   await client.post('admin', `/admin/users/${state.loneStudentId}/delete`, { expectStatus: 200 });
       if (state.divisionId)      await client.post('admin', `/admin/divisions/${state.divisionId}/delete`, { expectStatus: 200 });
+      if (state.joinOtherDivisionId) await client.post('admin', `/admin/divisions/${state.joinOtherDivisionId}/delete`, { expectStatus: 200 });
     },
   },
   {
@@ -2291,6 +2391,7 @@ const specs = [
           state.coTeacherId, state.coTeacherStudentId, state.coTeacherActivityId,
           state.preceptorId, state.preceptorStudentId, state.otherDivisionId,
           state.fakePreceptorId, state.dniNormalizedId, state.thirdDivisionId,
+          state.joinCourseId, state.joinOtherCourseId, state.joinOtherDivisionId,
         ].filter(Boolean);
         const ids = idStrings.map(s => new ObjectId(s));
 

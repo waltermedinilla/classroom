@@ -21,6 +21,8 @@ const {
 } = require('../middleware/image-upload');
 // Automatrícula del alumno — TEMPORAL, ver la cabecera de services/selfEnroll.js.
 const { cursosDisponibles, automatricular } = require('../services/selfEnroll');
+// Código de clase — apagable, ver la cabecera de services/joinByCode.js.
+const { JOIN_BY_CODE_ACTIVO, unirPorCodigo } = require('../services/joinByCode');
 
 const router = express.Router();
 
@@ -102,7 +104,8 @@ router.get('/', requireAuth, async (req, res) => {
       ? await cursosDisponibles(res.locals.user.school || null)
       : [];
 
-    res.render('dashboard', { courses, pendingSummary, profilePrompt, autoMatricula });
+    res.render('dashboard', { courses, pendingSummary, profilePrompt, autoMatricula,
+      joinByCode: JOIN_BY_CODE_ACTIVO });
   } catch (err) {
     res.status(500).send('Error del servidor');
   }
@@ -204,15 +207,32 @@ router.post('/create', requireAuth, async (req, res) => {
   }
 });
 
-// La matriculación por código de clase fue ELIMINADA (pedido del usuario, 2026-07-30).
-// Estuvo deshabilitada por el flag JOIN_BY_CODE_ENABLED desde el 2026-07-29 y ahora se
-// quitó del todo: ya no existe `POST /courses/join` ni el flag.
+// POST /courses/join — el alumno se suma a una materia tipeando su código de clase.
 //
-// Los alumnos se matriculan por las vías administrativas, que son las que dejan registro
-// de quién los inscribió: el alta con Curso desde /admin/users/create o desde el panel de
-// preceptoría (ambas usan services/enrollment.js), y `POST /courses/:id/add-student` para
-// sumar a alguien a una materia suelta. El botón "Enviar solicitud para unirme" del
-// dashboard sigue existiendo: manda una sugerencia al superadmin, no matricula.
+// Historia, porque la ruta fue y vino: existía, se apagó por flag el 2026-07-29, se eliminó
+// del todo el 2026-07-30 (matricular tenía que ser siempre administrativo) y se repuso el
+// 2026-07-31 a pedido del usuario, esta vez ACOTADA a las materias del propio curso del
+// alumno. La regla y el flag para apagarla viven en services/joinByCode.js.
+//
+// Las vías administrativas siguen intactas y son las que dejan registro de quién inscribió
+// a cada uno: el alta con Curso desde /admin/users/create o desde preceptoría (ambas usan
+// services/enrollment.js), y `POST /courses/:id/add-student` para una materia suelta.
+router.post('/join', requireAuth, async (req, res) => {
+  try {
+    if (res.locals.user?.role !== 'student') {
+      return res.status(403).json({ error: 'Solo los alumnos pueden unirse con un código.' });
+    }
+    const student = await User.findById(req.userId).select('_id name role school');
+    if (!student) return res.status(404).json({ error: 'No se encontró tu cuenta.' });
+
+    const r = await unirPorCodigo(req, student, req.body.code);
+    if (!r.ok) return res.status(400).json({ error: r.error });
+
+    res.json({ ok: true, materia: r.materia });
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
 //
 // El campo `Course.code` sigue en el modelo pero ya no se usa ni se muestra en ningún lado.
 
@@ -512,7 +532,7 @@ router.get('/:id', requireAuth, async (req, res) => {
       featuredTeacher = candidates[bestIdx];
     }
 
-    res.render('course', { course, featuredTeacher });
+    res.render('course', { course, featuredTeacher, joinByCode: JOIN_BY_CODE_ACTIVO });
   } catch (err) {
     res.status(500).send('Error del servidor');
   }

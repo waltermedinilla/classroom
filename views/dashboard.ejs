@@ -15,10 +15,17 @@
     <div class="dashboard-topbar">
       <h2>Tus clases</h2>
       <div class="dashboard-actions">
-        <% /* Unirse por código se ELIMINÓ (decisión del usuario, 2026-07-30). La única vía
-              del alumno para pedir el alta es la solicitud, que llega como sugerencia al
-              superadmin; matricular es siempre una acción administrativa. Los docentes
-              tampoco crean materias desde acá (decisión del 2026-07-25). */ %>
+        <% /* Unirse por código volvió el 2026-07-31, acotado a las materias del propio curso
+              del alumno (ver services/joinByCode.js). Se había eliminado el 2026-07-30. La
+              solicitud sigue existiendo para todo lo que el código no cubre: pedir el alta
+              en un curso que no es el suyo, o cuando todavía no tiene ninguna materia.
+              Los docentes no crean materias desde acá (decisión del 2026-07-25). */ %>
+        <% if (locals.joinByCode && user.role === 'student') { %>
+          <button class="btn btn-primary" onclick="showJoinModal()">
+            <span class="material-symbols-outlined">key</span>
+            Unirme con un código
+          </button>
+        <% } %>
         <% if (user.role !== 'teacher') { %>
           <button class="btn btn-outline" onclick="showRequestModal()">
             <span class="material-symbols-outlined">outgoing_mail</span>
@@ -287,8 +294,88 @@
     </div>
   </div>
 
-  <%# Única vía del alumno para pedir el alta: junta DNI y nombre completo y los manda como
-      una sugerencia común, que el superadmin ve en /superadmin/suggestions junto al resto.
+  <% if (locals.joinByCode && user.role === 'student') { %>
+  <%# Código de clase — el docente lo dicta y el alumno se suma a esa materia.
+      Solo funciona con materias de SU curso; la regla y el flag están en
+      services/joinByCode.js. Los mensajes de error los escribe el servidor: son los que
+      explican por qué un código válido puede no servirle a este alumno. %>
+  <div class="modal-overlay" id="joinModal">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">key</span>
+          <h3>Unirme con un código</h3>
+        </div>
+        <button class="icon-btn" onclick="hideJoinModal()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">
+          Pedile el código a tu profe. Sirve para las materias de tu curso: si es de otro curso,
+          el alta la tiene que hacer el administrador.
+        </p>
+        <form id="joinForm">
+          <div class="input-group">
+            <span class="material-symbols-outlined input-icon">key</span>
+            <input type="text" id="joinCode" placeholder="Código de la clase (6 caracteres)"
+                   maxlength="6" autocomplete="off" autocapitalize="characters" spellcheck="false"
+                   style="text-transform:uppercase;letter-spacing:2px;font-family:monospace" required>
+          </div>
+          <div class="form-error" id="joinError"></div>
+          <div class="form-success" id="joinOk"></div>
+          <button type="submit" class="btn btn-primary btn-full">
+            <span class="material-symbols-outlined">login</span>
+            Unirme
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <script>
+    function showJoinModal() { document.getElementById('joinModal').classList.add('active'); document.getElementById('joinCode').focus(); }
+    function hideJoinModal() { document.getElementById('joinModal').classList.remove('active'); }
+
+    document.getElementById('joinForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const error = document.getElementById('joinError');
+      const ok    = document.getElementById('joinOk');
+      const btn   = e.target.querySelector('button[type="submit"]');
+      error.classList.remove('show'); error.textContent = '';
+      ok.classList.remove('show');    ok.textContent = '';
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Uniéndote...';
+      try {
+        const res = await fetch('/courses/join', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: document.getElementById('joinCode').value }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          error.textContent = data.error || 'No se pudo unir.';
+          error.classList.add('show');
+          btn.disabled = false;
+          btn.innerHTML = '<span class="material-symbols-outlined">login</span> Unirme';
+          return;
+        }
+        ok.textContent = 'Listo, ya estás en ' + data.materia.name + '.';
+        ok.classList.add('show');
+        setTimeout(() => window.location.reload(), 900); // que alcance a leer el mensaje
+      } catch {
+        error.textContent = 'Error de conexión. Intentá de nuevo.';
+        error.classList.add('show');
+        btn.disabled = false;
+        btn.innerHTML = '<span class="material-symbols-outlined">login</span> Unirme';
+      }
+    });
+  </script>
+  <% } %>
+
+  <%# Vía del alumno para pedir el alta cuando el código no aplica (otro curso, o todavía sin
+      ninguna materia): junta DNI y nombre completo y los manda como una sugerencia común,
+      que el superadmin ve en /superadmin/suggestions junto al resto.
       No matricula ni toca la base más que creando esa sugerencia. %>
   <div class="modal-overlay" id="requestModal">
     <div class="modal">

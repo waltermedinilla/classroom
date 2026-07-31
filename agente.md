@@ -1344,6 +1344,33 @@ Cubierto por el spec `admin-users-curso-column` (la columna existe, el alumno ma
 
 ---
 
+## Vuelve el código de clase, acotado (2026-07-31)
+
+`POST /courses/join` volvió a existir. Historia completa, porque la ruta fue y vino tres veces: existía → se apagó por flag el 29/07 → se eliminó del todo el 30/07 (matricular tenía que ser siempre administrativo) → vuelve el 31/07 a pedido del usuario. Todo vive en `services/joinByCode.js`, apagable con `JOIN_BY_CODE_ACTIVO = false`.
+
+**Nunca hubo que regenerar nada**: `Course.code` siguió en el modelo todo este tiempo y las 419 materias ya tenían el suyo. Lo que se había eliminado era la puerta, no el dato.
+
+### La regla que lo hace seguro: solo materias del propio curso
+El código funciona únicamente si la materia pertenece a una División donde el alumno **ya** está matriculado. Sin eso, un código reenviado por WhatsApp lo mete en materias de otro año — exactamente el desorden que diagnostica `alumnos-en-varios-cursos` en `/superadmin/otros`.
+
+Caso de uso real: el docente crea una materia nueva en el curso y dicta el código en clase, en vez de pedirle al admin que matricule a los 30 uno por uno.
+
+Corolario deliberado: un alumno **sin ninguna materia no puede usar el código**, porque no hay curso contra el cual validar. Ese es el caso de la automatrícula: primero elige curso, después suma materias sueltas de ese curso. Las dos funciones se complementan en vez de pisarse.
+
+### Detalles que no son obvios
+- **Mismo mensaje para "no existe" y "es de otra escuela"**. Responder distinto convertiría el endpoint en un oráculo para adivinar códigos ajenos a fuerza de probar.
+- **El código se normaliza a mayúsculas y sin espacios**, porque se lo dictan en voz alta. Lo que NO se corrige es el 0/O: cambiaría el código por otro que podría existir.
+- **Solo lo ve el docente**, en el encabezado de su materia, con botón de copiar. Al alumno no: ya está en la materia y verlo solo le daría algo para reenviar.
+- El botón de copiar tiene camino alternativo con `execCommand`: `navigator.clipboard` no existe fuera de contextos seguros, y por la IP de Tailscale en http quedaría inerte.
+- Se inscribe con `enrollmentDates = ahora`, así que no le aparecen como pendientes las tareas ya vencidas.
+
+### Verificación — 142/142
+Cuatro specs nuevos que reemplazan a `course-join-route-is-gone` (el que verificaba el 404 de cuando la ruta no existía): se une con el código en minúsculas y con espacios, repetirlo avisa que ya está, el código de otro curso se rechaza, uno inexistente se rechaza, y un docente recibe 403. Más las tres comprobaciones de UI: el docente ve el código, el alumno no, y el alumno tiene el botón en su panel.
+
+⚠️ **Trampa que costó 6 specs rotos**: crear la materia de prueba y dejarla viva rompía a `enrolldiv-*` y `dni-existing-completes-missing-course`, que cuentan las materias de la división del smoke y esperan **una sola**. Los specs del código de clase borran lo que crean *dentro del propio spec*, no en la limpieza del final. Cualquier spec nuevo que agregue materias a `state.divisionId` tiene que hacer lo mismo.
+
+---
+
 ## Plan de Futuras Actualizaciones (Roadmap)
 
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`). Resumen de lo pendiente:

@@ -1276,6 +1276,26 @@ select, .select-input {
    El `100%` del min() la deja igual de contenida que antes en pantallas chicas: solo usa
    el espacio que sobra cuando de verdad sobra. */
 .main-content-ancho { max-width: min(1400px, 100%); }
+
+/* Código de clase en el encabezado de la materia (solo lo ve el docente).
+   Va sobre la portada, que puede ser un color, un degradado o una foto: de ahí el fondo
+   semitransparente oscuro en vez de un color fijo — legible sobre cualquiera de los tres. */
+.course-code {
+  display: inline-flex; align-items: center; gap: 8px; margin-top: 10px;
+  padding: 5px 10px 5px 12px; border-radius: 20px;
+  background: rgba(0,0,0,.28); color: #fff; font-size: 13px;
+  backdrop-filter: blur(2px);
+}
+.course-code .material-symbols-outlined { font-size: 17px; opacity: .9; }
+.course-code strong { font-family: monospace; font-size: 15px; letter-spacing: 2px; }
+.course-code-copy {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,.18); border: none; border-radius: 50%;
+  width: 26px; height: 26px; cursor: pointer; color: #fff; padding: 0;
+  transition: var(--transition);
+}
+.course-code-copy:hover { background: rgba(255,255,255,.34); }
+.course-code-copy .material-symbols-outlined { font-size: 15px; opacity: 1; }
 /* Los dos selects se dimensionaban por su opción más larga ("Superadministrador",
    "Escuela 4118 San José") y entre los dos se comían 300 px. Recortarlos no esconde nada:
    el valor elegido se sigue leyendo, y el desplegable se abre a su ancho natural. */
