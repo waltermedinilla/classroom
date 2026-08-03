@@ -44,7 +44,8 @@ const courseSchema = new mongoose.Schema({
   // dos o más Course del mismo nombre en la misma división se fusionan en una sola, los
   // owners de las eliminadas pasan acá en vez de perderse (ver scripts/merge-courses.js).
   // Siempre chequear pertenencia con course.isTeacher(userId) — nunca comparar
-  // solo contra `owner` directamente en código nuevo.
+  // solo contra `owner` directamente en código nuevo. Para PERMISOS de ruta o de UI
+  // usar course.canManage(user), que además incluye a los admins de la escuela.
   coTeachers: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -89,6 +90,32 @@ courseSchema.methods.isTeacher = function (userId) {
   const uid = userId.toString();
   if (idToString(this.owner) === uid) return true;
   return (this.coTeachers || []).some(t => idToString(t) === uid);
+};
+
+// "¿Puede gestionar esta materia?" — es isTeacher() MÁS los admins de la escuela y el
+// superadmin, con los mismos permisos que un docente (crear/editar actividades, calificar,
+// publicar novedades, gestionar alumnos). Decisión del usuario 2026-07-31: el admin entraba
+// a /courses/:id y le daba "Acceso denegado"; podía mirar solo suplantando a un docente.
+//
+// A diferencia de isTeacher() recibe el USUARIO COMPLETO, no el id: necesita el `role` y
+// la `school`. Pasarle un id suelto devuelve false para el caso admin (no rompe, pero no
+// concede nada) — usar siempre res.locals.user.
+//
+// Ojo con el `select` de la query: además de `owner coTeachers` tiene que traer `school`,
+// o el admin de la escuela cae en el `idToString(undefined)` y se lo rechaza por error.
+//
+// NO usar esto para armar listados de "mis materias" (dashboard, perfil): ahí sigue valiendo
+// la pertenencia real por owner/coTeachers, si no el admin vería las 419 materias como propias.
+courseSchema.methods.canManage = function (user) {
+  if (!user) return false;
+  if (this.isTeacher(user._id)) return true;
+  // El superadmin no tiene escuela asignada: llega a todas.
+  if (user.role === 'superadmin') return true;
+  if (user.role === 'admin') {
+    if (!user.school || !this.school) return false;
+    return idToString(this.school) === idToString(user.school);
+  }
+  return false;
 };
 
 module.exports = mongoose.model('Course', courseSchema);

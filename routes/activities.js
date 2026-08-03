@@ -114,7 +114,7 @@ const submissionUpload = multer({
 router.get('/new', requireAuth, async (req, res) => {
   try {
     const course = await Course.findById(req.query.courseId).populate('owner', 'name');
-    if (!course || !course.isTeacher(res.locals.user._id)) {
+    if (!course || !course.canManage(res.locals.user)) {
       return res.redirect('/courses');
     }
     res.render('activities/new', { course });
@@ -134,7 +134,7 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
 
     const userId  = res.locals.user._id.toString();
-    const isOwner = course.isTeacher(userId);
+    const isOwner = course.canManage(res.locals.user);
 
     const query = { course: req.params.courseId };
     // Los alumnos solo ven actividades que ya fueron publicadas (availableFrom <= ahora).
@@ -217,10 +217,17 @@ router.get('/available-templates', requireAuth, async (req, res) => {
 
     const course = await Course.findById(courseId).select('school owner coTeachers').lean();
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
-    const uid = String(res.locals.user._id);
+    // Comparación a mano (no course.canManage()) porque esta query es .lean(): el documento
+    // no trae los métodos del schema. Mismo criterio que canManage: docentes + admins de la
+    // escuela del curso + superadmin.
+    const uid  = String(res.locals.user._id);
+    const role = res.locals.user.role;
     const isTeacher = String(course.owner) === uid
       || (course.coTeachers || []).some(t => String(t) === uid);
-    if (!isTeacher) return res.status(403).json({ error: 'Sin acceso' });
+    const isSchoolAdmin = role === 'superadmin'
+      || (role === 'admin' && res.locals.user.school
+          && String(course.school) === String(res.locals.user.school));
+    if (!isTeacher && !isSchoolAdmin) return res.status(403).json({ error: 'Sin acceso' });
 
     // Todas las plantillas aceptadas por la escuela del curso (activo = status:'accepted').
     const assignments = await TemplateAssignment.find({ school: course.school, status: 'accepted' })
@@ -251,7 +258,7 @@ router.post('/create', requireAuth, uploadLimiter, upload.array('files', 10), as
 
     const course = await Course.findById(courseId);
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
-    if (!course.isTeacher(res.locals.user._id)) {
+    if (!course.canManage(res.locals.user)) {
       return res.status(403).json({ error: 'Solo el docente puede crear actividades' });
     }
 
@@ -390,7 +397,7 @@ router.post('/upload-attachment', requireAuth, uploadLimiter, (req, res, next) =
       fs.unlinkSync(req.file.path);
       return res.status(404).json({ error: 'Curso no encontrado' });
     }
-    if (!course.isTeacher(res.locals.user._id)) {
+    if (!course.canManage(res.locals.user)) {
       fs.unlinkSync(req.file.path);
       return res.status(403).json({ error: 'Sin acceso al curso' });
     }
@@ -467,7 +474,7 @@ router.get('/:id/grades', requireAuth, async (req, res) => {
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
 
     const course = await Course.findById(activity.course).populate('students', 'name email');
-    if (!course.isTeacher(res.locals.user._id)) {
+    if (!course.canManage(res.locals.user)) {
       return res.status(403).json({ error: 'Sin acceso' });
     }
 
@@ -503,7 +510,7 @@ router.post('/:id/grade', requireAuth, async (req, res) => {
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
 
     const course = await Course.findById(activity.course);
-    if (!course.isTeacher(res.locals.user._id)) {
+    if (!course.canManage(res.locals.user)) {
       return res.status(403).json({ error: 'Sin acceso' });
     }
 
@@ -551,7 +558,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
 
     const course = await Course.findById(activity.course);
-    if (!course.isTeacher(res.locals.user._id)) {
+    if (!course.canManage(res.locals.user)) {
       return res.status(403).json({ error: 'Sin acceso' });
     }
 
@@ -607,7 +614,7 @@ router.patch('/:id/toggle-late', requireAuth, async (req, res) => {
     const activity = await Activity.findById(req.params.id);
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
     const course = await Course.findById(activity.course);
-    if (!course.isTeacher(res.locals.user._id)) {
+    if (!course.canManage(res.locals.user)) {
       return res.status(403).json({ error: 'Sin acceso' });
     }
     activity.allowLateSubmissions = !activity.allowLateSubmissions;
@@ -637,7 +644,7 @@ router.put('/:id', requireAuth, async (req, res) => {
     const activity = await Activity.findById(req.params.id);
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
     const course = await Course.findById(activity.course);
-    if (!course.isTeacher(res.locals.user._id)) {
+    if (!course.canManage(res.locals.user)) {
       return res.status(403).json({ error: 'Sin acceso' });
     }
     if (!title?.trim()) return res.status(400).json({ error: 'El título es requerido' });
@@ -681,9 +688,9 @@ router.get('/submission-file/:filename', requireAuth, async (req, res) => {
 
     const isStudent = submission.student.toString() === userId;
     if (!isStudent) {
-      // Si no es el alumno, verifica que sea el docente dueño del curso
+      // Si no es el alumno, verifica que sea docente del curso (o admin de la escuela)
       const course = await Course.findById(submission.activity.course);
-      if (!course || !course.isTeacher(userId)) return res.status(403).send('Acceso denegado');
+      if (!course || !course.canManage(res.locals.user)) return res.status(403).send('Acceso denegado');
     }
 
     const file     = submission.files.find(f => f.filename === filename);
@@ -964,7 +971,7 @@ router.get('/:id/export-grades', requireAuth, async (req, res) => {
     if (!activity) return res.status(404).send('Actividad no encontrada');
 
     const course = await Course.findById(activity.course).populate('students', 'name email dni');
-    if (!course || !course.isTeacher(res.locals.user._id)) {
+    if (!course || !course.canManage(res.locals.user)) {
       return res.status(403).send('Sin acceso');
     }
 
@@ -1036,7 +1043,7 @@ router.get('/:id/submissions', requireAuth, async (req, res) => {
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
 
     const course = await Course.findById(activity.course);
-    if (!course.isTeacher(res.locals.user._id)) {
+    if (!course.canManage(res.locals.user)) {
       return res.status(403).json({ error: 'Sin acceso' });
     }
 

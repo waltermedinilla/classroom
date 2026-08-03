@@ -823,6 +823,30 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
 .ann-expanded { padding: 4px 20px 20px 20px; border-top: 1px solid var(--border); }
 .ann-full-text { font-size: 14px; line-height: 1.75; color: var(--text); white-space: pre-wrap; padding: 14px 0 12px; overflow-wrap: anywhere; word-break: break-word; }
 .ann-full-img { max-width: 100%; max-height: 360px; border-radius: var(--radius-sm); display: block; margin-bottom: 16px; }
+
+/* Editar / eliminar la propia novedad (el docente y el alumno sobre lo que publicaron;
+   además el docente y el admin pueden eliminar novedades ajenas, como moderación). */
+.ann-actions { display: flex; gap: 8px; justify-content: flex-end; padding-top: 12px; }
+.ann-action-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: transparent; border: none; cursor: pointer;
+  font-size: 13px; font-weight: 500; color: var(--text-secondary);
+  padding: 5px 10px; border-radius: var(--radius-sm); transition: background 0.18s, color 0.18s;
+}
+.ann-action-btn:hover { background: rgba(0,0,0,0.05); color: var(--text); }
+.ann-action-btn .material-symbols-outlined { font-size: 17px; }
+.ann-action-danger:hover { background: rgba(234,67,53,0.1); color: #ea4335; }
+.ann-edited-tag { font-size: 11px; color: var(--text-hint); font-style: italic; margin-left: 4px; }
+.ann-edit-input {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 90px;
+  font-family: inherit; font-size: 14px; line-height: 1.6; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 10px 12px; outline: none;
+}
+.ann-edit-input:focus { border-color: var(--primary); }
+.ann-edit-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+.ann-edit-btns .btn { padding: 6px 14px; font-size: 13px; }
+[data-theme="dark"] .ann-action-btn:hover { background: rgba(255,255,255,0.08); }
 .ann-comments { display: flex; flex-direction: column; gap: 14px; margin-bottom: 16px; padding-left: 8px; border-left: 3px solid var(--border); }
 .ann-comment { display: flex; gap: 10px; align-items: flex-start; }
 .ann-comment-body { flex: 1; }
@@ -1258,10 +1282,14 @@ select, .select-input {
 /* ─── Users Table ─── */
 .users-table-card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; }
 .users-table { width: 100%; border-collapse: collapse; }
-.users-table th { text-align: left; padding: 14px 20px; font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; background: #f8f9fa; border-bottom: 1px solid var(--border); }
-.users-table td { padding: 14px 20px; font-size: 14px; color: var(--text); border-bottom: 1px solid #f0f0f0; }
+/* Padding lateral acotado (era 20 px): con 8 columnas se iban 320 px solo en aire, y eso
+   era lo que empujaba la columna Acciones fuera de pantalla en /admin/users. */
+.users-table th { text-align: left; padding: 14px 12px; font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; background: #f8f9fa; border-bottom: 1px solid var(--border); }
+.users-table td { padding: 14px 12px; font-size: 14px; color: var(--text); border-bottom: 1px solid #f0f0f0; }
+.users-table th:first-child, .users-table td:first-child { padding-left: 20px; }
 .users-table tr:last-child td { border-bottom: none; }
 .users-table tr:hover td { background: #fafafa; }
+
 .td-email { color: var(--text-secondary); }
 .td-date { color: var(--text-hint); font-size: 13px; }
 /* Columna "Curso" de /admin/users: nombres cortos y fijos ("1° 1°"), que partidos en dos
@@ -2169,6 +2197,78 @@ table { max-width: 100%; }
    la derecha quedaban inaccesibles, sin scroll posible. overflow-x:auto conserva el
    clipping vertical (el radio se sigue viendo) y devuelve el scroll horizontal. */
 .users-table-card { overflow-x: auto; }
+
+/* ─── Columnas fijas en los listados anchos (2026-08-02) ────────────────────
+   Cuando una tabla no entra y hay que correrla en horizontal, lo primero que se pierde
+   es justo lo que más se usa: el botón de la derecha (Ver perfil, Editar, Gestionar) o,
+   scrolleando al revés, el nombre de la fila que estás leyendo. Dos clases opcionales,
+   que se ponen en la <table>:
+
+     .acciones-fijas  → ancla la ÚLTIMA columna a la derecha (columna de acciones)
+     .nombre-fijo     → ancla la PRIMERA columna a la izquierda (nombre de la fila)
+
+   Son opt-in a propósito: en las tablas donde la última columna es un dato más
+   (las previsualizaciones de importación, por ejemplo) anclarla no aportaría nada.
+
+   Las celdas ancladas necesitan fondo propio: son transparentes y, al quedar flotando
+   sobre las demás, se leerían encimadas. Los tres colores salen de variables con el
+   default de la mayoría de las tablas del panel, y cada tabla puede pisarlos. */
+/* El default es el fondo de la tarjeta, que es lo que rinden hoy las tablas del panel de
+   directivo y preceptor: sus reglas usan `var(--background)`, una variable que no existe
+   (la real es `--bg`), así que su encabezado y su hover son transparentes. Las tablas que
+   sí tienen color propio pisan estas variables — ver `.users-table` acá abajo y `.sp-table`
+   en views/superadmin/school-profile.ejs — y por eso el selector se queda en una clase:
+   con `table.` de más, ningún override de una sola clase podría ganarle. */
+.acciones-fijas, .nombre-fijo {
+  --celda-fija-bg:       var(--surface);
+  --celda-fija-bg-head:  var(--surface);
+  --celda-fija-bg-hover: var(--surface);
+}
+/* Esto sí va con `table.`: varias vistas definen su tabla en un <style> propio del <head>,
+   que por orden de aparición le gana a este archivo, y hay que pisarles el `overflow`.
+   Traen overflow:hidden para recortarse al border-radius, y eso las convierte a ELLAS en
+   el contenedor de scroll de referencia: la columna anclada se ancla al borde de la tabla,
+   o sea, no hace nada. `clip` recorta igual (el radio se sigue viendo) pero NO es un
+   contenedor de scroll, así que el sticky pasa a anclarse al div que scrollea. */
+table.acciones-fijas, table.nombre-fijo { overflow: clip; }
+.acciones-fijas th:last-child,
+.acciones-fijas td:last-child,
+.nombre-fijo th:first-child,
+.nombre-fijo td:first-child { position: sticky; background: var(--celda-fija-bg); z-index: 1; }
+.acciones-fijas th:last-child,  .acciones-fijas td:last-child  { right: 0; }
+.nombre-fijo    th:first-child, .nombre-fijo    td:first-child { left: 0; }
+.acciones-fijas th:last-child,
+.nombre-fijo th:first-child { background: var(--celda-fija-bg-head); z-index: 2; }
+.acciones-fijas tr:hover td:last-child,
+.nombre-fijo tr:hover td:first-child { background: var(--celda-fija-bg-hover); }
+.acciones-fijas tr.selected td:last-child,
+.nombre-fijo tr.selected td:first-child { background: var(--primary-light); }
+/* El botón de la columna anclada, en una sola línea: la columna es angosta y "Ver perfil"
+   se partía en dos renglones. */
+.acciones-fijas td:last-child .btn { white-space: nowrap; }
+
+/* La sombra que avisa que hay contenido tapado aparece SOLO si la tabla no entra: con la
+   tabla completa, una línea gris al costado de una columna sería ruido. La clase la pone
+   el script de `partials/header.ejs` sobre el contenedor que scrollea (al cargar y al
+   redimensionar). */
+.has-overflow .acciones-fijas th:last-child::before,
+.has-overflow .acciones-fijas td:last-child::before,
+.has-overflow .nombre-fijo th:first-child::after,
+.has-overflow .nombre-fijo td:first-child::after {
+  content: ''; position: absolute; top: 0; bottom: 0; width: 8px; pointer-events: none;
+}
+.has-overflow .acciones-fijas th:last-child::before,
+.has-overflow .acciones-fijas td:last-child::before {
+  left: 0; transform: translateX(-100%);
+  background: linear-gradient(to left, rgba(0,0,0,.09), transparent);
+}
+.has-overflow .nombre-fijo th:first-child::after,
+.has-overflow .nombre-fijo td:first-child::after {
+  right: 0; transform: translateX(100%);
+  background: linear-gradient(to right, rgba(0,0,0,.09), transparent);
+}
+/* La tabla de usuarios tiene sus propios grises (heredados del diseño original). */
+.users-table { --celda-fija-bg-head: #f8f9fa; --celda-fija-bg-hover: #fafafa; }
 
 /* ─── Botón que reemplaza a las solapas en pantallas chicas ───────────────── */
 .nav-toggle {

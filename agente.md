@@ -291,6 +291,147 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-03 — El restore rechazaba backups de más de 500 MB
+
+**Pedido**: "quiero restaurar un backup de la base de datos pero me sale un cartel que dice el archivo supera los 500 MB, obviamente de aquí en más van a pesar mucho más".
+
+**Causa**: el tope de subida de `POST /superadmin/backup/preview` (`routes/backup.js`) se fijó en 500 MB cuando el volumen de adjuntos era de ~33 MB. Hoy `public/archivos` + `archivos/entregas` ya suman ~400 MB en el mirror local y siguen creciendo con cada entrega, así que el propio backup que genera el sistema pasó a ser más grande que lo que el sistema acepta recibir.
+
+**Dos arreglos, porque había dos techos y el segundo no daba un mensaje claro**:
+
+1. **Tope de subida configurable** (`routes/backup.js`): `BACKUP_MAX_UPLOAD_MB`, default **4096 (4 GB)**. El mensaje del error 413 usa el valor real, así que no vuelve a quedar desactualizado. No es un límite de memoria: multer escribe a disco a medida que recibe, el techo verdadero es el espacio libre en `os.tmpdir()`.
+2. **`server.requestTimeout` a 1 h** (`server.js`). Node corta toda request que tarde más de 5 min en llegar completa, y subir cientos de MB desde una conexión hogareña se pasa de largo: la subida moría a mitad de camino y en el navegador se veía como "error de conexión", sin relación aparente con el tamaño. `headersTimeout` queda en el default (65 s), que es lo que frena un slowloris de headers.
+
+**Sin riesgo para el restore en sí**: la extracción del `.tar.gz` ocurre *antes* del `deleteMany`, así que si el disco no alcanza la operación aborta con la base intacta (y el backup de seguridad pre-restore ya está escrito).
+
+**Pendiente relacionado**: la descarga (`downloadBackup()` en `views/superadmin/backup.ejs`) hace `res.blob()`, o sea que el navegador se guarda el backup entero en memoria antes de ofrecerlo. Con 400-500 MB anda; cerca de los 2 GB es el próximo techo. Está anotado en el backlog.
+
+### 2026-08-02 — Al salir de la suplantación, el superadmin volvía al panel de admin
+
+**Pedido**: "con el rol de superadministrador, hago click en un usuario para ver su perfil y luego ver como este usuario; al regresar se me colocan las solapas de administrador solamente".
+
+**Causa**: `GET /exit-impersonate` (`routes/auth.js`) terminaba con `res.redirect('/admin')` — fijo, sin mirar quién estaba volviendo. Para el admin era su panel y nadie lo notaba; el superadmin aterrizaba en el panel de administración, con las solapas de admin y sin las suyas. Y de ahí no se sale: ninguna solapa de ese panel vuelve a `/superadmin`, así que parecía que la suplantación le había cambiado el rol.
+
+**Arreglo**: redirige a `/`, que ya reparte por rol (`server.js`): superadmin → `/superadmin`, admin → `/admin`, directivo → `/directivo`, preceptor → `/preceptor`, resto → `/courses`. Un renglón y sin lógica duplicada. De paso cubre el caso del `adminToken` vencido: ahí no queda sesión y `/` manda a `/login`, en vez de rebotar contra `/admin`.
+
+**Regresión cubierta**: spec nuevo `exit-impersonate-returns-to-own-panel` (`tests/smoke/specs.js`). Suplanta a un alumno con el superadmin y con el admin — cada uno con su propio actor, para que una falla a mitad de camino no le deje la cookie del suplantado pegada a los actores que usan los demás specs — y verifica las tres etapas: suplantando, `/` lleva a `/courses`; `/exit-impersonate` redirige a `/`; y `/` devuelve a cada uno a SU panel. **Verificado que el test detecta el bug**: reintroduciendo el `redirect('/admin')` falla con "fue a /admin", y con el arreglo pasa. Suite completa: **143/143**.
+
+### 2026-08-02 — La columna "Acciones" ya no se esconde detrás del scroll
+
+**Pedido**: "con el rol de administrador no puedo ver el botón de Ver perfil, porque se esconde detrás del scroll". En `/admin/users` la tabla tiene 8 columnas y no entraba en el contenedor de 1100 px: la última columna quedaba fuera de pantalla y había que scrollear la tarjeta a ciegas para llegar al botón.
+
+**Tres cambios, todos de presentación** (ninguna ruta ni consulta tocada):
+
+1. **`/admin/users` usa el contenedor ancho** (`main-content-ancho`, hasta 1400 px), el mismo que ya usaba `/superadmin/users` por el mismo motivo.
+2. **Padding lateral de las celdas: 20 px → 12 px** (el de la primera columna se mantiene en 20 para no pegar el contenido al borde). Con 8 columnas, 20 px por lado eran ~320 px de puro aire, que era buena parte de lo que empujaba "Acciones" afuera.
+3. **La columna Acciones queda fija a la derecha** (`position: sticky`) dentro de la tarjeta que scrollea. Aunque la tabla no entre — pantalla chica, zoom alto — el botón "Ver perfil" siempre está a la vista, y las columnas tapadas se alcanzan scrolleando con el botón siempre presente.
+
+La sombra al costado de la columna fija **solo aparece cuando hay algo tapado**: un script en `partials/header.ejs` pone la clase `has-overflow` en `.users-table-card` si `scrollWidth > clientWidth` (al cargar y al redimensionar). Si la tabla entra entera, no hay sombra ni scroll.
+
+**Verificado en el navegador**: a 1292 px la tabla entra completa (1228 px, sin overflow, sin sombra); a 900 px hay scroll y el borde derecho de la celda de Acciones coincide con el de la tarjeta — es decir, queda anclada — con el botón en una sola línea (`white-space: nowrap`). Comprobado en tema claro y oscuro.
+
+**Extendido al resto de los listados anchos** (mismo día). El anclaje quedó como un mecanismo genérico de `style.css`, opt-in con una clase en la `<table>`:
+
+| Clase | Qué ancla | Dónde se usa |
+|---|---|---|
+| `.acciones-fijas` | última columna, a la derecha | `/admin/users`, `/superadmin/users`, `/admin/courses`, `/admin/divisions`, ficha de escuela del superadmin (`.sp-table`), listado de alumnos del preceptor |
+| `.nombre-fijo` | primera columna, a la izquierda | listados del directivo: materias, docentes, cursos, alumnos y notas por materia |
+
+En las tablas del directivo el botón no está a la derecha: el acceso es el **nombre de la fila**, en la primera columna. Ahí lo que se perdía al scrollear era saber de qué materia o de qué docente era el número que estabas mirando — por eso se ancla la primera columna en vez de la última. Es opt-in a propósito: en las previsualizaciones de importación la última columna es un dato más y anclarla no aportaría nada.
+
+Tres detalles que costaron:
+
+- **`overflow: clip` en la tabla, no `hidden`.** Muchas de estas tablas traen `border-radius` + `overflow: hidden`, y eso las convierte a ellas en el contenedor de scroll de referencia: el `sticky` se anclaba al borde de la propia tabla, o sea, no hacía nada. `clip` recorta igual (el radio se sigue viendo) pero no es contenedor de scroll, así que el anclaje pasa al div que scrollea. Va con selector `table.` porque el `<style>` de cada vista está en el `<head>` **después** de `style.css` y le ganaba por orden.
+- **Los colores salen de variables** (`--celda-fija-bg`, `--celda-fija-bg-head`, `--celda-fija-bg-hover`) y ese bloque se queda en **una sola clase** de especificidad, justamente para que cada tabla pueda pisarlas: `.users-table` usa sus grises (`#f8f9fa` / `#fafafa`) y `.sp-table` usa `var(--bg)`.
+- **`.sp-table-wrap` tenía `overflow: hidden`** — el mismo bug que la tarjeta de `/admin/users`: recortaba la tabla sin dejar scroll. Ahora es `overflow-x: auto` + `overflow-y: hidden`.
+
+El script del header se generalizó: en vez de buscar una clase de contenedor fija, sube desde cada tabla anclada hasta el primer ancestro que scrollea y le pone `has-overflow`. Así ninguna vista tiene que acordarse de agregar nada.
+
+**Hallazgo al pasar** (no corregido, queda anotado): las tablas de directivo y preceptor pintan encabezado y hover con `var(--background)`, **una variable que no existe** — la real es `--bg`. Hoy quedan transparentes. Por eso el default de `--celda-fija-bg-head` es `var(--surface)`: replica lo que se ve hoy. Si se arregla la variable, hay que pasar esas tablas a `var(--bg)`.
+
+**Verificado**: con las dos tablas scrolleadas a fondo, la columna anclada coincide con el borde del contenedor en ambos casos (última a la derecha, primera a la izquierda), el fondo de la celda anclada coincide con el de su fila en tema claro y oscuro, y el encabezado anclado con el de sus vecinos. Smoke: **142/142**.
+
+### 2026-07-31 — El autor puede editar y eliminar su novedad
+
+**Pedido**: "que el docente pueda editar o eliminar la novedad que ha creado". Hasta ahora una novedad publicada era **inmutable**: no existía ninguna ruta de edición ni de borrado, ni siquiera para su autor. Un error de tipeo quedaba para siempre.
+
+**Rutas nuevas** (`routes/announcements.js`):
+
+| Ruta | Quién puede |
+|---|---|
+| `PUT /announcements/:id` | **solo el autor** |
+| `POST /announcements/:id/delete` | el **autor**, o quien gestiona la materia (`canManage`: docente titular/suplente y admin de la escuela) |
+
+**Por qué editar y eliminar no tienen el mismo permiso.** Editar es solo del autor a propósito: nadie corrige palabras ajenas y las deja firmadas con el nombre de otro, ni siquiera el admin. Eliminar se abre al docente y al admin porque los **alumnos también publican novedades** y no había ninguna vía de moderación — si un alumno publica algo inapropiado, alguien tiene que poder bajarlo. El borrado por moderación queda distinguido en la auditoría (`meta.como = 'moderación'` vs `'autor'`).
+
+**Alcance de la edición**: solo el texto. La imagen no se toca — para cambiarla hay que borrar la novedad y publicarla de nuevo. Al eliminar sí se borra la imagen del disco (con chequeo de que la ruta resuelta no escape de `ARCHIVOS_BASE`) y se van los comentarios, que son subdocumentos.
+
+**`Announcement.editedAt`** (campo nuevo, default `null`) — marca "(editada)" en el stream. **No alcanza con mirar `updatedAt`**: comentar una novedad hace `ann.save()` y también lo mueve, así que cualquier novedad comentada habría figurado como editada sin haberlo sido. Verificado con un test específico. Campo nuevo con default, sin migración: las novedades existentes quedan en `null` = "nunca editada", que es lo correcto.
+
+**UI** (`public/js/course.js` + CSS): al expandir una novedad aparecen "Editar" y "Eliminar" según corresponda. Editar es inline (textarea con Guardar/Cancelar, no permite dejarla vacía). Se agregó `window.USER_ID` en `views/course.ejs` — hasta ahora la vista solo exponía `IS_OWNER`, que no alcanza para saber si sos el autor de una novedad puntual.
+
+**Verificación**: script de punta a punta con 5 identidades (autor, otro docente de la materia, admin, alumno inscripto y un docente ajeno), creando sus propios usuarios y su propia materia y borrando todo al final — **27/27**. Cubre: el autor edita y borra lo suyo; docente, admin y alumno reciben **403** al editar lo ajeno; el alumno no borra la novedad del docente; el docente y el admin sí pueden borrarla por moderación; un docente ajeno a la materia recibe 403 en ambas; texto vacío da 400 sin pisar el original; comentar no marca como editada; la imagen se borra del disco; y las dos acciones quedan en la auditoría distinguiendo autoría de moderación. Más el ciclo completo en el navegador y **142/142** en la suite de smoke.
+
+### 2026-07-31 — El administrador ya puede quitar suplentes de una materia
+
+**Pedido**: verificar si el rol Administrador puede gestionar los docentes de una materia (agregarlos y quitarlos) y completarlo si faltaba.
+
+**Estado previo** — el admin ya podía:
+- **Cambiar el titular** (`Course.owner`): desde el select "Docente" del formulario de edición, o con el lápiz de la columna Docente en `/admin/courses` (`POST /admin/courses/:id/assign-teacher`).
+- **Agregar suplentes** (`Course.coTeachers`): `POST /admin/courses/:id/co-teachers`.
+- **Lo que faltaba**: quitar un suplente. Se había dejado explícitamente para más adelante en la sesión del 2026-07-25; una vez agregado, el único camino para sacarlo era editar Mongo a mano.
+
+**Lo que se agregó:**
+
+| Archivo | Cambio |
+|---|---|
+| `routes/admin.js` | **nueva** `POST /admin/courses/:id/co-teachers/:teacherId/delete` — valida escuela, que el docente sea realmente suplente de esa materia, lo saca del array y audita |
+| `config/audit-actions.js` | nueva acción `course.remove_coteacher` ("quitó un suplente", `group_remove`, naranja) |
+| `views/admin/course-form.ejs` | botón `person_remove` en cada fila de la lista de suplentes + handler delegado con `confirm()` |
+
+**Decisión de alcance**: la ruta **no** permite quitar al titular. Una materia sin `owner` queda huérfana y la alerta del panel directivo la marcaría como "materia sin docente"; para cambiar el titular está `assign-teacher`, que lo reemplaza en un solo paso.
+
+**Verificado en el mirror local** con la cuenta `administrador@escuela.edu.ar`: se quitó y se volvió a agregar un suplente de "Educación Artística (A) Teatro" desde la UI, con los dos registros correspondientes en la auditoría. La materia quedó con sus dos suplentes originales.
+
+**Qué pasa con el contenido del docente que se quita** (se verificó, no se asumió). El contenido cuelga de la **materia**, no del docente: `Activity.course` y `Announcement.course` son las claves de pertenencia y `author` es solo metadata de firma — ninguna ruta decide permisos mirando `author`. Prueba real en "Lengua Extranjera", donde la suplente CHAPARRO había creado la única actividad y la única novedad: al quitarla, ambas siguieron en la materia con su nombre, los 31 alumnos las siguieron viendo y el titular pudo editarlas y calificarlas. La cuenta del docente queda intacta. Tres efectos esperados: (1) pierde el acceso a esa materia, incluso a lo que creó él; (2) cambia el `featuredTeacher` de la ficha, que se calcula por volumen de contenido entre titular y suplentes; (3) los reportes históricos (directivo M3, columnas Nov/Act/Msg) le siguen atribuyendo esas producciones, porque van por `author`.
+
+### 2026-07-31 — El admin entra a `/courses/:id` con permisos de docente
+
+**Pedido**: al admin le daba "Acceso denegado" en la ficha de cualquier materia (`GET /courses/:id` solo dejaba pasar a docentes de esa materia y alumnos inscriptos). Podía mirarla únicamente suplantando a un docente. El usuario eligió explícitamente **permisos completos**, no solo lectura.
+
+**`Course.canManage(user)`** (`models/Course.js`) — nuevo método, ahora el punto de verdad para PERMISOS. Es `isTeacher()` más los admins de la escuela del curso y el superadmin:
+
+| | `isTeacher(userId)` | `canManage(user)` |
+|---|---|---|
+| Para qué | pertenencia real (¿es docente de esta materia?) | permisos de ruta y de UI |
+| Recibe | un id | el **usuario completo** (necesita `role` y `school`) |
+| Titular / suplente | ✅ | ✅ |
+| Admin de la escuela | ❌ | ✅ |
+| Superadmin | ❌ | ✅ |
+| Admin de **otra** escuela | ❌ | ❌ |
+
+Los dos conviven a propósito: **los listados de "mis materias"** (dashboard, perfil, panel directivo) siguen usando la pertenencia real por `owner`/`coTeachers`. Si usaran `canManage`, el admin vería las 419 materias como propias. Verificado: su dashboard sigue con 0 tarjetas.
+
+**Reemplazados los ~20 chequeos** de `course.isTeacher(...)` por `course.canManage(res.locals.user)` en `routes/courses.js`, `routes/activities.js`, `routes/announcements.js` y las 11 condiciones de `views/course.ejs`.
+
+**Dos trampas del `select`** que hay que respetar en código nuevo:
+- `canManage` necesita `school` además de `owner coTeachers`. `GET /courses/:id/customize` traía solo los dos últimos — se le sumó `school`, si no el admin caía en un `undefined` y se lo rechazaba por error.
+- `GET /activities/available-templates` usa `.lean()`, así que el documento **no tiene métodos**: ahí el chequeo quedó a mano, replicando el mismo criterio (documentado en el propio código).
+
+**Gestión de docentes desde la solapa Personas** (mismo día, pedido inmediato después): entrar a `/admin/courses/:id/edit` solo para tocar docentes era un rodeo, así que la card "Profesor / Docentes" de la ficha ahora trae los controles para el admin:
+
+- **`+` en el encabezado** → modal para agregar un suplente.
+- **`swap_horiz` en el titular** → mismo modal en modo "cambiar titular". El texto de ayuda avisa que el titular actual **pierde el acceso**, y sugiere agregarlo como suplente antes si se lo quiere conservar.
+- **`person_remove` rojo en cada suplente** → lo quita, con confirmación.
+
+No hay endpoints nuevos: pega contra `assign-teacher`, `co-teachers` y `co-teachers/:teacherId/delete` de `/admin/courses`, que ya están detrás de `requireAdmin`. `GET /courses/:id` pasa a la vista `manageTeachers` (true solo para admin/superadmin) y `schoolTeachers`, la lista de docentes activos de la escuela **ya filtrada** de los que están asignados a esa materia — por eso el select no ofrece al titular ni a un suplente actual.
+
+**Bug lateral arreglado en `assign-teacher`**: si el nuevo titular ya figuraba como suplente, quedaba en las dos listas a la vez (aparecía dos veces en Personas, como TITULAR y como SUPLENTE). Ahora se lo saca de `coTeachers` al promoverlo. Era alcanzable desde el select del panel de admin, que sí lista a todos los docentes.
+
+**Verificación**: test unitario de `canManage` con los 12 casos de rol (titular, suplente, docente ajeno, alumno inscripto, admin misma escuela, admin de otra escuela, admin sin escuela, superadmin, preceptor, directivo, soe, sin sesión) — 12/12. Suite de smoke completa **142/142 PASS**. Y en el navegador: la ficha abre con las 4 solapas, `IS_OWNER=true`, los 36 alumnos en Personas, botones de agregar/exportar/personalizar, y `/activities/course/:id`, `/gradebook`, `/available-templates` y `/announcements/course/:id` los cuatro en 200.
+
+Para la solapa Personas se probó el ciclo completo en el navegador (agregar suplente desde el modal → aparece con badge SUPLENTE y su botón de quitar, el encabezado pasa de "Profesor" a "Docentes", el select baja de 334 a 333 → quitarlo → todo vuelve atrás), con los dos registros en la auditoría. Y **la parte que importaba**: con un docente descartable creado para eso, se comparó el HTML servido a un docente contra el servido al admin — el docente ve la materia igual pero **ninguno** de los cuatro controles, y llamando los tres endpoints de admin a mano recibe **403** en los tres. El docente de prueba y sus audit logs se borraron al terminar.
+
 ### 2026-07-29 — Se elimina el tipo de actividad "Examen": quedan 3 tipos
 
 **Pedido**: "Evaluación" y "Examen" eran lo mismo en la práctica. Queda solo **Evaluación**, así los tipos de actividad son tres **hasta nuevo aviso**: `Tarea`, `Evaluación`, `Trabajo Práctico`.
@@ -834,7 +975,7 @@ Una vez que el dueño se autentica, el bypass por email (`res.locals.user?.email
 
 **Modelo multi-docente (nuevo, para soportar la fusión)**:
 - `Course.coTeachers: [ObjectId]` — docentes adicionales con los mismos permisos que `owner` sobre la materia. `owner` sigue siendo el docente principal, nunca se pisa.
-- `Course.isTeacher(userId)` — método de instancia, único punto de verdad para "¿es docente de esta materia?" (owner o cualquier coTeacher). Seguro con el campo poblado o sin popular.
+- `Course.isTeacher(userId)` — método de instancia, único punto de verdad para "¿es docente de esta materia?" (owner o cualquier coTeacher). Seguro con el campo poblado o sin popular. ⚠️ Desde el 2026-07-31 los **permisos** se chequean con `Course.canManage(user)`, que suma a los admins de la escuela; `isTeacher` quedó para la pertenencia real (listados de "mis materias").
 - Reemplazados los ~27 chequeos `course.owner.toString() === userId` esparcidos en `activities.js`, `announcements.js`, `courses.js` y `course.ejs` por `course.isTeacher(userId)`.
 - Queries "mis cursos" (dashboard, perfil, panel directivo M4) extendidas para incluir materias co-dictadas.
 - Alerta directivo "materias sin docente" ahora considera coTeachers activos antes de marcar una materia como huérfana.

@@ -24,6 +24,8 @@ const ACTIONS = {
   // ── Novedades ─────────────────────────────────────────────────────────────
   'announcement.create':  { label: 'publicó una novedad',      icon: 'campaign',             color: '#0d7377', category: 'announcement' },
   'announcement.comment': { label: 'comentó una novedad',      icon: 'chat_bubble',          color: '#0d7377', category: 'announcement' },
+  'announcement.edit':    { label: 'editó una novedad',        icon: 'edit',                 color: '#0d7377', category: 'announcement' },
+  'announcement.delete':  { label: 'eliminó una novedad',      icon: 'delete',               color: '#ea4335', category: 'announcement' },
 
   // ── Cursos (Course = Materia dictada en una división) ─────────────────────
   'course.create':         { label: 'creó un curso',            icon: 'add_circle',           color: '#1a73e8', category: 'course' },
@@ -34,6 +36,7 @@ const ACTIONS = {
   'course.remove_student': { label: 'quitó un alumno',          icon: 'person_remove',        color: '#ea8600', category: 'course' },
   'course.assign_teacher': { label: 'asignó docente',           icon: 'assignment_ind',       color: '#1a73e8', category: 'course' },
   'course.add_coteacher':  { label: 'agregó un suplente',       icon: 'group_add',            color: '#1a73e8', category: 'course' },
+  'course.remove_coteacher': { label: 'quitó un suplente',      icon: 'group_remove',         color: '#ea8600', category: 'course' },
   'course.merge':           { label: 'fusionó materias duplicadas', icon: 'merge_type',       color: '#9334e6', category: 'course' },
 
   // ── Divisiones (Division = "1°1°", "2°A", etc.) ───────────────────────────

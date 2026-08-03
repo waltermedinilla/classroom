@@ -87,10 +87,16 @@
             <% (course.coTeachers || []).forEach(ct => { %>
               <div class="person-item" style="padding:4px 0" data-coteacher-id="<%= ct._id %>">
                 <div class="avatar" style="width:32px;height:32px;font-size:14px;background:#9334e6"><%= ct.name.charAt(0).toUpperCase() %></div>
-                <div class="person-info">
+                <div class="person-info" style="flex:1">
                   <div class="person-name" style="font-size:13px"><%= ct.name %></div>
                   <div class="person-email" style="font-size:12px"><%= ct.email %></div>
                 </div>
+                <button type="button" class="btn-remove-coteacher" title="Quitar suplente"
+                  data-teacher-id="<%= ct._id %>"
+                  data-teacher-name="<%- ct.name.replace(/"/g, '&quot;') %>"
+                  style="background:none;border:none;cursor:pointer;padding:4px;color:#ea4335;line-height:1;display:flex;align-items:center">
+                  <span class="material-symbols-outlined" style="font-size:18px">person_remove</span>
+                </button>
               </div>
             <% }) %>
           </div>
@@ -182,6 +188,30 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ teacherId }),
       });
+      const data = await res.json();
+      btn.disabled = false;
+
+      if (!res.ok) {
+        errorEl.textContent = data.error;
+        errorEl.classList.add('show');
+        return;
+      }
+      window.location.reload();
+    });
+
+    // Quitar suplente. Delegado en la lista porque las filas se re-renderizan al recargar.
+    document.getElementById('coTeachersList').addEventListener('click', async (e) => {
+      const btn = e.target.closest('.btn-remove-coteacher');
+      if (!btn) return;
+
+      const { teacherId, teacherName } = btn.dataset;
+      if (!confirm(`¿Quitar a ${teacherName} como suplente de esta materia? Pierde el acceso a las actividades y calificaciones.`)) return;
+
+      const errorEl = document.getElementById('coTeacherError');
+      errorEl.classList.remove('show');
+      btn.disabled = true;
+
+      const res  = await fetch(`/admin/courses/<%= course._id %>/co-teachers/${teacherId}/delete`, { method: 'POST' });
       const data = await res.json();
       btn.disabled = false;
 

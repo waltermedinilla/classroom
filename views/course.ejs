@@ -35,7 +35,7 @@
         <%# Código de clase — solo para el docente, que es quien lo dicta. Al alumno no se le
             muestra: ya está en la materia, y verlo solo le daría algo para reenviar. Con la
             función apagada (services/joinByCode.js) el bloque desaparece entero. %>
-        <% if (locals.joinByCode && course.isTeacher(user._id)) { %>
+        <% if (locals.joinByCode && course.canManage(user)) { %>
           <div class="course-code" title="Los alumnos de este curso pueden unirse tipeando este código">
             <span class="material-symbols-outlined">key</span>
             <span>Código:</span>
@@ -50,7 +50,7 @@
         <div class="avatar" style="width:48px;height:48px;font-size:22px;background:rgba(255,255,255,0.3)"><%= featuredTeacher.name.charAt(0).toUpperCase() %></div>
         <span class="course-owner-name"><%= featuredTeacher.name %></span>
       </div>
-      <% if (course.isTeacher(user._id)) { %>
+      <% if (course.canManage(user)) { %>
       <button class="header-customize-btn" onclick="openCustomizeModal()">
         <span class="material-symbols-outlined">palette</span>
         Personalizar
@@ -58,7 +58,7 @@
       <% } %>
     </div>
 
-    <% if (locals.joinByCode && course.isTeacher(user._id)) { %>
+    <% if (locals.joinByCode && course.canManage(user)) { %>
     <script>
       function copiarCodigoClase(btn) {
         const codigo = document.getElementById('codigoClase').textContent.trim();
@@ -92,7 +92,7 @@
         <span class="material-symbols-outlined">assignment</span>
         Actividades
       </button>
-      <% if (course.isTeacher(user._id)) { %>
+      <% if (course.canManage(user)) { %>
       <button class="tab" data-tab="calificaciones">
         <span class="material-symbols-outlined">grade</span>
         Calificaciones
@@ -128,7 +128,7 @@
 
         <!-- Columna principal -->
         <div class="stream-main">
-          <% if (course.isTeacher(user._id)) { %>
+          <% if (course.canManage(user)) { %>
           <!-- Botón Nuevo anuncio (solo docente) -->
           <div class="stream-action-row" id="streamActionRow">
             <button class="stream-announce-btn" onclick="openAnnouncementForm()">
@@ -171,9 +171,20 @@
     <!-- Tab: Personas -->
     <div class="tab-content hidden" id="peopleTab">
       <div class="people-card">
+        <%
+          // El admin gestiona los docentes acá mismo (pedido del usuario 2026-07-31: entrar
+          // a /admin/courses/:id/edit para esto era un rodeo). Al docente no se le muestra
+          // nada de esto: no se administra a sí mismo ni a sus suplentes.
+          const canManageTeachers = locals.manageTeachers === true;
+        %>
         <div class="people-card-header">
           <span class="material-symbols-outlined">school</span>
           <h3><%= (course.coTeachers && course.coTeachers.length) ? 'Docentes' : 'Profesor' %></h3>
+          <% if (canManageTeachers) { %>
+          <button class="add-person-btn" style="margin-left:auto" onclick="openAddTeacherModal()" title="Agregar suplente">
+            <span class="material-symbols-outlined">person_add</span>
+          </button>
+          <% } %>
         </div>
         <div class="person-item">
           <div class="avatar" style="background:#1a73e8"><%= course.owner.name.charAt(0).toUpperCase() %></div>
@@ -184,15 +195,28 @@
           <% if (course.coTeachers && course.coTeachers.length) { %>
           <span class="badge-disabled" style="margin-left:auto;background:#e8f0fe;color:#1a73e8">TITULAR</span>
           <% } %>
+          <% if (canManageTeachers) { %>
+          <button class="add-person-btn" style="<%= (course.coTeachers && course.coTeachers.length) ? '' : 'margin-left:auto' %>"
+                  onclick="openChangeOwnerModal()" title="Cambiar el docente titular">
+            <span class="material-symbols-outlined">swap_horiz</span>
+          </button>
+          <% } %>
         </div>
         <% (course.coTeachers || []).forEach(ct => { %>
-        <div class="person-item">
+        <div class="person-item" data-coteacher-id="<%= ct._id %>">
           <div class="avatar" style="background:#9334e6"><%= ct.name.charAt(0).toUpperCase() %></div>
           <div class="person-info">
             <div class="person-name"><%= ct.name %></div>
             <div class="person-email"><%= ct.email %></div>
           </div>
           <span class="badge-disabled" style="margin-left:auto;background:#f3e8fd;color:#9334e6">SUPLENTE</span>
+          <% if (canManageTeachers) { %>
+          <button class="add-person-btn btn-remove-coteacher" style="color:#ea4335"
+                  data-teacher-id="<%= ct._id %>" data-teacher-name="<%- ct.name.replace(/"/g, '&quot;') %>"
+                  title="Quitar suplente">
+            <span class="material-symbols-outlined">person_remove</span>
+          </button>
+          <% } %>
         </div>
         <% }) %>
       </div>
@@ -206,7 +230,7 @@
             // (decisión del usuario 2026-07-25). Si el owner es un admin (Course.owner
             // puede serlo, ver agente.md), conserva estos botones — la restricción es
             // específica para el rol docente, no para "quien sea dueño del curso".
-            const isOwnerView = course.isTeacher(user._id);
+            const isOwnerView = course.canManage(user);
             const teacherManagesPeople = isOwnerView && user.role !== 'teacher';
           %>
           <% if (isOwnerView) { %>
@@ -283,7 +307,7 @@
     </div>
 
     <!-- Tab: Calificaciones (solo docente) -->
-    <% if (course.isTeacher(user._id)) { %>
+    <% if (course.canManage(user)) { %>
     <div class="tab-content hidden" id="calificacionesTab">
       <div id="calificacionesList">
         <div class="empty-state">
@@ -306,7 +330,7 @@
   </main>
 
   <!-- FAB solo para docente del curso -->
-  <% if (course.isTeacher(user._id)) { %>
+  <% if (course.canManage(user)) { %>
   <button class="fab" id="fabBtn" style="display:none" onclick="window.location.href='/activities/new?courseId=<%= course._id %>'" title="Nueva tarea">
     <span class="material-symbols-outlined">add</span>
   </button>
@@ -517,8 +541,50 @@
     </div>
   </div>
 
+  <!-- Modal: Docentes (agregar suplente / cambiar titular) — solo admin y superadmin -->
+  <% if (locals.manageTeachers) { %>
+  <div class="modal-overlay" id="teacherModal">
+    <div class="modal" style="max-width:460px">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon" id="teacherModalIcon">person_add</span>
+          <h3 id="teacherModalTitle">Agregar suplente</h3>
+        </div>
+        <button class="icon-btn" onclick="closeTeacherModal()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:14px;color:var(--text-secondary);margin-bottom:16px" id="teacherModalHelp"></p>
+        <div class="input-group" style="margin-bottom:16px">
+          <span class="material-symbols-outlined input-icon">badge</span>
+          <select id="teacherModalSelect" style="flex:1;border:none;background:transparent;font-size:14px;color:var(--text-primary);outline:none;padding:0">
+            <option value="">Seleccioná un docente...</option>
+            <% (locals.schoolTeachers || []).forEach(t => { %>
+              <option value="<%= t._id %>"><%= t.name %><%= t.email ? ' (' + t.email + ')' : '' %></option>
+            <% }) %>
+          </select>
+        </div>
+        <% if (!(locals.schoolTeachers || []).length) { %>
+          <p style="font-size:13px;color:#ea8600;margin-top:-8px;margin-bottom:16px">
+            No quedan docentes disponibles para asignar a esta materia.
+          </p>
+        <% } %>
+        <div class="form-error" id="teacherModalError" style="margin-bottom:16px"></div>
+        <div style="display:flex;justify-content:flex-end;gap:12px">
+          <button class="btn btn-outline" onclick="closeTeacherModal()">Cancelar</button>
+          <button class="btn btn-primary" id="teacherModalConfirm" onclick="submitTeacherModal()">
+            <span class="material-symbols-outlined">check</span>
+            Confirmar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <% } %>
+
   <!-- Modal: Personalizar portada -->
-  <% if (course.isTeacher(user._id)) { %>
+  <% if (course.canManage(user)) { %>
   <div class="modal-overlay" id="customizeModal">
     <div class="modal" style="max-width:460px">
       <div class="modal-header">
@@ -622,7 +688,10 @@
   <%- include('partials/footer') %>
   <script>
     window.COURSE_ID = '<%= course._id %>';
-    window.IS_OWNER = <%= course.isTeacher(user._id) %>;
+    window.IS_OWNER = <%= course.canManage(user) %>;
+    // Para decidir quién ve Editar/Eliminar en cada novedad: editar es solo del autor,
+    // eliminar además lo puede hacer quien gestiona la materia (IS_OWNER), como moderación.
+    window.USER_ID = '<%= user._id %>';
 
     function showUploadErrModal(title, msg) {
       document.getElementById('uplModalTitle').innerHTML =
@@ -642,7 +711,7 @@
   </script>
   <script src="/js/course.js"></script>
   <script src="/js/task-runner.js"></script>
-  <% if (course.isTeacher(user._id)) { %>
+  <% if (course.canManage(user)) { %>
   <script>
     const PRESET_COLORS = ['#1a73e8','#34a853','#ea4335','#fbbc04','#9334e6','#0d7377','#e91e63','#ff5722','#795548','#607d8b'];
     const _INIT_COLOR  = '<%= (course.header && course.header.color)  ? course.header.color  : "#1a73e8" %>';
@@ -769,6 +838,105 @@
     renderSwatches('colorSwatches', 'hColor');
     renderSwatches('color2Swatches', 'hColor2');
     renderSwatches('blendSwatches', 'hBlendColor');
+  </script>
+  <% } %>
+
+  <% if (locals.manageTeachers) { %>
+  <script>
+    // Gestión de docentes desde la solapa Personas (solo admin/superadmin). Pega contra las
+    // rutas ya existentes de /admin/courses/:id — no hay endpoints nuevos para esto.
+    const TEACHER_MODAL = {
+      coteacher: {
+        icon:  'person_add',
+        title: 'Agregar suplente',
+        help:  'El suplente tiene los mismos permisos que el titular sobre esta materia: crear actividades, calificar y gestionar alumnos.',
+        url:   '/admin/courses/<%= course._id %>/co-teachers',
+      },
+      owner: {
+        icon:  'swap_horiz',
+        title: 'Cambiar docente titular',
+        help:  'El docente que elijas pasa a ser el titular. El titular actual pierde el acceso a esta materia — si querés que lo conserve, agregalo como suplente antes de cambiarlo.',
+        url:   '/admin/courses/<%= course._id %>/assign-teacher',
+      },
+    };
+    let _teacherModalMode = 'coteacher';
+
+    function openTeacherModal(mode) {
+      _teacherModalMode = mode;
+      const cfg = TEACHER_MODAL[mode];
+      document.getElementById('teacherModalIcon').textContent  = cfg.icon;
+      document.getElementById('teacherModalTitle').textContent = cfg.title;
+      document.getElementById('teacherModalHelp').textContent  = cfg.help;
+      document.getElementById('teacherModalSelect').value = '';
+      const err = document.getElementById('teacherModalError');
+      err.textContent = '';
+      err.classList.remove('show');
+      document.getElementById('teacherModal').classList.add('show');
+    }
+    function openAddTeacherModal()  { openTeacherModal('coteacher'); }
+    function openChangeOwnerModal() { openTeacherModal('owner'); }
+
+    function closeTeacherModal() {
+      document.getElementById('teacherModal').classList.remove('show');
+    }
+    document.getElementById('teacherModal').addEventListener('click', function (e) {
+      if (e.target === this) closeTeacherModal();
+    });
+
+    async function submitTeacherModal() {
+      const teacherId = document.getElementById('teacherModalSelect').value;
+      const errEl = document.getElementById('teacherModalError');
+      errEl.classList.remove('show');
+      if (!teacherId) {
+        errEl.textContent = 'Elegí un docente.';
+        errEl.classList.add('show');
+        return;
+      }
+      const btn = document.getElementById('teacherModalConfirm');
+      btn.disabled = true;
+      try {
+        const res  = await fetch(TEACHER_MODAL[_teacherModalMode].url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ teacherId }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errEl.textContent = data.error || 'No se pudo guardar';
+          errEl.classList.add('show');
+          btn.disabled = false;
+          return;
+        }
+        window.location.reload();
+      } catch {
+        errEl.textContent = 'Error de conexión';
+        errEl.classList.add('show');
+        btn.disabled = false;
+      }
+    }
+
+    // Quitar suplente — delegado, porque las filas se re-renderizan al recargar.
+    document.getElementById('peopleTab').addEventListener('click', async (e) => {
+      const btn = e.target.closest('.btn-remove-coteacher');
+      if (!btn) return;
+      const { teacherId, teacherName } = btn.dataset;
+      if (!confirm(`¿Quitar a ${teacherName} como suplente de esta materia? Pierde el acceso a las actividades y calificaciones, pero lo que ya cargó queda en la materia.`)) return;
+
+      btn.disabled = true;
+      try {
+        const res  = await fetch(`/admin/courses/<%= course._id %>/co-teachers/${teacherId}/delete`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || 'No se pudo quitar el suplente');
+          btn.disabled = false;
+          return;
+        }
+        window.location.reload();
+      } catch {
+        alert('Error de conexión');
+        btn.disabled = false;
+      }
+    });
   </script>
   <% } %>
 </body>

@@ -497,6 +497,12 @@ connectDB().then(() => {
     logger.info(`Servidor iniciado en puerto ${PORT} (PID ${process.pid})`);
   });
 
+  // Node corta cualquier request que tarde más de 5 min en llegar completa (default de
+  // requestTimeout). Subir un backup de varios cientos de MB desde una conexión hogareña
+  // se pasa de largo y el corte se ve como "error de conexión" a mitad de la subida.
+  // headersTimeout sigue en el default (65 s), que es lo que frena un slowloris de headers.
+  server.requestTimeout = 60 * 60 * 1000; // 1 h
+
   const shutdown = (signal) => {
     logger.info(`Cerrando servidor por ${signal} (PID ${process.pid})`);
     server.close(() => {

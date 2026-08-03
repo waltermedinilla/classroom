@@ -645,6 +645,11 @@ router.post('/courses/:id/assign-teacher', async (req, res) => {
     const teacher = await User.findOne({ _id: teacherId, school: school || course.school });
     if (!teacher) return res.status(400).json({ error: 'Docente no válido' });
     course.owner = teacher._id;
+    // Si el nuevo titular ya figuraba como suplente, sacarlo de ahí: si no, queda listado
+    // dos veces en la solapa Personas (como TITULAR y como SUPLENTE) y en el form de admin.
+    if (course.coTeachers.some(t => t.toString() === teacher._id.toString())) {
+      course.coTeachers = course.coTeachers.filter(t => t.toString() !== teacher._id.toString());
+    }
     await course.save({ validateModifiedOnly: true });
 
     logAudit(req, 'course.assign_teacher',
@@ -663,8 +668,7 @@ router.post('/courses/:id/assign-teacher', async (req, res) => {
 });
 
 // POST /admin/courses/:id/co-teachers — agrega un docente suplente (no reemplaza al
-// titular, a diferencia de /assign-teacher). Solo agregar por ahora — sacar suplentes
-// queda para más adelante (decisión del usuario 2026-07-25).
+// titular, a diferencia de /assign-teacher). Para sacarlo, ver el /delete de abajo.
 router.post('/courses/:id/co-teachers', async (req, res) => {
   try {
     const school = res.locals.user.school;
@@ -698,6 +702,43 @@ router.post('/courses/:id/co-teachers', async (req, res) => {
     );
 
     res.json({ teacher: { _id: teacher._id, name: teacher.name, email: teacher.email } });
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /admin/courses/:id/co-teachers/:teacherId/delete — saca un suplente de la materia.
+// No toca al titular (para cambiarlo está /assign-teacher): quitar al owner dejaría la
+// materia huérfana y la alerta del directivo la marcaría como "sin docente".
+router.post('/courses/:id/co-teachers/:teacherId/delete', async (req, res) => {
+  try {
+    const school = res.locals.user.school;
+    const course = await Course.findById(req.params.id);
+    if (!course) return res.status(404).json({ error: 'Materia no encontrada' });
+    if (school && course.school?.toString() !== school.toString()) {
+      return res.status(403).json({ error: 'Sin acceso' });
+    }
+
+    const { teacherId } = req.params;
+    if (!course.coTeachers.some(t => t.toString() === teacherId)) {
+      return res.status(404).json({ error: 'Ese docente no es suplente de esta materia' });
+    }
+
+    course.coTeachers = course.coTeachers.filter(t => t.toString() !== teacherId);
+    await course.save({ validateModifiedOnly: true });
+
+    const teacher = await User.findById(teacherId).select('name');
+
+    logAudit(req, 'course.remove_coteacher',
+      [
+        { type: 'course', id: course._id, name: course.name },
+        { type: 'user',   id: teacherId,  name: teacher?.name || 'Docente' },
+      ],
+      {},
+      { schoolId: course.school || null },
+    );
+
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
   }

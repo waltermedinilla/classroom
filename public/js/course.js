@@ -333,6 +333,13 @@ function buildAnnouncementEl(ann) {
   const preview      = ann.text.length > 100 ? ann.text.slice(0, 100) + '…' : ann.text;
   const commentsHtml = (ann.comments || []).map(buildCommentHtml).join('');
 
+  // Editar: solo el autor. Eliminar: el autor o quien gestiona la materia (moderación de
+  // novedades ajenas, típicamente las de un alumno). El backend revalida las dos cosas.
+  const esAutor    = !!window.USER_ID && String(ann.author?._id) === String(window.USER_ID);
+  const puedeBorrar = esAutor || window.IS_OWNER === true;
+  const editadaMsg = ann.editedAt
+    ? `<span class="ann-edited-tag" title="Editada el ${fmtShort(ann.editedAt)}">(editada)</span>` : '';
+
   const wrapper = document.createElement('div');
   wrapper.className  = 'ann-card';
   wrapper.dataset.id = ann._id;
@@ -343,12 +350,21 @@ function buildAnnouncementEl(ann) {
       </div>
       <div class="stream-item-body">
         <div class="stream-item-text"><strong>${ann.author.name}</strong> publicó: ${preview}</div>
-        <div class="stream-item-date">${fmtShort(ann.createdAt)}</div>
+        <div class="stream-item-date">${fmtShort(ann.createdAt)} ${editadaMsg}</div>
       </div>
       <span class="material-symbols-outlined ann-expand-arrow">expand_more</span>
     </div>
     <div class="ann-expanded" id="ann-exp-${ann._id}" style="display:none">
-      <div class="ann-full-text">${ann.text}</div>
+      ${(esAutor || puedeBorrar) ? `
+      <div class="ann-actions">
+        ${esAutor ? `<button class="ann-action-btn" onclick="startEditAnnouncement('${ann._id}')" title="Editar novedad">
+          <span class="material-symbols-outlined">edit</span> Editar
+        </button>` : ''}
+        ${puedeBorrar ? `<button class="ann-action-btn ann-action-danger" onclick="deleteAnnouncement('${ann._id}')" title="Eliminar novedad">
+          <span class="material-symbols-outlined">delete</span> Eliminar
+        </button>` : ''}
+      </div>` : ''}
+      <div class="ann-full-text" id="ann-text-${ann._id}">${ann.text}</div>
       ${ann.image ? `<img src="${ann.image}" class="ann-full-img" alt="">` : ''}
       <div class="ann-comments" id="ann-comments-${ann._id}">${commentsHtml}</div>
       <div class="ann-comment-form">
@@ -373,6 +389,89 @@ function toggleAnnExpand(annId) {
   const open = exp.style.display !== 'none';
   exp.style.display = open ? 'none' : 'block';
   card.classList.toggle('expanded', !open); // Clase CSS que rota la flecha de expand
+}
+
+// Edición inline de una novedad: reemplaza el texto por un textarea con Guardar/Cancelar.
+// No toca la imagen — para cambiarla hay que borrar la novedad y publicarla de nuevo.
+function startEditAnnouncement(annId) {
+  const cont = document.getElementById('ann-text-' + annId);
+  if (!cont || cont.dataset.editing === '1') return;
+
+  const original = cont.textContent;
+  cont.dataset.editing = '1';
+  cont.dataset.original = original;
+  cont.innerHTML = `
+    <textarea class="ann-edit-input" id="ann-edit-${annId}" rows="4">${original.replace(/</g, '&lt;')}</textarea>
+    <div class="ann-edit-error form-error" id="ann-edit-err-${annId}"></div>
+    <div class="ann-edit-btns">
+      <button class="btn btn-outline" onclick="cancelEditAnnouncement('${annId}')">Cancelar</button>
+      <button class="btn btn-primary" id="ann-edit-save-${annId}" onclick="saveEditAnnouncement('${annId}')">
+        <span class="material-symbols-outlined">check</span> Guardar
+      </button>
+    </div>`;
+  const ta = document.getElementById('ann-edit-' + annId);
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+function cancelEditAnnouncement(annId) {
+  const cont = document.getElementById('ann-text-' + annId);
+  if (!cont) return;
+  cont.textContent = cont.dataset.original || '';
+  cont.dataset.editing = '0';
+}
+
+async function saveEditAnnouncement(annId) {
+  const cont  = document.getElementById('ann-text-' + annId);
+  const ta    = document.getElementById('ann-edit-' + annId);
+  const errEl = document.getElementById('ann-edit-err-' + annId);
+  const btn   = document.getElementById('ann-edit-save-' + annId);
+  const text  = ta.value.trim();
+
+  errEl.classList.remove('show');
+  if (!text) {
+    errEl.textContent = 'La novedad no puede quedar vacía.';
+    errEl.classList.add('show');
+    return;
+  }
+
+  btn.disabled = true;
+  try {
+    const res  = await fetch('/announcements/' + annId, {
+      method:  'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ text }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errEl.textContent = data.error || 'No se pudo guardar';
+      errEl.classList.add('show');
+      btn.disabled = false;
+      return;
+    }
+    // Se recarga el stream para que el preview colapsado y el "(editada)" queden al día.
+    loadStream();
+  } catch {
+    errEl.textContent = 'Error de conexión';
+    errEl.classList.add('show');
+    btn.disabled = false;
+  }
+}
+
+// Elimina una novedad (POST /announcements/:id/delete). Se lleva sus comentarios y su imagen.
+async function deleteAnnouncement(annId) {
+  if (!confirm('¿Eliminar esta novedad? Se borran también sus comentarios y la imagen adjunta. No se puede deshacer.')) return;
+  try {
+    const res  = await fetch('/announcements/' + annId + '/delete', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || 'No se pudo eliminar la novedad');
+      return;
+    }
+    document.querySelector(`.ann-card[data-id="${annId}"]`)?.remove();
+  } catch {
+    alert('Error de conexión');
+  }
 }
 
 // Envía un comentario a una novedad (POST /announcements/:id/comment)

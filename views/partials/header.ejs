@@ -355,3 +355,30 @@ const _activeTheme = (function() {
     </div>
   </div>
 </nav>
+
+<script>
+  /* Listados anchos: marca con `has-overflow` al contenedor que scrollea cuando la tabla
+     no entra, para que la columna anclada (.acciones-fijas / .nombre-fijo, ver style.css)
+     muestre la sombra que avisa que hay columnas tapadas. Si la tabla entra, no hay sombra.
+
+     Busca el contenedor subiendo desde la tabla en vez de pedir una clase fija: los
+     envoltorios varían por vista (.users-table-card, .sp-table-wrap, divs con
+     overflow-x:auto inline) y así ninguna vista tiene que acordarse de nada. */
+  (function () {
+    function contenedorScroll(tabla) {
+      for (var el = tabla.parentElement; el && el !== document.body; el = el.parentElement) {
+        var ox = getComputedStyle(el).overflowX;
+        if (ox === 'auto' || ox === 'scroll') return el;
+      }
+      return null;
+    }
+    function marcar() {
+      document.querySelectorAll('.acciones-fijas, .nombre-fijo').forEach(function (t) {
+        var c = contenedorScroll(t);
+        if (c) c.classList.toggle('has-overflow', c.scrollWidth > c.clientWidth + 1);
+      });
+    }
+    document.addEventListener('DOMContentLoaded', marcar);
+    window.addEventListener('resize', marcar);
+  })();
+</script>

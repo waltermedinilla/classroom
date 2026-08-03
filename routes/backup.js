@@ -44,6 +44,12 @@ const UPLOADS_DIR = path.join(os.tmpdir(), 'classroom-backup-uploads');
 const BACKUP_FORMAT_VERSION = '1.0';
 const UPLOAD_TTL_MS = 30 * 60 * 1000; // 30 min
 
+// Tope de subida del restore. El backup crece con los adjuntos y las entregas (ya pasó
+// los 500 MB del tope original), así que el default es amplio y queda configurable por
+// si en algún momento hace falta apretarlo. multer escribe a disco a medida que recibe,
+// no acumula en memoria: el límite real es el espacio libre en os.tmpdir().
+const MAX_UPLOAD_MB = Number(process.env.BACKUP_MAX_UPLOAD_MB) || 4096; // 4 GB
+
 // Todas las colecciones que entran en el backup. Un solo array evita repetir la lista
 // en el dump, el restore y el cálculo de "diff" del preview.
 const COLLECTIONS = [
@@ -244,7 +250,7 @@ const uploadTar = multer({
     destination: (req, file, cb) => cb(null, UPLOADS_DIR),
     filename:    (req, file, cb) => cb(null, crypto.randomBytes(8).toString('hex') + '.part'),
   }),
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB, margen amplio sobre el volumen actual (~33 MB)
+  limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     cb(null, /\.(tar\.gz|tgz)$/i.test(file.originalname));
   },
@@ -255,7 +261,7 @@ const uploadTar = multer({
 router.post('/preview', (req, res, next) => {
   uploadTar.single('file')(req, res, (err) => {
     if (err) {
-      if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'El archivo supera los 500 MB' });
+      if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: `El archivo supera los ${MAX_UPLOAD_MB} MB` });
       return res.status(400).json({ error: err.message || 'Error al subir el archivo' });
     }
     next();

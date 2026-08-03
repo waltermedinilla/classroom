@@ -1843,6 +1843,45 @@ const specs = [
     },
   },
   {
+    id: 'exit-impersonate-returns-to-own-panel',
+    title: 'Al salir de la suplantación, cada rol vuelve a SU panel (no todos a /admin)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, env, state, assert }) {
+      // /exit-impersonate redirigía SIEMPRE a /admin. El admin no lo notaba (es su panel),
+      // pero el superadmin terminaba en el panel de administración: con las solapas de admin
+      // y sin las suyas, como si al volver de la suplantación hubiera cambiado de rol.
+      //
+      // Cada caso usa su propio actor: si algo falla en el medio, la cookie del suplantado no
+      // le queda pegada a los actores 'admin'/'superadmin' que usan los demás specs.
+      const casos = [
+        { actor: 'exitSuper', email: env.SMOKE_SUPERADMIN_EMAIL, password: env.SMOKE_SUPERADMIN_PASSWORD,
+          target: state.studentId,       panel: '/superadmin' },
+        { actor: 'exitAdmin', email: env.SMOKE_ADMIN_EMAIL,      password: env.SMOKE_ADMIN_PASSWORD,
+          target: state.scopedStudentId, panel: '/admin' },
+      ];
+
+      for (const c of casos) {
+        assert(c.target, `falta el alumno de prueba para el caso ${c.actor}`);
+        await client.post(c.actor, '/login', {
+          body: { email: c.email, password: c.password }, expectStatus: 200,
+        });
+
+        await client.post(c.actor, `/admin/users/${c.target}/impersonate`, { expectStatus: 200 });
+        const comoAlumno = await client.get(c.actor, '/', { expectStatus: 302 });
+        assert(comoAlumno.headers.get('location') === '/courses',
+          `suplantando a un alumno, / debería llevar a /courses; llevó a ${comoAlumno.headers.get('location')}`);
+
+        const salida = await client.get(c.actor, '/exit-impersonate', { expectStatus: 302 });
+        assert(salida.headers.get('location') === '/',
+          `salir de la suplantación debería ir a / (que reparte por rol); fue a ${salida.headers.get('location')}`);
+
+        const vuelta = await client.get(c.actor, '/', { expectStatus: 302 });
+        assert(vuelta.headers.get('location') === c.panel,
+          `${c.actor} debería volver a ${c.panel}, volvió a ${vuelta.headers.get('location')}`);
+      }
+    },
+  },
+  {
     id: 'superadmin-suggestions-paginated',
     title: 'El panel de sugerencias del superadmin pagina correctamente',
     requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],

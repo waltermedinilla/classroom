@@ -32,6 +32,10 @@ const announcementSchema = new mongoose.Schema({
   },
   // Comentarios anidados: se agregan con ann.comments.push() y se guardan con ann.save()
   comments: [commentSchema],
+  // Fecha de la última edición del texto por su autor; null = nunca se editó.
+  // NO alcanza con mirar `updatedAt`: comentar una novedad hace ann.save() y también lo
+  // mueve, así que cualquier novedad comentada figuraría como editada sin haberlo sido.
+  editedAt: { type: Date, default: null },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Announcement', announcementSchema);

@@ -251,7 +251,12 @@ router.get('/exit-impersonate', (req, res) => {
     // Si el adminToken expiró, cierra sesión completamente
     res.clearCookie('token');
   }
-  res.redirect('/admin'); // Vuelve al panel de administración
+  // A la raíz, no a /admin: quien suplanta puede ser admin O superadmin, y mandar a todos
+  // a /admin dejaba al superadmin en el panel de administración — con las solapas de admin
+  // y sin las suyas — como si al volver hubiera cambiado de rol. `GET /` ya reparte por rol
+  // (ver server.js): superadmin → /superadmin, admin → /admin. Si el adminToken venció, no
+  // queda sesión y la misma ruta lo manda a /login.
+  res.redirect('/');
 });
 
 module.exports = router;

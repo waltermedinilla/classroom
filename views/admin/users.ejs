@@ -11,7 +11,9 @@
 <body>
   <%- include('../partials/header') %>
 
-  <main class="main-content">
+  <%# main-content-ancho: 8 columnas no entran en los 1100 px del contenedor normal y la
+      columna Acciones quedaba fuera de pantalla. Es el mismo ancho que usa /superadmin/users. %>
+  <main class="main-content main-content-ancho">
     <%- include('../partials/admin-nav', { activePage: 'users' }) %>
 
     <div class="dashboard-topbar">
@@ -56,7 +58,7 @@
           <p>No se encontraron usuarios</p>
         </div>
       <% } else { %>
-        <table class="users-table">
+        <table class="users-table acciones-fijas">
           <thead>
             <tr>
               <th>DNI</th>

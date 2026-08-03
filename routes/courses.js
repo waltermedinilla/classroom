@@ -503,7 +503,7 @@ router.get('/:id', requireAuth, async (req, res) => {
       .populate('students', 'name email dni active avatar')
       .populate('division', 'name');
     if (!course) return res.status(404).send('Curso no encontrado');
-    const isOwner   = course.isTeacher(req.userId);
+    const isOwner   = course.canManage(res.locals.user);
     const isStudent = course.students.some(s => s._id.toString() === req.userId);
     if (!isOwner && !isStudent) return res.status(403).send('Acceso denegado');
 
@@ -532,7 +532,22 @@ router.get('/:id', requireAuth, async (req, res) => {
       featuredTeacher = candidates[bestIdx];
     }
 
-    res.render('course', { course, featuredTeacher, joinByCode: JOIN_BY_CODE_ACTIVO });
+    // Gestión de docentes desde la solapa Personas: solo para admin/superadmin (el docente
+    // no se administra a sí mismo). Las acciones pegan contra las rutas de /admin/courses,
+    // que ya existen y están detrás de requireAdmin — acá solo se arma el selector.
+    const manageTeachers = ['admin', 'superadmin'].includes(res.locals.user.role);
+    let schoolTeachers = [];
+    if (manageTeachers) {
+      const taken = new Set([course.owner._id.toString(), ...course.coTeachers.map(t => t._id.toString())]);
+      schoolTeachers = (await User.find({ role: 'teacher', active: { $ne: false }, ...(course.school ? { school: course.school } : {}) })
+        .sort({ name: 1 }).select('_id name email').lean())
+        .filter(t => !taken.has(t._id.toString()));
+    }
+
+    res.render('course', {
+      course, featuredTeacher, joinByCode: JOIN_BY_CODE_ACTIVO,
+      manageTeachers, schoolTeachers,
+    });
   } catch (err) {
     res.status(500).send('Error del servidor');
   }
@@ -543,7 +558,7 @@ router.post('/:id/add-student', requireAuth, async (req, res) => {
   try {
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
-    if (!course.isTeacher(req.userId)) {
+    if (!course.canManage(res.locals.user)) {
       return res.status(403).json({ error: 'Solo el docente puede agregar alumnos' });
     }
     const { email } = req.body;
@@ -581,7 +596,7 @@ router.delete('/:id/students/:studentId', requireAuth, async (req, res) => {
   try {
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
-    if (!course.isTeacher(req.userId)) {
+    if (!course.canManage(res.locals.user)) {
       return res.status(403).json({ error: 'Solo el docente puede quitar alumnos' });
     }
     if (!course.students.some(s => s.toString() === req.params.studentId)) {
@@ -619,7 +634,7 @@ router.post('/:id/students/:studentId/toggle-active', requireAuth, async (req, r
   try {
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
-    if (!course.isTeacher(req.userId)) {
+    if (!course.canManage(res.locals.user)) {
       return res.status(403).json({ error: 'Solo el docente puede modificar alumnos' });
     }
     if (!course.students.some(s => s.toString() === req.params.studentId)) {
@@ -641,7 +656,7 @@ router.get('/:id/gradebook', requireAuth, async (req, res) => {
   try {
     const course = await Course.findById(req.params.id).populate('students', 'name email');
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
-    if (!course.isTeacher(req.userId)) return res.status(403).json({ error: 'Sin acceso' });
+    if (!course.canManage(res.locals.user)) return res.status(403).json({ error: 'Sin acceso' });
     const activities = await Activity.find({ course: req.params.id }).sort({ createdAt: -1 });
     const gradeMap = {};
     activities.forEach(act => {
@@ -665,7 +680,7 @@ router.get('/:id/export-students', requireAuth, async (req, res) => {
   try {
     const course = await Course.findById(req.params.id).populate('students', 'name email dni active');
     if (!course) return res.status(404).send('Curso no encontrado');
-    if (!course.isTeacher(req.userId)) return res.status(403).send('Sin acceso');
+    if (!course.canManage(res.locals.user)) return res.status(403).send('Sin acceso');
     const rows = course.students.map((s, i) => ({
       '#':       i + 1,
       'Nombre':  s.name,
@@ -717,9 +732,10 @@ router.post('/:id/customize', requireAuth, async (req, res, next) => {
   try {
     // select incluye coTeachers: si solo trajéramos 'owner', isTeacher() no podría ver a
     // los co-docentes (this.coTeachers vendría undefined) y los rechazaría por error.
-    const course = await Course.findById(req.params.id).select('owner coTeachers');
+    // Y `school` por lo mismo, para el caso admin de canManage().
+    const course = await Course.findById(req.params.id).select('owner coTeachers school');
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
-    if (!course.isTeacher(req.userId)) {
+    if (!course.canManage(res.locals.user)) {
       return res.status(403).json({ error: 'Solo el docente puede personalizar el curso' });
     }
     next();

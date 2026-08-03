@@ -202,9 +202,16 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      overflow: hidden;
+      /* overflow:hidden recortaba la tabla cuando no entraba (la columna de acciones
+         quedaba inaccesible, sin scroll posible). En x scrollea; en y sigue recortando,
+         que es lo que hace valer el border-radius. */
+      overflow-x: auto;
+      overflow-y: hidden;
     }
-    .sp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    /* Colores de la columna anclada (ver `.acciones-fijas` en style.css): esta tabla usa
+       var(--bg) en el encabezado y en el hover, no los grises de .users-table. */
+    .sp-table { width: 100%; border-collapse: collapse; font-size: 13px;
+      --celda-fija-bg-head: var(--bg); --celda-fija-bg-hover: var(--bg); }
     .sp-table th {
       background: var(--bg); color: var(--text-secondary);
       font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
@@ -542,7 +549,7 @@
       </div>
 
       <div class="sp-table-wrap">
-        <table class="sp-table" id="usersTable">
+        <table class="sp-table acciones-fijas" id="usersTable">
           <thead>
             <tr>
               <th>Usuario</th>
