@@ -60,6 +60,9 @@ const ACTIONS = {
   'user.bulk_role':       { label: 'cambió el rol en masa',    icon: 'group',                color: '#9334e6', category: 'user' },
   'user.bulk_school':     { label: 'asignó escuela en masa',   icon: 'group',                color: '#1a73e8', category: 'user' },
   'user.school_change':   { label: 'cambió la escuela de',     icon: 'swap_horiz',           color: '#1a73e8', category: 'user' },
+  // Fusión de dos cuentas de la misma persona desde /superadmin/otros (docentes con el
+  // mismo DNI). El primer target es la cuenta que se conserva; los siguientes, las sobrantes.
+  'user.merge':           { label: 'fusionó cuentas de',       icon: 'merge_type',           color: '#9334e6', category: 'user' },
 
   // ── Materias (Subject = catálogo institucional de materias) ───────────────
   'subject.create':       { label: 'creó una materia',         icon: 'menu_book',            color: '#1a73e8', category: 'subject' },

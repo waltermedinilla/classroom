@@ -460,7 +460,26 @@ router.post('/users/:id/delete', async (req, res) => {
       return res.status(403).json({ error: 'Sin acceso' });
     }
     if (req.params.id === req.userId) return res.status(400).json({ error: 'No puedes eliminarte a ti mismo' });
+
+    // Un docente titular no se puede borrar sin más: Course.owner quedaría apuntando a un
+    // usuario inexistente y populate('owner') devuelve null, lo que rompía el listado de
+    // /admin/courses con un 500 (pasó en producción con 2 materias de "Ciencias Naturales").
+    // Las vistas ahora toleran el hueco, pero igual hay que reasignar antes de borrar: una
+    // materia sin titular no tiene quién cargue actividades ni califique.
+    const ownedCourses = await Course.countDocuments({ owner: req.params.id });
+    if (ownedCourses > 0) {
+      return res.status(409).json({
+        error: `No se puede eliminar: es docente titular de ${ownedCourses} materia(s). Reasigná esas materias a otro docente y volvé a intentarlo.`,
+      });
+    }
+
     await User.findByIdAndDelete(req.params.id);
+    // coTeachers y students son arrays: una referencia colgada no rompe el populate, pero
+    // infla los contadores de alumnos y deja suplentes fantasma. Se limpian acá.
+    await Course.updateMany(
+      { $or: [{ coTeachers: req.params.id }, { students: req.params.id }] },
+      { $pull: { coTeachers: req.params.id, students: req.params.id } },
+    );
     invalidateUser(req.params.id);
 
     logAudit(req, 'user.delete',

@@ -1512,6 +1512,73 @@ Cuatro specs nuevos que reemplazan a `course-join-route-is-gone` (el que verific
 
 ---
 
+## El admin no podía entrar a la solapa Materias (2026-08-03)
+
+**Síntoma**: en producción, `/admin/courses` respondía **500** para el rol administrador. El resto del panel (`/admin`, `/admin/users`, `/admin/divisions`, `/admin/subjects`, `/admin/audit`, `/admin/theme`) andaba bien. En el mirror local no se reproducía.
+
+**Causa**: dos materias "Ciencias Naturales" (Cursos 2° 1° y 2° 9°) tenían `Course.owner` apuntando a un usuario **que ya no existe** — el docente fue eliminado desde el panel y `POST /admin/users/:id/delete` no hacía ninguna verificación ni limpieza. Con la referencia colgada, `populate('owner')` devuelve `null` y la vista hacía `c.owner._id` → TypeError → 500 de la página entera. Un solo registro roto tiraba abajo el listado completo de 419 materias.
+
+Diagnóstico: se acotó con el filtro por división (dos divisiones fallaban) y después con `?search=` letra por letra hasta aislar el nombre. Ni hizo falta entrar al servidor.
+
+**El bug más grave estaba en el modelo**: `idToString()` en `models/Course.js` hacía `val.toString()` sin chequear null, así que `isTeacher()` — y con él `canManage()` — reventaba para cualquier materia con el owner colgado. Eso no es solo el listado del admin: es **toda** ruta que valide permisos sobre esa materia (abrir el curso, actividades, novedades, gradebook). Las dos materias eran inaccesibles para todo el mundo, no solo para el admin.
+
+### Qué se cambió
+- `models/Course.js` — `idToString()` tolera `null`/`undefined` y devuelve `''` (nunca coincide con un id real, así que no concede permisos por accidente).
+- `views/admin/courses.ejs` — muestra **"Sin docente"** en rojo cuando falta el titular, y el botón de asignar sigue funcionando (con el select preseleccionado en el primero de la lista). Es el camino para reparar los datos desde la propia UI, sin script.
+- Mismo criterio defensivo en `views/admin/subject-detail.ejs`, `views/admin/user-profile.ejs`, `views/course.ejs` (encabezado + solapa Personas), `views/dashboard.ejs` y `views/profile.ejs`. Las vistas de directivo ya lo hacían bien — de ahí se copió el "Sin docente".
+- `routes/courses.js` — `featuredTeacher` y el set de docentes ya tomados aguantan `owner` nulo.
+- `routes/admin.js` — `POST /users/:id/delete` ahora **rechaza con 409** si el usuario es titular de materias ("es docente titular de N materia(s)…"), igual que ya hacía el borrado de divisiones. Y cuando el borrado sí procede, hace `$pull` del usuario en `coTeachers` y `students` de todas las materias: esos son arrays, así que una referencia colgada no rompe el `populate` pero deja suplentes fantasma e infla el contador de alumnos.
+
+### Detalle que no es obvio
+Con arrays (`students`, `coTeachers`) Mongoose descarta silenciosamente las referencias que no resuelven, así que nunca explotan — se pudren de a poco (contadores inflados). Con una referencia **suelta** (`owner`, `division`) devuelve `null` y explota en la primera propiedad que se lea. Por eso el único campo que tiraba 500 era `owner`.
+
+### Pendiente de datos en producción
+Las dos materias siguen sin titular hasta que se les asigne uno desde `/admin/courses` (botón del lápiz junto a "Sin docente"). No hace falta tocar la base: el borrado del docente ya ocurrió y no se puede deshacer. Ojo: en producción hay un usuario "ARCAJO" con id distinto — probablemente la cuenta recreada después del borrado.
+
+---
+
+## Fusionar docentes duplicados por DNI — solapa Otros (2026-08-03)
+
+Cuarta tarjeta con arreglo del panel `/superadmin/otros`: **"Dos docentes con el mismo DNI"**. En la base real hay 4 casos, todos con la misma forma — la cuenta vieja con el mail personal se quedó con las materias y la institucional (`@escuelasanjose.edu.ar`), creada después, está vacía. El docente entra por la que le dieron y no ve nada.
+
+### Por qué no es un botón más
+El resto de este panel se rige por la REGLA DE ORO de `services/dbFixes.js`: un arreglo solo es automático si existe UNA respuesta derivable de los datos. Cuál de las dos cuentas se conserva **no lo es** — la escuela puede querer quedarse con el mail institucional justamente aunque esté vacío. Antes eso condenaba al caso a ser "solo diagnóstico".
+
+Acá se abrió una tercera categoría, `interactivo: true`: la tarjeta trae la decisión adentro. Un bloque por duplicado, las dos cuentas con sus números (materias como titular y como suplente, actividades, novedades, último acceso), un radio para elegir y un botón propio por grupo. La cuenta con más trabajo encima viene preseleccionada como **sugerida**, pero es solo eso.
+
+### Qué mueve la fusión
+Todo lo que cuelga de la cuenta sobrante pasa a la elegida: `Course.owner`, `Course.coTeachers`, `Activity.author`, `Announcement.author` y el `author` de los comentarios. Las matrículas sueltas (un docente dentro de `students[]` por cargas viejas) se quitan en vez de transferirse.
+
+**El orden es el punto**: primero se transfiere, la cuenta sobrante se toca al final. Si algo falla en el medio queda una transferencia parcial con las dos cuentas vivas — nunca una cuenta borrada con materias apuntando a ella, que es exactamente el bug de referencias colgadas que tiraba 500 el panel de materias (ver el changelog anterior).
+
+### Con qué correo queda la cuenta conservada
+Son **dos decisiones distintas**, y a propósito: qué cuenta se conserva y con qué correo queda. El caso más común de todos es quedarse con la cuenta que **ya tiene las materias** —así no se mueve nada— pero con el correo institucional, que hoy está en la otra. Un segundo select por grupo lista los correos de las cuentas del duplicado; por defecto sigue a la cuenta elegida y deja de moverse en cuanto se lo toca a mano.
+
+`User.email` es único global, así que el correo elegido tiene que estar **libre** antes de asignarlo. De ahí que ese paso vaya último de todos:
+- Si la cuenta sobrante se **elimina**, el correo queda libre y se asigna directo.
+- Si queda **deshabilitada**, los correos se **intercambian**: la conservada toma el institucional y la deshabilitada se queda con el personal. Nadie pierde un correo válido, no se inventa ninguno y se revierte haciendo el camino inverso.
+
+El intercambio pasa por un correo temporal (`fusion-en-curso-<id>@invalido.local`) porque el índice único no admite el mismo valor en las dos ni por un instante. Si el proceso se cortara justo ahí, la cuenta **deshabilitada** queda con ese temporal —se ve a simple vista y se corrige desde el panel— y la conservada nunca queda sin correo.
+
+Ojo con lo que NO cambia: el **nombre** es el de la cuenta que se conserva. Si te quedás con la institucional (`Diego cornejo`) y preferís el nombre bien cargado (`CORNEJO, DIEGO ALEJANDRO`), eso se edita después desde `/admin`. La **contraseña** también es la de la cuenta conservada: el docente entra con el correo nuevo y la clave de siempre de esa cuenta.
+
+### Detalles que no son obvios
+- **Se agrupa por DNI normalizado dentro de la misma escuela.** El índice único `{ school, dni }` compara el string crudo, así que "12.345.678" y "12345678" conviven sin que Mongo se queje — y son la misma persona. Entre escuelas distintas no se agrupa: un docente puede trabajar en dos.
+- **Si la elegida ya era suplente de una materia que recibe como titular, se la saca de suplentes**; si no, queda listada dos veces en la solapa Personas (misma regla que `POST /courses/:id/assign-teacher`).
+- **La sobrante se deshabilita por defecto**, y hay opción de eliminarla. Si tiene entregas propias no se elimina aunque se pida: dejaría `Submission.student` colgado. La respuesta lo dice.
+- **Las cuentas ya deshabilitadas y sin materias no cuentan como duplicado**: son el resto de una fusión anterior. Sin esa regla, el grupo quedaría reportado para siempre después de resolverlo.
+- **El servicio recalcula el grupo desde la base antes de tocar nada**, así que un panel abierto en otra pestaña no puede fusionar contra un estado que ya cambió: contesta 400 y pide actualizar.
+- Auditoría: acción nueva `user.merge` ("fusionó cuentas de"), con la cuenta conservada como primer target y el detalle de lo transferido en el meta. Se registra con la escuela del grupo, así que el admin la ve en su propio panel.
+
+### Verificación — 152/152
+Siete specs nuevos (`docentes-dup-*`): se arman dos cuentas con el mismo DNI (una con puntos, cargado directo en Mongo porque por la ruta de alta no entra), el panel las detecta igual, fusionar hacia una cuenta ajena al grupo se rechaza, la fusión hacia la cuenta **vacía** le transfiere la materia y deja a la otra sin poder iniciar sesión, y el grupo deja de figurar. Los dos últimos cubren el correo: un correo que no es de ninguna cuenta del grupo se rechaza, y tras el intercambio la conservada entra con el correo adoptado y su contraseña de siempre, mientras la deshabilitada se queda con el viejo y no puede entrar.
+
+Las cuentas y la materia de prueba se borran dentro del propio bloque, por la trampa de `enrolldiv-*` documentada más arriba.
+
+⚠️ **Trampa del entorno, no del código**: la primera corrida completa de estos specs quedó cortada porque el servicio de MongoDB **se murió con "out of memory"** a mitad (`reportOutOfMemoryErrorAndExit` en `mongod.log`) — la máquina de desarrollo se queda sin RAM con el smoke completo, ver la nota operativa del backlog. Se ve como una cascada de 302 a `/login` y `ECONNREFUSED 27017`; no hay que buscarle una causa en el código. El servicio reserva por defecto la mitad de la RAM menos 1 GB (~3 GB acá): conviene limitarlo con `storage.wiredTiger.engineConfig.cacheSizeGB: 1` en `mongod.cfg`.
+
+---
+
 ## Plan de Futuras Actualizaciones (Roadmap)
 
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`). Resumen de lo pendiente:

@@ -230,8 +230,10 @@
                 </div>
               <% } else { %>
                 <div class="card-stat">
-                  <div class="avatar" style="width:26px;height:26px;font-size:11px;background:#1a73e8"><%= course.owner.name.charAt(0).toUpperCase() %></div>
-                  <span><%= course.owner.name %></span>
+                  <%# owner puede ser null si se eliminó al docente dueño: la tarjeta del alumno
+                      no debe tirar el dashboard entero por eso. %>
+                  <div class="avatar" style="width:26px;height:26px;font-size:11px;background:#1a73e8"><%= (course.owner?.name || '—').charAt(0).toUpperCase() %></div>
+                  <span><%= course.owner?.name || 'Sin docente' %></span>
                 </div>
               <% } %>
             </div>

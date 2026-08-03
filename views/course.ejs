@@ -47,8 +47,8 @@
         <% } %>
       </div>
       <div class="course-owner">
-        <div class="avatar" style="width:48px;height:48px;font-size:22px;background:rgba(255,255,255,0.3)"><%= featuredTeacher.name.charAt(0).toUpperCase() %></div>
-        <span class="course-owner-name"><%= featuredTeacher.name %></span>
+        <div class="avatar" style="width:48px;height:48px;font-size:22px;background:rgba(255,255,255,0.3)"><%= (featuredTeacher?.name || '—').charAt(0).toUpperCase() %></div>
+        <span class="course-owner-name"><%= featuredTeacher?.name || 'Sin docente' %></span>
       </div>
       <% if (course.canManage(user)) { %>
       <button class="header-customize-btn" onclick="openCustomizeModal()">
@@ -187,10 +187,12 @@
           <% } %>
         </div>
         <div class="person-item">
-          <div class="avatar" style="background:#1a73e8"><%= course.owner.name.charAt(0).toUpperCase() %></div>
+          <%# course.owner queda en null si se elimina al usuario docente (referencia colgada).
+              Se muestra el hueco en vez de romper la vista; el admin lo reasigna con el botón. %>
+          <div class="avatar" style="background:<%= course.owner ? '#1a73e8' : '#9aa0a6' %>"><%= (course.owner?.name || '—').charAt(0).toUpperCase() %></div>
           <div class="person-info">
-            <div class="person-name"><%= course.owner.name %></div>
-            <div class="person-email"><%= course.owner.email %></div>
+            <div class="person-name"><%= course.owner?.name || 'Sin docente asignado' %></div>
+            <div class="person-email"><%= course.owner?.email || '' %></div>
           </div>
           <% if (course.coTeachers && course.coTeachers.length) { %>
           <span class="badge-disabled" style="margin-left:auto;background:#e8f0fe;color:#1a73e8">TITULAR</span>

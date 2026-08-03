@@ -340,8 +340,8 @@
             </div>
             <div class="card-body">
               <div class="card-stat">
-                <div class="avatar" style="width:22px;height:22px;font-size:10px;background:#34a853"><%= c.owner.name.charAt(0).toUpperCase() %></div>
-                <span><%= c.owner.name %></span>
+                <div class="avatar" style="width:22px;height:22px;font-size:10px;background:#34a853"><%= (c.owner?.name || '—').charAt(0).toUpperCase() %></div>
+                <span><%= c.owner?.name || 'Sin docente' %></span>
               </div>
             </div>
             <div class="card-footer">

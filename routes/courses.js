@@ -517,7 +517,8 @@ router.get('/:id', requireAuth, async (req, res) => {
     // que el titular en esta materia, se muestra ese suplente en su lugar.
     let featuredTeacher = course.owner;
     if (course.coTeachers.length > 0) {
-      const candidates = [course.owner, ...course.coTeachers];
+      // filter(Boolean): el titular puede faltar si se eliminó al usuario dueño.
+      const candidates = [course.owner, ...course.coTeachers].filter(Boolean);
       const counts = await Promise.all(candidates.map(async (t) => {
         const [activities, announcements] = await Promise.all([
           Activity.countDocuments({ course: course._id, author: t._id }),
@@ -538,7 +539,9 @@ router.get('/:id', requireAuth, async (req, res) => {
     const manageTeachers = ['admin', 'superadmin'].includes(res.locals.user.role);
     let schoolTeachers = [];
     if (manageTeachers) {
-      const taken = new Set([course.owner._id.toString(), ...course.coTeachers.map(t => t._id.toString())]);
+      // owner puede venir null (docente eliminado, referencia colgada): en ese caso no hay
+      // nadie "tomado" y todos los docentes de la escuela quedan disponibles para asignar.
+      const taken = new Set([...(course.owner ? [course.owner._id.toString()] : []), ...course.coTeachers.map(t => t._id.toString())]);
       schoolTeachers = (await User.find({ role: 'teacher', active: { $ne: false }, ...(course.school ? { school: course.school } : {}) })
         .sort({ name: 1 }).select('_id name email').lean())
         .filter(t => !taken.has(t._id.toString()));

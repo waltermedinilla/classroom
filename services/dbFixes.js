@@ -26,13 +26,14 @@
 // alumno, cuál es el DNI de esta persona), el arreglo se queda en diagnóstico y deriva al
 // panel que corresponda. Inventar el dato es peor que no arreglarlo.
 
-const mongoose   = require('mongoose');
-const User       = require('../models/User');
-const Course     = require('../models/Course');
-const School     = require('../models/School');
-const Division   = require('../models/Division');
-const Activity   = require('../models/Activity');
-const Submission = require('../models/Submission');
+const mongoose     = require('mongoose');
+const User         = require('../models/User');
+const Course       = require('../models/Course');
+const School       = require('../models/School');
+const Division     = require('../models/Division');
+const Activity     = require('../models/Activity');
+const Submission   = require('../models/Submission');
+const Announcement = require('../models/Announcement');
 
 // Cuántas filas se mandan a la vista previa. El resto queda en el conteo.
 const MUESTRA_MAX = 50;
@@ -279,6 +280,247 @@ async function calcularDniDuplicados() {
   return { grupos };
 }
 
+// Dos (o más) cuentas de DOCENTE con el mismo DNI en la misma escuela: es la misma persona
+// cargada dos veces — típicamente la cuenta vieja con su mail personal más la institucional
+// creada después (@escuelasanjose.edu.ar). Una se queda con todas las materias y la otra
+// entra y no ve nada, así que el docente termina usando la que "funciona" sin saber por qué.
+//
+// A diferencia del resto de este archivo, acá NO hay una regla automática: cuál de las dos
+// cuentas se conserva es una decisión de la escuela (el mail institucional puede ser el
+// correcto aunque las materias estén en el otro). Por eso este arreglo no tiene aplicar():
+// muestra las cuentas con sus números y la persona elige, grupo por grupo, desde la tarjeta.
+//
+// El agrupamiento es por escuela + DNI normalizado: el índice único { school, dni } compara
+// el string crudo, así que "12.345.678" y "12345678" conviven sin que Mongo se queje. Entre
+// escuelas distintas NO se agrupa: un docente puede trabajar legítimamente en dos.
+//
+// Se ignoran las cuentas ya deshabilitadas Y sin materias: son el resto de una fusión
+// anterior. Si no, el grupo quedaría reportado para siempre después de resolverlo.
+async function calcularDocentesDuplicados() {
+  const docentes = await User.find({ role: 'teacher' })
+    .select('_id name email dni school active lastSeen createdAt').lean();
+
+  const porClave = new Map(); // `${schoolId}|${dni}` → [user]
+  for (const u of docentes) {
+    if (!u.school) continue;  // sin escuela no hay contra qué agrupar (ver 'usuarios-sin-escuela')
+    const dni = normalizarDni(u.dni);
+    if (!dni) continue;       // sin DNI no hay con qué comparar (ver 'usuarios-sin-dni')
+    const clave = `${u.school.toString()}|${dni}`;
+    if (!porClave.has(clave)) porClave.set(clave, []);
+    porClave.get(clave).push(u);
+  }
+
+  const candidatos = [...porClave.entries()].filter(([, us]) => us.length > 1);
+  if (!candidatos.length) return { grupos: [] };
+
+  // Un solo barrido por colección para todas las cuentas en juego: son pocas cuentas pero
+  // 419 materias y miles de actividades, así que no conviene contar de a una.
+  const ids = candidatos.flatMap(([, us]) => us.map(u => u._id));
+  const contar = async (Model, campo) => {
+    const filas = await Model.aggregate([
+      { $match: { [campo]: { $in: ids } } },
+      { $group: { _id: `$${campo}`, n: { $sum: 1 } } },
+    ]);
+    return new Map(filas.map(f => [f._id.toString(), f.n]));
+  };
+  const [titular, actividades, novedades] = await Promise.all([
+    contar(Course, 'owner'),
+    contar(Activity, 'author'),
+    contar(Announcement, 'author'),
+  ]);
+  // coTeachers es un array: el $group de arriba no sirve, hay que desarmarlo.
+  const suplenteFilas = await Course.aggregate([
+    { $match: { coTeachers: { $in: ids } } },
+    { $unwind: '$coTeachers' },
+    { $match: { coTeachers: { $in: ids } } },
+    { $group: { _id: '$coTeachers', n: { $sum: 1 } } },
+  ]);
+  const suplente = new Map(suplenteFilas.map(f => [f._id.toString(), f.n]));
+
+  const escuelas = await School.find().select('_id name').lean();
+  const nombreEscuela = Object.fromEntries(escuelas.map(e => [e._id.toString(), e.name]));
+
+  const grupos = [];
+  for (const [clave, us] of candidatos) {
+    const [schoolId, dni] = clave.split('|');
+
+    const cuentas = us.map(u => {
+      const id = u._id.toString();
+      return {
+        id,
+        nombre: u.name,
+        email: u.email,
+        dniCrudo: u.dni,
+        activa: u.active !== false,
+        titular:     titular.get(id)     || 0,
+        suplente:    suplente.get(id)    || 0,
+        actividades: actividades.get(id) || 0,
+        novedades:   novedades.get(id)   || 0,
+        ultimoAcceso: u.lastSeen || null,
+        creada: u.createdAt || null,
+      };
+    });
+
+    // Restos de una fusión anterior: deshabilitadas y sin nada a cargo. No son un duplicado
+    // pendiente — la decisión ya se tomó.
+    const vivas = cuentas.filter(c => c.activa || c.titular || c.suplente);
+    if (vivas.length < 2) continue;
+
+    // Sugerencia (no decisión): la cuenta con más trabajo real encima. Empatadas, la que
+    // se conectó más recientemente; si tampoco, la más antigua. La persona puede elegir
+    // otra — el caso típico es quedarse con el mail institucional aunque esté vacío.
+    const peso = c => c.titular * 100 + c.suplente * 50 + c.actividades + c.novedades;
+    const sugerida = [...cuentas].sort((a, b) =>
+      peso(b) - peso(a) ||
+      (b.activa === a.activa ? 0 : b.activa ? 1 : -1) ||
+      new Date(b.ultimoAcceso || 0) - new Date(a.ultimoAcceso || 0) ||
+      new Date(a.creada || 0) - new Date(b.creada || 0)
+    )[0];
+
+    grupos.push({
+      clave,
+      schoolId,
+      escuela: nombreEscuela[schoolId] || 'escuela',
+      dni,
+      cuentas: cuentas.sort((a, b) => peso(b) - peso(a)),
+      sugeridaId: sugerida.id,
+    });
+  }
+
+  grupos.sort((a, b) => a.escuela.localeCompare(b.escuela, 'es') || a.dni.localeCompare(b.dni));
+  return { grupos };
+}
+
+// Pasa TODO lo que una cuenta de docente tiene a cargo a la cuenta que se conserva, y deja
+// la sobrante deshabilitada o eliminada. Devuelve el detalle de lo movido.
+//
+// El orden importa: primero se transfiere y recién al final se toca la cuenta sobrante. Si
+// algo falla en el medio, lo peor que queda es una transferencia parcial con las dos cuentas
+// todavía vivas — nunca una cuenta borrada con materias apuntando a ella (que es exactamente
+// el bug de las referencias colgadas que rompía /admin/courses).
+async function fusionarDocentes({ clave, keepId, sobrante = 'deshabilitar', emailId = null }) {
+  const { grupos } = await calcularDocentesDuplicados();
+  const grupo = grupos.find(g => g.clave === clave);
+  if (!grupo) {
+    throw new Error('Ese grupo ya no figura como duplicado (puede que alguien lo haya resuelto recién). Actualizá la página.');
+  }
+  if (!grupo.cuentas.some(c => c.id === keepId)) {
+    throw new Error('La cuenta elegida no pertenece a este grupo.');
+  }
+  if (!['deshabilitar', 'eliminar'].includes(sobrante)) {
+    throw new Error('Qué hacer con la cuenta sobrante solo puede ser "deshabilitar" o "eliminar".');
+  }
+  // Con qué correo queda la cuenta conservada. Son dos decisiones distintas a propósito: el
+  // caso más común es quedarse con la cuenta que YA tiene las materias (así no se mueve
+  // nada) pero con el correo institucional, que hoy está en la otra.
+  const correoDe = emailId || keepId;
+  if (!grupo.cuentas.some(c => c.id === correoDe)) {
+    throw new Error('El correo elegido no pertenece a ninguna cuenta de este grupo.');
+  }
+
+  const keep     = new mongoose.Types.ObjectId(keepId);
+  const perdedor = grupo.cuentas.filter(c => c.id !== keepId);
+  const perdedorIds = perdedor.map(c => new mongoose.Types.ObjectId(c.id));
+
+  const resumen = { titular: 0, suplente: 0, actividades: 0, novedades: 0, comentarios: 0, matriculas: 0 };
+
+  // 1. Materias donde la cuenta sobrante es titular → pasan a la que se conserva. Si la que
+  //    se conserva ya figuraba como suplente en esa materia, se la saca de ahí: quedaría
+  //    listada dos veces en la solapa Personas (misma regla que POST /courses/:id/assign-teacher).
+  const comoTitular = await Course.find({ owner: { $in: perdedorIds } }).select('_id coTeachers').lean();
+  for (const c of comoTitular) {
+    await Course.updateOne(
+      { _id: c._id },
+      { $set: { owner: keep }, $pull: { coTeachers: keep } },
+    );
+    resumen.titular++;
+  }
+
+  // 2. Materias donde es suplente → la reemplaza la que se conserva, salvo que esa ya sea
+  //    titular o suplente (ahí solo se saca a la sobrante, sin duplicar).
+  const comoSuplente = await Course.find({ coTeachers: { $in: perdedorIds } })
+    .select('_id owner coTeachers').lean();
+  for (const c of comoSuplente) {
+    const yaEsta = c.owner?.toString() === keepId
+      || (c.coTeachers || []).some(t => t.toString() === keepId);
+    await Course.updateOne({ _id: c._id }, { $pull: { coTeachers: { $in: perdedorIds } } });
+    if (!yaEsta) await Course.updateOne({ _id: c._id }, { $addToSet: { coTeachers: keep } });
+    resumen.suplente++;
+  }
+
+  // 3. Autoría de actividades y novedades. Sin esto, borrar la cuenta sobrante dejaría
+  //    `author` apuntando a un usuario inexistente — la misma clase de referencia colgada
+  //    que tiraba 500 el panel de materias.
+  resumen.actividades = (await Activity.updateMany({ author: { $in: perdedorIds } }, { $set: { author: keep } })).modifiedCount;
+  resumen.novedades   = (await Announcement.updateMany({ author: { $in: perdedorIds } }, { $set: { author: keep } })).modifiedCount;
+  resumen.comentarios = (await Announcement.updateMany(
+    { 'comments.author': { $in: perdedorIds } },
+    { $set: { 'comments.$[c].author': keep } },
+    { arrayFilters: [{ 'c.author': { $in: perdedorIds } }] },
+  )).modifiedCount;
+
+  // 4. Un docente no debería estar dentro de students[], pero pasa con las cargas viejas:
+  //    ahí no se transfiere nada, se saca. Inscribir a la cuenta buena como alumna de su
+  //    propia materia sería peor que el problema original.
+  resumen.matriculas = (await Course.updateMany(
+    { students: { $in: perdedorIds } },
+    { $pull: { students: { $in: perdedorIds } } },
+  )).modifiedCount;
+
+  // 5. Recién ahora la cuenta sobrante. Si tiene entregas propias (fue alumna alguna vez)
+  //    no se borra aunque lo pidan: borrarla dejaría `Submission.student` colgado.
+  const conEntregas = await Submission.countDocuments({ student: { $in: perdedorIds } });
+  const accion = (sobrante === 'eliminar' && conEntregas === 0) ? 'eliminar' : 'deshabilitar';
+  if (accion === 'eliminar') {
+    await User.deleteMany({ _id: { $in: perdedorIds } });
+  } else {
+    await User.updateMany({ _id: { $in: perdedorIds } }, { $set: { active: false } });
+  }
+
+  // 6. El correo. Va ÚLTIMO porque `User.email` es único global: para que la conservada se
+  //    quede con el correo de la otra, ese correo tiene que estar libre primero.
+  //
+  //    - Si la sobrante se eliminó, ya quedó libre y alcanza con asignarlo.
+  //    - Si sigue viva (deshabilitada), se INTERCAMBIAN: la conservada toma el correo
+  //      institucional y la deshabilitada se queda con el personal. Nadie pierde un correo
+  //      válido, no se inventa ninguno y se puede revertir haciendo el camino inverso.
+  //
+  //    El intercambio pasa por un correo temporal porque el índice único no admite que las
+  //    dos tengan el mismo valor ni por un instante. Si el proceso se cortara entre medio,
+  //    la cuenta deshabilitada queda con ese temporal — se ve a simple vista y se arregla
+  //    a mano desde el panel de administración; la conservada nunca queda sin correo.
+  const cuentaConservada = grupo.cuentas.find(c => c.id === keepId);
+  const correoFinal = grupo.cuentas.find(c => c.id === correoDe).email;
+  const correoCambiado = correoDe !== keepId;
+
+  if (correoCambiado) {
+    const donante = grupo.cuentas.find(c => c.id === correoDe); // siempre una de las sobrantes
+    if (accion === 'eliminar') {
+      await User.updateOne({ _id: keep }, { $set: { email: correoFinal } });
+    } else {
+      const temporal = `fusion-en-curso-${donante.id}@invalido.local`;
+      await User.updateOne({ _id: donante.id }, { $set: { email: temporal } });
+      await User.updateOne({ _id: keep },       { $set: { email: correoFinal } });
+      await User.updateOne({ _id: donante.id }, { $set: { email: cuentaConservada.email } });
+    }
+  }
+
+  return {
+    resumen,
+    accion,
+    forzadoDeshabilitar: sobrante === 'eliminar' && accion === 'deshabilitar',
+    conservada: cuentaConservada,
+    sobrantes: perdedor,
+    correo: {
+      final: correoFinal,
+      cambiado: correoCambiado,
+      anterior: cuentaConservada.email,
+      // Solo cuando la sobrante sigue viva: se quedó con el correo que soltó la conservada.
+      intercambiadoCon: correoCambiado && accion !== 'eliminar' ? cuentaConservada.email : null,
+    },
+  };
+}
+
 const FIXES = [
   /* ─────────────────────────────────────────────────────────────────────── */
   {
@@ -523,6 +765,62 @@ const FIXES = [
 
   /* ─────────────────────────────────────────────────────────────────────── */
   {
+    id: 'docentes-dni-duplicado',
+    titulo: 'Dos docentes con el mismo DNI',
+    descripcion:
+      'La misma persona con dos cuentas en la escuela: la vieja con su mail personal y la ' +
+      'institucional creada después. Las materias quedan colgadas de una sola, así que si ' +
+      'entra por la otra no ve nada. Elegí con cuál se queda y el arreglo le pasa a esa todo ' +
+      'lo de la otra: materias como titular y como suplente, actividades, novedades y ' +
+      'comentarios. La cuenta sobrante queda deshabilitada (o eliminada, si lo pedís).',
+    icono: 'person_search',
+    severidad: 'alta',
+    // Sin botón único: cuál cuenta se conserva no se puede deducir de los datos (el mail
+    // institucional puede ser el correcto aunque esté vacío). Ver la REGLA DE ORO de arriba.
+    // En vez de quedarse en diagnóstico, la tarjeta trae la elección adentro: un grupo por
+    // duplicado, con los números de cada cuenta y un botón propio.
+    aplicable: false,
+    interactivo: true,
+    parametros: [],
+
+    async diagnosticar() {
+      const { grupos } = await calcularDocentesDuplicados();
+      const cuentasDeMas = grupos.reduce((acc, g) => acc + g.cuentas.length - 1, 0);
+      const conMateriasRepartidas = grupos.filter(
+        g => g.cuentas.filter(c => c.titular || c.suplente).length > 1
+      ).length;
+
+      return {
+        total: grupos.length,
+        grupos,
+        muestra: grupos.slice(0, MUESTRA_MAX).map(g => ({
+          principal: `DNI ${g.dni} · ${g.escuela}`,
+          secundario: g.cuentas
+            .map(c => `${c.nombre} (${c.email}) — ${c.titular} materia(s) como titular` +
+                      `${c.suplente ? `, ${c.suplente} como suplente` : ''}` +
+                      `${c.activa ? '' : ' · deshabilitada'}`)
+            .join('  ·  '),
+          extra: `${g.cuentas.length} cuentas`,
+          fecha: null,
+        })),
+        nota: grupos.length
+          ? `${cuentasDeMas} cuenta(s) de más. Elegí abajo, grupo por grupo, con cuál se queda cada ` +
+            'docente: lo de la otra se transfiere y no se pierde nada. ' +
+            (conMateriasRepartidas
+              ? `Ojo con ${conMateriasRepartidas} caso(s): las dos cuentas tienen materias a cargo, ` +
+                'así que la fusión le mueve a la elegida las materias de la otra (los alumnos y las ' +
+                'entregas de esas materias no se tocan).'
+              : 'En todos los casos una sola de las cuentas tiene materias.')
+          : null,
+      };
+    },
+
+    // No hay aplicar(): la resolución es grupo por grupo desde POST /superadmin/otros/:id/fusionar.
+    fusionar: fusionarDocentes,
+  },
+
+  /* ─────────────────────────────────────────────────────────────────────── */
+  {
     id: 'usuarios-sin-escuela',
     titulo: 'Cuentas sin escuela asignada',
     descripcion:
@@ -755,8 +1053,12 @@ async function diagnosticarTodos() {
       return {
         id: fix.id, titulo: fix.titulo, descripcion: fix.descripcion,
         icono: fix.icono, severidad: fix.severidad, aplicable: fix.aplicable,
+        interactivo: fix.interactivo === true,
         parametros: await resolverParametros(fix),
         total: d.total, muestra: d.muestra, nota: d.nota || null,
+        // Solo los arreglos interactivos lo traen: es el detalle que la tarjeta necesita
+        // para dejar elegir (ver 'docentes-dni-duplicado').
+        grupos: d.grupos || [],
         error: null,
       };
     } catch (err) {
@@ -764,7 +1066,8 @@ async function diagnosticarTodos() {
       return {
         id: fix.id, titulo: fix.titulo, descripcion: fix.descripcion,
         icono: fix.icono, severidad: fix.severidad, aplicable: fix.aplicable,
-        parametros: [], total: null, muestra: [], nota: null,
+        interactivo: fix.interactivo === true,
+        parametros: [], total: null, muestra: [], nota: null, grupos: [],
         error: err.message,
       };
     }

@@ -82,8 +82,13 @@ const courseSchema = new mongoose.Schema({
 // Seguro tanto si owner/coTeachers vienen sin popular (ObjectId crudo) como si vienen
 // populados (.populate('owner', 'name')) — en ese caso hay que comparar por ._id,
 // porque el .toString() de un documento completo NO es el mismo que el del ObjectId.
+// Tolera null/undefined: `owner` puede quedar colgado si se elimina al usuario docente
+// (populate('owner') devuelve null). Sin esto, isTeacher() tiraba un TypeError y con él
+// toda ruta que use canManage() — la materia se volvía inaccesible para todo el mundo.
+// Devuelve '' en ese caso: nunca coincide con un id real, así que no concede nada.
 function idToString(val) {
-  return (val && val._id ? val._id : val).toString();
+  if (val === null || val === undefined) return '';
+  return (val._id ? val._id : val).toString();
 }
 courseSchema.methods.isTeacher = function (userId) {
   if (!userId) return false;

@@ -2324,6 +2324,244 @@ const specs = [
     },
   },
   {
+    // ── Fusión de docentes duplicados por DNI (/superadmin/otros) ────────────
+    // Reproduce el caso real: la cuenta vieja con el mail personal tiene las materias y la
+    // institucional está vacía. El DNI se guarda con puntos en una y sin puntos en la otra,
+    // que es como conviven en la base pese al índice único { school, dni }.
+    id: 'docentes-dup-setup',
+    title: 'Se arman dos cuentas de docente con el mismo DNI (una con materia, otra vacía)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state }) {
+      const dni = dniSmoke(17);
+      state.dupDni = dni;
+
+      const conMateria = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke Dup Personal ${RUN_ID}`, email: `dup.personal.${RUN_ID}@example.com`,
+                password: 'SmokeTest1234', role: 'teacher', dni },
+        expectStatus: 201,
+      });
+      state.dupConMateriaId = conMateria.json.user._id;
+
+      const vacia = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke Dup Institucional ${RUN_ID}`, email: `dup.institucional.${RUN_ID}@example.com`,
+                password: 'SmokeTest1234', role: 'teacher', dni: dniSmoke(18) },
+        expectStatus: 201,
+      });
+      state.dupVaciaId = vacia.json.user._id;
+
+      const curso = await client.post('admin', '/admin/courses/create', {
+        body: { name: `Materia Dup Smoke ${RUN_ID}`, divisionId: state.divisionId, teacherId: state.dupConMateriaId },
+        expectStatus: 201,
+      });
+      state.dupCourseId = curso.json.course._id;
+
+      // El DNI repetido va directo a Mongo: por la ruta de alta no entra (normalizeDni le
+      // saca los puntos y ahí sí choca contra el índice único).
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        await mongo.db().collection('users').updateOne(
+          { _id: new ObjectId(state.dupVaciaId) },
+          { $set: { dni: `${dni.slice(0, 2)}.${dni.slice(2, 5)}.${dni.slice(5)}` } },
+        );
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'docentes-dup-diagnostico',
+    title: 'El panel Otros detecta el DNI repetido aunque esté escrito con puntos',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert }) {
+      const res = await client.get('superadmin', '/superadmin/otros/docentes-dni-duplicado/diagnostico', { expectStatus: 200 });
+      const grupo = (res.json.grupos || []).find(g => g.dni === state.dupDni.replace(/^0+/, ''));
+      assert(grupo, `debería detectar el grupo del DNI ${state.dupDni}`);
+      assert(grupo.cuentas.length === 2, `el grupo debería tener 2 cuentas, tiene ${grupo.cuentas.length}`);
+      state.dupClave = grupo.clave;
+
+      const conMateria = grupo.cuentas.find(c => c.id === state.dupConMateriaId);
+      assert(conMateria.titular === 1, `la cuenta vieja debería figurar con 1 materia, figura con ${conMateria.titular}`);
+      assert(grupo.sugeridaId === state.dupConMateriaId, 'la sugerida debería ser la que tiene la materia');
+    },
+  },
+  {
+    id: 'docentes-dup-rechaza-cuenta-ajena',
+    title: 'Fusionar hacia una cuenta que no es del grupo se rechaza',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state }) {
+      // Sin esto, un id copiado a mano podría llevarse materias de una persona a otra.
+      await client.post('superadmin', '/superadmin/otros/docentes-dni-duplicado/fusionar', {
+        body: { clave: state.dupClave, keepId: state.scopedStudentId },
+        expectStatus: 400,
+      });
+    },
+  },
+  {
+    id: 'docentes-dup-fusion',
+    title: 'Se elige la cuenta institucional y se le transfiere la materia de la otra',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert }) {
+      // A propósito se conserva la cuenta VACÍA: es el caso que no se puede automatizar
+      // (quedarse con el mail institucional aunque las materias estén en el otro).
+      const res = await client.post('superadmin', '/superadmin/otros/docentes-dni-duplicado/fusionar', {
+        body: { clave: state.dupClave, keepId: state.dupVaciaId, sobrante: 'deshabilitar' },
+        expectStatus: 200,
+      });
+      assert(/1 materia\(s\) como titular/.test(res.json.mensaje), `debería informar la materia transferida — dijo: ${res.json.mensaje}`);
+
+      // La materia quedó a nombre de la cuenta elegida.
+      const listado = await client.get('admin', `/admin/courses?search=${encodeURIComponent('Materia Dup Smoke ' + RUN_ID)}`, { expectStatus: 200 });
+      assert(listado.text.includes(`Smoke Dup Institucional ${RUN_ID}`),
+        'el listado de materias debería mostrar a la cuenta institucional como docente');
+
+      // La sobrante quedó deshabilitada: no puede iniciar sesión.
+      await client.post('dupSobrante', '/login', {
+        body: { email: `dup.personal.${RUN_ID}@example.com`, password: 'SmokeTest1234' },
+        expectStatus: [400, 401, 403],
+      });
+
+      // Y el grupo ya no figura como duplicado pendiente.
+      const despues = await client.get('superadmin', '/superadmin/otros/docentes-dni-duplicado/diagnostico', { expectStatus: 200 });
+      assert(!(despues.json.grupos || []).some(g => g.clave === state.dupClave),
+        'el grupo fusionado no debería seguir apareciendo');
+    },
+  },
+  {
+    // El caso que más se usa en la práctica: quedarse con la cuenta que YA tiene las
+    // materias (así no se mueve nada) pero con el correo institucional, que está en la otra.
+    // Como User.email es único global, las dos cuentas se INTERCAMBIAN el correo.
+    id: 'docentes-dup-email-setup',
+    title: 'Se arma un segundo par duplicado para probar la elección de correo',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state }) {
+      const dni = dniSmoke(19);
+      state.dupMailDni = dni;
+      state.dupMailViejo = `dup.mail.viejo.${RUN_ID}@example.com`;
+      state.dupMailNuevo = `dup.mail.institucional.${RUN_ID}@example.com`;
+
+      const vieja = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke Dup Mail Vieja ${RUN_ID}`, email: state.dupMailViejo,
+                password: 'SmokeTest1234', role: 'teacher', dni },
+        expectStatus: 201,
+      });
+      state.dupMailViejaId = vieja.json.user._id;
+
+      const nueva = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke Dup Mail Nueva ${RUN_ID}`, email: state.dupMailNuevo,
+                password: 'OtraClave1234', role: 'teacher', dni: dniSmoke(20) },
+        expectStatus: 201,
+      });
+      state.dupMailNuevaId = nueva.json.user._id;
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        await mongo.db().collection('users').updateOne(
+          { _id: new ObjectId(state.dupMailNuevaId) },
+          { $set: { dni: `${dni.slice(0, 2)}.${dni.slice(2, 5)}.${dni.slice(5)}` } },
+        );
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'docentes-dup-elige-correo',
+    title: 'Se conserva una cuenta y se le pasa el correo de la otra (se intercambian)',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert }) {
+      const diag = await client.get('superadmin', '/superadmin/otros/docentes-dni-duplicado/diagnostico', { expectStatus: 200 });
+      const grupo = (diag.json.grupos || []).find(g => g.dni === state.dupMailDni.replace(/^0+/, ''));
+      assert(grupo, 'debería detectar el segundo par duplicado');
+
+      // Un correo que no es de ninguna cuenta del grupo se rechaza.
+      await client.post('superadmin', '/superadmin/otros/docentes-dni-duplicado/fusionar', {
+        body: { clave: grupo.clave, keepId: state.dupMailViejaId, emailId: state.scopedStudentId },
+        expectStatus: 400,
+      });
+
+      const res = await client.post('superadmin', '/superadmin/otros/docentes-dni-duplicado/fusionar', {
+        body: { clave: grupo.clave, keepId: state.dupMailViejaId, emailId: state.dupMailNuevaId, sobrante: 'deshabilitar' },
+        expectStatus: 200,
+      });
+      assert(res.json.mensaje.includes(state.dupMailNuevo), `el mensaje debería informar el correo nuevo — dijo: ${res.json.mensaje}`);
+
+      // La cuenta conservada entra con el correo adoptado y SU contraseña de siempre.
+      await client.post('dupMailConservada', '/login', {
+        body: { email: state.dupMailNuevo, password: 'SmokeTest1234' },
+        expectStatus: 200,
+      });
+
+      // Y el correo viejo quedó en la cuenta deshabilitada, que no puede iniciar sesión.
+      await client.post('dupMailSobrante', '/login', {
+        body: { email: state.dupMailViejo, password: 'OtraClave1234' },
+        expectStatus: [400, 401, 403],
+      });
+    },
+  },
+  {
+    id: 'docentes-dup-cleanup',
+    title: 'Limpieza: se borran la materia y las dos cuentas duplicadas de prueba',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      if (state.dupMailViejaId) await client.post('admin', `/admin/users/${state.dupMailViejaId}/delete`, { expectStatus: 200 });
+      if (state.dupMailNuevaId) await client.post('admin', `/admin/users/${state.dupMailNuevaId}/delete`, { expectStatus: 200 });
+      // La materia se borra ACÁ y no en la limpieza final: los specs de matrícula por
+      // división cuentan las materias de state.divisionId y esperan una sola.
+      if (state.dupCourseId)      await client.post('admin', `/admin/courses/${state.dupCourseId}/delete`, { expectStatus: 200 });
+      if (state.dupVaciaId)       await client.post('admin', `/admin/users/${state.dupVaciaId}/delete`, { expectStatus: 200 });
+      if (state.dupConMateriaId)  await client.post('admin', `/admin/users/${state.dupConMateriaId}/delete`, { expectStatus: 200 });
+    },
+  },
+  {
+    // Regresión del 2026-08-03: en producción /admin/courses tiraba 500 para el admin.
+    // Dos materias tenían `owner` apuntando a un usuario ya borrado; populate() devolvía
+    // null y la vista hacía `c.owner._id`. Peor: idToString() en models/Course.js reventaba
+    // con null, así que isTeacher()/canManage() fallaban y la materia quedaba inaccesible
+    // para TODOS los roles, no solo en el panel.
+    id: 'owner-huerfano-no-rompe-el-panel',
+    title: 'Una materia con el docente titular borrado no rompe /admin/courses ni la ficha del curso',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state, assert }) {
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      const HUERFANO = new ObjectId('000000000000000000000000'); // no existe ningún usuario así
+      try {
+        await mongo.connect();
+        const courses = mongo.db().collection('courses');
+        await courses.updateOne({ _id: new ObjectId(state.courseId) }, { $set: { owner: HUERFANO } });
+
+        const listado = await client.get('admin', `/admin/courses?search=${encodeURIComponent('Materia Smoke ' + RUN_ID)}`, { expectStatus: 200 });
+        assert(listado.text.includes('Sin docente'), 'el listado debería marcar la materia como "Sin docente"');
+
+        // canManage() con el owner colgado: el admin de la escuela sigue entrando.
+        await client.get('admin', `/courses/${state.courseId}`, { expectStatus: 200 });
+
+        await courses.updateOne(
+          { _id: new ObjectId(state.courseId) },
+          { $set: { owner: new ObjectId(state.scopedTeacherId) } },
+        );
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'delete-docente-titular-bloqueado',
+    title: 'No se puede borrar a un docente que es titular de materias (409)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Es la causa raíz del bug de arriba: borrar al titular dejaba la referencia colgada.
+      const res = await client.post('admin', `/admin/users/${state.scopedTeacherId}/delete`, { expectStatus: 409 });
+      assert(/titular de \d+ materia/.test(res.json?.error || ''), `el error debería decir de cuántas materias es titular — fue: ${res.json?.error}`);
+      // Y no lo borró: el spec de limpieza de más abajo cuenta con que siga existiendo.
+      await client.get('admin', `/admin/users/${state.scopedTeacherId}`, { expectStatus: 200 });
+    },
+  },
+  {
     id: 'cleanup-course',
     title: 'Limpieza: el admin borra el curso de prueba (cascada)',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
@@ -2431,6 +2669,8 @@ const specs = [
           state.preceptorId, state.preceptorStudentId, state.otherDivisionId,
           state.fakePreceptorId, state.dniNormalizedId, state.thirdDivisionId,
           state.joinCourseId, state.joinOtherCourseId, state.joinOtherDivisionId,
+          state.dupConMateriaId, state.dupVaciaId, state.dupCourseId,
+          state.dupMailViejaId, state.dupMailNuevaId,
         ].filter(Boolean);
         const ids = idStrings.map(s => new ObjectId(s));
 

@@ -82,11 +82,18 @@
                 <% } %>
               </td>
               <td>
+                <%# El docente puede faltar: si se elimina al usuario dueño, la referencia queda
+                    colgada y populate() devuelve null. Antes esto tiraba la página entera (500).
+                    Se muestra "Sin docente" y el botón sigue disponible para reasignarlo. %>
                 <div style="display:flex;align-items:center;gap:6px">
-                  <a href="/admin/users/<%= c.owner._id %>" style="color:var(--primary)" id="teacher-name-<%= c._id %>"><%= c.owner.name %></a>
-                  <button class="btn-assign-teacher" title="Cambiar docente"
+                  <% if (c.owner) { %>
+                    <a href="/admin/users/<%= c.owner._id %>" style="color:var(--primary)" id="teacher-name-<%= c._id %>"><%= c.owner.name %></a>
+                  <% } else { %>
+                    <span style="color:#ea4335;font-weight:600;font-size:13px" id="teacher-name-<%= c._id %>">Sin docente</span>
+                  <% } %>
+                  <button class="btn-assign-teacher" title="<%= c.owner ? 'Cambiar docente' : 'Asignar docente' %>"
                     data-course-id="<%= c._id %>"
-                    data-teacher-id="<%= c.owner._id %>"
+                    data-teacher-id="<%= c.owner ? c.owner._id : '' %>"
                     data-course-name="<%- c.name.replace(/"/g, '&quot;') %>"
                     style="background:none;border:none;cursor:pointer;padding:2px;color:var(--text-secondary);line-height:1;display:flex;align-items:center">
                     <span class="material-symbols-outlined" style="font-size:15px">edit</span>
@@ -172,7 +179,11 @@
     function openAssignModal(courseId, currentTeacherId, courseName) {
       _assignCourseId = courseId;
       document.getElementById('assignModalSubtitle').textContent = courseName;
-      document.getElementById('assignTeacherSelect').value = currentTeacherId;
+      // currentTeacherId viene vacío cuando la materia quedó sin docente: en ese caso
+      // se deja preseleccionado el primero de la lista en vez de un select en blanco.
+      const sel = document.getElementById('assignTeacherSelect');
+      if (currentTeacherId) sel.value = currentTeacherId;
+      else sel.selectedIndex = 0;
       document.getElementById('assignError').classList.remove('show');
       document.getElementById('assignError').textContent = '';
       document.getElementById('assignModalBackdrop').style.display = 'flex';
@@ -207,11 +218,16 @@
           errorEl.classList.add('show');
           return;
         }
-        // Actualiza el nombre del docente en la tabla sin recargar
+        // Actualiza el nombre del docente en la tabla sin recargar. Si la materia estaba
+        // "Sin docente" el elemento es un <span>, no un <a>: ahí conviene recargar para
+        // que quede el link al perfil del nuevo docente.
         const nameEl = document.getElementById('teacher-name-' + _assignCourseId);
-        if (nameEl) {
+        if (nameEl && nameEl.tagName === 'A') {
           nameEl.textContent = data.teacherName;
           nameEl.href = '/admin/users/' + data.teacherId;
+        } else {
+          location.reload();
+          return;
         }
         closeAssignModal();
       } catch {
