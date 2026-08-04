@@ -31,6 +31,17 @@ const schoolSchema = new Schema({
     endDate:    { type: String, default: null }, // "MM-DD"
     config:     { type: Schema.Types.Mixed, default: {} },
   }],
+  // Ajustes que el admin de la escuela controla desde /admin/tasks.
+  // Ojo: lo que se agregue acá hay que sumarlo al .select() de server.js que arma
+  // res.locals.school, o el campo nunca llega a las vistas (el doc va cacheado).
+  settings: {
+    // Si está en true, al alumno se le avisa en el detalle de la actividad que el docente
+    // puede ver que la abrió. El registro del acuse (ActivityView) ocurre siempre: este
+    // flag solo controla la transparencia hacia el alumno.
+    // Default false para no cambiarle el comportamiento a las escuelas existentes sin que
+    // el admin lo decida.
+    showViewReceiptToStudents: { type: Boolean, default: false },
+  },
 }, { timestamps: true });
 
 // Índice único sparse: solo indexa escuelas que tienen token activo (null no se indexa)

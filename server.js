@@ -300,7 +300,7 @@ app.use('*', async (req, res, next) => {
     const key = schoolId.toString();
     let school = schoolCache.get(key);
     if (!school) {
-      school = await School.findById(schoolId).select('name color slug _id themes').lean();
+      school = await School.findById(schoolId).select('name color slug _id themes settings').lean();
       if (school) schoolCache.set(key, school);
     }
     res.locals.school = school || null;

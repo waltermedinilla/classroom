@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tareas - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* Fila de ajuste: texto a la izquierda, toggle a la derecha. Pensada para que
+       agregar el segundo y el tercer ajuste sea copiar el bloque, sin rediseñar nada. */
+    .set-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; overflow: hidden; margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.04);
+    }
+    .set-row {
+      display: flex; align-items: flex-start; gap: 16px;
+      padding: 18px 22px;
+    }
+    .set-row + .set-row { border-top: 1px solid var(--border); }
+    .set-icon {
+      width: 44px; height: 44px; flex-shrink: 0;
+      background: var(--primary-light, #e8f0fe); border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--primary);
+    }
+    .set-icon .material-symbols-outlined { font-size: 24px; }
+    .set-main { flex: 1; min-width: 0; }
+    .set-main h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--text); }
+    .set-desc { margin: 6px 0 0; font-size: 13px; color: var(--text-secondary); line-height: 1.55; }
+    .set-toggle { display: flex; align-items: center; gap: 10px; flex-shrink: 0; padding-top: 4px; }
+    .set-state { font-size: 12px; font-weight: 600; color: var(--text-secondary); min-width: 58px; text-align: right; }
+    .set-info {
+      background: var(--bg); border-left: 3px solid var(--primary);
+      padding: 12px 16px; border-radius: 8px;
+      margin-bottom: 24px; font-size: 13px; color: var(--text-secondary);
+    }
+    .set-info strong { color: var(--text); }
+  </style>
+</head>
+<body>
+  <%- include('../../partials/header') %>
+
+  <main class="main-content main-content-ancho">
+    <%- include('../../partials/admin-nav', { activePage: 'tasks' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Tareas</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Ajustes de las actividades para toda la escuela. Se aplican a todas las materias
+          y a todos los docentes.
+        </p>
+      </div>
+    </div>
+
+    <div class="set-info">
+      <strong>Acuse de lectura.</strong> Cuando un alumno abre una actividad, queda registrado
+      para que el docente pueda distinguir entre "la vio y no la hizo" y "nunca se enteró".
+      El registro se hace siempre; acá elegís si al alumno se le avisa.
+    </div>
+
+    <div class="set-card">
+      <div class="set-row">
+        <div class="set-icon"><span class="material-symbols-outlined">visibility</span></div>
+        <div class="set-main">
+          <h3>Avisar a los alumnos que el docente ve si abrieron la actividad</h3>
+          <p class="set-desc">
+            Con esta opción activada, el alumno ve una línea al pie del detalle de cada
+            actividad que le aclara que su apertura queda registrada.
+            <strong>Desactivarla no apaga el registro</strong>: el docente sigue viendo quién
+            abrió cada actividad, solo que el alumno no recibe el aviso.
+          </p>
+        </div>
+        <div class="set-toggle">
+          <span class="set-state" id="state_showViewReceiptToStudents">
+            <%= school.settings && school.settings.showViewReceiptToStudents ? 'Activado' : 'Desactivado' %>
+          </span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="showViewReceiptToStudents"
+              <%= school.settings && school.settings.showViewReceiptToStudents ? 'checked' : '' %>
+              onchange="saveSetting('showViewReceiptToStudents', this)">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <%- include('../../partials/footer') %>
+
+  <script>
+    // Guarda un ajuste al vuelo. Si falla, revierte el checkbox al estado anterior:
+    // dejarlo movido haría creer que se guardó algo que no se guardó.
+    async function saveSetting(key, input) {
+      const value = input.checked;
+      input.disabled = true;
+      try {
+        const res  = await fetch('/admin/tasks/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ key, value }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error');
+        const label = document.getElementById('state_' + key);
+        if (label) label.textContent = value ? 'Activado' : 'Desactivado';
+      } catch (err) {
+        input.checked = !value;
+        alert(err.message || 'No se pudo guardar el ajuste');
+      } finally {
+        input.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1579,6 +1579,97 @@ Las cuentas y la materia de prueba se borran dentro del propio bloque, por la tr
 
 ---
 
+## Acuse de lectura de actividades — "¿quién abrió la tarea?" (2026-08-03)
+
+**Pedido**: "me gustaría que los docentes puedan ver de alguna forma si los alumnos han abierto las actividades, o sea, si la han visto".
+
+### El problema
+El docente solo podía saber **quién entregó**: el estado salía de la existencia de un `Submission`. No había forma de distinguir *"la vio y no la hizo"* de *"nunca se enteró de que existía"*, que es justo lo que decide si hay que insistirle al alumno o si el problema es de comunicación.
+
+### Modelo nuevo: `ActivityView`
+Colección aparte, no un array embebido en `Activity`. Dos razones: espeja a `Submission` (mismo par `{activity, student}`, índice único, upsert) así que el docente cruza los dos mapas con el mismo patrón; y un array dentro de `Activity` crecería un elemento por alumno y por actividad, sin techo.
+
+Campos: `firstViewedAt` (una sola vez, `$setOnInsert`, igual que `Submission.firstSubmittedAt`), `lastViewedAt` (se pisa) y `viewCount` (`$inc`). **La ausencia de documento significa "sin abrir"**: no hizo falta ningún backfill para las actividades que ya existían.
+
+### Dónde se registra
+`POST /activities/:id/view`, que dispara `loadStudentDetail()` al abrir el modal — el único momento en que el alumno realmente ve la consigna. Va **fire-and-forget** desde el cliente (sin `await`, con `.catch()`): el detalle no debe esperar al ping ni romperse si falla.
+
+Es POST y **no** se colgó del `GET /:id/my-submission` que ya se disparaba ahí, aunque hubiera sido más barato: un GET no debe mutar, y así el acuse queda testeable por separado.
+
+Dos guardas en la ruta:
+- **Si no es alumno, se ignora en silencio** (`{ ok: true }`, no error). El docente que entra a mirar su propia actividad no tiene que inflar el contador "N vieron", pero tampoco está haciendo nada mal.
+- **Se verifica que el alumno esté en `course.students`** antes de escribir. Sin eso, cualquiera podría registrar vistas en actividades de otros cursos pingueando IDs.
+
+No se audita: es alto volumen y bajo valor forense.
+
+### Qué ve el docente, en tres lugares
+- **Chip en la tarjeta del listado** (`viewedChip`), al lado del de entregas: `18/25`. Es el que permite detectar de un vistazo la actividad que **nadie** abrió. El contador sale de un `ActivityView.aggregate` que corre en `Promise.all` junto al de `Submission`, en `GET /activities/course/:courseId` — mismo patrón que ya usaba `submittedCount`.
+- **Resumen del modal**: "· N vieron" después de calificados y entregados. Cuenta **solo alumnos que siguen inscriptos**: si uno se dio de baja, su registro sigue en la base pero no aparece en la tabla, y el resumen tiene que coincidir con lo que se ve.
+- **Columna "Visto"** en la tabla de entregas, antes de "Entrega" (orden natural: vio → entregó). Con fecha de primera apertura y, si volvió, un "Últ: ..." — mismo tratamiento que el "Act:" de la entrega. Sale de un tercer fetch a `GET /activities/:id/views` sumado al `Promise.all` que ya existía; si ese fetch falla, el mapa queda vacío y la columna dice "Sin abrir" en todos, sin romper la tabla de notas.
+
+**Detalle de color, que no es capricho**: "Visto" va en **azul** y no en verde para que no se confunda con "Entregado" leyendo la fila de reojo, y "Sin abrir" en **gris neutro, no rojo** — todavía no haber abierto no es una falta, es información.
+
+### Solapa "Tareas" en el panel del admin
+La decisión de si al alumno se le avisa que su apertura queda registrada es de la escuela, no del código. El proyecto **no tenía infraestructura de settings**, así que se creó la mínima:
+
+- `School.settings.showViewReceiptToStudents`, default `false` — comportamiento silencioso, para no cambiarle nada a las escuelas existentes sin que el admin lo decida.
+- `GET /admin/tasks` + `POST /admin/tasks/settings`. La key se valida contra la lista blanca `TASK_SETTINGS` y el valor se castea a booleano: **nunca se persiste el body crudo** (mismo criterio que `buildConfig()` en superadmin). Sin esa lista blanca, un `$set` con la key que venga del cliente escribe cualquier campo del documento.
+- Auditoría: acción nueva `school.settings_update`, con qué ajuste cambió y a qué valor en el meta. Es la primera `school.*` que dispara un **admin** y no el superadmin.
+
+⚠️ **La trampa**: `res.locals.school` va cacheado 5 min por worker y se arma con un `.select()` explícito en `server.js`. Hubo que **sumar `settings` a ese select** (si no, el campo nunca llega a las vistas) y llamar a `invalidateSchool()` al guardar (si no, el admin guarda, recarga y sigue viendo el valor viejo).
+
+**El toggle NO apaga el registro**, y la vista lo dice con todas las letras: el docente sigue viendo quién abrió cada actividad. Lo único que cambia es si el alumno ve la línea al pie del detalle ("El docente puede ver que abriste esta actividad").
+
+### Nav del admin en dos filas
+Con "Tareas" el nav pasó de 9 a 10 solapas y `.admin-nav` es flex **sin wrap**. Se le aplicó el mismo tratamiento que ya tenía el de superadmin: `.admin-nav-2filas` + un `.admin-nav-break` fijo después de "Auditoría" — arriba la gestión de datos, abajo la configuración de la escuela. El corte no se deja librado al ancho (las solapas saltarían de fila según la pantalla y uno las busca donde las vio la última vez); debajo de 1090 px el separador se apaga y envuelven solas.
+
+### Tres cascadas de borrado que había que tocar
+Un `ActivityView` colgado no es solo basura: el chip "N vieron" cuenta documentos por actividad, así que un registro de alguien que ya no está seguiría sumando y podía mostrar **más vistos que alumnos** ("3/2"). Se cubrió por los dos lados:
+
+- **Borrado**: `cascadeDeleteCourse()` y `DELETE /activities/:id` limpian por actividad; `POST /admin/users/:id/delete` limpia por alumno. Este último importa porque un alumno **sin entregas sí se puede borrar** (con entregas la ruta devuelve 409), y ese es justamente el caso que deja el acuse huérfano.
+- **Desmatriculación**, que no borra nada: el aggregate del contador filtra por `student: { $in: course.students }`. La tabla del modal ya aplicaba el mismo criterio por otro camino (cruza contra `studentGrades`, que son los inscriptos), así que los dos números coinciden siempre.
+
+Se encontró probando en el navegador, no en los tests: el spec `activity-view-survives-unenrolled-student` se escribió después, para fijarlo.
+
+### Dark mode: se sacó el media query
+Los badges de esta tabla usaban `@media (prefers-color-scheme: dark)`, que responde al **sistema operativo** e ignora el botón de tema de la app. `partials/header.ejs` setea `data-theme` **siempre** (default `'light'`), así que el resto de la app usa `[data-theme="dark"]` y esta tabla era la excepción.
+
+Se vio en el navegador durante la verificación: con Windows en oscuro y la app en claro, los badges salían oscuros dentro de una tabla blanca. Los cuatro pasaron a `[data-theme="dark"]` y el media query se eliminó.
+
+### Verificación
+**160/160.** Ocho specs nuevos: el ping registra y el docente lo ve (`activity-view-ping`), reabrir incrementa `viewCount` sin crear otro registro ni mover `firstViewedAt` (`activity-view-idempotent`), el alumno no puede listar quién abrió (403), el listado del docente trae `viewedCount`, el contador ignora a un alumno desmatriculado o borrado (`activity-view-survives-unenrolled-student`), y tres del panel de admin — prender/apagar el toggle, rechazo de una key fuera de la lista blanca (400) y rechazo del docente (403). El spec del toggle deja el ajuste **apagado** al terminar para no alterar la escuela del entorno.
+
+Además, recorrido manual completo en el navegador con un alumno descartable: aviso al alumno, chip `1/23` solo en la actividad abierta, resumen "0/23 calificados · 0/23 entregaron · 1/23 vieron", columna "Visto" con fecha y "Últ:" tras reabrir, 22 filas en "Sin abrir", cero errores de consola, sin desborde horizontal, y el nav del admin cortando 7+3.
+
+**Sin migración**: `activityviews` es una colección nueva y `School.settings` se resuelve por default de Mongoose sin tocar los documentos existentes.
+
+---
+
+## El panel de admin se corría de lugar al cambiar de solapa (2026-08-03)
+
+**Pedido**: "no me gusta que en el rol de administrador, cuando hago click en la solapa usuarios o materias, se me corre todo el listado incluyendo las solapas, pero si hago click en cualquier otra solapa, queda fijo mostrándose de manera profesional".
+
+Eran **dos** corrimientos distintos sumados, y el grande no era el que parecía.
+
+### 1. Dos vistas de diez tenían otro ancho (~90 px)
+`views/admin/users.ejs` y `views/admin/courses.ejs` eran las únicas con `.main-content-ancho`. Medido a 1280 px: en Tema el contenedor iba a 1100 centrado (`left: 90`), en Usuarios a ancho completo (`left: 0`). Al saltar entre solapas se movían de lugar el listado, el título **y las propias solapas**.
+
+La clase existe por una razón real —la tabla de Usuarios tiene 8 columnas y necesita ~1265 px, no entra en los 1036 px útiles de un contenedor de 1100—, así que sacarla habría dejado la tabla apretada. Se resolvió al revés: **la llevan las 10 vistas del panel**. Que dos pestañas tengan otro ancho es la causa del salto; emparejar hacia arriba mantiene la tabla cómoda y deja el nav clavado en el mismo píxel en todas.
+
+### 2. La barra de scroll (~15 px)
+Encima, las pantallas largas (Usuarios, Materias) hacen aparecer la barra vertical, el viewport se angosta 15 px y todo se corre otra vez. Se resolvió con `html { scrollbar-gutter: stable }`: el canal se reserva siempre, haya o no scroll. El costo es un canal vacío en las pantallas cortas; la alternativa es que la página salte.
+
+### Verificación
+Medido en las cuatro combinaciones (con y sin barra, larga y corta): `navLeft` 32, ancho del nav 1201 y del contenedor 1265 — **idénticos en todas**. El nav sigue cortando 7+3, la tabla de Materias usa los 1201 px y no hay scroll horizontal. 160/160 en el smoke.
+
+### Trampa del entorno que apareció en el camino
+El `.env` local tiene `NODE_ENV=production`, y con eso Express prende `view cache`: **los cambios en archivos `.ejs` no se ven hasta reiniciar el server**, aunque nodemon esté corriendo (solo vigila `js,mjs,json`). Se manifiesta como "edité la vista y el navegador sigue mostrando lo viejo" en unas páginas sí y en otras no, según cuáles se hayan renderizado antes del cambio. No es cache del navegador ni un error de tipeo.
+
+### Pendiente relacionado
+`views/superadmin/users.ejs` tiene el mismo `.main-content-ancho` suelto dentro de un panel de 11 solapas que no lo usan: el panel del superadmin arrastra exactamente el mismo salto. No se tocó porque el pedido era sobre el rol de administrador.
+
+---
+
 ## Plan de Futuras Actualizaciones (Roadmap)
 
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`). Resumen de lo pendiente:

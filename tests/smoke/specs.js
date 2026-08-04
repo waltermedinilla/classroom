@@ -769,6 +769,130 @@ const specs = [
     },
   },
   {
+    id: 'activity-view-ping',
+    title: 'Al abrir la actividad, el alumno queda registrado y el docente lo ve',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.post('scopedStudent', `/activities/${state.activityId}/view`, { expectStatus: 200 });
+
+      const res = await client.get('scopedTeacher', `/activities/${state.activityId}/views`, { expectStatus: 200 });
+      assert(res.json.views.length === 1, `debería haber 1 registro de vista, hay ${res.json.views.length}`);
+      const v = res.json.views[0];
+      assert(v.student._id === state.scopedStudentId, 'el registro debería ser del alumno del suite');
+      assert(v.viewCount === 1, `viewCount debería ser 1, es ${v.viewCount}`);
+      assert(!!v.firstViewedAt, 'firstViewedAt debería estar seteado');
+      state.firstViewedAt = v.firstViewedAt;
+    },
+  },
+  {
+    id: 'activity-view-idempotent',
+    title: 'Reabrir la actividad incrementa el contador pero no crea otro registro',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.post('scopedStudent', `/activities/${state.activityId}/view`, { expectStatus: 200 });
+
+      const res = await client.get('scopedTeacher', `/activities/${state.activityId}/views`, { expectStatus: 200 });
+      assert(res.json.views.length === 1, `debería seguir habiendo 1 registro, hay ${res.json.views.length}`);
+      const v = res.json.views[0];
+      assert(v.viewCount === 2, `viewCount debería ser 2, es ${v.viewCount}`);
+      assert(v.firstViewedAt === state.firstViewedAt, 'firstViewedAt no debería cambiar al reabrir');
+    },
+  },
+  {
+    id: 'activity-views-forbidden-for-student',
+    title: 'El alumno no puede ver quién abrió la actividad (403)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.get('scopedStudent', `/activities/${state.activityId}/views`, { expectStatus: 403 });
+    },
+  },
+  {
+    id: 'activity-view-count-in-list',
+    title: 'El listado del docente trae el contador de aperturas',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('scopedTeacher', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      const act = res.json.activities.find(a => a._id === state.activityId);
+      assert(act, 'la actividad debería estar en el listado del docente');
+      assert(act.viewedCount === 1, `viewedCount debería ser 1 (un alumno), es ${act.viewedCount}`);
+    },
+  },
+  {
+    id: 'activity-view-survives-unenrolled-student',
+    title: 'El contador de aperturas ignora a un alumno que ya no está en el curso',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Un alumno desmatriculado deja su ActivityView en la base. Si el aggregate no lo
+      // filtrara, el chip mostraría más vistos que alumnos inscriptos ("3/2").
+      const otro = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke Vista Suelta ${RUN_ID}`, email: `vista.suelta.${RUN_ID}@smoke.local`,
+          password: student.password, role: 'student', dni: dniSmoke(21), divisionId: state.divisionId },
+        expectStatus: 201,
+      });
+      const otroId = otro.json.user._id;
+
+      await client.post('vistaSuelta', '/login', {
+        body: { email: `vista.suelta.${RUN_ID}@smoke.local`, password: student.password },
+        expectStatus: 200,
+      });
+      await client.post('vistaSuelta', `/activities/${state.activityId}/view`, { expectStatus: 200 });
+
+      const antes = await client.get('scopedTeacher', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      const actAntes = antes.json.activities.find(a => a._id === state.activityId);
+      assert(actAntes.viewedCount === 2, `con los dos alumnos deberían ser 2 vistas, son ${actAntes.viewedCount}`);
+
+      // Al borrar la cuenta, la cascada limpia su ActivityView y el contador vuelve a 1
+      await client.post('admin', `/admin/users/${otroId}/delete`, { expectStatus: 200 });
+      const despues = await client.get('scopedTeacher', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      const actDespues = despues.json.activities.find(a => a._id === state.activityId);
+      assert(actDespues.viewedCount === 1, `tras borrar la cuenta debería quedar 1 vista, quedan ${actDespues.viewedCount}`);
+      assert(actDespues.viewedCount <= actDespues.totalStudents, 'nunca puede haber más vistos que alumnos');
+    },
+  },
+  {
+    id: 'admin-task-settings-toggle',
+    title: 'El admin prende y apaga el aviso de acuse de lectura',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      await client.get('admin', '/admin/tasks', { expectStatus: 200 });
+
+      const on = await client.post('admin', '/admin/tasks/settings', {
+        body: { key: 'showViewReceiptToStudents', value: true },
+        expectStatus: 200,
+      });
+      assert(on.json.settings.showViewReceiptToStudents === true, 'el ajuste debería quedar en true');
+
+      // Se deja apagado (el default del schema) para no alterar la escuela del entorno.
+      const off = await client.post('admin', '/admin/tasks/settings', {
+        body: { key: 'showViewReceiptToStudents', value: false },
+        expectStatus: 200,
+      });
+      assert(off.json.settings.showViewReceiptToStudents === false, 'el ajuste debería quedar en false');
+    },
+  },
+  {
+    id: 'admin-task-settings-rejects-unknown-key',
+    title: 'El panel de tareas rechaza una key fuera de la lista blanca (400)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      await client.post('admin', '/admin/tasks/settings', {
+        body: { key: 'role', value: 'superadmin' },
+        expectStatus: 400,
+      });
+    },
+  },
+  {
+    id: 'admin-task-settings-forbidden-for-teacher',
+    title: 'Un docente no puede tocar los ajustes de la escuela (403)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      await client.post('scopedTeacher', '/admin/tasks/settings', {
+        body: { key: 'showViewReceiptToStudents', value: true },
+        expectStatus: 403,
+      });
+    },
+  },
+  {
     id: 'activity-submit',
     title: 'El alumno entrega la actividad',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],

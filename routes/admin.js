@@ -10,6 +10,7 @@ const Subject  = require('../models/Subject');
 const Division = require('../models/Division');
 const Activity     = require('../models/Activity');
 const Submission   = require('../models/Submission');
+const ActivityView = require('../models/ActivityView');
 const Announcement = require('../models/Announcement');
 const { requireAuth }  = require('../middleware/auth');
 const { requireAdmin } = require('../middleware/admin');
@@ -48,6 +49,10 @@ async function cascadeDeleteCourse(courseId) {
     });
     // 1b. Borra los documentos Submission
     await Submission.deleteMany({ activity: { $in: activityIds } });
+
+    // 1b-bis. Borra los acuses de lectura. No es solo higiene: el chip "N vieron" cuenta
+    // documentos ActivityView por actividad, así que un registro colgado seguiría sumando.
+    await ActivityView.deleteMany({ activity: { $in: activityIds } });
 
     // 1c. Borra los adjuntos del docente de cada actividad
     activities.forEach(act => {
@@ -474,6 +479,9 @@ router.post('/users/:id/delete', async (req, res) => {
     }
 
     await User.findByIdAndDelete(req.params.id);
+    // Acuses de lectura del usuario borrado. Si quedaran, el chip "N vieron" del docente
+    // contaría a alguien que ya no está en el curso y podría mostrar más vistos que alumnos.
+    await ActivityView.deleteMany({ student: req.params.id });
     // coTeachers y students son arrays: una referencia colgada no rompe el populate, pero
     // infla los contadores de alumnos y deja suplentes fantasma. Se limpian acá.
     await Course.updateMany(
@@ -1515,6 +1523,56 @@ router.post('/task-templates/respond', requireAuth, requireAdmin, async (req, re
     );
     res.json({ assignment: a });
   } catch (err) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+/* ─── Tareas: ajustes de la escuela ─── */
+// Solapa donde el admin configura el comportamiento de las actividades para toda su
+// escuela. Hoy tiene un solo ajuste (el aviso del acuse de lectura), pero es el lugar
+// previsto para los que vengan: por eso la vista itera sobre school.settings y no
+// hardcodea un único checkbox suelto.
+router.get('/tasks', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const school = await School.findById(res.locals.user.school).select('name settings');
+    if (!school) return res.status(404).send('Escuela no encontrada');
+    res.render('admin/tasks/index', { school, activePage: 'tasks' });
+  } catch {
+    res.status(500).send('Error del servidor');
+  }
+});
+
+// POST /admin/tasks/settings — guarda un ajuste de la escuela.
+// Body: { key, value }. La key se valida contra una lista blanca y el value se castea a
+// booleano: nunca se persiste el body crudo (mismo criterio que buildConfig() en superadmin).
+const TASK_SETTINGS = ['showViewReceiptToStudents'];
+
+router.post('/tasks/settings', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { key, value } = req.body;
+    if (!TASK_SETTINGS.includes(key)) return res.status(400).json({ error: 'Ajuste inválido' });
+
+    const boolValue = value === true || value === 'true';
+    const schoolId  = res.locals.user.school;
+    if (!schoolId) return res.status(400).json({ error: 'Este usuario no tiene escuela asignada' });
+
+    const school = await School.findByIdAndUpdate(
+      schoolId,
+      { $set: { [`settings.${key}`]: boolValue } },
+      { new: true },
+    ).select('name settings');
+    if (!school) return res.status(404).json({ error: 'Escuela no encontrada' });
+
+    // Obligatorio: res.locals.school va cacheado 5 min por worker (ver server.js).
+    // Sin esto el admin guarda, recarga y sigue viendo el valor viejo.
+    invalidateSchool(schoolId);
+
+    logAudit(req, 'school.settings_update',
+      [{ type: 'school', id: school._id, name: school.name }],
+      { ajuste: key, valor: boolValue },
+    );
+    res.json({ ok: true, settings: school.settings });
+  } catch {
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

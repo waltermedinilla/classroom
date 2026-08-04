@@ -7,6 +7,7 @@ const router  = express.Router();
 const Activity   = require('../models/Activity');
 const Course     = require('../models/Course');
 const Submission = require('../models/Submission');
+const ActivityView = require('../models/ActivityView');
 const User       = require('../models/User');
 const XLSX       = require('xlsx');
 const { requireAuth } = require('../middleware/auth');
@@ -163,18 +164,32 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
 
     let result;
     if (isOwner) {
-      // Para el docente: agrega conteo de entregas por actividad (para el chip "X/Y entregaron")
-      const counts = await Submission.aggregate([
-        { $match: { activity: { $in: activities.map(a => a._id) } } },
-        { $group: { _id: '$activity', count: { $sum: 1 } } },
+      // Para el docente: conteo de entregas (chip "X/Y entregaron") y de aperturas
+      // (chip "X/Y vieron"). Los dos aggregates son independientes → van en paralelo.
+      const actIds = activities.map(a => a._id);
+      const [counts, viewCounts] = await Promise.all([
+        Submission.aggregate([
+          { $match: { activity: { $in: actIds } } },
+          { $group: { _id: '$activity', count: { $sum: 1 } } },
+        ]),
+        // Acotado a los alumnos que HOY están en el curso: el denominador del chip es
+        // course.students.length, así que contar a un desmatriculado daría "3/2".
+        // La tabla del modal aplica el mismo criterio (cruza contra studentGrades).
+        ActivityView.aggregate([
+          { $match: { activity: { $in: actIds }, student: { $in: course.students } } },
+          { $group: { _id: '$activity', count: { $sum: 1 } } },
+        ]),
       ]);
       const countMap     = {};
       counts.forEach(c => { countMap[c._id.toString()] = c.count; });
+      const viewMap      = {};
+      viewCounts.forEach(c => { viewMap[c._id.toString()] = c.count; });
       const totalStudents = course.students.length;
 
       result = activities.map(act => {
         const obj          = act.toObject();
         obj.submittedCount = countMap[obj._id.toString()] || 0;
+        obj.viewedCount    = viewMap[obj._id.toString()]  || 0;
         obj.totalStudents  = totalStudents;
         return obj;
       });
@@ -574,6 +589,10 @@ router.delete('/:id', requireAuth, async (req, res) => {
 
     // 2. Borrar todos los documentos Submission (incluye texto/comentario del alumno)
     await Submission.deleteMany({ activity: req.params.id });
+
+    // 2b. Borrar los acuses de lectura de la actividad (si no, quedan colgados para siempre:
+    // no hay ninguna otra ruta que los limpie y nadie los vuelve a mirar)
+    await ActivityView.deleteMany({ activity: req.params.id });
 
     // 3. Borrar archivos adjuntos del docente del disco
     // La URL tiene formato /archivos/{relPath}; se convierte a ruta absoluta via ARCHIVOS_BASE
@@ -1052,6 +1071,66 @@ router.get('/:id/submissions', requireAuth, async (req, res) => {
       .sort({ updatedAt: -1 }); // Las más recientes primero
 
     res.json({ submissions });
+  } catch {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /activities/:id/view
+// Acuse de lectura: el alumno abrió el detalle de la actividad. Lo dispara course.js
+// (fire-and-forget) al abrir el modal. Es POST y no se cuelga de /my-submission a propósito:
+// un GET no debe mutar, y así queda testeable por separado.
+// Retorna: { ok: true } siempre que no haya error real — el cliente no usa la respuesta.
+router.post('/:id/view', requireAuth, async (req, res) => {
+  try {
+    // Solo se registran alumnos. El docente/admin que entra a mirar su propia actividad no
+    // debe inflar el contador "N vieron" — pero tampoco es un error: se ignora en silencio.
+    if (res.locals.user.role !== 'student') return res.json({ ok: true });
+
+    const activity = await Activity.findById(req.params.id).select('course');
+    if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
+
+    // Verificar que el alumno esté inscripto en el curso de la actividad: sin esto,
+    // cualquiera podría registrar vistas en actividades de otros cursos pingueando IDs.
+    const course = await Course.findById(activity.course).select('students');
+    const isEnrolled = course?.students.some(s => s.toString() === res.locals.user._id.toString());
+    if (!isEnrolled) return res.status(403).json({ error: 'Sin acceso' });
+
+    const now = new Date();
+    await ActivityView.findOneAndUpdate(
+      { activity: activity._id, student: res.locals.user._id },
+      {
+        $setOnInsert: { firstViewedAt: now }, // solo en la primera apertura
+        $set:         { lastViewedAt: now },
+        $inc:         { viewCount: 1 },
+      },
+      { upsert: true },
+    );
+    // No se audita: es alto volumen y de bajo valor forense.
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /activities/:id/views
+// El docente ve qué alumnos abrieron la actividad y cuándo
+// Retorna: { views } array con student populado (name, email) + firstViewedAt/lastViewedAt/viewCount
+router.get('/:id/views', requireAuth, async (req, res) => {
+  try {
+    const activity = await Activity.findById(req.params.id);
+    if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
+
+    const course = await Course.findById(activity.course);
+    if (!course.canManage(res.locals.user)) {
+      return res.status(403).json({ error: 'Sin acceso' });
+    }
+
+    const views = await ActivityView.find({ activity: req.params.id })
+      .populate('student', 'name email')
+      .sort({ firstViewedAt: 1 }); // Los primeros en abrirla, primero
+
+    res.json({ views });
   } catch {
     res.status(500).json({ error: 'Error del servidor' });
   }

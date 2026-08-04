@@ -75,6 +75,9 @@ const ACTIONS = {
   'school.delete':          { label: 'eliminó una escuela',      icon: 'domain_disabled',    color: '#ea4335', category: 'school' },
   'school.invite_generate': { label: 'generó enlace de invitación', icon: 'link',            color: '#137333', category: 'school' },
   'school.invite_revoke':   { label: 'revocó enlace de invitación', icon: 'link_off',        color: '#ea8600', category: 'school' },
+  // Ajustes de la escuela que edita el ADMIN desde /admin/tasks (a diferencia del resto
+  // de school.*, que son del superadmin). El meta guarda qué ajuste cambió y a qué valor.
+  'school.settings_update': { label: 'cambió un ajuste de la escuela', icon: 'tune',         color: '#1a73e8', category: 'school' },
 
   // ── Sugerencias ───────────────────────────────────────────────────────────
   'suggestion.create':        { label: 'envió una sugerencia',     icon: 'lightbulb',        color: '#fbbc04', category: 'suggestion' },

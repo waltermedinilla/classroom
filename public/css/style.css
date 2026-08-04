@@ -1297,12 +1297,18 @@ select, .select-input {
    (ver .users-table-card), así que el nowrap no puede desbordar la página. */
 .td-curso { white-space: nowrap; font-size: 13.5px; }
 
-/* Vistas con tablas anchas que no entran en los 1100 px del contenedor normal — hoy el
-   listado de usuarios del superadmin, que suma 8 columnas más dos selects editables y
-   necesita 1207 px. Con el ancho de siempre la columna Acciones quedaba fuera de la
-   pantalla y no había forma de llegar al botón sin scrollear la tabla a ciegas.
+/* Vistas con tablas anchas que no entran en los 1100 px del contenedor normal — el
+   listado de usuarios suma 8 columnas más dos selects editables y necesita ~1265 px. Con
+   el ancho de siempre la columna Acciones quedaba fuera de la pantalla y no había forma
+   de llegar al botón sin scrollear la tabla a ciegas.
    El `100%` del min() la deja igual de contenida que antes en pantallas chicas: solo usa
-   el espacio que sobra cuando de verdad sobra. */
+   el espacio que sobra cuando de verdad sobra.
+
+   2026-08-03 — la lleva TODO el panel de admin, no solo las dos vistas con tabla.
+   Antes la tenían Usuarios y Materias nada más, y al saltar entre solapas el contenido
+   pasaba de 1100 centrado a ancho completo: se corrían de lugar el listado, el título y
+   las propias solapas (~90 px a 1280). Que dos pestañas de diez tengan otro ancho es la
+   causa del salto, no un detalle de esas dos. */
 .main-content-ancho { max-width: min(1400px, 100%); }
 
 /* Código de clase en el encabezado de la materia (solo lo ve el docente).
@@ -1462,11 +1468,12 @@ select, .select-input {
 .admin-nav-item.active { color: var(--primary); border-bottom-color: var(--primary); }
 .admin-nav-item .material-symbols-outlined { font-size: 20px; }
 
-/* Nav de dos filas — hoy solo el de superadmin, el único con 11 solapas: en una sola fila
-   no entraba ni en escritorio y había que scrollear horizontalmente para llegar a las
-   últimas. El corte NO se deja librado al ancho disponible (las solapas saltarían de fila
-   según la pantalla, y uno las busca donde las vio la última vez): lo fija el separador
-   .admin-nav-break, que ocupa una fila entera de alto cero y empuja lo que sigue abajo.
+/* Nav de dos filas — lo usan el de superadmin (11 solapas) y el de admin (10 desde que se
+   sumó "Tareas"): en una sola fila no entraban ni en escritorio y había que scrollear
+   horizontalmente para llegar a las últimas. El corte NO se deja librado al ancho disponible
+   (las solapas saltarían de fila según la pantalla, y uno las busca donde las vio la última
+   vez): lo fija el separador .admin-nav-break, que ocupa una fila entera de alto cero y
+   empuja lo que sigue abajo.
 
    row-gap 2px compensa el margin-bottom:-2px de las solapas, que si no encimaría la
    segunda fila contra la primera. Las de la fila de abajo conservan ese -2px y siguen
@@ -1685,6 +1692,26 @@ select, .select-input {
   border-radius: 12px; white-space: nowrap;
 }
 
+/* ─── Viewed chip (docente: X/Y abrieron la actividad) ─── */
+/* Mismo shape que el de entregas pero en gris: van uno al lado del otro en la tarjeta y
+   la entrega es el dato importante — el de vistas acompaña, no compite. */
+.viewed-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: var(--bg); color: var(--text-secondary);
+  font-size: 12px; font-weight: 500; padding: 3px 8px;
+  border-radius: 12px; white-space: nowrap;
+}
+[data-theme="dark"] .viewed-chip { background: rgba(255,255,255,.06); color: var(--text-hint); }
+
+/* ─── Aviso de acuse de lectura (alumno) ─── */
+/* Solo aparece si el admin lo habilitó en /admin/tasks. Deliberadamente discreto:
+   es una aclaración, no una advertencia. */
+.view-receipt-note {
+  display: flex; align-items: center; gap: 6px;
+  margin: 18px 0 0; font-size: 11.5px; color: var(--text-hint);
+}
+.view-receipt-note .material-symbols-outlined { font-size: 14px !important; }
+
 /* ─── Person disabled ─── */
 .person-disabled { opacity: 0.65; }
 .badge-disabled {
@@ -1863,10 +1890,14 @@ select, .select-input {
 .grade-table tbody tr:last-child td { border-bottom: none; }
 .grade-table tbody tr:hover td { background: var(--hover-bg); }
 
-.gt-col-student  { width: 26%; }
+/* 5 columnas desde que se sumó "Visto". Feedback y Entrega cedieron el ancho: son las
+   dos que mejor toleran achicarse (la primera es un textarea que crece a lo alto, la
+   segunda ya recorta con ellipsis). "Visto" solo tiene que entrar un badge y una fecha. */
+.gt-col-student  { width: 24%; }
 .gt-col-grade    { width: 10%; }
-.gt-col-feedback { width: 34%; }
-.gt-col-sub      { width: 30%; }
+.gt-col-feedback { width: 30%; }
+.gt-col-view     { width: 13%; }
+.gt-col-sub      { width: 23%; }
 
 /* Student cell */
 .gt-student-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -1911,6 +1942,12 @@ select, .select-input {
 .gt-sub-badge .material-symbols-outlined { font-size: 13px !important; }
 .gt-sub-ok   { background: #e6f4ea; color: #1e7e34; }
 .gt-sub-pending { background: #fef3cd; color: #856404; }
+
+/* Acuse de lectura (reusa .gt-sub-badge como base). Azul y no verde para que no se
+   confunda con "Entregado" leyendo la fila de reojo, y gris neutro para "Sin abrir":
+   todavía no haber abierto no es una falta. */
+.gt-view-ok   { background: #e8f0fe; color: #1967d2; }
+.gt-view-none { background: #f1f3f4; color: #5f6368; }
 .gt-sub-date {
   font-size: 11px; color: var(--text-secondary);
   display: flex; align-items: center; gap: 2px;
@@ -1938,12 +1975,16 @@ select, .select-input {
 .gt-summary-val { font-weight: 700; }
 .gt-summary-sep { color: var(--border); }
 
-/* Dark mode overrides */
-@media (prefers-color-scheme: dark) {
-  .gt-sub-ok      { background: #1a3a22; color: #6fcf7a; }
-  .gt-sub-pending { background: #3a2e0a; color: #f5c842; }
-  .grade-table thead th { background: var(--surface); }
-}
+/* Dark mode overrides.
+   Van con [data-theme="dark"] y NO con @media (prefers-color-scheme: dark), que es lo
+   que usaba esta tabla antes. partials/header.ejs setea data-theme SIEMPRE (default
+   'light') y es lo que mueve el botón de tema, así que el media query respondía al SO
+   e ignoraba la elección del usuario: con el sistema en oscuro y la app en claro, los
+   badges salían oscuros en una tabla blanca. Verificado en el navegador. */
+[data-theme="dark"] .gt-sub-ok      { background: #1a3a22; color: #6fcf7a; }
+[data-theme="dark"] .gt-sub-pending { background: #3a2e0a; color: #f5c842; }
+[data-theme="dark"] .gt-view-ok     { background: #1c2f4a; color: #8ab4f8; }
+[data-theme="dark"] .gt-view-none   { background: #2a2c2e; color: #9aa0a6; }
 
 /* ─── Task Builder / Runner ─────────────────────────────────────────────── */
 
@@ -2185,6 +2226,14 @@ select, .select-input {
    que un elemento ancho nuevo (una tabla, un nav, un <pre>) reintroduzca el
    scroll horizontal sin que nadie se dé cuenta. */
 html, body { max-width: 100%; overflow-x: hidden; }
+
+/* Reserva el canal de la barra vertical SIEMPRE, haya o no scroll. Sin esto, pasar de
+   una pantalla corta (Tema) a una larga (Usuarios) hace aparecer la barra, el viewport
+   se angosta 15 px y todo el contenido se corre. Era el segundo corrimiento del panel de
+   admin, encima del salto de ancho de contenedor (ver .main-content-ancho). El costo es
+   un canal vacío en las pantallas cortas; la alternativa es que la página salte. */
+html { scrollbar-gutter: stable; }
+
 .main-content { width: 100%; box-sizing: border-box; }
 /* Las tablas anchas scrollean DENTRO de su contenedor, nunca empujando la página.
    Varias vistas ya envuelven la tabla en un div con overflow-x:auto; esto cubre a

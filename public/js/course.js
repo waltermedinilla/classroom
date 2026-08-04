@@ -880,6 +880,15 @@ function addActivityTabCard(act) {
       </span>`
     : '';
 
+  // Chip de aperturas: cuántos alumnos abrieron el detalle. Permite detectar de un vistazo
+  // la actividad que nadie vio (distinto de la que vieron y no hicieron).
+  const viewedChip = (act.totalStudents > 0)
+    ? `<span class="viewed-chip" data-actid="${act._id}" title="Alumnos que abrieron la actividad">
+        <span class="material-symbols-outlined" style="font-size:13px;vertical-align:-3px">visibility</span>
+        ${act.viewedCount ?? 0}/${act.totalStudents}
+      </span>`
+    : '';
+
   const div = document.createElement('div');
   div.className  = 'act-student-item';
   div.dataset.id = act._id;
@@ -895,6 +904,7 @@ function addActivityTabCard(act) {
       <div class="act-item-date${isOverdue ? ' date-overdue' : ''}">${dateText}</div>
     </div>
     <div class="act-status-col">
+      ${viewedChip}
       ${submittedChip}
       <button class="icon-btn activity-row-menu" onclick="toggleActivityMenu(event,'${act._id}')" title="Más opciones">
         <span class="material-symbols-outlined">more_vert</span>
@@ -1427,9 +1437,10 @@ function attachmentSection(attachments) {
 // Construye subMap (studentId → submission) para mostrar estado de entrega por alumno
 async function loadTeacherDetail(activityId) {
   const body = document.getElementById('detailBody');
-  const [gradesRes, subsRes] = await Promise.all([
+  const [gradesRes, subsRes, viewsRes] = await Promise.all([
     fetch('/activities/' + activityId + '/grades'),
     fetch('/activities/' + activityId + '/submissions'),
+    fetch('/activities/' + activityId + '/views'),
   ]);
   if (!gradesRes.ok) { body.innerHTML = '<p style="color:var(--danger)">Error al cargar la actividad.</p>'; return; }
 
@@ -1440,6 +1451,15 @@ async function loadTeacherDetail(activityId) {
   if (subsRes.ok) {
     const { submissions } = await subsRes.json();
     submissions.forEach(s => { subMap[s.student._id] = s; });
+  }
+
+  // Ídem para el acuse de lectura: studentId → view. Si el fetch falla, el mapa queda
+  // vacío y la columna muestra "Sin abrir" en todos — degradación silenciosa, igual que
+  // hace subMap: no vale la pena romper toda la tabla de notas por esto.
+  const viewMap = {};
+  if (viewsRes.ok) {
+    const { views } = await viewsRes.json();
+    views.forEach(v => { if (v.student) viewMap[v.student._id] = v; });
   }
   document.getElementById('detailTitle').textContent = activity.title;
 
@@ -1476,6 +1496,9 @@ async function loadTeacherDetail(activityId) {
 
   const graded    = studentGrades.filter(s => s.points != null).length;
   const submitted = Object.keys(subMap).length;
+  // Solo cuenta a los alumnos que siguen inscriptos: si uno se dio de baja, su registro de
+  // vista sigue en la base pero no aparece en la tabla, y el resumen tiene que coincidir.
+  const viewed    = studentGrades.filter(s => viewMap[s._id]).length;
 
   if (studentGrades.length === 0) {
     html += '<div class="empty-state small" style="margin-top:24px"><p>No hay alumnos inscriptos</p></div>';
@@ -1484,12 +1507,15 @@ async function loadTeacherDetail(activityId) {
       <span><span class="gt-summary-val" style="color:var(--secondary)">${graded}</span>/<span>${studentGrades.length}</span> calificados</span>
       <span class="gt-summary-sep">·</span>
       <span><span class="gt-summary-val" style="color:var(--primary)">${submitted}</span>/<span>${studentGrades.length}</span> entregaron</span>
+      <span class="gt-summary-sep">·</span>
+      <span><span class="gt-summary-val" style="color:var(--text-secondary)">${viewed}</span>/<span>${studentGrades.length}</span> vieron</span>
     </div>
     <div class="grade-table-wrap"><table class="grade-table">
       <thead><tr>
         <th class="gt-col-student">Alumno</th>
         <th class="gt-col-grade">Nota${activity.points != null ? `<span class="gt-pts-max"> / ${activity.points}</span>` : ''}</th>
         <th class="gt-col-feedback">Feedback al alumno</th>
+        <th class="gt-col-view">Visto</th>
         <th class="gt-col-sub">Entrega</th>
       </tr></thead>
       <tbody>`;
@@ -1519,6 +1545,23 @@ async function loadTeacherDetail(activityId) {
             <span class="material-symbols-outlined">schedule</span>Pendiente
            </span>`;
 
+      // Acuse de lectura. "Sin abrir" va en gris y no en rojo a propósito: no haber abierto
+      // todavía no es una falta, es información para que el docente sepa a quién avisarle.
+      const view = viewMap[sg._id];
+      const viewCell = view
+        ? `<div class="gt-sub-delivered">
+            <span class="gt-sub-badge gt-view-ok">
+              <span class="material-symbols-outlined">visibility</span>Visto
+            </span>
+            <span class="gt-sub-date">${fmtShort(view.firstViewedAt)}</span>
+            ${view.viewCount > 1 ? `<span class="gt-sub-date" style="color:var(--text-hint)">
+              <span class="material-symbols-outlined" style="font-size:11px;vertical-align:-1px">update</span>
+              Últ: ${fmtShort(view.lastViewedAt)}</span>` : ''}
+          </div>`
+        : `<span class="gt-sub-badge gt-view-none">
+            <span class="material-symbols-outlined">visibility_off</span>Sin abrir
+           </span>`;
+
       html += `<tr>
         <td>
           <div class="gt-student-cell">
@@ -1539,6 +1582,7 @@ async function loadTeacherDetail(activityId) {
           <textarea class="feedback-input" data-student="${sg._id}" rows="2"
             placeholder="Comentario al alumno...">${sg.feedback || ''}</textarea>
         </td>
+        <td class="gt-col-view">${viewCell}</td>
         <td class="gt-col-sub">${subCell}</td>
       </tr>`;
     });
@@ -1667,6 +1711,10 @@ async function loadStudentDetail(activityId) {
   document.getElementById('detailTitle').textContent = act ? act.title : 'Actividad';
   if (!act) { body.innerHTML = '<p>No se pudo cargar la actividad.</p>'; return; }
 
+  // Acuse de lectura: avisa al server que el alumno abrió la actividad. Va fire-and-forget
+  // (sin await) a propósito — el detalle no debe esperar ni romperse si el ping falla.
+  fetch('/activities/' + activityId + '/view', { method: 'POST' }).catch(() => {});
+
   let html = '';
   if (act.description) {
     html += `<p style="font-size:14px;color:var(--text-secondary);margin-bottom:16px;white-space:pre-line">${act.description}</p>`;
@@ -1727,6 +1775,16 @@ async function loadStudentDetail(activityId) {
 
   // Placeholder para la sección de entrega (se llena asíncronamente abajo)
   html += '<div id="submissionSection"></div>';
+
+  // Aviso de transparencia del acuse de lectura. Solo si el admin de la escuela lo
+  // habilitó en /admin/tasks; el registro se hace igual, esto es únicamente el aviso.
+  if (window.SHOW_VIEW_RECEIPT) {
+    html += `<p class="view-receipt-note">
+      <span class="material-symbols-outlined">visibility</span>
+      El docente puede ver que abriste esta actividad.
+    </p>`;
+  }
+
   body.innerHTML = html;
 
   // Fetch de la entrega actual del alumno (puede ser null si no entregó todavía)

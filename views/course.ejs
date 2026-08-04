@@ -694,6 +694,9 @@
     // Para decidir quién ve Editar/Eliminar en cada novedad: editar es solo del autor,
     // eliminar además lo puede hacer quien gestiona la materia (IS_OWNER), como moderación.
     window.USER_ID = '<%= user._id %>';
+    // Acuse de lectura: el registro de que el alumno abrió la actividad se hace siempre.
+    // Este flag (lo prende el admin en /admin/tasks) decide solo si al alumno se le avisa.
+    window.SHOW_VIEW_RECEIPT = <%= !!(school && school.settings && school.settings.showViewReceiptToStudents) %>;
 
     function showUploadErrModal(title, msg) {
       document.getElementById('uplModalTitle').innerHTML =

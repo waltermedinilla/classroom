@@ -1,4 +1,4 @@
-<nav class="admin-nav">
+<nav class="admin-nav admin-nav-2filas">
   <a href="/admin" class="admin-nav-item <%= activePage === 'dashboard' ? 'active' : '' %>">
     <span class="material-symbols-outlined">dashboard</span>
     Resumen
@@ -27,12 +27,22 @@
     <span class="material-symbols-outlined">history</span>
     Auditoría
   </a>
+
+  <%# Corte fijo: arriba la gestión de datos, abajo la configuración de la escuela.
+      Ver .admin-nav-break en style.css — en pantallas angostas no se aplica y las
+      solapas envuelven solas. %>
+  <span class="admin-nav-break"></span>
+
   <a href="/admin/theme" class="admin-nav-item <%= activePage === 'theme' ? 'active' : '' %>" style="position:relative">
     <span class="material-symbols-outlined">palette</span>
     Tema
     <% if (typeof school !== 'undefined' && school?.themes?.some(t => t.status === 'offered')) { %>
       <span style="position:absolute;top:6px;right:6px;width:8px;height:8px;background:#ea4335;border-radius:50%"></span>
     <% } %>
+  </a>
+  <a href="/admin/tasks" class="admin-nav-item <%= activePage === 'tasks' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">checklist</span>
+    Tareas
   </a>
   <% if (typeof taskTemplatesEnabled === 'undefined' || taskTemplatesEnabled) { %>
   <a href="/admin/task-templates" class="admin-nav-item <%= activePage === 'task-templates' ? 'active' : '' %>" style="position:relative">
