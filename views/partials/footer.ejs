@@ -235,6 +235,11 @@
     async function logout() {
       if (!confirm('¿Cerrar sesión?')) return;
       await fetch('/logout', { method: 'POST' });
+      // Corta la identidad de PostHog ANTES de navegar a /login: sin esto, en una
+      // computadora compartida de la escuela el próximo alumno que se loguee en el mismo
+      // navegador seguiría bajo el distinct_id de quien acaba de cerrar sesión hasta que
+      // su propio identify() lo pisara. No-op si la analítica está apagada.
+      if (typeof posthog !== 'undefined') posthog.reset();
       window.location.href = '/login';
     }
 
@@ -255,5 +260,10 @@
   <%# Colapsa las solapas de sección detrás de un botón en pantallas chicas. Va acá porque
       el footer es el único partial que incluyen TODAS las vistas del proyecto. %>
   <script src="/js/nav-responsive.js"></script>
+  <%# Mismo motivo: el footer es el único partial común a todas las vistas autenticadas,
+      así que es el lugar correcto para cargar la analítica una sola vez. No-op si
+      partials/analytics-init no imprimió el snippet de PostHog (POSTHOG_KEY sin
+      configurar). %>
+  <script src="/js/analytics.js"></script>
 </body>
 </html>

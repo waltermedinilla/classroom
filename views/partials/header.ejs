@@ -4,6 +4,7 @@
     document.documentElement.setAttribute('data-theme', t);
   })();
 </script>
+<%- include('analytics-init') %>
 <%
 // ── Detectar tema activo por fecha ──────────────────────────────────────────
 const _activeTheme = (function() {
@@ -299,42 +300,53 @@ const _activeTheme = (function() {
         // rótulo acompaña al rol que se está viendo. Es lo correcto.
         const _rolAdministrativo = typeof user !== 'undefined' && user
           && ['admin', 'superadmin', 'directivo', 'preceptor'].includes(user.role);
+
+        // can() resuelve rol + lo que el superadmin haya deshabilitado para esta escuela
+        // en /superadmin/roles (config/sections.js). Donde abajo se conserva además el
+        // `user.role === '...'` exacto es a propósito: el acceso base de esas secciones
+        // incluye a los roles de arriba (un admin "puede" /directivo), pero este menú
+        // muestra el panel propio de cada uno, no todos los que podría abrir.
+        const puede = (k) => (typeof can === 'function' ? can(k) : true);
       %>
       <a href="/" class="drawer-item">
         <span class="material-symbols-outlined"><%= _rolAdministrativo ? 'home' : 'school' %></span>
         <span><%= _rolAdministrativo ? 'Inicio' : 'Clases' %></span>
       </a>
-      <% if (typeof user !== 'undefined' && user && user.role !== 'superadmin') { %>
+      <% if (puede('app_profile')) { %>
         <a href="/courses/profile" class="drawer-item">
           <span class="material-symbols-outlined">account_circle</span>
           <span>Mi perfil</span>
         </a>
       <% } %>
-      <% if (typeof user !== 'undefined' && user && user.role === 'student') { %>
+      <% if (puede('app_pending')) { %>
         <a href="/activities/my-pending" class="drawer-item">
           <span class="material-symbols-outlined">pending_actions</span>
           <span>Mis pendientes</span>
         </a>
       <% } %>
-      <% if (typeof user !== 'undefined' && user && user.role === 'directivo' && !impersonating) { %>
+      <% if (typeof user !== 'undefined' && user && user.role === 'directivo' && !impersonating && puede('directivo_dashboard')) { %>
         <a href="/directivo" class="drawer-item">
           <span class="material-symbols-outlined">supervisor_account</span>
           <span>Panel Directivo</span>
         </a>
       <% } %>
       <% if (typeof user !== 'undefined' && user && user.role === 'preceptor' && !impersonating) { %>
+        <% if (puede('preceptor_dashboard')) { %>
         <a href="/preceptor" class="drawer-item">
           <span class="material-symbols-outlined">school</span>
           <span>Mis cursos</span>
         </a>
+        <% } %>
         <%# El preceptor puede además estar matriculado en materias como cualquier usuario;
             "/" ya no lo lleva ahí, así que el acceso a sus clases va explícito. %>
+        <% if (puede('app_courses')) { %>
         <a href="/courses" class="drawer-item">
           <span class="material-symbols-outlined">menu_book</span>
           <span>Mis clases</span>
         </a>
+        <% } %>
       <% } %>
-      <% if (typeof user !== 'undefined' && user && user.role === 'admin' && !impersonating) { %>
+      <% if (typeof user !== 'undefined' && user && user.role === 'admin' && !impersonating && puede('admin_dashboard')) { %>
         <a href="/admin" class="drawer-item">
           <span class="material-symbols-outlined">admin_panel_settings</span>
           <span>Administración</span>

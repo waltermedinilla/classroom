@@ -11,6 +11,8 @@ const ActivityView = require('../models/ActivityView');
 const User       = require('../models/User');
 const XLSX       = require('xlsx');
 const { requireAuth } = require('../middleware/auth');
+// Permisos por solapa configurados en /superadmin/roles (ver middleware/sections.js).
+const { requireSection } = require('../middleware/sections');
 const { logAudit }    = require('../middleware/audit');
 const { uploadLimiter } = require('../middleware/rate-limits');
 const ActivityTemplate   = require('../models/ActivityTemplate');
@@ -428,7 +430,7 @@ router.post('/upload-attachment', requireAuth, uploadLimiter, (req, res, next) =
 // GET /activities/my-pending
 // Página del alumno: listado de todas sus actividades pendientes en todos sus cursos
 // Solo accesible para alumnos (redirige a /courses si el rol no es student)
-router.get('/my-pending', requireAuth, async (req, res) => {
+router.get('/my-pending', requireAuth, requireSection('app_pending'), async (req, res) => {
   try {
     const user = res.locals.user;
     if (user.role !== 'student') return res.redirect('/courses');

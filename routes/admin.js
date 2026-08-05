@@ -14,6 +14,9 @@ const ActivityView = require('../models/ActivityView');
 const Announcement = require('../models/Announcement');
 const { requireAuth }  = require('../middleware/auth');
 const { requireAdmin } = require('../middleware/admin');
+// Permisos por solapa que el superadmin configura en /superadmin/roles. Solo puede quitar
+// lo que requireAdmin ya concedió, nunca agregar (ver middleware/sections.js).
+const { sectionGuard } = require('../middleware/sections');
 const { invalidateUser, invalidateSchool } = require('../middleware/cache');
 const { logAudit } = require('../middleware/audit');
 // Matrícula de alumnos en las materias de una división. Extraída a services/ porque el
@@ -119,7 +122,10 @@ const router = express.Router();
 
 const PROTECTED_ADMIN_EMAIL = 'waltermedinilla@gmail.com';
 
-router.use(requireAuth, requireAdmin);
+// sectionGuard cubre todo el router de una sola vez, GET y POST: si la escuela le
+// deshabilitó "Usuarios" al rol admin, también quedan cerrados /admin/users/:id/delete,
+// /reset-password, /impersonate y demás acciones que cuelgan de esa solapa.
+router.use(requireAuth, requireAdmin, sectionGuard('admin'));
 
 /* ─── Dashboard ─── */
 router.get('/', async (req, res) => {

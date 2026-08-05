@@ -1,26 +1,41 @@
+<%# Mismo criterio que admin-nav: cada solapa depende de can(), que resuelve rol +
+    lo configurado en /superadmin/roles para esta escuela (ver config/sections.js). %>
+<% const puede = (k) => (typeof can === 'function' ? can(k) : true); %>
 <nav class="admin-nav">
+  <% if (puede('directivo_dashboard')) { %>
   <a href="/directivo" class="admin-nav-item <%= activePage === 'dashboard' ? 'active' : '' %>">
     <span class="material-symbols-outlined">dashboard</span>
     Resumen
   </a>
+  <% } %>
+  <% if (puede('directivo_courses')) { %>
   <a href="/directivo/courses" class="admin-nav-item <%= activePage === 'courses' ? 'active' : '' %>">
     <span class="material-symbols-outlined">menu_book</span>
     Materias
   </a>
+  <% } %>
+  <% if (puede('directivo_divisions')) { %>
   <a href="/directivo/divisions" class="admin-nav-item <%= activePage === 'divisions' ? 'active' : '' %>">
     <span class="material-symbols-outlined">school</span>
     Divisiones
   </a>
+  <% } %>
+  <% if (puede('directivo_students')) { %>
   <a href="/directivo/students" class="admin-nav-item <%= activePage === 'students' ? 'active' : '' %>">
     <span class="material-symbols-outlined">group</span>
     Alumnos
   </a>
+  <% } %>
+  <% if (puede('directivo_teachers')) { %>
   <a href="/directivo/teachers" class="admin-nav-item <%= activePage === 'teachers' ? 'active' : '' %>">
     <span class="material-symbols-outlined">badge</span>
     Docentes
   </a>
+  <% } %>
+  <% if (puede('directivo_grades')) { %>
   <a href="/directivo/grades" class="admin-nav-item <%= activePage === 'grades' ? 'active' : '' %>">
     <span class="material-symbols-outlined">grade</span>
     Promedios
   </a>
+  <% } %>
 </nav>

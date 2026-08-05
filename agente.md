@@ -102,6 +102,53 @@ El admin puede "ver como" cualquier otro usuario (excepto el admin protegido):
 - **Cargos**: importa docentes (email=`doc.DNI@esc4039.edu.ar`, contraseña=DNI), cursos por materia+división, materias, e inscripción de alumnos existentes
 - Wizard de 3 pasos: subir → configurar → resultados
 
+### 12. Superadmin Roles (`/superadmin/roles`)
+- Grilla **roles × solapas**, una tabla por panel (Administración, Directivo, Preceptoría, General, Superadministración)
+- Selector de escuela arriba: **la configuración es por escuela**
+- Cada celda es un toggle que habilita/deshabilita esa solapa para ese rol. Apagarla la saca del menú **y** devuelve 403 en su URL y en las acciones que cuelgan de ella
+- Celdas con candado: el rol superadministrador (nunca se restringe), las pantallas de inicio de cada panel (son el destino del redirect de `/`), y Backup/Otros (ya atadas al email del dueño). El motivo va en el `title`
+- Botón "Restablecer" por rol: devuelve todos sus accesos por defecto de una sola vez
+- Backend: `routes/roles.js` (`GET /`, `POST /toggle`, `POST /reset`) — montado antes del catch-all de `/superadmin`
+- Catálogo de secciones: `config/sections.js`. Enforcement: `middleware/sections.js`. Persistencia: `School.rolePermissions` (solo las **denegadas**)
+
+---
+
+## Analítica de producto (PostHog)
+
+Mide comportamiento de uso: pantallas más visitadas y retención, **tiempo activo real** por pantalla (no solo carga de página), clicks en CTAs instrumentados, profundidad de scroll y embudos básicos.
+
+**Apagada por default.** Sin `POSTHOG_KEY` en el `.env`, `res.locals.posthogKey` queda vacío, `views/partials/analytics-init.ejs` no imprime nada, y `public/js/analytics.js` hace un no-op completo al cargar (verificado: sin la env var no existe `window.posthog` ni se genera ningún error de consola). Dev local y CI no dependen de esto para nada.
+
+### Por qué esta configuración es más restrictiva que el default de PostHog
+Esta es una plataforma escolar con **alumnos menores de edad**. Antes de tocar código se decidió:
+- **Hosting: PostHog Cloud, región EU** (`POSTHOG_HOST=https://eu.i.posthog.com`), no self-hosted. El servidor de producción es una máquina compartida con otro proyecto no relacionado (ver `production_server` en memoria) — sumarle el stack de un PostHog self-hosted (ClickHouse+Kafka+Postgres+Redis) no se justificaba pudiendo usar el free tier de PostHog Cloud (1M eventos/mes, de sobra para una escuela) con residencia de datos en la UE.
+- **Sin autocapture** (`views/partials/analytics-init.ejs`): el autocapture de PostHog manda el texto del elemento clickeado, y muchos botones de esta app tienen nombres reales adentro ("Ver perfil de Juan Pérez"). Los clicks que importan se instrumentan a mano.
+- **Sin grabación de pantalla** (`disable_session_recording: true`), nunca. Ningún objetivo de medición la necesita.
+- **Sin cookie de tracking** (`persistence: 'localStorage'`).
+- **Sin nombre/email/DNI en ningún evento.** El `identify()` usa el `_id` de Mongo (ya opaco) más `role` y `school` como propiedades — nunca datos que identifiquen a la persona por sí solos.
+- **Computadoras compartidas de la escuela**: `logout()` (`views/partials/footer.ejs`) llama a `posthog.reset()` antes de redirigir a `/login`, y `analytics.js` llama a `reset()` también al aterrizar en `/login` sin sesión activa (red de seguridad si el alumno anterior cerró la pestaña sin desloguearse) — sin esto, el próximo alumno que usa el mismo navegador heredaría la identidad del anterior hasta su propio login.
+
+### Cómo se resuelve cada objetivo
+| Objetivo | Cómo |
+|---|---|
+| Pantallas más visitadas / retención | `posthog.capture('$pageview', { screen_key })` manual (no el `capture_pageview` automático) — usa `res.locals.screenKey`, resuelto en `server.js` con `sectionForPath()`/`normalizePath()` de `config/sections.js`. Reportes nativos de Trends/Retention de PostHog |
+| Tiempo activo real | `public/js/analytics.js`: heartbeat de 1s que solo suma si la pestaña está `visible` (Page Visibility API) **y** hubo interacción en los últimos 30s. Manda el acumulado cada 30s y al ocultarse la pestaña (evento `screen_time`, propiedad `seconds`) |
+| Clicks en CTAs | Atributo `data-analytics="nombre_evento"` en cualquier botón/link + un listener delegado en `document` (evento `cta_click`). Primer lote instrumentado como referencia: modales del dashboard (`create_course_open/submit`, `join_by_code_open/submit`, `request_join_open/submit`), `login_submit`, `register_submit` |
+| Profundidad de scroll | Umbrales 25/50/75/100%, un evento `scroll_depth` por umbral cruzado, throttled con `requestAnimationFrame` |
+| Embudos | Sin código extra: se arman en el dashboard de PostHog a partir de la secuencia de eventos ya nombrados (ej. `$pageview screen_key=login` → `login_submit` → `$pageview screen_key=/courses`) |
+
+### Setup pendiente (no se puede hacer desde acá)
+1. Crear cuenta/proyecto en **PostHog Cloud, región EU** (`app.posthog.com` con la región EU seleccionada al crear el proyecto).
+2. En la config del proyecto (dashboard de PostHog, no código): confirmar que **Session replay** y **Autocapture** estén desactivados a nivel proyecto — los flags del SDK (`disable_session_recording`, `autocapture: false`) ya lo fuerzan del lado del cliente, pero conviene que el proyecto tampoco los ofrezca por si alguien inicializa el SDK distinto en el futuro.
+3. Copiar el **Project API Key** (empieza con `phc_`, es pública por diseño — no es un secreto, es análoga al Measurement ID de GA).
+4. Sumar al `.env` de producción: `POSTHOG_KEY=phc_...` (y opcionalmente `POSTHOG_HOST` si no es la región EU por defecto).
+5. `sudo -u walter pm2 reload classroom --update-env` (¡`reload`, no restart — ver la nota de Deploy Pipeline sobre env vars nuevas!).
+
+Sin estos pasos manuales, todo el código ya está andando pero apagado — no hay riesgo de que se active por accidente.
+
+### Instrumentar un CTA nuevo
+Agregar `data-analytics="nombre_del_evento"` al `<button>`/`<a>` — no hace falta tocar `analytics.js`. Elegir nombres en snake_case, cortos y consistentes con el patrón `<acción>_<paso>` (ej. `create_course_submit`).
+
 ---
 
 ## Backend (API)
@@ -113,6 +160,10 @@ El admin puede "ver como" cualquier otro usuario (excepto el admin protegido):
 | `middleware/auth.js` | `checkUser` | Global; setea `res.locals.user`, `res.locals.impersonating`. Actualiza `User.lastSeen` (throttle 5 min) |
 | `middleware/admin.js` | `requireAdmin` | Retorna 403 si el rol no es `admin` **ni** `superadmin` (el superadmin también pasa) |
 | `middleware/superadmin.js` | `requireSuperAdmin` | Retorna 403 si el rol no es exactamente `superadmin` |
+| `middleware/sections.js` | `sectionGuard(panel)` | Se monta una vez por router; resuelve qué sección corresponde al path y devuelve 403 si la escuela se la deshabilitó a ese rol. Cubre GET, POST y sub-paths |
+| `middleware/sections.js` | `requireSection(key)` | Guarda puntual para una sección concreta (ej. `/admin/audit`, que se monta fuera del router de admin) |
+
+> `sectionGuard`/`requireSection` **solo pueden quitar** acceso, nunca darlo: corren después de los middlewares de rol, que siguen decidiendo el acceso base. Ver `config/sections.js` y la pantalla `/superadmin/roles`.
 
 > El mapa de traducción `res.locals.roleNames` (rol → español) se define como middleware global directamente en `server.js`, no en `middleware/auth.js`.
 
@@ -290,6 +341,50 @@ Variables CSS para colores, sombras, radios. Componentes:
 ---
 
 ## Historial de Cambios (Changelog)
+
+### 2026-08-04 — Analítica de producto con PostHog (apagada por default)
+
+**Pedido**: medir comportamiento de uso — pantallas más visitadas y retención, tiempo activo real por pantalla (no solo carga de página), clicks en CTAs, profundidad de scroll y embudos básicos. Preferencia declarada por PostHog, "salvo que se justifique otra".
+
+**Análisis previo a escribir código**: PostHog es la herramienta correcta para estos 5 objetivos (Plausible/Umami no hacen embudos serios; Matomo self-hosted es más pesado). La decisión real estaba en **dónde** vive: el servidor de producción es una máquina **compartida** con otro proyecto no relacionado (ver `production_server` en memoria), y esta es una plataforma con **alumnos menores**. Se presentaron ambas opciones (self-hosted vs. Cloud EU) al usuario; eligió delegar la decisión de hosting y confirmó medir todos los roles. Se optó por **PostHog Cloud, región EU**, con la configuración del SDK endurecida — ver la sección "Analítica de producto (PostHog)" más arriba para el detalle completo de qué se desactivó y por qué (sin autocapture, sin grabación de pantalla, sin cookies, sin nombre/email/DNI en ningún evento).
+
+**Arquitectura**: un catálogo único resuelve el nombre de cada pantalla — `config/sections.js` ganó `sectionForPath()`/`normalizePath()`, reusando las mismas claves que ya usa la solapa `/superadmin/roles` (así "Importar" es `admin_import` en el nav, en el 403 y ahora también en los reportes de PostHog), con fallback a la URL normalizada (ObjectIds reemplazados por `:id`) para las páginas fuera del catálogo. `server.js` expone `res.locals.screenKey`/`posthogKey`/`posthogHost`; `views/partials/analytics-init.ejs` (nuevo, incluido en `header.ejs`, `login.ejs`, `register.ejs`, `invite-register.ejs`) imprime el snippet oficial de PostHog **solo si `POSTHOG_KEY` está seteada**; `public/js/analytics.js` (nuevo) hace el resto: pageview manual, heartbeat de tiempo activo con Page Visibility API, scroll depth por umbrales, y clicks delegados vía `data-analytics="..."` en los elementos.
+
+**Verificado sin clave configurada** (el estado por default en todos lados): `window.posthog` no existe, `analytics.js` retorna sin hacer nada, cero errores de consola, y la suite de smoke **167/167** sin cambios — el catálogo de secciones y el enforcement de `/superadmin/roles` no se tocaron, solo se les agregaron dos funciones de lectura nuevas.
+
+**Pendiente, fuera del alcance del código**: crear el proyecto en PostHog Cloud (región EU), confirmar Session Replay/Autocapture apagados también del lado del dashboard, y cargar `POSTHOG_KEY` en el `.env` de producción + `pm2 reload --update-env`. Documentado en la sección de arriba.
+
+### 2026-08-04 — Solapa "Roles": habilitar y deshabilitar accesos por rol y por escuela
+
+**Pedido**: "quiero que el rol de superadministrador tenga otra solapa que diga Roles, la cual dentro podremos observar los roles que hay actualmente, y habilitarle o deshabilitarle los accesos, primero a las solapas en sí, para poder controlar que ve cada Rol".
+
+**Punto de partida**: toda la autorización estaba hardcodeada. Los siete roles viven en un enum (`models/User.js`) y cada middleware compara contra una lista literal; los `*-nav.ejs` ni siquiera tenían condicionales, porque el rol lo garantizaba el middleware de la ruta. Si una escuela quería que su directivo no viera "Promedios", había que tocar código y redesplegar.
+
+**Decisiones acordadas antes de escribir nada**: el bloqueo oculta la solapa **y** cierra la URL (ocultar sin bloquear es seguridad aparente); la configuración es **por escuela**; y el rol superadministrador se muestra con candado, **no editable**, para que no exista una configuración que deje a esa cuenta afuera de la única pantalla desde donde se arregla.
+
+**Arquitectura — una capa que solo puede quitar**. Ningún middleware de rol se tocó: `requireAdmin`, `requireDirectivo` y `requirePreceptor` siguen decidiendo el acceso base, y lo nuevo corre después. Una configuración mal hecha nunca puede escalar privilegios, y si algo falla el comportamiento que queda es el de siempre.
+
+Tres piezas leen del **mismo catálogo** (`config/sections.js`), para que no puedan desincronizarse:
+- `res.locals.can(key)` (inyectado en `server.js`) → qué se pinta en los navs y en el drawer.
+- `middleware/sections.js` → `sectionGuard(panel)` en cada router y `requireSection(key)` donde el router no coincide con un panel.
+- `views/superadmin/roles.ejs` → qué celdas se pueden configurar.
+
+**Se guardan las secciones DENEGADAS, no las habilitadas** (`School.rolePermissions`, campo hermano de `settings`). Es lo que evita el script de migración: una solapa nueva aparece sola con su default, sin re-guardar escuela por escuela. Y va **fuera** de `settings` a propósito: ese namespace lo edita el admin de la escuela desde `/admin/tasks`, así que si esto viviera ahí, sumar una key a `TASK_SETTINGS` por error le daría al admin la llave para desbloquearse solo.
+
+**Lo que no se puede deshabilitar, y por qué**: las pantallas de inicio de cada panel y `/courses` son los destinos del redirect de `/` — apagarlas dejaría al usuario con un 403 apenas entra. Backup y Otros ya están atados al email del dueño. Y todo el panel de superadministración, por la decisión de arriba. Se catalogan igual, con candado y el motivo en el `title`, en vez de dejar un hueco sin explicación.
+
+**Detalles que costaron una vuelta**:
+- `sectionGuard` matchea por **límite de segmento** y con el prefijo más largo primero: si no, `/admin/users/:id` caería en `/admin` y `/admin/task-templates` en `/admin/tasks`. Usa `originalUrl` porque dentro de un router montado `req.path` viene sin el prefijo.
+- Como matchea por path y no por método, apagar "Usuarios" cierra también `POST /admin/users/:id/delete`, `/reset-password` e `/impersonate`. Es lo deseado: una solapa apagada con sus acciones abiertas no serviría de nada.
+- `/admin/audit` vive en `routes/audit.js`, montado en `/` **antes** que adminRoutes, así que el guard de panel nunca lo ve: lleva su propio `requireSection`. Tiene spec propio para que no se caiga sin que nadie lo note.
+- Durante una suplantación se aplican las restricciones del usuario suplantado (`res.locals.school` es la de él). Es lo correcto y además es la forma más rápida de verificar la configuración.
+- El `.select()` de `server.js` tuvo que sumar `rolePermissions`: sin eso el campo no llega y toda la función queda muda, sin romper nada (fail-open) y sin dar señales.
+
+**Alcance de esta primera etapa**: paneles Administración (10 solapas), Directivo (6), Preceptoría y los accesos del menú lateral. Docente y Alumno aparecen en la grilla pero casi sin celdas editables: sus pestañas viven **adentro** de cada materia (Novedades, Actividades, Calificaciones, Personas) y no tienen URL propia, así que bloquearlas de verdad exige ir endpoint por endpoint en `routes/activities.js` y `routes/courses.js`. Queda anotado como segunda etapa.
+
+**Cobertura**: 7 specs nuevos en `tests/smoke/specs.js` — la pantalla carga; apagar una solapa la saca del menú y devuelve 403 en la URL y en su POST; el caso de `/admin/audit`; el rechazo del rol superadmin, de las secciones bloqueadas y de las keys desconocidas (400); un admin no puede tocar la pantalla (403); y el restablecer. Todos dejan la escuela como la encontraron. Suite completa: **167/167**.
+
+**Ajuste posterior — el nav de admin pasa a repartirse solo**: el corte de dos filas del panel de administración lo fijaba un separador invisible (`.admin-nav-break`) que siempre cortaba después de "Auditoría". La razón original era que las solapas no cambiaran de fila según la pantalla. Con esta función eso se dio vuelta: apagando tres solapas quedaba una primera fila de cinco ítems y media pantalla vacía al lado. Se sacó el separador de `admin-nav.ejs` — el `flex-wrap` de `.admin-nav-2filas` ya hacía el trabajo — así que ahora se llena la primera fila y baja lo que no entra. Medido con las 10 solapas: 9+1 a 1280 px, 8+2 a 1100, 6+4 a 960, sin scroll horizontal en ningún caso, y por debajo de 900 sigue colapsando en el botón hamburguesa. **El nav de superadmin conserva su corte fijo**: ahí el agrupamiento tiene sentido semántico y sus solapas no se deshabilitan.
 
 ### 2026-08-03 — El restore rechazaba backups de más de 500 MB
 

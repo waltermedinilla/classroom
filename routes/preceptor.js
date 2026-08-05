@@ -21,6 +21,8 @@ const Activity   = require('../models/Activity');
 const Submission = require('../models/Submission');
 const { requireAuth } = require('../middleware/auth');
 const { requirePreceptor, loadPreceptorScope, inScope } = require('../middleware/preceptor');
+// Permisos por solapa configurados en /superadmin/roles (ver middleware/sections.js).
+const { sectionGuard } = require('../middleware/sections');
 const { getDivisionDetail } = require('../services/divisionDetail');
 const {
   enrollStudentInDivisionCourses, unenrollStudentFromDivision, contarEntregasEnDivision,
@@ -30,7 +32,10 @@ const { logAudit } = require('../middleware/audit');
 const { invalidateUser } = require('../middleware/cache');
 
 const router = express.Router();
-router.use(requireAuth, requirePreceptor, loadPreceptorScope);
+// sectionGuard va ANTES de loadPreceptorScope para no pagar la query de divisiones en un
+// request que va a terminar en 403. Hoy es un no-op (preceptor_dashboard está locked en
+// config/sections.js): va por simetría con los otros paneles.
+router.use(requireAuth, requirePreceptor, sectionGuard('preceptor'), loadPreceptorScope);
 
 const oid = (id) => new mongoose.Types.ObjectId(id.toString());
 

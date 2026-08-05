@@ -7,11 +7,13 @@ const Activity = require('../models/Activity');
 const Submission = require('../models/Submission');
 const { requireAuth }      = require('../middleware/auth');
 const { requireDirectivo } = require('../middleware/directivo');
+// Permisos por solapa configurados en /superadmin/roles (ver middleware/sections.js).
+const { sectionGuard } = require('../middleware/sections');
 // Detalle de división (materias + nómina + métricas). Compartido con routes/preceptor.js.
 const { getDivisionDetail } = require('../services/divisionDetail');
 
 const router = express.Router();
-router.use(requireAuth, requireDirectivo);
+router.use(requireAuth, requireDirectivo, sectionGuard('directivo'));
 
 // Convierte un string a ObjectId (para pipelines de aggregate, donde el $match requiere
 // el tipo exacto — a diferencia de find, que castea automáticamente).

@@ -78,6 +78,10 @@ const ACTIONS = {
   // Ajustes de la escuela que edita el ADMIN desde /admin/tasks (a diferencia del resto
   // de school.*, que son del superadmin). El meta guarda qué ajuste cambió y a qué valor.
   'school.settings_update': { label: 'cambió un ajuste de la escuela', icon: 'tune',         color: '#1a73e8', category: 'school' },
+  // Permisos de solapas por rol que el SUPERADMIN configura en /superadmin/roles. El meta
+  // guarda qué rol, qué sección y si quedó habilitada (seccion:'todas' = se restablecieron
+  // los valores por defecto de ese rol).
+  'school.role_permissions_update': { label: 'cambió los permisos de un rol', icon: 'admin_panel_settings', color: '#9334e6', category: 'school' },
 
   // ── Sugerencias ───────────────────────────────────────────────────────────
   'suggestion.create':        { label: 'envió una sugerencia',     icon: 'lightbulb',        color: '#fbbc04', category: 'suggestion' },

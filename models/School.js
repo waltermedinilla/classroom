@@ -42,6 +42,23 @@ const schoolSchema = new Schema({
     // el admin lo decida.
     showViewReceiptToStudents: { type: Boolean, default: false },
   },
+  // Permisos de solapas por rol, que configura el SUPERADMIN desde /superadmin/roles.
+  // Formato: { <rol>: [<sectionKey>, ...] } — se listan SOLO las secciones DENEGADAS.
+  // Campo ausente, rol ausente o array vacío = la escuela usa los defaults del catálogo
+  // (config/sections.js). Por eso las escuelas existentes no necesitan migración.
+  //
+  // Por qué DENEGADAS y no habilitadas: una solapa nueva que se sume al catálogo aparece
+  // sola, con su default, sin que nadie tenga que volver a guardar escuela por escuela.
+  // Con una lista de habilitadas quedaría invisible hasta que alguien la tildara.
+  //
+  // Por qué NO va adentro de `settings`: ese namespace lo edita el ADMIN de la escuela
+  // desde /admin/tasks (lista blanca TASK_SETTINGS en routes/admin.js). Si esto viviera
+  // ahí, sumar una key a esa lista por error le daría al admin la llave para
+  // desbloquearse sus propias solapas. Son dos dueños distintos, dos campos distintos.
+  //
+  // Ojo: mismo caveat que `settings` (ver arriba) — está en el .select() de server.js;
+  // si se saca de ahí, el campo no llega y la restricción queda muda.
+  rolePermissions: { type: Schema.Types.Mixed, default: undefined },
 }, { timestamps: true });
 
 // Índice único sparse: solo indexa escuelas que tienen token activo (null no se indexa)

@@ -8,6 +8,8 @@ const Announcement = require('../models/Announcement');
 const Submission = require('../models/Submission');
 const XLSX       = require('xlsx');
 const { requireAuth } = require('../middleware/auth');
+// Permisos por solapa configurados en /superadmin/roles (ver middleware/sections.js).
+const { requireSection } = require('../middleware/sections');
 const { invalidateUser } = require('../middleware/cache');
 const { logAudit } = require('../middleware/audit');
 const { SYSTEM_OWNER_EMAIL } = require('../config/maintenance');
@@ -260,6 +262,12 @@ function sanitizeSocialHandle(raw, domain) {
   }
   return { value, error: null };
 }
+
+// Permisos de la solapa "Mi perfil" (config/sections.js). Un solo router.use en vez de
+// repetir la guarda en las 7 rutas de /profile: así una ruta nueva de perfil queda
+// cubierta sin que haya que acordarse. Cubre la vista y también las mutaciones (avatar,
+// contraseña, email, contacto, intereses).
+router.use('/profile', requireSection('app_profile'));
 
 // GET /courses/profile
 router.get('/profile', requireAuth, async (req, res) => {

@@ -21,13 +21,13 @@
               en un curso que no es el suyo, o cuando todavía no tiene ninguna materia.
               Los docentes no crean materias desde acá (decisión del 2026-07-25). */ %>
         <% if (locals.joinByCode && user.role === 'student') { %>
-          <button class="btn btn-primary" onclick="showJoinModal()">
+          <button class="btn btn-primary" data-analytics="join_by_code_open" onclick="showJoinModal()">
             <span class="material-symbols-outlined">key</span>
             Unirme con un código
           </button>
         <% } %>
         <% if (user.role !== 'teacher') { %>
-          <button class="btn btn-outline" onclick="showRequestModal()">
+          <button class="btn btn-outline" data-analytics="request_join_open" onclick="showRequestModal()">
             <span class="material-symbols-outlined">outgoing_mail</span>
             Enviar solicitud para unirme
           </button>
@@ -35,7 +35,7 @@
         <% /* El preceptor tampoco: no dicta materias, las administra desde /preceptor.
               El endpoint POST /courses/create además lo rechaza por rol. */ %>
         <% if (user.role !== 'student' && user.role !== 'teacher' && user.role !== 'preceptor') { %>
-        <button class="btn btn-primary" onclick="showCreateModal()">
+        <button class="btn btn-primary" data-analytics="create_course_open" onclick="showCreateModal()">
           <span class="material-symbols-outlined">add</span>
           Crear clase
         </button>
@@ -287,7 +287,7 @@
             <input type="text" id="room" placeholder="Salón (opcional)">
           </div>
           <div class="form-error" id="createError"></div>
-          <button type="submit" class="btn btn-primary btn-full">
+          <button type="submit" class="btn btn-primary btn-full" data-analytics="create_course_submit">
             <span class="material-symbols-outlined">check</span>
             Crear
           </button>
@@ -326,7 +326,7 @@
           </div>
           <div class="form-error" id="joinError"></div>
           <div class="form-success" id="joinOk"></div>
-          <button type="submit" class="btn btn-primary btn-full">
+          <button type="submit" class="btn btn-primary btn-full" data-analytics="join_by_code_submit">
             <span class="material-symbols-outlined">login</span>
             Unirme
           </button>
@@ -403,7 +403,7 @@
           </div>
           <div class="form-error" id="requestError"></div>
           <div class="form-success" id="requestOk"></div>
-          <button type="submit" class="btn btn-primary btn-full">
+          <button type="submit" class="btn btn-primary btn-full" data-analytics="request_join_submit">
             <span class="material-symbols-outlined">send</span>
             Enviar solicitud
           </button>

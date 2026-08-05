@@ -18,6 +18,7 @@ const Suggestion = require('./models/Suggestion');
 const TemplateAssignment = require('./models/TemplateAssignment');
 const APP_VERSION = require('./package.json').version;
 const { INTEREST_LABELS, INTEREST_ICONS } = require('./config/interests');
+const { SECTIONS_BY_KEY, isAllowed, sectionForPath, normalizePath } = require('./config/sections');
 
 // Log del deploy automático (POST /deploy). Va a un archivo propio y no al logger de
 // winston a propósito: el proceso que escribe acá sobrevive al worker que lo lanzó
@@ -42,6 +43,7 @@ const dbFixesRoutes      = require('./routes/dbFixes');
 const suggestionRoutes   = require('./routes/suggestions');
 const auditRoutes        = require('./routes/audit');
 const tasksRoutes        = require('./routes/tasks');
+const rolesRoutes        = require('./routes/roles');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -300,7 +302,7 @@ app.use('*', async (req, res, next) => {
     const key = schoolId.toString();
     let school = schoolCache.get(key);
     if (!school) {
-      school = await School.findById(schoolId).select('name color slug _id themes settings').lean();
+      school = await School.findById(schoolId).select('name color slug _id themes settings rolePermissions').lean();
       if (school) schoolCache.set(key, school);
     }
     res.locals.school = school || null;
@@ -332,6 +334,32 @@ app.use((req, res, next) => {
   // por request para que las vistas puedan condicionar UI sin releer env vars.
   res.locals.taskTemplatesEnabled        = process.env.TASK_TEMPLATES_ENABLED !== 'false';
   res.locals.taskTemplatesTeacherEnabled = process.env.TASK_TEMPLATES_TEACHER_ENABLED === 'true';
+  // Helper único para las vistas: ¿este usuario ve esta solapa? Resuelve de una sola vez
+  // el rol, los permisos que la escuela configuró en /superadmin/roles y el feature flag,
+  // para que los *-nav.ejs no tengan que combinar tres condiciones distintas y se puedan
+  // desincronizar entre sí. Es un closure: se evalúa recién al renderizar, cuando
+  // res.locals.school y res.locals.user ya están resueltos por los middlewares de arriba.
+  res.locals.can = (key) => {
+    const sec = SECTIONS_BY_KEY[key];
+    if (sec && sec.flag && res.locals[sec.flag] === false) return false;
+    return isAllowed(res.locals.school, res.locals.user && res.locals.user.role, key);
+  };
+  // ── Analítica de producto (PostHog) ─────────────────────────────────────────
+  // Apagada por default: sin POSTHOG_KEY en el entorno, res.locals.posthogKey queda
+  // vacío y el partial partials/analytics-init.ejs no imprime nada — así el dev local
+  // y los smoke tests (que nunca corren JS de navegador) no dependen de esto para nada.
+  // POSTHOG_HOST default a la región EU (no la US) a propósito: esta es una plataforma
+  // escolar con alumnos menores, y EU es la región con el compromiso de residencia de
+  // datos más fuerte que ofrece PostHog Cloud.
+  res.locals.posthogKey  = process.env.POSTHOG_KEY || '';
+  res.locals.posthogHost = process.env.POSTHOG_HOST || 'https://eu.i.posthog.com';
+  // Nombre de pantalla para la analítica: reusa las mismas claves del catálogo de
+  // /superadmin/roles cuando la URL cae en una sección conocida (así "Importar" es
+  // "admin_import" en el nav, en el 403 y en los reportes de PostHog), y cae a la URL
+  // normalizada (con :id en vez del ObjectId real) para el resto de la app — dashboard
+  // de materias, detalle de curso, login, perfil, etc.
+  const _sec = sectionForPath(req.originalUrl);
+  res.locals.screenKey = _sec ? _sec.key : normalizePath(req.originalUrl);
   next();
 });
 
@@ -459,6 +487,8 @@ app.use('/superadmin/otros', dbFixesRoutes);
 if (process.env.TASK_TEMPLATES_ENABLED !== 'false') {
   app.use('/superadmin/tasks', tasksRoutes);
 }
+// Mismo criterio de montaje que /backup y /otros: antes de /superadmin, que es catch-all.
+app.use('/superadmin/roles', rolesRoutes);
 app.use('/superadmin',  superadminRoutes);
 app.use('/directivo',   directivoRoutes);
 app.use('/preceptor',   preceptorRoutes);

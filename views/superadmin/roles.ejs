@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Roles - Superadmin</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* Tarjetas de panel: mismo lenguaje visual que los ajustes de /admin/tasks
+       (.set-card / .set-info), adaptado a una grilla de roles × solapas. */
+    .set-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; overflow: hidden; margin-bottom: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.04);
+    }
+    .set-info {
+      background: var(--bg); border-left: 3px solid var(--primary);
+      padding: 12px 16px; border-radius: 8px;
+      margin-bottom: 22px; font-size: 13px; color: var(--text-secondary); line-height: 1.6;
+    }
+    .set-info strong { color: var(--text); }
+    .panel-head {
+      padding: 16px 22px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .panel-head h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--text); }
+    .panel-head .hint { font-size: 12px; color: var(--text-secondary); }
+    /* La grilla puede tener hasta 6 columnas de rol: scrollea dentro de su tarjeta en vez
+       de estirar la página. */
+    .grid-wrap { overflow-x: auto; }
+    table.perm-grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.perm-grid th, table.perm-grid td { padding: 10px 14px; text-align: center; }
+    table.perm-grid thead th { border-bottom: 1px solid var(--border); white-space: nowrap; }
+    table.perm-grid tbody tr + tr td { border-top: 1px solid var(--border); }
+    table.perm-grid td.sec-name, table.perm-grid th.sec-name {
+      text-align: left; white-space: nowrap; min-width: 190px;
+    }
+    .sec-name span.material-symbols-outlined {
+      font-size: 18px; vertical-align: -4px; margin-right: 8px; color: var(--text-secondary);
+    }
+    .sec-path { display: block; font-size: 11px; color: var(--text-secondary); margin-left: 26px; }
+    .cell-off { color: var(--text-secondary); opacity: .45; }
+    .cell-lock { color: var(--text-secondary); opacity: .6; font-size: 18px; vertical-align: -4px; }
+    .reset-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 16px 22px; }
+    .school-pick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+    .school-pick select { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 14px; }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+  <main class="main-content main-content-ancho">
+    <%- include('../partials/superadmin-nav', { activePage: 'roles' }) %>
+
+    <div class="section-header" style="margin-bottom:20px">
+      <span class="material-symbols-outlined section-icon" style="color:#9334e6">admin_panel_settings</span>
+      <div>
+        <h2 style="margin:0">Roles y accesos</h2>
+        <p style="margin:2px 0 0;font-size:13px;color:var(--text-secondary)">
+          Qué solapa ve y puede abrir cada rol, escuela por escuela.
+        </p>
+      </div>
+    </div>
+
+    <% if (!schools.length) { %>
+      <div class="set-info">Todavía no hay escuelas cargadas. Creá una desde <strong>Escuelas</strong> para configurar sus roles.</div>
+    <% } else { %>
+
+    <div class="school-pick">
+      <label for="schoolSel" style="font-size:13px;color:var(--text-secondary)">Escuela:</label>
+      <select id="schoolSel" onchange="location.href='/superadmin/roles?school=' + this.value">
+        <% schools.forEach(s => { %>
+          <option value="<%= s._id %>" <%= s._id.toString() === school._id.toString() ? 'selected' : '' %>><%= s.name %></option>
+        <% }) %>
+      </select>
+      <span style="width:12px;height:12px;border-radius:50%;background:<%= school.color %>;display:inline-block"></span>
+    </div>
+
+    <div class="set-info">
+      <strong>Cada cambio afecta solo a esta escuela.</strong> Apagar una solapa la saca del menú
+      <em>y</em> bloquea su dirección: si alguien la escribe a mano recibe "Acceso denegado". Se
+      bloquean también las acciones que cuelgan de esa solapa (por ejemplo, apagar
+      <em>Usuarios</em> deshabilita crear, editar y borrar usuarios).<br>
+      El <strong>superadministrador nunca se restringe</strong>, y las pantallas de inicio de cada
+      panel tampoco: son la puerta de entrada a la app y apagarlas dejaría a esa persona sin
+      forma de navegar. Van con candado.<br>
+      En producción un cambio puede tardar hasta un minuto en verse (la escuela queda unos
+      segundos en la memoria de cada proceso).
+    </div>
+
+    <%
+      // Permisos actuales de la escuela: { rol: [secciones denegadas] }.
+      const denegadas = (school.rolePermissions && typeof school.rolePermissions === 'object')
+        ? school.rolePermissions : {};
+      const estaDenegada = (rol, key) => Array.isArray(denegadas[rol]) && denegadas[rol].includes(key);
+
+      // Motivo del candado, para que la pantalla explique por qué una celda no se toca en
+      // vez de mostrarla apagada sin más.
+      const motivoCandado = (sec) => {
+        if (sec.panel === 'superadmin') return 'El panel de superadministración no se restringe nunca';
+        if (sec.ownerOnly)              return 'Reservado a la cuenta dueña del sistema';
+        return 'Es la pantalla de entrada del panel: si se apagara, el usuario no tendría por dónde entrar';
+      };
+    %>
+
+    <% PANELS.forEach(panel => {
+         const secs = SECTIONS.filter(s => s.panel === panel.id);
+         if (!secs.length) return;
+         // Solo se muestran como columna los roles que tienen acceso base a alguna sección
+         // del panel: sin esto la grilla del panel de Administración tendría cinco columnas
+         // llenas de guiones.
+         const cols = roles.filter(r => secs.some(s => s.roles.includes(r)));
+    %>
+    <div class="set-card">
+      <div class="panel-head">
+        <h3><%= panel.label %></h3>
+        <span class="hint">
+          <% if (panel.id === 'app') { %>
+            Accesos del menú lateral, fuera de los paneles.
+          <% } else if (panel.id === 'superadmin') { %>
+            Solo lectura: este panel no se restringe.
+          <% } %>
+        </span>
+      </div>
+      <div class="grid-wrap">
+        <table class="perm-grid">
+          <thead>
+            <tr>
+              <th class="sec-name">Solapa</th>
+              <% cols.forEach(r => { %>
+                <th><span class="role-badge role-<%= r %>"><%= roleNames[r] %></span></th>
+              <% }) %>
+            </tr>
+          </thead>
+          <tbody>
+            <% secs.forEach(sec => { %>
+              <tr>
+                <td class="sec-name">
+                  <span class="material-symbols-outlined"><%= sec.icon %></span><%= sec.label %>
+                  <span class="sec-path"><%= sec.path %></span>
+                </td>
+                <% cols.forEach(r => { %>
+                  <td>
+                    <% if (!sec.roles.includes(r)) { %>
+                      <span class="cell-off" title="<%= roleNames[r] %> no tiene acceso a esta solapa">—</span>
+                    <% } else if (r === 'superadmin') { %>
+                      <span class="material-symbols-outlined cell-lock" title="El superadministrador nunca se restringe">lock</span>
+                    <% } else if (sec.locked || sec.ownerOnly || sec.panel === 'superadmin') { %>
+                      <span class="material-symbols-outlined cell-lock" title="<%= motivoCandado(sec) %>">lock</span>
+                    <% } else { %>
+                      <label class="toggle-switch" title="<%= sec.label %> para <%= roleNames[r] %>">
+                        <input type="checkbox" <%= estaDenegada(r, sec.key) ? '' : 'checked' %>
+                          onchange="toggleSection('<%= r %>', '<%= sec.key %>', this)">
+                        <span class="toggle-slider"></span>
+                      </label>
+                    <% } %>
+                  </td>
+                <% }) %>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <% }) %>
+
+    <%
+      // Roles con alguna restricción cargada: solo para ellos tiene sentido ofrecer
+      // "volver a los valores por defecto".
+      const configurados = roles.filter(r => r !== 'superadmin' && Array.isArray(denegadas[r]) && denegadas[r].length);
+    %>
+    <% if (configurados.length) { %>
+    <div class="set-card">
+      <div class="panel-head"><h3>Restablecer</h3><span class="hint">Vuelve un rol a los accesos por defecto, de una sola vez.</span></div>
+      <div class="reset-row">
+        <% configurados.forEach(r => { %>
+          <button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="resetRole('<%= r %>', this)">
+            <span class="material-symbols-outlined" style="font-size:15px;vertical-align:-3px">restart_alt</span>
+            <%= roleNames[r] %> (<%= denegadas[r].length %>)
+          </button>
+        <% }) %>
+      </div>
+    </div>
+    <% } %>
+
+    <p style="font-size:12px;color:var(--text-secondary);margin-top:4px">
+      Un rol que no aparece como columna es porque el panel no le corresponde. El rol
+      <strong><%= roleNames.soe %></strong> todavía no tiene panel propio: solo se le pueden
+      configurar los accesos generales. Las pestañas de adentro de cada materia (Novedades,
+      Actividades, Calificaciones, Personas) no se configuran acá todavía.
+    </p>
+
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+
+  <script>
+    const SCHOOL_ID = '<%= school ? school._id : "" %>';
+
+    // Guarda un permiso al vuelo. Si falla, revierte el checkbox: dejarlo movido haría
+    // creer que se guardó algo que no se guardó. Mismo patrón que /admin/tasks.
+    // A propósito NO recarga la página: son decenas de toggles y recargar en cada clic
+    // haría la pantalla inusable.
+    async function toggleSection(role, key, input) {
+      const enabled = input.checked;
+      input.disabled = true;
+      try {
+        const res  = await fetch('/superadmin/roles/toggle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ schoolId: SCHOOL_ID, role, key, enabled }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error');
+      } catch (err) {
+        input.checked = !enabled;
+        alert(err.message || 'No se pudo guardar el permiso');
+      } finally {
+        input.disabled = false;
+      }
+    }
+
+    // El reset sí recarga: cambia muchas celdas de golpe y volver a pintarlas a mano
+    // sería reimplementar el render del servidor en el cliente.
+    async function resetRole(role, btn) {
+      if (!confirm('¿Devolver todos los accesos por defecto a este rol?')) return;
+      btn.disabled = true;
+      try {
+        const res  = await fetch('/superadmin/roles/reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ schoolId: SCHOOL_ID, role }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error');
+        location.reload();
+      } catch (err) {
+        btn.disabled = false;
+        alert(err.message || 'No se pudo restablecer el rol');
+      }
+    }
+  </script>
+</body>
+</html>

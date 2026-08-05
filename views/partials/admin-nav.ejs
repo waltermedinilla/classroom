@@ -1,38 +1,61 @@
+<%# Cada solapa se muestra solo si el rol la tiene habilitada. `can` lo inyecta server.js
+    a partir de config/sections.js y de lo que el superadmin haya configurado en
+    /superadmin/roles para esta escuela. El fallback a `true` es por si algún render
+    llega sin el middleware global (nunca debería, pero un nav que se rompe deja al
+    usuario sin forma de navegar). %>
+<% const puede = (k) => (typeof can === 'function' ? can(k) : true); %>
 <nav class="admin-nav admin-nav-2filas">
+  <% if (puede('admin_dashboard')) { %>
   <a href="/admin" class="admin-nav-item <%= activePage === 'dashboard' ? 'active' : '' %>">
     <span class="material-symbols-outlined">dashboard</span>
     Resumen
   </a>
+  <% } %>
+  <% if (puede('admin_users')) { %>
   <a href="/admin/users" class="admin-nav-item <%= activePage === 'users' ? 'active' : '' %>">
     <span class="material-symbols-outlined">people</span>
     Usuarios
   </a>
+  <% } %>
+  <% if (puede('admin_divisions')) { %>
   <a href="/admin/divisions" class="admin-nav-item <%= activePage === 'divisions' ? 'active' : '' %>">
     <span class="material-symbols-outlined">class</span>
     Cursos
   </a>
+  <% } %>
+  <% if (puede('admin_courses')) { %>
   <a href="/admin/courses" class="admin-nav-item <%= activePage === 'courses' ? 'active' : '' %>">
     <span class="material-symbols-outlined">menu_book</span>
     Materias
   </a>
+  <% } %>
+  <% if (puede('admin_subjects')) { %>
   <a href="/admin/subjects" class="admin-nav-item <%= activePage === 'subjects' ? 'active' : '' %>">
     <span class="material-symbols-outlined">auto_stories</span>
     Catálogo
   </a>
+  <% } %>
+  <% if (puede('admin_import')) { %>
   <a href="/admin/import" class="admin-nav-item <%= activePage === 'import' ? 'active' : '' %>">
     <span class="material-symbols-outlined">upload_file</span>
     Importar
   </a>
+  <% } %>
+  <% if (puede('admin_audit')) { %>
   <a href="/admin/audit" class="admin-nav-item <%= activePage === 'audit' ? 'active' : '' %>">
     <span class="material-symbols-outlined">history</span>
     Auditoría
   </a>
+  <% } %>
 
-  <%# Corte fijo: arriba la gestión de datos, abajo la configuración de la escuela.
-      Ver .admin-nav-break en style.css — en pantallas angostas no se aplica y las
-      solapas envuelven solas. %>
-  <span class="admin-nav-break"></span>
+  <%# Sin corte fijo a propósito: las solapas llenan la primera fila y las que no entran
+      bajan solas a la segunda (.admin-nav-2filas hace el wrap, ver style.css). Antes había
+      un .admin-nav-break que cortaba siempre después de "Auditoría"; se sacó por dos
+      motivos: desaprovechaba el ancho en pantallas grandes, y desde que las solapas se
+      pueden deshabilitar por rol (/superadmin/roles) el corte fijo podía dejar una primera
+      fila de tres ítems y media pantalla vacía al lado. %>
 
+  <% if (puede('admin_theme')) { %>
   <a href="/admin/theme" class="admin-nav-item <%= activePage === 'theme' ? 'active' : '' %>" style="position:relative">
     <span class="material-symbols-outlined">palette</span>
     Tema
@@ -40,11 +63,16 @@
       <span style="position:absolute;top:6px;right:6px;width:8px;height:8px;background:#ea4335;border-radius:50%"></span>
     <% } %>
   </a>
+  <% } %>
+  <% if (puede('admin_tasks')) { %>
   <a href="/admin/tasks" class="admin-nav-item <%= activePage === 'tasks' ? 'active' : '' %>">
     <span class="material-symbols-outlined">checklist</span>
     Tareas
   </a>
-  <% if (typeof taskTemplatesEnabled === 'undefined' || taskTemplatesEnabled) { %>
+  <% } %>
+  <%# El feature flag taskTemplatesEnabled ya está adentro de can('admin_task_templates')
+      (ver el campo `flag` en config/sections.js), por eso acá no se vuelve a chequear. %>
+  <% if (puede('admin_task_templates')) { %>
   <a href="/admin/task-templates" class="admin-nav-item <%= activePage === 'task-templates' ? 'active' : '' %>" style="position:relative">
     <span class="material-symbols-outlined">assignment</span>
     Plantillas

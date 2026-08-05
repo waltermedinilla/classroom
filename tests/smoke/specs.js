@@ -892,6 +892,161 @@ const specs = [
       });
     },
   },
+
+  // ── Permisos de solapas por rol (/superadmin/roles) ───────────────────────
+  // El superadmin habilita/deshabilita, por escuela, qué solapa ve y puede abrir cada rol
+  // (config/sections.js + middleware/sections.js). Todos estos specs dejan la escuela como
+  // la encontraron: usan try/finally o restablecen explícitamente al final.
+  {
+    id: 'roles-screen-loads',
+    title: 'La pantalla de Roles carga con la grilla de secciones',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env, assert }) {
+      // Login propio del actor 'superadmin': el spec genérico vive más abajo en el archivo
+      // (mismo motivo que en suggestions-superadmin-can-respond).
+      await client.post('superadmin', '/login', {
+        body: { email: env.SMOKE_SUPERADMIN_EMAIL, password: env.SMOKE_SUPERADMIN_PASSWORD },
+        expectStatus: 200,
+      });
+
+      // La escuela sobre la que se prueba es la del admin de las credenciales, no la
+      // primera de la lista: los asserts de bloqueo se verifican con ese mismo admin.
+      const { MongoClient } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const admin = await mongo.db().collection('users').findOne({ email: env.SMOKE_ADMIN_EMAIL });
+        assert(admin && admin.school, `el admin ${env.SMOKE_ADMIN_EMAIL} debería tener una escuela asignada`);
+        state.rolesSchoolId = admin.school.toString();
+      } finally {
+        await mongo.close();
+      }
+
+      const res = await client.get('superadmin', `/superadmin/roles?school=${state.rolesSchoolId}`, { expectStatus: 200 });
+      assert(res.text.includes('admin_import'), 'la grilla debería incluir la sección admin_import');
+      assert(res.text.includes('/superadmin/roles/toggle'), 'la pantalla debería traer el JS que guarda los toggles');
+    },
+  },
+  {
+    id: 'roles-toggle-hides-and-blocks',
+    title: 'Apagar una solapa la saca del menú Y bloquea su URL y sus acciones (403)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert }) {
+      const toggle = (enabled) => client.post('superadmin', '/superadmin/roles/toggle', {
+        body: { schoolId: state.rolesSchoolId, role: 'admin', key: 'admin_import', enabled },
+        expectStatus: 200,
+      });
+
+      // try/finally: si un assert falla a mitad, la solapa tiene que volver a habilitarse
+      // igual — si no, los specs que corren después con el actor 'admin' heredan el bloqueo.
+      try {
+        await toggle(false);
+
+        await client.get('admin', '/admin/import', { expectStatus: 403 });
+        // La acción POST de esa solapa también queda cerrada, no solo la pantalla.
+        await client.post('admin', '/admin/import/execute', { body: {}, expectStatus: 403 });
+
+        const nav = await client.get('admin', '/admin', { expectStatus: 200 });
+        assert(!nav.text.includes('/admin/import'), 'la solapa Importar no debería aparecer en el menú');
+        assert(nav.text.includes('/admin/users'), 'las demás solapas deberían seguir en el menú');
+      } finally {
+        await toggle(true);
+      }
+
+      await client.get('admin', '/admin/import', { expectStatus: 200 });
+      const navFinal = await client.get('admin', '/admin', { expectStatus: 200 });
+      assert(navFinal.text.includes('/admin/import'), 'al rehabilitarla, la solapa debería volver al menú');
+    },
+  },
+  {
+    id: 'roles-blocks-audit-mounted-outside-panel',
+    title: 'El bloqueo alcanza a /admin/audit, que se monta fuera del router de admin',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state }) {
+      // routes/audit.js se monta en "/" antes que adminRoutes, así que el guard de panel
+      // nunca lo ve: lleva su propio requireSection. Sin este spec, esa ruta podría quedar
+      // abierta sin que ningún otro test lo note.
+      const toggle = (enabled) => client.post('superadmin', '/superadmin/roles/toggle', {
+        body: { schoolId: state.rolesSchoolId, role: 'admin', key: 'admin_audit', enabled },
+        expectStatus: 200,
+      });
+
+      try {
+        await toggle(false);
+        await client.get('admin', '/admin/audit', { expectStatus: 403 });
+      } finally {
+        await toggle(true);
+      }
+      await client.get('admin', '/admin/audit', { expectStatus: 200 });
+    },
+  },
+  {
+    id: 'roles-rejects-superadmin-role',
+    title: 'El superadministrador no se puede restringir, ni salteando la pantalla (400)',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'SMOKE_ADMIN_EMAIL', 'MONGODB_URI'],
+    async run({ client, state }) {
+      // El candado de la vista es presentación: la regla real vive en el servidor.
+      await client.post('superadmin', '/superadmin/roles/toggle', {
+        body: { schoolId: state.rolesSchoolId, role: 'superadmin', key: 'admin_users', enabled: false },
+        expectStatus: 400,
+      });
+    },
+  },
+  {
+    id: 'roles-rejects-locked-and-unknown-sections',
+    title: 'Rechaza secciones bloqueadas, del panel de superadmin y desconocidas (400)',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'SMOKE_ADMIN_EMAIL', 'MONGODB_URI'],
+    async run({ client, state }) {
+      const rechaza = (key, role = 'admin') => client.post('superadmin', '/superadmin/roles/toggle', {
+        body: { schoolId: state.rolesSchoolId, role, key, enabled: false },
+        expectStatus: 400,
+      });
+
+      await rechaza('admin_dashboard');     // locked: es la puerta de entrada del panel
+      await rechaza('superadmin_backup');   // panel de superadmin + atada al email del dueño
+      await rechaza('no_existe_esta_key');  // fuera del catálogo
+      await rechaza('admin_users', 'teacher'); // el rol no tiene acceso base a esa sección
+    },
+  },
+  {
+    id: 'roles-forbidden-for-admin',
+    title: 'Un admin de escuela no puede tocar los permisos de roles (403)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI', 'SMOKE_SUPERADMIN_EMAIL'],
+    async run({ client, state }) {
+      await client.get('admin', '/superadmin/roles', { expectStatus: 403 });
+      await client.post('admin', '/superadmin/roles/toggle', {
+        body: { schoolId: state.rolesSchoolId, role: 'admin', key: 'admin_users', enabled: true },
+        expectStatus: 403,
+      });
+    },
+  },
+  {
+    id: 'roles-reset-restores-defaults',
+    title: 'Restablecer devuelve al rol todos sus accesos de una sola vez',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state }) {
+      const apagar = (key) => client.post('superadmin', '/superadmin/roles/toggle', {
+        body: { schoolId: state.rolesSchoolId, role: 'admin', key, enabled: false },
+        expectStatus: 200,
+      });
+
+      try {
+        await apagar('admin_import');
+        await apagar('admin_subjects');
+        await client.get('admin', '/admin/import',   { expectStatus: 403 });
+        await client.get('admin', '/admin/subjects', { expectStatus: 403 });
+      } finally {
+        await client.post('superadmin', '/superadmin/roles/reset', {
+          body: { schoolId: state.rolesSchoolId, role: 'admin' },
+          expectStatus: 200,
+        });
+      }
+
+      await client.get('admin', '/admin/import',   { expectStatus: 200 });
+      await client.get('admin', '/admin/subjects', { expectStatus: 200 });
+    },
+  },
+
   {
     id: 'activity-submit',
     title: 'El alumno entrega la actividad',

@@ -58,6 +58,13 @@ y corré `npm run test:smoke` normalmente — `run.js` lo carga automático si e
   otro curso; y los adjuntos que no son imágenes (PDF) siguen intactos.
 - **Nivel 3** (con `SMOKE_SUPERADMIN_*`, opcional): panel de sugerencias del superadmin
   pagina bien.
+- **Permisos de solapas por rol** (specs `roles-*`, necesitan además `MONGODB_URI` para
+  resolver la escuela del admin): la pantalla `/superadmin/roles` carga; apagar una solapa
+  la saca del menú **y** devuelve 403 en su URL y en su POST; el caso especial de
+  `/admin/audit` (que se monta fuera del router de admin); los rechazos con 400 (rol
+  superadmin, secciones bloqueadas, keys desconocidas); un admin no puede tocar la
+  pantalla (403); y el botón de restablecer. Todos dejan la escuela como la encontraron
+  (`try/finally`), así que se pueden correr contra el mirror local sin ensuciarlo.
 - Al final borra todo lo que creó (curso, división, usuarios de prueba, sugerencias).
   Los usuarios autoregistrados del Nivel 1 quedan (no hay endpoint para borrarlos sin
   escuela asignada) — es basura inofensiva en tu Mongo LOCAL, se pisa solo la próxima

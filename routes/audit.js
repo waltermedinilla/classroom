@@ -4,6 +4,9 @@ const School   = require('../models/School');
 const { requireAuth }        = require('../middleware/auth');
 const { requireAdmin }       = require('../middleware/admin');
 const { requireSuperAdmin }  = require('../middleware/superadmin');
+// Guarda puntual y no sectionGuard('admin'): este router se monta en "/" (ver server.js),
+// antes que adminRoutes, así que el guard de panel de routes/admin.js nunca ve esta ruta.
+const { requireSection }     = require('../middleware/sections');
 const { ACTIONS, CATEGORIES } = require('../config/audit-actions');
 
 const router    = express.Router();
@@ -88,7 +91,7 @@ async function listAudit(req, res, { isSuperadmin }) {
   });
 }
 
-router.get('/admin/audit',      requireAuth, requireAdmin,      (req, res, next) => listAudit(req, res, { isSuperadmin: false }).catch(next));
+router.get('/admin/audit',      requireAuth, requireAdmin,      requireSection('admin_audit'), (req, res, next) => listAudit(req, res, { isSuperadmin: false }).catch(next));
 router.get('/superadmin/audit', requireAuth, requireSuperAdmin, (req, res, next) => listAudit(req, res, { isSuperadmin: true  }).catch(next));
 
 module.exports = router;

@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body class="auth-body">
+  <%- include('partials/analytics-init') %>
   <div class="auth-container">
     <div class="auth-card">
       <div class="auth-logo">
@@ -112,7 +113,7 @@
         <% } %>
 
         <div class="form-error" id="registerError"></div>
-        <button type="submit" class="btn btn-primary btn-full">
+        <button type="submit" class="btn btn-primary btn-full" data-analytics="register_submit">
           <span class="material-symbols-outlined">person_add</span>
           Registrarse
         </button>
@@ -123,6 +124,7 @@
   </div>
 
   <script src="/js/register.js"></script>
+  <script src="/js/analytics.js"></script>
   <script>
     async function buscarPorDni() {
       const input   = document.getElementById('dniInput');

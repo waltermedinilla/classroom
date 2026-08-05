@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body class="auth-body">
+  <%- include('partials/analytics-init') %>
   <div class="auth-container">
     <div class="auth-card">
       <div class="auth-logo">
@@ -39,7 +40,7 @@
           <input type="password" id="password" placeholder="Contraseña" required>
         </div>
         <div class="form-error" id="loginError"></div>
-        <button type="submit" class="btn btn-primary btn-full">
+        <button type="submit" class="btn btn-primary btn-full" data-analytics="login_submit">
           <span class="material-symbols-outlined">login</span>
           Iniciar sesión
         </button>
@@ -118,6 +119,7 @@
   </div>
 
   <script src="/js/login.js"></script>
+  <script src="/js/analytics.js"></script>
   <script>
     function abrirModalDni(e) {
       e.preventDefault();

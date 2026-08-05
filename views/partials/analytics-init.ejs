@@ -1,0 +1,44 @@
+<%# Carga PostHog — solo si el superadmin configuró POSTHOG_KEY en el entorno (server.js).
+    Sin esa variable, este partial no imprime nada: dev local y CI quedan sin analítica
+    por default, sin que haga falta un flag aparte.
+
+    Config ENDURECIDA a propósito: esta es una plataforma escolar con alumnos MENORES.
+    Ver agente.md (sección "Analítica") para la justificación completa. Resumen:
+      - Sin autocapture: el autocapture de PostHog manda el texto de lo que se clickea, y
+        muchos botones de esta app tienen nombres reales adentro ("Ver perfil de Juan
+        Pérez"). Los clicks que importan se instrumentan a mano (ver public/js/analytics.js).
+      - Sin grabación de pantalla (session recording), nunca. Ninguno de los objetivos de
+        medición la necesita.
+      - Sin cookie de tracking: persistencia en localStorage únicamente.
+      - Sin nombre/email/DNI en ningún evento: el identify usa el _id de Mongo (ya opaco)
+        más rol y escuela como propiedades. %>
+<% if (typeof posthogKey !== 'undefined' && posthogKey) { %>
+<script>
+  // Loader oficial de PostHog (snippet "Web", verificado contra posthog.com/docs/libraries/js
+  // el 2026-08-04 — no tocar a mano, se reemplaza entero si PostHog lo actualiza).
+  !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init capture register register_once register_for_session unregister unregister_for_session getFeatureFlag getFeatureFlagResult isFeatureEnabled reloadFeatureFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey getNextSurveyStep identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException loadToolbar get_property getSessionProperty createPersonProfile opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+
+  posthog.init(<%- JSON.stringify(posthogKey) %>, {
+    api_host: <%- JSON.stringify(posthogHost) %>,
+    autocapture: false,               // solo mandamos los clicks que instrumentamos a mano
+    capture_pageview: false,          // el pageview lo dispara analytics.js con el nombre
+                                       // de pantalla del catálogo (screenKey), no la URL cruda
+    disable_session_recording: true,  // sin grabación de pantalla, nunca
+    mask_all_text: true,              // cinturón y tiradores si algún día se reactiva
+    mask_all_element_attributes: true,
+    persistence: 'localStorage',      // sin cookie de tracking
+  });
+
+  // Contexto de la request actual para public/js/analytics.js. Nunca incluye nombre,
+  // email ni DNI — ver la nota de arriba.
+  window.__ANALYTICS__ = {
+    screenKey: <%- JSON.stringify(typeof screenKey !== 'undefined' ? screenKey : null) %>,
+    user: <%- JSON.stringify(
+      (typeof user !== 'undefined' && user)
+        ? { id: String(user._id), role: user.role, school: user.school ? String(user.school) : null }
+        : null
+    ) %>,
+    impersonating: <%- JSON.stringify(typeof impersonating !== 'undefined' && !!impersonating) %>,
+  };
+</script>
+<% } %>
