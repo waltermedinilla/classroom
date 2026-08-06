@@ -130,6 +130,10 @@
 
     async function openInboxModal() {
       document.getElementById('inboxModal').style.display = 'flex';
+      await loadInbox();
+    }
+
+    async function loadInbox() {
       var body = document.getElementById('inboxBody');
       body.innerHTML = '<div style="padding:40px 16px;text-align:center;color:var(--text-secondary)">Cargando…</div>';
       try {
@@ -168,22 +172,56 @@
       }
 
       body.innerHTML = suggestions.map(function (s) {
-        var st   = INBOX_STATUS[s.status] || INBOX_STATUS.pending;
-        var date = new Date(s.createdAt).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' });
-        var responseHtml = '';
-        if (s.status === 'answered' && s.response) {
-          var rdate = s.respondedAt
-            ? new Date(s.respondedAt).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+        var st    = INBOX_STATUS[s.status] || INBOX_STATUS.pending;
+        var date  = new Date(s.createdAt).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' });
+        // El hilo viene armado del server (services/suggestionThread.js). El primer mensaje
+        // es la sugerencia y se muestra arriba; el resto es la conversación.
+        var hilo  = s.hilo || [{ from: 'user', text: s.text, at: s.createdAt }];
+        var resto = hilo.slice(1);
+
+        var conversacion = resto.map(function (m) {
+          var esEquipo = m.from === 'staff';
+          var fecha = m.at
+            ? new Date(m.at).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
             : '';
-          responseHtml = '' +
-            '<div style="margin-top:10px;padding:12px 14px;background:var(--bg);border-radius:8px;border-left:3px solid #1a73e8">' +
-              '<div style="font-size:11px;font-weight:600;color:#1a73e8;margin-bottom:4px;display:flex;align-items:center;gap:4px">' +
-                '<span class="material-symbols-outlined" style="font-size:14px">reply</span>' +
-                'Respuesta del equipo' + (rdate ? ' · ' + rdate : '') +
+          return '' +
+            '<div style="margin-top:8px;padding:11px 14px;background:var(--bg);border-radius:8px;border-left:3px solid ' + (esEquipo ? '#1a73e8' : '#fbbc04') + '">' +
+              '<div style="font-size:11px;font-weight:600;color:' + (esEquipo ? '#1a73e8' : '#b06000') + ';margin-bottom:4px;display:flex;align-items:center;gap:4px">' +
+                '<span class="material-symbols-outlined" style="font-size:14px">' + (esEquipo ? 'reply' : 'forum') + '</span>' +
+                (esEquipo ? 'Respuesta del equipo' : 'Tu respuesta') + (fecha ? ' · ' + fecha : '') +
+                (m.editedAt ? ' · editada' : '') +
               '</div>' +
-              '<div style="font-size:13px;color:var(--text);white-space:pre-wrap">' + escapeHtml(s.response) + '</div>' +
+              '<div style="font-size:13px;color:var(--text);white-space:pre-wrap">' + escapeHtml(m.text) + '</div>' +
             '</div>';
+        }).join('');
+
+        // Seguir el hilo solo tiene sentido sobre algo que el equipo ya contestó. Si todavía
+        // no respondieron —o la conversación llegó al tope— lo que corresponde es abrir una
+        // sugerencia nueva, y eso es lo que dice el pie del bloque.
+        var accion = '';
+        if (s.puedeResponder) {
+          accion = '' +
+            '<div style="margin-top:10px">' +
+              '<button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="toggleReply(\'' + s._id + '\')">' +
+                '<span class="material-symbols-outlined" style="font-size:15px">reply</span> Responder' +
+              '</button>' +
+              '<div id="replyBox-' + s._id + '" style="display:none;margin-top:8px">' +
+                '<textarea id="replyText-' + s._id + '" rows="3" maxlength="1000" placeholder="Escribí tu respuesta…" ' +
+                  'style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;resize:vertical;font-family:inherit;background:var(--surface);color:var(--text);box-sizing:border-box;outline:none"></textarea>' +
+                '<div id="replyError-' + s._id + '" style="display:none;color:var(--danger);font-size:12px;margin-top:4px"></div>' +
+                '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">' +
+                  '<button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="toggleReply(\'' + s._id + '\')">Cancelar</button>' +
+                  '<button class="btn btn-primary" style="font-size:12px;padding:5px 12px" id="replyBtn-' + s._id + '" onclick="submitReply(\'' + s._id + '\')">Enviar</button>' +
+                '</div>' +
+              '</div>' +
+            '</div>';
+        } else if (resto.length && !s.esperaAlEquipo) {
+          accion = '<div style="font-size:11px;color:var(--text-hint);margin-top:8px">' +
+            'Esta conversación llegó a su límite. Si necesitás plantear algo más, enviá una sugerencia nueva.</div>';
+        } else if (s.esperaAlEquipo && resto.length) {
+          accion = '<div style="font-size:11px;color:var(--text-hint);margin-top:8px">Esperando la respuesta del equipo.</div>';
         }
+
         return '' +
           '<div style="padding:14px 24px;border-bottom:1px solid var(--border)">' +
             '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">' +
@@ -191,7 +229,8 @@
               '<span style="flex-shrink:0;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:' + st.bg + ';color:' + st.color + '">' + st.label + '</span>' +
             '</div>' +
             '<div style="font-size:11px;color:var(--text-hint);margin-top:4px">' + date + '</div>' +
-            responseHtml +
+            conversacion +
+            accion +
           '</div>';
       }).join('');
 
@@ -204,6 +243,55 @@
           fetch('/suggestions/mine/' + s._id + '/read', { method: 'POST' }).catch(function () {});
         });
         updateInboxBadge(0);
+      }
+    }
+
+    function toggleReply(id) {
+      var box = document.getElementById('replyBox-' + id);
+      if (!box) return;
+      var abierto = box.style.display !== 'none';
+      box.style.display = abierto ? 'none' : 'block';
+      if (!abierto) document.getElementById('replyText-' + id).focus();
+    }
+
+    async function submitReply(id) {
+      var ta     = document.getElementById('replyText-' + id);
+      var errBox = document.getElementById('replyError-' + id);
+      var btn    = document.getElementById('replyBtn-' + id);
+      var text   = ta.value.trim();
+      errBox.style.display = 'none';
+
+      if (!text) {
+        errBox.textContent = 'Escribí tu respuesta antes de enviar';
+        errBox.style.display = 'block';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Enviando…';
+      try {
+        var res  = await fetch('/suggestions/mine/' + id + '/reply', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ text: text }),
+        });
+        var data = await res.json();
+        if (res.ok) {
+          // Se recarga la bandeja entera en vez de insertar el mensaje a mano: así el estado
+          // que se ve (vuelve a "Pendiente", desaparece el botón de responder) es el que
+          // quedó en la base, no una reconstrucción del navegador.
+          await loadInbox();
+        } else {
+          errBox.textContent = data.error || 'No se pudo enviar tu respuesta';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'Enviar';
+        }
+      } catch {
+        errBox.textContent = 'Error de conexión. Intentá de nuevo.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Enviar';
       }
     }
 

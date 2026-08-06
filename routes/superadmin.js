@@ -18,6 +18,7 @@ const { requireAuth }      = require('../middleware/auth');
 const { requireSuperAdmin } = require('../middleware/superadmin');
 const { invalidateUser, invalidateSchool } = require('../middleware/cache');
 const { logAudit } = require('../middleware/audit');
+const { hilo, esperaAlEquipo, ultimoDelEquipo } = require('../services/suggestionThread');
 
 // Multer en memoria para importación Excel (no necesita guardarse en disco)
 const xlsUpload = multer({
@@ -860,7 +861,10 @@ router.get('/suggestions', async (req, res) => {
       Suggestion.find(filter)
         .populate('user', 'name email role')
         .populate('school', 'name color')
-        .sort({ createdAt: -1 })
+        // Por última actividad y no por fecha de alta: cuando alguien responde una sugerencia
+        // vieja, ese hilo tiene que subir a la vista. Marcar leída no toca updatedAt
+        // (ver POST /suggestions/mine/:id/read), así que esto es actividad real.
+        .sort({ updatedAt: -1 })
         .skip((page - 1) * LIMIT)
         .limit(LIMIT),
       Suggestion.countDocuments(filter),
@@ -870,6 +874,9 @@ router.get('/suggestions', async (req, res) => {
     const totalPages = Math.ceil(total / LIMIT) || 1;
     res.render('superadmin/suggestions', {
       suggestions, pendingCount, status, page, totalPages, total, activePage: 'suggestions',
+      // La vista pinta la conversación completa sin saber dónde vive cada mensaje.
+      hiloDe: hilo,
+      esperaAlEquipo,
     });
   } catch {
     res.status(500).send('Error del servidor');
@@ -893,34 +900,66 @@ router.post('/suggestions/:id/reviewed', async (req, res) => {
   }
 });
 
-// POST /superadmin/suggestions/:id/respond — escribe (o reescribe) la respuesta.
-// Mismo endpoint para "responder por primera vez" y "editar una respuesta ya enviada":
-// en ambos casos se resetea readByUser=false, así el usuario ve el badge del sobre
-// de nuevo cuando el superadmin corrige o amplía lo que había escrito.
+// POST /superadmin/suggestions/:id/respond — contesta la sugerencia.
+//
+// Tres cosas por el mismo endpoint, porque para quien responde son la misma acción:
+//   1. Responder por primera vez  → llena `response` (el campo de siempre).
+//   2. Volver a responder         → suma un mensaje al hilo, sin pisar lo anterior. Es lo que
+//                                    permite seguir la conversación cuando el usuario contestó.
+//   3. Editar (`isEdit`)          → corrige lo ÚLTIMO que escribió el equipo, esté en
+//                                    `response` o en el último mensaje del hilo.
+//
+// Siempre se resetea readByUser=false: el usuario tiene que ver el badge del sobre tanto por
+// un mensaje nuevo como por una corrección de lo que ya había leído.
 router.post('/suggestions/:id/respond', async (req, res) => {
   try {
     const { text } = req.body;
     if (!text || !text.trim()) {
       return res.status(400).json({ error: 'La respuesta no puede estar vacía' });
     }
+    if (text.trim().length > 1000) {
+      return res.status(400).json({ error: 'La respuesta no puede superar los 1000 caracteres' });
+    }
     const isEdit = req.body.isEdit === true || req.body.isEdit === 'true';
 
-    const s = await Suggestion.findByIdAndUpdate(
-      req.params.id,
-      {
-        response:    text.trim(),
-        respondedAt: new Date(),
-        respondedBy: req.userId,
-        status:      'answered',
-        readByUser:  false,
-      },
-      { new: true },
-    );
+    const s = await Suggestion.findById(req.params.id);
     if (!s) return res.status(404).json({ error: 'Sugerencia no encontrada' });
+
+    const ultimo = ultimoDelEquipo(s); // índice en messages[] · null = está en `response` · undefined = no hay
+    let accion;
+
+    if (isEdit && ultimo !== undefined) {
+      if (ultimo === null) {
+        s.response    = text.trim();
+        s.respondedAt = new Date();
+        s.respondedBy = req.userId;
+      } else {
+        s.messages[ultimo].text     = text.trim();
+        s.messages[ultimo].editedAt = new Date();
+      }
+      accion = 'editada';
+    } else if (ultimo === undefined) {
+      // Primera respuesta: va a los campos de siempre, así las sugerencias con un solo ida y
+      // vuelta —que son la enorme mayoría— se siguen leyendo exactamente igual que antes.
+      s.response    = text.trim();
+      s.respondedAt = new Date();
+      s.respondedBy = req.userId;
+      accion = 'nueva';
+    } else {
+      // El hilo no tiene tope del lado del equipo a propósito: el que se topea es el usuario
+      // (ver services/suggestionThread.js), y aun con el hilo lleno hay que poder cerrarlo
+      // con una última respuesta.
+      s.messages.push({ from: 'staff', author: req.userId, text: text.trim() });
+      accion = 'seguimiento';
+    }
+
+    s.status     = 'answered';
+    s.readByUser = false;
+    await s.save();
 
     logAudit(req, 'suggestion.respond',
       [{ type: 'suggestion', id: s._id, name: (s.text || '').slice(0, 60) }],
-      { accion: isEdit ? 'editada' : 'nueva' },
+      { accion },
       { schoolId: s.school || null },
     );
 

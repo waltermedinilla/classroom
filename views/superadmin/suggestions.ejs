@@ -7,6 +7,27 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
   <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* Hilo de la conversación: la sugerencia y las respuestas de los dos lados. Se distingue
+       de quién es cada mensaje por el borde y el fondo, no por la alineación: son textos
+       largos y una burbuja de chat a la derecha se leería peor. */
+    .thread { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+    .thread-msg { padding: 11px 14px; border-radius: 8px; }
+    .thread-msg.de-usuario { background: var(--background); border-left: 3px solid #fbbc04; }
+    .thread-msg.de-equipo  { background: var(--background); border-left: 3px solid #1a73e8; }
+    .thread-meta {
+      font-size: 11px; font-weight: 600; margin-bottom: 4px;
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    }
+    .thread-msg.de-usuario .thread-meta { color: #b06000; }
+    .thread-msg.de-equipo  .thread-meta { color: #1a73e8; }
+    .thread-text { font-size: 13px; color: var(--text); white-space: pre-wrap; }
+    .thread-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: #fef7e0; color: #b06000; font-size: 11px; font-weight: 700;
+      padding: 3px 10px; border-radius: 12px; letter-spacing: .3px;
+    }
+  </style>
 </head>
 <body>
   <%- include('../partials/header') %>
@@ -48,7 +69,14 @@
       %>
       <div style="display:flex;flex-direction:column;gap:14px">
         <% suggestions.forEach(s => { %>
-          <% const sb = statusBadges[s.status] || statusBadges.pending; %>
+          <%
+            const sb = statusBadges[s.status] || statusBadges.pending;
+            // La conversación completa (sugerencia + respuestas de los dos lados) y cuál es
+            // el último mensaje del equipo, que es el único editable.
+            const mensajes = hiloDe(s);
+            let ultimoDelEquipo = -1;
+            mensajes.forEach((m, i) => { if (m.from === 'staff') ultimoDelEquipo = i; });
+          %>
           <div class="suggestion-card" id="scard-<%= s._id %>" data-status="<%= s.status %>">
             <div class="suggestion-header">
               <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
@@ -70,40 +98,63 @@
                 </div>
               </div>
               <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                <%# El hilo puede tener varias idas y vueltas: lo que importa de un vistazo no
+                    es el estado sino de quién es el turno. Si el último mensaje es del usuario,
+                    hay algo esperando respuesta aunque la sugerencia ya se haya contestado antes. %>
+                <% if (esperaAlEquipo(s) && mensajes.length > 1) { %>
+                  <span class="thread-chip" title="El usuario respondió tu última respuesta">
+                    <span class="material-symbols-outlined" style="font-size:13px">forum</span>
+                    TE RESPONDIÓ
+                  </span>
+                <% } %>
                 <span id="statusBadge-<%= s._id %>" style="background:<%= sb.bg %>;color:<%= sb.color %>;font-size:11px;padding:3px 10px;border-radius:12px;font-weight:600"><%= sb.label %></span>
                 <% if (s.status === 'pending') { %>
-                  <button class="btn btn-outline" style="font-size:12px;padding:4px 12px" onclick="markReviewed('<%= s._id %>')">
+                  <button class="btn btn-outline" id="reviewBtn-<%= s._id %>" style="font-size:12px;padding:4px 12px" onclick="markReviewed('<%= s._id %>')">
                     <span class="material-symbols-outlined" style="font-size:15px">check_circle</span>
                     Marcar revisada
                   </button>
                 <% } %>
-                <% if (s.status !== 'answered') { %>
-                  <button class="btn btn-primary" style="font-size:12px;padding:4px 12px" onclick="toggleRespond('<%= s._id %>')">
-                    <span class="material-symbols-outlined" style="font-size:15px">reply</span>
-                    Responder
-                  </button>
-                <% } %>
+                <%# Antes el botón desaparecía al responder. Ahora siempre está: es lo que
+                    permite seguir la conversación cuando el usuario vuelve a escribir. %>
+                <button class="btn <%= esperaAlEquipo(s) ? 'btn-primary' : 'btn-outline' %>" style="font-size:12px;padding:4px 12px" onclick="toggleRespond('<%= s._id %>')">
+                  <span class="material-symbols-outlined" style="font-size:15px">reply</span>
+                  <%= mensajes.length > 1 ? 'Responder de nuevo' : 'Responder' %>
+                </button>
                 <button class="icon-btn" title="Eliminar" onclick="deleteSuggestion('<%= s._id %>')">
                   <span class="material-symbols-outlined" style="font-size:18px;color:var(--text-hint)">delete</span>
                 </button>
               </div>
             </div>
-            <p class="suggestion-text"><%= s.text %></p>
 
-            <% if (s.status === 'answered') { %>
-              <div style="margin-top:4px;padding:12px 14px;background:var(--bg);border-radius:8px;border-left:3px solid #1a73e8" id="responseDisplay-<%= s._id %>">
-                <div style="font-size:11px;font-weight:600;color:#1a73e8;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;gap:8px">
-                  <span style="display:flex;align-items:center;gap:4px">
-                    <span class="material-symbols-outlined" style="font-size:14px">reply</span>
-                    Tu respuesta<% if (s.respondedAt) { %> · <%= new Date(s.respondedAt).toLocaleDateString('es-ES', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) %><% } %>
-                  </span>
-                  <button class="icon-btn" style="width:24px;height:24px" title="Editar respuesta" onclick="toggleRespond('<%= s._id %>', true)">
-                    <span class="material-symbols-outlined" style="font-size:15px">edit</span>
-                  </button>
+            <%# La conversación completa, en orden. El primer mensaje es la sugerencia; los
+                demás son las respuestas de un lado y del otro. %>
+            <div class="thread">
+              <% mensajes.forEach((m, i) => { %>
+                <% const esEquipo = m.from === 'staff'; %>
+                <div class="thread-msg <%= esEquipo ? 'de-equipo' : 'de-usuario' %>">
+                  <div class="thread-meta">
+                    <span style="display:flex;align-items:center;gap:4px">
+                      <span class="material-symbols-outlined" style="font-size:14px"><%= esEquipo ? 'reply' : (i === 0 ? 'lightbulb' : 'forum') %></span>
+                      <%= esEquipo ? 'Tu respuesta' : (i === 0 ? 'Sugerencia' : 'Respondió ' + (s.user?.name || 'el usuario')) %><%
+                        %><% if (m.at) { %> · <%= new Date(m.at).toLocaleDateString('es-ES', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) %><% } %><%
+                        %><% if (m.editedAt) { %> · editada<% } %>
+                    </span>
+                    <%# Solo se edita lo ÚLTIMO que escribió el equipo: corregir un mensaje del
+                        medio dejaría la conversación sin sentido para quien ya la leyó. %>
+                    <% if (esEquipo && i === ultimoDelEquipo) { %>
+                      <button class="icon-btn" style="width:24px;height:24px" title="Editar esta respuesta" onclick="toggleRespond('<%= s._id %>', true)">
+                        <span class="material-symbols-outlined" style="font-size:15px">edit</span>
+                      </button>
+                    <% } %>
+                  </div>
+                  <% if (esEquipo && i === ultimoDelEquipo) { %>
+                    <div class="thread-text" id="responseText-<%= s._id %>"><%= m.text %></div>
+                  <% } else { %>
+                    <div class="thread-text"><%= m.text %></div>
+                  <% } %>
                 </div>
-                <div style="font-size:13px;color:var(--text);white-space:pre-wrap" id="responseText-<%= s._id %>"><%= s.response %></div>
-              </div>
-            <% } %>
+              <% }) %>
+            </div>
 
             <div class="suggest-respond-area" id="respond-<%= s._id %>" style="display:none;margin-top:12px">
               <textarea class="respond-textarea" id="respondText-<%= s._id %>" rows="3" maxlength="1000"
@@ -170,7 +221,9 @@
       if (res.ok) {
         const card = document.getElementById('scard-' + id);
         card.dataset.status = 'reviewed';
-        card.querySelector('.btn.btn-outline').remove();
+        // Por id y no por `.btn.btn-outline`: el botón de responder también puede ser
+        // outline (cuando el turno no es del equipo) y se borraría el que no era.
+        document.getElementById('reviewBtn-' + id)?.remove();
         document.getElementById('statusBadge-' + id).outerHTML =
           `<span id="statusBadge-${id}" style="background:#e8eaed;color:#5f6368;font-size:11px;padding:3px 10px;border-radius:12px;font-weight:600">REVISADA</span>`;
       }
@@ -182,21 +235,31 @@
       if (res.ok) document.getElementById('scard-' + id).remove();
     }
 
-    // Abre/cierra el área de respuesta. isEdit=true precarga el texto actual (editar
-    // una respuesta ya enviada); false arranca vacío (responder por primera vez).
+    // Abre/cierra el área de respuesta.
+    //   isEdit=true  → corrige la ÚLTIMA respuesta del equipo: precarga su texto.
+    //   isEdit=false → mensaje nuevo en el hilo: arranca vacío.
+    // El modo queda guardado en el área porque es lo que después decide el server entre
+    // pisar la última respuesta o sumar un mensaje. No se puede deducir del estado de la
+    // tarjeta: una sugerencia ya respondida se puede tanto editar como continuar.
     function toggleRespond(id, isEdit) {
       const area    = document.getElementById('respond-' + id);
+      const textarea = document.getElementById('respondText-' + id);
+      const btn      = document.getElementById('respondBtn-' + id);
       const showing = area.style.display !== 'none';
       if (showing) {
         area.style.display = 'none';
         return;
       }
+      area.dataset.edit = isEdit ? '1' : '0';
       if (isEdit) {
         const current = document.getElementById('responseText-' + id);
-        document.getElementById('respondText-' + id).value = current ? current.textContent : '';
+        textarea.value = current ? current.textContent : '';
+      } else {
+        textarea.value = '';
       }
+      btn.textContent = isEdit ? 'Guardar cambios' : 'Enviar respuesta';
       area.style.display = 'block';
-      document.getElementById('respondText-' + id).focus();
+      textarea.focus();
     }
 
     async function submitResponse(id) {
@@ -212,8 +275,7 @@
         return;
       }
 
-      const card   = document.getElementById('scard-' + id);
-      const isEdit = card.dataset.status === 'answered';
+      const isEdit = document.getElementById('respond-' + id).dataset.edit === '1';
 
       btn.disabled = true;
       btn.textContent = 'Enviando…';
@@ -232,13 +294,13 @@
           errBox.textContent = data.error || 'Error al enviar la respuesta';
           errBox.style.display = 'block';
           btn.disabled = false;
-          btn.textContent = 'Enviar respuesta';
+          btn.textContent = isEdit ? 'Guardar cambios' : 'Enviar respuesta';
         }
       } catch {
         errBox.textContent = 'Error de conexión. Intentá de nuevo.';
         errBox.style.display = 'block';
         btn.disabled = false;
-        btn.textContent = 'Enviar respuesta';
+        btn.textContent = isEdit ? 'Guardar cambios' : 'Enviar respuesta';
       }
     }
   </script>

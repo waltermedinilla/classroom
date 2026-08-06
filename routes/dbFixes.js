@@ -73,11 +73,15 @@ router.post('/:id/previsualizar', async (req, res) => {
 });
 
 /* ─── Resolver UN grupo de un arreglo interactivo ────────────────────────── */
-// Los arreglos interactivos (hoy solo 'docentes-dni-duplicado') no tienen un botón único:
-// cada grupo se resuelve por separado porque la elección —cuál de las dos cuentas se
-// conserva— es de la escuela, no derivable de los datos. El servicio recalcula el grupo
+// Los arreglos interactivos ('docentes-dni-duplicado' y 'dni-duplicado-en-curso') resuelven
+// cada grupo por separado, porque la elección —cuál de las dos cuentas se conserva y con qué
+// correo queda— es de la escuela, no derivable de los datos. El servicio recalcula el grupo
 // desde la base antes de tocar nada, así que un panel viejo en otra pestaña no puede
 // fusionar contra un estado que ya cambió.
+//
+// El mensaje y el detalle de auditoría los arma el propio arreglo: lo que se transfiere en
+// una fusión de docentes (materias a cargo) no se parece a lo de una de alumnos (entregas y
+// notas), y esta ruta no tiene por qué saber la diferencia.
 router.post('/:id/fusionar', async (req, res) => {
   const fix = getFix(req.params.id);
   if (!fix) return res.status(404).json({ error: 'Ese arreglo no existe' });
@@ -108,44 +112,17 @@ router.post('/:id/fusionar', async (req, res) => {
         sobrante: r.sobrantes.map(c => c.email).join(', '),
         destino_sobrante: r.accion,
         ...(r.correo.cambiado ? { correo_final: r.correo.final, correo_anterior: r.correo.anterior } : {}),
-        materias_titular: r.resumen.titular,
-        materias_suplente: r.resumen.suplente,
-        actividades: r.resumen.actividades,
-        novedades: r.resumen.novedades,
+        ...(r.auditoria || {}),
       },
-      // La clave del grupo es `${schoolId}|${dni}`: sin esto el evento queda con school:null
-      // y no lo ve el admin de la escuela en su propio panel de auditoría.
-      { schoolId: String(clave).split('|')[0] || null },
+      // Sin esto el evento queda con school:null y no lo ve el admin de la escuela en su
+      // propio panel de auditoría (el superadmin no tiene escuela propia).
+      { schoolId: r.schoolId || null },
     );
 
     const despues = await fix.diagnosticar();
-    const { titular, suplente, actividades, novedades, comentarios, matriculas } = r.resumen;
-    const movido = [
-      titular     ? `${titular} materia(s) como titular` : null,
-      suplente    ? `${suplente} como suplente`          : null,
-      actividades ? `${actividades} actividad(es)`       : null,
-      novedades   ? `${novedades} novedad(es)`           : null,
-      comentarios ? `${comentarios} novedad(es) con comentarios suyos` : null,
-      matriculas  ? `${matriculas} matrícula(s) sueltas quitadas`      : null,
-    ].filter(Boolean);
-
     res.json({
       ok: true,
-      mensaje:
-        `Listo: ${r.conservada.nombre} (${r.correo.final}) se queda con todo. ` +
-        (movido.length ? `Se transfirió: ${movido.join(', ')}. ` : 'No había nada que transferir. ') +
-        (r.correo.cambiado
-          ? `El correo pasó de ${r.correo.anterior} a ${r.correo.final}` +
-            (r.correo.intercambiadoCon
-              ? ` (la cuenta deshabilitada se quedó con ${r.correo.intercambiadoCon}). `
-              : '. ')
-          : '') +
-        (r.accion === 'eliminar'
-          ? 'La cuenta sobrante se eliminó.'
-          : 'La cuenta sobrante quedó deshabilitada' +
-            (r.forzadoDeshabilitar
-              ? ' (no se pudo eliminar: tiene entregas propias, borrarla dejaría esas entregas sin dueño).'
-              : '.')),
+      mensaje: r.mensaje,
       restantes: despues.total,
       grupos: despues.grupos || [],
     });

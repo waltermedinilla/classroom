@@ -20,6 +20,23 @@ const Activity   = require('../models/Activity');
 const Submission = require('../models/Submission');
 const { logAudit } = require('../middleware/audit');
 
+// TOPE DE MATERIAS DEL ALUMNO (pedido el 2026-08-06).
+//
+// Con 9 o más materias el alumno ya tiene su curso completo, así que el panel deja de
+// ofrecerle sumar más: desaparecen «Unirme con un código» y «Enviar solicitud para unirme»
+// (views/dashboard.ejs) y la ruta POST /courses/join rechaza (services/joinByCode.js).
+//
+// NO limita el alta administrativa: el admin, el preceptor y el docente pueden seguir
+// matriculando por encima del tope. Es un freno a la vía del alumno, no una regla de la
+// base. Para moverlo o sacarlo, cambiar este número (Infinity lo desactiva de hecho).
+const MAX_MATERIAS_ALUMNO = 9;
+
+// ¿El alumno ya llegó al tope? Cuenta las materias donde figura como alumno.
+async function alcanzoTopeDeMaterias(studentId) {
+  const materias = await Course.countDocuments({ students: studentId });
+  return materias >= MAX_MATERIAS_ALUMNO;
+}
+
 // Inscribe a `student` en las materias del Curso `divisionId` donde todavía no figura.
 // Usado tanto para un alumno recién creado como para uno que ya existía (encontrado por
 // DNI) — en ambos casos la regla es la misma: completar lo que le falta, sin duplicar.
@@ -127,4 +144,6 @@ module.exports = {
   enrollStudentInDivisionCourses,
   unenrollStudentFromDivision,
   contarEntregasEnDivision,
+  MAX_MATERIAS_ALUMNO,
+  alcanzoTopeDeMaterias,
 };

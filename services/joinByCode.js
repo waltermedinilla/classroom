@@ -22,6 +22,9 @@
 
 const Course = require('../models/Course');
 const { logAudit } = require('../middleware/audit');
+// Tope de materias del alumno: el botón ya no se muestra al llegar, pero la ruta también
+// tiene que rechazar — el panel se puede saltear con un request armado a mano.
+const { MAX_MATERIAS_ALUMNO, alcanzoTopeDeMaterias } = require('../services/enrollment');
 
 const JOIN_BY_CODE_ACTIVO = true;
 
@@ -66,6 +69,14 @@ async function unirPorCodigo(req, student, code) {
 
   if ((materia.students || []).some(s => s.toString() === student._id.toString())) {
     return { ok: false, error: `Ya estás en ${materia.name}.` };
+  }
+
+  // Va después de "ya estás en X" para que ese mensaje, que es el más específico, gane.
+  if (await alcanzoTopeDeMaterias(student._id)) {
+    return {
+      ok: false,
+      error: `Ya tenés ${MAX_MATERIAS_ALUMNO} materias o más. Si te falta alguna, pedile el alta al administrador.`,
+    };
   }
 
   const misDivisiones = await divisionesDelAlumno(student._id);

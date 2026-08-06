@@ -25,6 +25,8 @@ const {
 const { cursosDisponibles, automatricular } = require('../services/selfEnroll');
 // Código de clase — apagable, ver la cabecera de services/joinByCode.js.
 const { JOIN_BY_CODE_ACTIVO, unirPorCodigo } = require('../services/joinByCode');
+// Tope de materias por alumno: a partir de ahí el panel no le ofrece sumar más.
+const { MAX_MATERIAS_ALUMNO } = require('../services/enrollment');
 
 const router = express.Router();
 
@@ -106,8 +108,14 @@ router.get('/', requireAuth, async (req, res) => {
       ? await cursosDisponibles(res.locals.user.school || null)
       : [];
 
+    // Tope de materias del alumno (ver services/enrollment.js). Se mide con joined, que son
+    // las materias donde está como alumno: un alumno nunca es owner, así que `courses` daría
+    // lo mismo, pero joined es lo que la regla mira. Para los demás roles nunca está lleno.
+    const cupoMateriasLleno = res.locals.user?.role === 'student' &&
+      joined.length >= MAX_MATERIAS_ALUMNO;
+
     res.render('dashboard', { courses, pendingSummary, profilePrompt, autoMatricula,
-      joinByCode: JOIN_BY_CODE_ACTIVO });
+      joinByCode: JOIN_BY_CODE_ACTIVO, cupoMateriasLleno });
   } catch (err) {
     res.status(500).send('Error del servidor');
   }

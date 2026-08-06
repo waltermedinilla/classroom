@@ -1693,6 +1693,29 @@ const specs = [
     },
   },
   {
+    // ── Hilo de conversación (ver services/suggestionThread.js) ──────────────
+    // La regla que le da sentido al hilo: se puede seguir una conversación, no abrir una
+    // sin contestar. Mientras nadie respondió no hay hilo, y lo que corresponde es una
+    // sugerencia nueva. Va acá porque más abajo la sugerencia ya está respondida.
+    id: 'suggestions-thread-blocked-before-answer',
+    title: 'Sin respuesta del equipo, el usuario no puede seguir el hilo (le pide abrir una nueva)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const mineRes = await client.get('scopedStudent', '/suggestions/mine', { expectStatus: 200 });
+      const mine = mineRes.json.suggestions.find(s => s._id === state.studentSuggestionId);
+      assert(mine.puedeResponder === false, 'sin respuesta del equipo no debería poder responder');
+      assert(mine.esperaAlEquipo === true, 'debería figurar esperando al equipo');
+      assert(mine.hilo.length === 1, `el hilo debería tener solo la sugerencia, tiene ${mine.hilo.length}`);
+
+      const res = await client.post('scopedStudent', `/suggestions/mine/${state.studentSuggestionId}/reply`, {
+        body: { text: 'No debería entrar' },
+        expectStatus: 400,
+      });
+      assert(/sugerencia nueva/.test(res.json.error || ''),
+        `el error debería derivar a abrir una sugerencia nueva — dijo: ${res.json.error}`);
+    },
+  },
+  {
     id: 'suggestions-superadmin-can-respond',
     title: 'El superadmin responde la sugerencia del alumno',
     requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
@@ -1771,6 +1794,90 @@ const specs = [
     async run({ client, state }) {
       // scopedTeacher intenta marcar como leída la sugerencia del alumno — no es suya
       await client.post('scopedTeacher', `/suggestions/mine/${state.studentSuggestionId}/read`, {
+        expectStatus: 404,
+      });
+    },
+  },
+  {
+    id: 'suggestions-thread-student-replies',
+    title: 'El alumno responde la respuesta y la sugerencia vuelve a Pendientes',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      state.threadStudentReply = `Repregunta del alumno — smoke ${RUN_ID}`;
+      await client.post('scopedStudent', `/suggestions/mine/${state.studentSuggestionId}/reply`, {
+        body: { text: state.threadStudentReply },
+        expectStatus: 200,
+      });
+
+      const mineRes = await client.get('scopedStudent', '/suggestions/mine', { expectStatus: 200 });
+      const mine = mineRes.json.suggestions.find(s => s._id === state.studentSuggestionId);
+      // Vuelve a 'pending' a propósito: es lo que la devuelve a la bandeja donde el
+      // superadmin entra por default. Si quedara en 'answered' nadie vería la repregunta.
+      assert(mine.status === 'pending', `esperaba pending tras responder, encontré ${mine.status}`);
+      assert(mine.hilo.length === 3, `el hilo debería tener 3 mensajes, tiene ${mine.hilo.length}`);
+      assert(mine.hilo[2].from === 'user' && mine.hilo[2].text === state.threadStudentReply,
+        'el último mensaje del hilo debería ser el del alumno');
+      assert(mine.esperaAlEquipo === true, 'ahora la pelota queda del lado del equipo');
+      // Su propia respuesta no puede dejarle el sobre marcado como no leído.
+      assert(mine.readByUser === true, 'responder no debería dejar la sugerencia como no leída');
+
+      const panel = await client.get('superadmin', '/superadmin/suggestions?status=pending', { expectStatus: 200 });
+      assert(panel.text.includes(state.threadStudentReply), 'el panel del superadmin debería mostrar la repregunta');
+      assert(panel.text.includes('TE RESPONDIÓ'), 'la tarjeta debería avisar que el usuario respondió');
+    },
+  },
+  {
+    id: 'suggestions-thread-superadmin-replies-again',
+    title: 'El superadmin vuelve a responder: suma al hilo sin pisar la primera respuesta',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      state.threadStaffReply = `Segunda respuesta del equipo — smoke ${RUN_ID}`;
+      await client.post('superadmin', `/superadmin/suggestions/${state.studentSuggestionId}/respond`, {
+        body: { text: state.threadStaffReply, isEdit: false },
+        expectStatus: 200,
+      });
+
+      const mineRes = await client.get('scopedStudent', '/suggestions/mine', { expectStatus: 200 });
+      const mine = mineRes.json.suggestions.find(s => s._id === state.studentSuggestionId);
+      assert(mine.status === 'answered', `esperaba answered, encontré ${mine.status}`);
+      assert(mine.hilo.length === 4, `el hilo debería tener 4 mensajes, tiene ${mine.hilo.length}`);
+      assert(mine.hilo[3].from === 'staff' && mine.hilo[3].text === state.threadStaffReply,
+        'el último mensaje debería ser la segunda respuesta del equipo');
+      // La primera respuesta vive en `response` y no se toca: es lo que mantiene legibles
+      // las sugerencias históricas sin migrar la base.
+      assert(mine.hilo[1].text !== state.threadStaffReply, 'la primera respuesta no debería haberse pisado');
+      assert(mine.readByUser === false, 'un mensaje nuevo del equipo debería volver a marcarla sin leer');
+
+      const pageRes = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
+      assert(pageRes.text.includes('id="inboxBadge"'), 'el badge del sobre debería reaparecer');
+    },
+  },
+  {
+    id: 'suggestions-thread-edit-touches-last-message',
+    title: 'Editar corrige el último mensaje del equipo, no el primero',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const corregida = `Segunda respuesta corregida — smoke ${RUN_ID}`;
+      await client.post('superadmin', `/superadmin/suggestions/${state.studentSuggestionId}/respond`, {
+        body: { text: corregida, isEdit: true },
+        expectStatus: 200,
+      });
+
+      const mineRes = await client.get('scopedStudent', '/suggestions/mine', { expectStatus: 200 });
+      const mine = mineRes.json.suggestions.find(s => s._id === state.studentSuggestionId);
+      assert(mine.hilo.length === 4, 'editar no debería agregar un mensaje al hilo');
+      assert(mine.hilo[3].text === corregida, 'el último mensaje debería quedar corregido');
+      assert(mine.hilo[3].editedAt, 'el mensaje corregido debería quedar marcado como editado');
+      assert(mine.hilo[2].text === state.threadStudentReply, 'la repregunta del alumno no debería tocarse');
+    },
+  },
+  {
+    id: 'suggestions-thread-denies-other-users',
+    title: 'Un usuario no puede responder en el hilo de otro (404)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.post('scopedTeacher', `/suggestions/mine/${state.studentSuggestionId}/reply`, {
+        body: { text: 'No es mi conversación' },
         expectStatus: 404,
       });
     },
@@ -2798,6 +2905,131 @@ const specs = [
       if (state.dupCourseId)      await client.post('admin', `/admin/courses/${state.dupCourseId}/delete`, { expectStatus: 200 });
       if (state.dupVaciaId)       await client.post('admin', `/admin/users/${state.dupVaciaId}/delete`, { expectStatus: 200 });
       if (state.dupConMateriaId)  await client.post('admin', `/admin/users/${state.dupConMateriaId}/delete`, { expectStatus: 200 });
+    },
+  },
+  {
+    // ── Fusión de ALUMNOS duplicados por DNI (/superadmin/otros) ─────────────
+    // Mismo panel y misma puerta que los docentes, pero lo que se transfiere son entregas y
+    // notas. El caso real: la cuenta vieja es la que cursa y tiene las notas, la nueva se
+    // creó después con el correo bueno, y el docente ve al alumno repetido en el gradebook.
+    id: 'alumnos-dup-setup',
+    title: 'Se arman dos cuentas de alumno con el mismo DNI en un curso (una con nota, otra vacía)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state }) {
+      const dni = dniSmoke(25);
+      state.dupAlumnoDni    = dni;
+      state.dupAlumnoVieja  = `dup.alumno.viejo.${RUN_ID}@example.com`;
+      state.dupAlumnoNueva  = `dup.alumno.nuevo.${RUN_ID}@example.com`;
+
+      const vieja = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke Alumno Dup Viejo ${RUN_ID}`, email: state.dupAlumnoVieja,
+                password: 'SmokeTest1234', role: 'student', dni, divisionId: state.divisionId },
+        expectStatus: 201,
+      });
+      state.dupAlumnoViejaId = vieja.json.user._id;
+
+      const nueva = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke Alumno Dup Nuevo ${RUN_ID}`, email: state.dupAlumnoNueva,
+                password: 'OtraClave1234', role: 'student', dni: dniSmoke(26), divisionId: state.divisionId },
+        expectStatus: 201,
+      });
+      state.dupAlumnoNuevaId = nueva.json.user._id;
+
+      // La cuenta vieja es la que tiene trabajo hecho: es lo único que decide la sugerencia.
+      await client.post('scopedTeacher', `/activities/${state.activityId}/grade`, {
+        body: { studentId: state.dupAlumnoViejaId, points: '7', feedback: 'Smoke' },
+        expectStatus: 200,
+      });
+
+      // El DNI repetido va directo a Mongo: por la ruta de alta no entra (normalizeDni le
+      // saca los puntos y ahí sí choca contra el índice único).
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        await mongo.db().collection('users').updateOne(
+          { _id: new ObjectId(state.dupAlumnoNuevaId) },
+          { $set: { dni: `${dni.slice(0, 2)}.${dni.slice(2, 5)}.${dni.slice(5)}` } },
+        );
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'alumnos-dup-diagnostico',
+    title: 'El panel Otros detecta al alumno repetido y sugiere la cuenta que tiene la nota',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert }) {
+      const res = await client.get('superadmin', '/superadmin/otros/dni-duplicado-en-curso/diagnostico', { expectStatus: 200 });
+      const grupo = (res.json.grupos || []).find(g => g.dni === state.dupAlumnoDni.replace(/^0+/, ''));
+      assert(grupo, `debería detectar el grupo del DNI ${state.dupAlumnoDni}`);
+      assert(grupo.cuentas.length === 2, `el grupo debería tener 2 cuentas, tiene ${grupo.cuentas.length}`);
+      state.dupAlumnoClave = grupo.clave;
+
+      assert(grupo.sugeridaId === state.dupAlumnoViejaId, 'la sugerida debería ser la que tiene la nota');
+      const conNota = grupo.cuentas.find(c => c.id === state.dupAlumnoViejaId);
+      assert(/1 nota\(s\)/.test(conNota.detalle), `el detalle debería contar la nota — dice: ${conNota.detalle}`);
+      // La tercera opción para la cuenta sobrante es propia de los alumnos: sacarla del curso
+      // sin tocar la cuenta, que es lo que hacía el arreglo antes de ser elegible caso por caso.
+      assert((grupo.opcionesSobrante || []).some(o => o.value === 'sacar'),
+        'debería poder dejarse la cuenta sobrante solo fuera del curso');
+    },
+  },
+  {
+    id: 'alumnos-dup-rechaza-cuenta-ajena',
+    title: 'Fusionar un alumno hacia una cuenta que no es del grupo se rechaza',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state }) {
+      // Sin esto, un id copiado a mano podría llevarse las notas de un alumno a otro.
+      await client.post('superadmin', '/superadmin/otros/dni-duplicado-en-curso/fusionar', {
+        body: { clave: state.dupAlumnoClave, keepId: state.scopedStudentId },
+        expectStatus: 400,
+      });
+    },
+  },
+  {
+    id: 'alumnos-dup-fusion-elige-correo',
+    title: 'Se conserva la cuenta nueva con el correo de la vieja y se le pasa la nota',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert }) {
+      const res = await client.post('superadmin', '/superadmin/otros/dni-duplicado-en-curso/fusionar', {
+        body: { clave: state.dupAlumnoClave, keepId: state.dupAlumnoNuevaId,
+                emailId: state.dupAlumnoViejaId, sobrante: 'deshabilitar' },
+        expectStatus: 200,
+      });
+      assert(/1 nota\(s\)/.test(res.json.mensaje), `debería informar la nota transferida — dijo: ${res.json.mensaje}`);
+      assert(res.json.mensaje.includes(state.dupAlumnoVieja), `debería informar el correo adoptado — dijo: ${res.json.mensaje}`);
+
+      // La nota quedó en la cuenta conservada, no en la que se dio de baja.
+      const libro = await client.get('scopedTeacher', `/courses/${state.courseId}/gradebook`, { expectStatus: 200 });
+      const notas = libro.json.gradeMap[state.activityId] || {};
+      assert(notas[state.dupAlumnoNuevaId] === 7, `la nota 7 debería estar en la cuenta conservada, gradeMap dice ${notas[state.dupAlumnoNuevaId]}`);
+      assert(notas[state.dupAlumnoViejaId] === undefined, 'la cuenta sobrante no debería seguir con la nota');
+
+      // La conservada entra con el correo adoptado y SU contraseña de siempre; la sobrante
+      // se quedó con el correo que soltó y no puede iniciar sesión.
+      await client.post('dupAlumnoConservada', '/login', {
+        body: { email: state.dupAlumnoVieja, password: 'OtraClave1234' },
+        expectStatus: 200,
+      });
+      await client.post('dupAlumnoSobrante', '/login', {
+        body: { email: state.dupAlumnoNueva, password: 'SmokeTest1234' },
+        expectStatus: [400, 401, 403],
+      });
+
+      const despues = await client.get('superadmin', '/superadmin/otros/dni-duplicado-en-curso/diagnostico', { expectStatus: 200 });
+      assert(!(despues.json.grupos || []).some(g => g.clave === state.dupAlumnoClave),
+        'el grupo fusionado no debería seguir apareciendo');
+    },
+  },
+  {
+    id: 'alumnos-dup-cleanup',
+    title: 'Limpieza: se borran las dos cuentas de alumno duplicadas de prueba',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      if (state.dupAlumnoNuevaId) await client.post('admin', `/admin/users/${state.dupAlumnoNuevaId}/delete`, { expectStatus: 200 });
+      if (state.dupAlumnoViejaId) await client.post('admin', `/admin/users/${state.dupAlumnoViejaId}/delete`, { expectStatus: 200 });
     },
   },
   // ── Alta masiva de materias en varios cursos (/superadmin/otros) ──────────

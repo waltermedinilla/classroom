@@ -14,6 +14,12 @@
 //                 false → SOLO diagnóstico: no existe una regla automática correcta.
 //                         La tarjeta lo dice explícitamente en vez de ofrecer un botón
 //                         que invente datos. Ver el comentario de 'usuarios-sin-dni'.
+//   interactivo   true → además (o en vez) del botón masivo, la tarjeta deja resolver el
+//                 problema GRUPO POR GRUPO, porque la decisión es humana: con qué cuenta se
+//                 queda la persona y con qué correo. Requiere fusionar() y que diagnosticar()
+//                 devuelva `grupos`. Ver 'docentes-dni-duplicado' y 'dni-duplicado-en-curso'.
+//   fusionar(p)   resuelve UN grupo: { clave, keepId, sobrante, emailId } →
+//                 { mensaje, schoolId, accion, conservada, sobrantes, correo, auditoria }
 //   compositor    true → no es un problema con un contador, es una HERRAMIENTA: la tarjeta
 //                 pinta un formulario propio (lo que hay que crear no está en la base, lo
 //                 escribe la persona) y el resultado del diagnóstico son las OPCIONES de
@@ -49,6 +55,8 @@ const Activity     = require('../models/Activity');
 const Submission   = require('../models/Submission');
 const Announcement = require('../models/Announcement');
 const Subject      = require('../models/Subject');
+const ActivityView = require('../models/ActivityView');
+const Suggestion   = require('../models/Suggestion');
 
 // Cuántas filas se mandan a la vista previa. El resto queda en el conteo.
 const MUESTRA_MAX = 50;
@@ -176,10 +184,11 @@ function normalizarDni(dni) {
 // TODOS los alumnos de todas las materias de la división, porque una misma persona puede
 // estar con una cuenta en Matemática y con la otra en Historia del mismo curso.
 //
-// Lo comparten diagnosticar() y aplicar(), como en calcularMatriculaParcial().
-// Devuelve { grupos: [{ divisionId, dni, materias, conservar, sacar, ambigua }] }.
+// Lo comparten diagnosticar(), aplicar() y fusionarAlumnos(), como en calcularMatriculaParcial().
+// Devuelve { grupos: [{ clave, divisionId, schoolId, curso, dni, materias, cuentas,
+//                       sugerida, conservar, sacar, ambigua }] }.
 async function calcularDniDuplicados() {
-  const cursos = await Course.find().select('_id name division students').lean();
+  const cursos = await Course.find().select('_id name division school students').lean();
 
   // Solo alumnos: un docente que quedó dentro de students[] por un error viejo no es un
   // duplicado de alumno, y sacarlo del curso no es lo que este arreglo tiene que hacer.
@@ -211,7 +220,16 @@ async function calcularDniDuplicados() {
     }
     for (const [dni, cuentas] of porDni) {
       if (cuentas.size < 2) continue;
-      crudos.push({ divisionId, dni, materias, cuentas: [...cuentas.values()] });
+      crudos.push({
+        clave: `${divisionId}|${dni}`,
+        divisionId,
+        // La escuela del curso: la necesita el evento de auditoría de la fusión, porque el
+        // superadmin no tiene escuela propia y sin esto el admin no ve el evento.
+        schoolId: materias.find(m => m.school)?.school?.toString() || null,
+        dni,
+        materias,
+        cuentas: [...cuentas.values()],
+      });
     }
   }
 
@@ -229,70 +247,172 @@ async function calcularDniDuplicados() {
     .select('_id course grades.student').lean();
   const cursoDeActividad = new Map(actividades.map(a => [a._id.toString(), a.course.toString()]));
 
-  const trabajo = new Map(); // `${studentId}|${courseId}` → cuántas señales de actividad
-  const sumar = (studentId, courseId) => {
+  // Notas y entregas por separado y no en un solo contador: la tarjeta interactiva muestra
+  // los dos números, y "2 entregas y 0 notas" contra "0 y 2" no significan lo mismo a la
+  // hora de elegir con qué cuenta se queda el alumno.
+  const notas    = new Map(); // `${studentId}|${courseId}` → cuántas
+  const entregas = new Map();
+  const sumar = (mapa, studentId, courseId) => {
     const k = studentId + '|' + courseId;
-    trabajo.set(k, (trabajo.get(k) || 0) + 1);
+    mapa.set(k, (mapa.get(k) || 0) + 1);
   };
 
   for (const a of actividades) {
     for (const g of (a.grades || [])) {
       const s = g.student?.toString();
-      if (s && esCandidato.has(s)) sumar(s, a.course.toString());
+      if (s && esCandidato.has(s)) sumar(notas, s, a.course.toString());
     }
   }
 
-  const entregas = await Submission.find({
+  const entregasDocs = await Submission.find({
     activity: { $in: actividades.map(a => a._id) },
     student:  { $in: alumnoIds.map(id => new mongoose.Types.ObjectId(id)) },
   }).select('activity student').lean();
-  for (const e of entregas) {
+  for (const e of entregasDocs) {
     const courseId = cursoDeActividad.get(e.activity.toString());
-    if (courseId) sumar(e.student.toString(), courseId);
+    if (courseId) sumar(entregas, e.student.toString(), courseId);
+  }
+
+  const divisiones = await Division.find().select('_id name').lean();
+  const nombreDivision = new Map(divisiones.map(d => [d._id.toString(), d.name]));
+
+  // En qué OTROS cursos figura cada cuenta candidata. Importa al resolver el duplicado a
+  // mano: deshabilitar o eliminar una cuenta que además cursa en otra división le saca el
+  // acceso allá, y eso no se ve mirando solo este curso.
+  const divisionesPorCandidato = new Map();
+  for (const c of cursos) {
+    const d = c.division?.toString();
+    if (!d) continue;
+    for (const s of (c.students || [])) {
+      const k = s.toString();
+      if (!esCandidato.has(k)) continue;
+      if (!divisionesPorCandidato.has(k)) divisionesPorCandidato.set(k, new Set());
+      divisionesPorCandidato.get(k).add(d);
+    }
   }
 
   const grupos = crudos.map(g => {
     const cuentas = g.cuentas.map(u => {
       const id = u._id.toString();
+      const contar = mapa => g.materias.reduce(
+        (acc, m) => acc + (mapa.get(id + '|' + m._id.toString()) || 0), 0);
+      const entregasN = contar(entregas);
+      const notasN    = contar(notas);
       return {
         u,
-        trabajos: g.materias.reduce(
-          (acc, m) => acc + (trabajo.get(id + '|' + m._id.toString()) || 0), 0),
+        entregas: entregasN,
+        notas: notasN,
+        trabajos: entregasN + notasN,
         materiasEn: g.materias.filter(m => (m.students || []).some(s => s.toString() === id)).length,
+        otrosCursos: [...(divisionesPorCandidato.get(id) || [])]
+          .filter(d => d !== g.divisionId)
+          .map(d => nombreDivision.get(d) || 'otro curso')
+          .sort((a, b) => a.localeCompare(b, 'es', { numeric: true })),
       };
     });
 
-    const conTrabajo = cuentas.filter(c => c.trabajos > 0);
+    // Orden y sugerencia: primero la que tiene el trabajo hecho (es la real). Si empatan
+    // —o si ninguna tiene nada— la que más "vive": habilitada, en más materias, con
+    // conexión más reciente y más antigua.
+    const porPeso = [...cuentas].sort((a, b) =>
+      b.trabajos - a.trabajos ||
+      (b.u.active !== false) - (a.u.active !== false) ||
+      b.materiasEn - a.materiasEn ||
+      (b.u.lastSeen ? new Date(b.u.lastSeen) : 0) - (a.u.lastSeen ? new Date(a.u.lastSeen) : 0) ||
+      new Date(a.u.createdAt || 0) - new Date(b.u.createdAt || 0)
+    );
 
-    // DOS cuentas con entregas o notas propias = las dos tienen datos que se perderían de
-    // vista al desmatricular una. Cuál es la buena y qué se hace con el trabajo de la otra
-    // lo decide una persona: el grupo queda marcado como ambiguo y aplicar() lo saltea.
-    if (conTrabajo.length > 1) {
-      return { ...g, cuentas, conservar: null, sacar: [], ambigua: true };
-    }
-
-    // Si hay exactamente una con trabajo, esa es la real y las demás están vacías en este
-    // curso. Si ninguna tiene trabajo, ninguna tiene nada que perder: se conserva la que
-    // más "vive" — habilitada, en más materias, con conexión más reciente y más antigua.
-    const conservar = conTrabajo.length === 1
-      ? conTrabajo[0]
-      : [...cuentas].sort((a, b) =>
-          (b.u.active !== false) - (a.u.active !== false) ||
-          b.materiasEn - a.materiasEn ||
-          (b.u.lastSeen ? new Date(b.u.lastSeen) : 0) - (a.u.lastSeen ? new Date(a.u.lastSeen) : 0) ||
-          new Date(a.u.createdAt || 0) - new Date(b.u.createdAt || 0)
-        )[0];
+    // DOS cuentas con entregas o notas propias = las dos tienen datos en juego. El botón
+    // masivo saltea estos casos (no hay regla automática); la tarjeta los deja resolver a
+    // mano, que es donde una persona decide qué cuenta se queda y con qué correo.
+    const ambigua = porPeso.filter(c => c.trabajos > 0).length > 1;
+    const conservar = ambigua ? null : porPeso[0];
 
     return {
       ...g,
-      cuentas,
+      cuentas: porPeso,
+      curso: nombreDivision.get(g.divisionId) || 'curso',
+      sugerida: porPeso[0],
       conservar,
-      sacar: cuentas.filter(c => c !== conservar),
-      ambigua: false,
+      sacar: ambigua ? [] : porPeso.filter(c => c !== conservar),
+      ambigua,
     };
   });
 
   return { grupos };
+}
+
+// Forma presentable de un grupo de alumnos duplicados para la tarjeta interactiva.
+//
+// El bloque de la vista es UNO SOLO para todos los arreglos interactivos, así que el texto
+// de cada cuenta se arma acá y no en el EJS: los números que hay que mirar para elegir no
+// son los mismos para un docente (materias a cargo) que para un alumno (entregas y notas).
+// Se manda solo lo que la tarjeta pinta — nunca el documento de usuario entero, que viaja
+// como JSON al navegador en GET /:id/diagnostico.
+function presentarGruposAlumnos(grupos) {
+  return grupos.map(g => {
+    const sugeridaId = g.sugerida.u._id.toString();
+    return {
+      clave: g.clave,
+      dni: g.dni,
+      divisionId: g.divisionId,
+      curso: g.curso,
+      ambigua: g.ambigua,
+      icono: 'group',
+      titulo: `DNI ${g.dni} · ${g.curso}`,
+      ayuda: 'Elegí la cuenta que se queda: la otra le pasa sus entregas, sus notas y las materias ' +
+             'de este curso donde figuraba.',
+      aviso: g.ambigua
+        ? 'Las dos cuentas tienen entregas o notas propias en este curso. Se transfiere igual todo ' +
+          'lo de la otra, salvo lo que choque: si las dos entregaron o tienen nota en la MISMA ' +
+          'actividad, lo de la otra se queda donde está y no se pisa nada. El detalle sale acá abajo ' +
+          'al fusionar.'
+        : null,
+      sugeridaId,
+      cuentas: g.cuentas.map(c => {
+        const id = c.u._id.toString();
+        return {
+          id,
+          nombre: c.u.name,
+          email: c.u.email,
+          entregas: c.entregas,
+          notas: c.notas,
+          materiasEn: c.materiasEn,
+          activa: c.u.active !== false,
+          otrosCursos: c.otrosCursos,
+          detalle: [
+            `${c.entregas} entrega(s)`,
+            `${c.notas} nota(s)`,
+            `en ${c.materiasEn} de ${g.materias.length} materia(s) del curso`,
+            c.u.lastSeen
+              ? 'último acceso ' + new Date(c.u.lastSeen).toLocaleDateString('es-AR')
+              : 'nunca se conectó',
+            c.otrosCursos.length ? 'también cursa en ' + c.otrosCursos.join(', ') : null,
+          ].filter(Boolean).join(' · '),
+          chips: [
+            id === sugeridaId          ? { tipo: 'sugerida', texto: 'sugerida' }             : null,
+            c.u.active === false       ? { tipo: 'inactiva', texto: 'deshabilitada' }        : null,
+            c.trabajos                 ? { tipo: 'datos',    texto: 'con entregas o notas' } : null,
+            c.otrosCursos.length       ? { tipo: 'inactiva', texto: 'en otro curso' }        : null,
+          ].filter(Boolean),
+        };
+      }),
+      // 'sacar' primero cuando las dos cuentas cursan en otro lado: ahí deshabilitar es lo
+      // que rompe algo. En el caso normal el default es deshabilitar, que es lo que evita
+      // que el alumno vuelva a entrar por la cuenta vacía y siga generando el duplicado.
+      opcionesSobrante: (g.cuentas.some(c => c.otrosCursos.length)
+        ? [
+            { value: 'sacar',        label: 'solo se saca de este curso (la cuenta queda activa)' },
+            { value: 'deshabilitar', label: 'se deshabilita (se puede revertir)' },
+            { value: 'eliminar',     label: 'se elimina' },
+          ]
+        : [
+            { value: 'deshabilitar', label: 'se deshabilita (se puede revertir)' },
+            { value: 'sacar',        label: 'solo se saca de este curso (la cuenta queda activa)' },
+            { value: 'eliminar',     label: 'se elimina' },
+          ]),
+    };
+  });
 }
 
 // Dos (o más) cuentas de DOCENTE con el mismo DNI en la misma escuela: es la misma persona
@@ -406,6 +526,64 @@ async function calcularDocentesDuplicados() {
   return { grupos };
 }
 
+// Los mismos grupos con lo que la tarjeta interactiva necesita para pintarse (ver
+// presentarGruposAlumnos). Se AGREGA sobre lo que ya había: los campos crudos (titular,
+// suplente, actividades…) siguen viajando porque son los que mira el smoke test.
+function presentarGruposDocentes(grupos) {
+  return grupos.map(g => ({
+    ...g,
+    icono: 'badge',
+    titulo: `DNI ${g.dni} · ${g.escuela}`,
+    ayuda: 'Elegí la cuenta que se queda: la otra le transfiere todo lo que tiene a cargo.',
+    aviso: null,
+    cuentas: g.cuentas.map(c => ({
+      ...c,
+      detalle: [
+        `${c.titular} materia(s) como titular`,
+        `${c.suplente} como suplente`,
+        `${c.actividades} actividad(es)`,
+        `${c.novedades} novedad(es)`,
+        c.ultimoAcceso
+          ? 'último acceso ' + new Date(c.ultimoAcceso).toLocaleDateString('es-AR')
+          : 'nunca se conectó',
+      ].join(' · '),
+      chips: [
+        c.id === g.sugeridaId    ? { tipo: 'sugerida', texto: 'sugerida' }      : null,
+        !c.activa                ? { tipo: 'inactiva', texto: 'deshabilitada' } : null,
+        (c.titular || c.suplente)? { tipo: 'datos',    texto: 'con materias' }  : null,
+      ].filter(Boolean),
+    })),
+    opcionesSobrante: [
+      { value: 'deshabilitar', label: 'se deshabilita (se puede revertir)' },
+      { value: 'eliminar',     label: 'se elimina' },
+    ],
+  }));
+}
+
+// Deja a la cuenta conservada con el correo elegido, que puede ser el de otra cuenta del
+// grupo. Va SIEMPRE al final de una fusión porque `User.email` es único global: para que la
+// conservada se quede con el correo de la otra, ese correo tiene que estar libre primero.
+//
+//   - Si la cuenta que lo cede se eliminó, ya quedó libre y alcanza con asignarlo.
+//   - Si sigue viva (deshabilitada, o simplemente sacada del curso), se INTERCAMBIAN: la
+//     conservada toma el correo elegido y la otra se queda con el que soltó. Nadie pierde un
+//     correo válido, no se inventa ninguno y se puede revertir haciendo el camino inverso.
+//
+// El intercambio pasa por un correo temporal porque el índice único no admite que las dos
+// tengan el mismo valor ni por un instante. Si el proceso se cortara entre medio, la cuenta
+// que cede queda con ese temporal —se ve a simple vista y se arregla desde el panel de
+// administración—; la conservada nunca queda sin correo.
+async function pasarCorreo({ keepId, correoConservada, donanteId, correoDonante, donanteEliminado }) {
+  if (donanteEliminado) {
+    await User.updateOne({ _id: keepId }, { $set: { email: correoDonante } });
+    return;
+  }
+  const temporal = `fusion-en-curso-${donanteId}@invalido.local`;
+  await User.updateOne({ _id: donanteId }, { $set: { email: temporal } });
+  await User.updateOne({ _id: keepId },    { $set: { email: correoDonante } });
+  await User.updateOne({ _id: donanteId }, { $set: { email: correoConservada } });
+}
+
 // Pasa TODO lo que una cuenta de docente tiene a cargo a la cuenta que se conserva, y deja
 // la sobrante deshabilitada o eliminada. Devuelve el detalle de lo movido.
 //
@@ -492,47 +670,313 @@ async function fusionarDocentes({ clave, keepId, sobrante = 'deshabilitar', emai
     await User.updateMany({ _id: { $in: perdedorIds } }, { $set: { active: false } });
   }
 
-  // 6. El correo. Va ÚLTIMO porque `User.email` es único global: para que la conservada se
-  //    quede con el correo de la otra, ese correo tiene que estar libre primero.
-  //
-  //    - Si la sobrante se eliminó, ya quedó libre y alcanza con asignarlo.
-  //    - Si sigue viva (deshabilitada), se INTERCAMBIAN: la conservada toma el correo
-  //      institucional y la deshabilitada se queda con el personal. Nadie pierde un correo
-  //      válido, no se inventa ninguno y se puede revertir haciendo el camino inverso.
-  //
-  //    El intercambio pasa por un correo temporal porque el índice único no admite que las
-  //    dos tengan el mismo valor ni por un instante. Si el proceso se cortara entre medio,
-  //    la cuenta deshabilitada queda con ese temporal — se ve a simple vista y se arregla
-  //    a mano desde el panel de administración; la conservada nunca queda sin correo.
+  // 6. El correo, siempre al final (ver pasarCorreo: el índice único obliga a liberarlo antes).
   const cuentaConservada = grupo.cuentas.find(c => c.id === keepId);
   const correoFinal = grupo.cuentas.find(c => c.id === correoDe).email;
   const correoCambiado = correoDe !== keepId;
 
   if (correoCambiado) {
-    const donante = grupo.cuentas.find(c => c.id === correoDe); // siempre una de las sobrantes
-    if (accion === 'eliminar') {
-      await User.updateOne({ _id: keep }, { $set: { email: correoFinal } });
-    } else {
-      const temporal = `fusion-en-curso-${donante.id}@invalido.local`;
-      await User.updateOne({ _id: donante.id }, { $set: { email: temporal } });
-      await User.updateOne({ _id: keep },       { $set: { email: correoFinal } });
-      await User.updateOne({ _id: donante.id }, { $set: { email: cuentaConservada.email } });
-    }
+    await pasarCorreo({
+      keepId:           keep,
+      correoConservada: cuentaConservada.email,
+      donanteId:        correoDe, // siempre una de las sobrantes
+      correoDonante:    correoFinal,
+      donanteEliminado: accion === 'eliminar',
+    });
   }
+
+  const correo = {
+    final: correoFinal,
+    cambiado: correoCambiado,
+    anterior: cuentaConservada.email,
+    // Solo cuando la sobrante sigue viva: se quedó con el correo que soltó la conservada.
+    intercambiadoCon: correoCambiado && accion !== 'eliminar' ? cuentaConservada.email : null,
+  };
+
+  const movido = [
+    resumen.titular     ? `${resumen.titular} materia(s) como titular` : null,
+    resumen.suplente    ? `${resumen.suplente} como suplente`          : null,
+    resumen.actividades ? `${resumen.actividades} actividad(es)`       : null,
+    resumen.novedades   ? `${resumen.novedades} novedad(es)`           : null,
+    resumen.comentarios ? `${resumen.comentarios} novedad(es) con comentarios suyos` : null,
+    resumen.matriculas  ? `${resumen.matriculas} matrícula(s) sueltas quitadas`      : null,
+  ].filter(Boolean);
 
   return {
     resumen,
     accion,
-    forzadoDeshabilitar: sobrante === 'eliminar' && accion === 'deshabilitar',
+    schoolId: grupo.schoolId,
     conservada: cuentaConservada,
     sobrantes: perdedor,
-    correo: {
-      final: correoFinal,
-      cambiado: correoCambiado,
-      anterior: cuentaConservada.email,
-      // Solo cuando la sobrante sigue viva: se quedó con el correo que soltó la conservada.
-      intercambiadoCon: correoCambiado && accion !== 'eliminar' ? cuentaConservada.email : null,
+    correo,
+    auditoria: {
+      materias_titular:  resumen.titular,
+      materias_suplente: resumen.suplente,
+      actividades:       resumen.actividades,
+      novedades:         resumen.novedades,
     },
+    mensaje:
+      `Listo: ${cuentaConservada.nombre} (${correoFinal}) se queda con todo. ` +
+      (movido.length ? `Se transfirió: ${movido.join(', ')}. ` : 'No había nada que transferir. ') +
+      textoCorreo(correo) +
+      (accion === 'eliminar'
+        ? 'La cuenta sobrante se eliminó.'
+        : 'La cuenta sobrante quedó deshabilitada' +
+          (sobrante === 'eliminar'
+            ? ' (no se pudo eliminar: tiene entregas propias, borrarla dejaría esas entregas sin dueño).'
+            : '.')),
+  };
+}
+
+// El párrafo del correo dentro del mensaje final de una fusión. Es idéntico para docentes y
+// para alumnos, y es la parte que la persona vuelve a leer para chequear que no se le fue
+// el correo institucional a la cuenta equivocada.
+function textoCorreo(correo) {
+  if (!correo.cambiado) return '';
+  return `El correo pasó de ${correo.anterior} a ${correo.final}` +
+    (correo.intercambiadoCon ? ` (la otra cuenta se quedó con ${correo.intercambiadoCon}). ` : '. ');
+}
+
+// Fusiona dos (o más) cuentas de ALUMNO que son la misma persona dentro de un curso.
+//
+// La diferencia con los docentes no es el mecanismo sino qué se transfiere: un alumno no
+// tiene materias a cargo, tiene entregas, notas, acuses de lectura y su matrícula. Y una
+// diferencia que sí importa: entregas, notas y acuses tienen un índice único por
+// {actividad, alumno}, así que si las DOS cuentas entregaron la misma tarea no se pueden
+// juntar. En ese caso lo de la cuenta sobrante se deja donde está y se informa: pisarlo
+// sería borrar una entrega real de un alumno.
+//
+// El orden es el mismo que en fusionarDocentes y por la misma razón: primero se transfiere,
+// después se toca la cuenta sobrante, y el correo al final. Si algo falla en el medio lo
+// peor que queda es una transferencia parcial con las dos cuentas todavía vivas.
+async function fusionarAlumnos({ clave, keepId, sobrante = 'deshabilitar', emailId = null }) {
+  const { grupos } = await calcularDniDuplicados();
+  const grupo = grupos.find(g => g.clave === clave);
+  if (!grupo) {
+    throw new Error('Ese grupo ya no figura como duplicado (puede que alguien lo haya resuelto recién). Actualizá la página.');
+  }
+
+  const idDe = c => c.u._id.toString();
+  const conservada = grupo.cuentas.find(c => idDe(c) === keepId);
+  if (!conservada) throw new Error('La cuenta elegida no pertenece a este grupo.');
+  if (!['sacar', 'deshabilitar', 'eliminar'].includes(sobrante)) {
+    throw new Error('Qué hacer con la cuenta sobrante solo puede ser "sacar", "deshabilitar" o "eliminar".');
+  }
+  // Con qué correo queda la cuenta conservada. Es una decisión aparte, igual que en los
+  // docentes: lo habitual es quedarse con la cuenta que tiene las entregas pero con el
+  // correo institucional, que está en la otra.
+  const correoDe = emailId || keepId;
+  const donante = grupo.cuentas.find(c => idDe(c) === correoDe);
+  if (!donante) throw new Error('El correo elegido no pertenece a ninguna cuenta de este grupo.');
+
+  const keep        = new mongoose.Types.ObjectId(keepId);
+  const perdedores  = grupo.cuentas.filter(c => idDe(c) !== keepId);
+  const perdedorIds = perdedores.map(c => c.u._id);
+  const perdedorSet = new Set(perdedores.map(idDe));
+  const materiaIds  = grupo.materias.map(m => m._id);
+
+  const resumen = {
+    materias: 0, entregas: 0, notas: 0, aperturas: 0,
+    comentarios: 0, sugerencias: 0, conflictos: 0, desmatriculadas: 0,
+  };
+
+  // 1. Las materias del curso donde figuraba SOLO la cuenta sobrante pasan a la conservada:
+  //    si no, al sacar la otra el alumno perdería el acceso a esas materias.
+  //
+  //    Se HEREDA la fecha de inscripción de la cuenta sobrante en vez de poner "ahora":
+  //    routes/activities.js la usa para no mostrarle las tareas que vencieron antes de su
+  //    alta, así que con la fecha de hoy le desaparecerían de la vista las tareas viejas del
+  //    curso, incluidas las que esa misma persona ya entregó. Si la sobrante no tenía fecha
+  //    (las altas viejas no la llevan y se leen como "siempre estuvo"), tampoco se le pone
+  //    una a la conservada: es exactamente el mismo significado.
+  const materiasFrescas = await Course.find({ _id: { $in: materiaIds } })
+    .select('_id students enrollmentDates').lean();
+  for (const mat of materiasFrescas) {
+    const enMateria = (mat.students || []).map(s => s.toString());
+    if (enMateria.includes(keepId)) continue;
+    const desdeLaOtra = perdedores.map(idDe).find(id => enMateria.includes(id));
+    if (!desdeLaOtra) continue;
+    const heredada = (mat.enrollmentDates || {})[desdeLaOtra];
+    await Course.updateOne({ _id: mat._id }, {
+      $addToSet: { students: keep },
+      ...(heredada ? { $set: { [`enrollmentDates.${keepId}`]: heredada } } : {}),
+    });
+    resumen.materias++;
+  }
+
+  const actividades = await Activity.find({ course: { $in: materiaIds } })
+    .select('_id grades').lean();
+  const actIds = actividades.map(a => a._id);
+
+  if (actIds.length) {
+    // 2. Entregas. El índice único { activity, student } no admite dos entregas del mismo
+    //    alumno en la misma actividad: las que chocan se quedan en la cuenta sobrante.
+    const yaEntregadas = new Set(
+      (await Submission.find({ activity: { $in: actIds }, student: keep }).select('activity').lean())
+        .map(s => s.activity.toString())
+    );
+    const entregasSobrantes = await Submission.find({
+      activity: { $in: actIds }, student: { $in: perdedorIds },
+    }).select('_id activity').lean();
+    // Se descartan las que chocan con una entrega de la conservada Y, si el duplicado es de
+    // tres cuentas, las que chocarían entre ellas: solo una puede quedarse con la actividad.
+    const tomadas = new Set(yaEntregadas);
+    const moverEntregas = [];
+    for (const s of entregasSobrantes) {
+      const k = s.activity.toString();
+      if (tomadas.has(k)) { resumen.conflictos++; continue; }
+      tomadas.add(k);
+      moverEntregas.push(s._id);
+    }
+    if (moverEntregas.length) {
+      resumen.entregas = (await Submission.updateMany(
+        { _id: { $in: moverEntregas } }, { $set: { student: keep } })).modifiedCount;
+    }
+
+    // 3. Notas. grades[] tiene como máximo una entrada por alumno y actividad, así que rige
+    //    el mismo criterio: si la conservada ya tiene nota ahí, la de la otra no se toca.
+    const ops = [];
+    for (const a of actividades) {
+      const suyas = (a.grades || []).filter(g => perdedorSet.has(g.student?.toString()));
+      if (!suyas.length) continue;
+      if ((a.grades || []).some(g => g.student?.toString() === keepId)) {
+        resumen.conflictos += suyas.length;
+        continue;
+      }
+      // Tres cuentas duplicadas con nota en la misma actividad: solo la primera puede pasar,
+      // el resto chocaría contra la que acaba de pasar.
+      resumen.conflictos += suyas.length - 1;
+      ops.push({
+        updateOne: {
+          filter: { _id: a._id },
+          update: { $set: { 'grades.$[g].student': keep } },
+          arrayFilters: [{ 'g.student': suyas[0].student }],
+        },
+      });
+      resumen.notas++;
+    }
+    if (ops.length) await Activity.bulkWrite(ops, { ordered: false });
+
+    // 4. Acuses de lectura: mismo índice único, mismo criterio.
+    const yaVistas = new Set(
+      (await ActivityView.find({ activity: { $in: actIds }, student: keep }).select('activity').lean())
+        .map(v => v.activity.toString())
+    );
+    const vistasSobrantes = await ActivityView.find({
+      activity: { $in: actIds }, student: { $in: perdedorIds },
+    }).select('_id activity').lean();
+    const vistasTomadas = new Set(yaVistas);
+    const moverVistas = [];
+    for (const v of vistasSobrantes) {
+      const k = v.activity.toString();
+      if (vistasTomadas.has(k)) continue; // el acuse ya está registrado para la conservada
+      vistasTomadas.add(k);
+      moverVistas.push(v._id);
+    }
+    if (moverVistas.length) {
+      resumen.aperturas = (await ActivityView.updateMany(
+        { _id: { $in: moverVistas } }, { $set: { student: keep } })).modifiedCount;
+    }
+  }
+
+  // 5. Comentarios en novedades y sugerencias enviadas. No tienen unicidad, van todos: sin
+  //    esto, borrar la cuenta sobrante dejaría referencias colgadas a un usuario inexistente.
+  resumen.comentarios = (await Announcement.updateMany(
+    { 'comments.author': { $in: perdedorIds } },
+    { $set: { 'comments.$[c].author': keep } },
+    { arrayFilters: [{ 'c.author': { $in: perdedorIds } }] },
+  )).modifiedCount;
+  resumen.sugerencias = (await Suggestion.updateMany(
+    { user: { $in: perdedorIds } }, { $set: { user: keep } })).modifiedCount;
+
+  // 6. Se saca a la sobrante de las materias de ESTE curso. Si además se la va a eliminar,
+  //    de todas: una cuenta borrada dentro de students[] es una referencia colgada, que es
+  //    justo lo que rompía /admin/courses.
+  const alcance = sobrante === 'eliminar' ? {} : { _id: { $in: materiaIds } };
+  resumen.desmatriculadas = (await Course.updateMany(
+    { ...alcance, students: { $in: perdedorIds } },
+    {
+      $pull:  { students: { $in: perdedorIds } },
+      // Sin esto quedaría una fecha de inscripción huérfana en el Map, que volvería a
+      // aplicarse si alguna vez se rematricula a esa cuenta.
+      $unset: Object.fromEntries(perdedores.map(c => [`enrollmentDates.${idDe(c)}`, ''])),
+    },
+  )).modifiedCount;
+
+  // 7. Recién ahora la cuenta sobrante. Si le quedaron entregas (las que chocaron, o las de
+  //    otro curso) no se borra aunque lo pidan: borrarla dejaría `Submission.student` colgado.
+  const conEntregas = await Submission.countDocuments({ student: { $in: perdedorIds } });
+  const accion = (sobrante === 'eliminar' && conEntregas > 0) ? 'deshabilitar' : sobrante;
+  if (accion === 'eliminar') {
+    // Los acuses de lectura que quedaron (los que chocaron) se van con la cuenta: son un
+    // contador de "quién abrió la tarea", no un dato del alumno que valga conservar suelto.
+    await ActivityView.deleteMany({ student: { $in: perdedorIds } });
+    await User.deleteMany({ _id: { $in: perdedorIds } });
+  } else if (accion === 'deshabilitar') {
+    await User.updateMany({ _id: { $in: perdedorIds } }, { $set: { active: false } });
+  }
+
+  // 8. El correo, al final (ver pasarCorreo).
+  const correoFinal = donante.u.email;
+  const correoCambiado = correoDe !== keepId;
+  if (correoCambiado) {
+    await pasarCorreo({
+      keepId:           keep,
+      correoConservada: conservada.u.email,
+      donanteId:        correoDe,
+      correoDonante:    correoFinal,
+      donanteEliminado: accion === 'eliminar',
+    });
+  }
+
+  const correo = {
+    final: correoFinal,
+    cambiado: correoCambiado,
+    anterior: conservada.u.email,
+    intercambiadoCon: correoCambiado && accion !== 'eliminar' ? conservada.u.email : null,
+  };
+
+  const movido = [
+    resumen.entregas    ? `${resumen.entregas} entrega(s)`               : null,
+    resumen.notas       ? `${resumen.notas} nota(s)`                     : null,
+    resumen.aperturas   ? `${resumen.aperturas} acuse(s) de lectura`     : null,
+    resumen.materias    ? `${resumen.materias} materia(s) del curso`     : null,
+    resumen.comentarios ? `${resumen.comentarios} novedad(es) con comentarios suyos` : null,
+    resumen.sugerencias ? `${resumen.sugerencias} sugerencia(s)`         : null,
+  ].filter(Boolean);
+
+  const destino = {
+    sacar:        'La otra cuenta quedó fuera del curso, pero sigue activa: si no la usa nadie, conviene deshabilitarla desde el panel de administración.',
+    deshabilitar: 'La otra cuenta quedó deshabilitada' +
+      (sobrante === 'eliminar'
+        ? ' (no se pudo eliminar: le quedan entregas propias, borrarla las dejaría sin dueño).'
+        : '.'),
+    eliminar:     'La otra cuenta se eliminó.',
+  }[accion];
+
+  return {
+    resumen,
+    accion,
+    schoolId: grupo.schoolId,
+    conservada: { id: keepId, nombre: conservada.u.name, email: correoFinal },
+    sobrantes: perdedores.map(c => ({ id: idDe(c), nombre: c.u.name, email: c.u.email })),
+    correo,
+    auditoria: {
+      curso:       grupo.curso,
+      entregas:    resumen.entregas,
+      notas:       resumen.notas,
+      materias:    resumen.materias,
+      conflictos:  resumen.conflictos,
+    },
+    mensaje:
+      `Listo: ${conservada.u.name} (${correoFinal}) se queda con el curso ${grupo.curso}. ` +
+      (movido.length ? `Se transfirió: ${movido.join(', ')}. ` : 'No había nada que transferir. ') +
+      (resumen.conflictos
+        ? `${resumen.conflictos} entrega(s) o nota(s) se quedaron en la otra cuenta porque la ` +
+          'conservada ya tenía la suya en esa misma actividad: revisalas antes de dar de baja la cuenta. '
+        : '') +
+      textoCorreo(correo) +
+      destino,
   };
 }
 
@@ -901,27 +1345,30 @@ const FIXES = [
     descripcion:
       'Es la misma persona cargada dos veces (alta manual + importación, o registro público ' +
       'sobre una cuenta que ya existía): el docente la ve repetida en la lista y en el ' +
-      'gradebook. El arreglo saca del curso la cuenta vacía y conserva la que tiene las ' +
-      'entregas y las notas. NO borra ninguna cuenta ni ninguna entrega. Si las dos tienen ' +
-      'trabajo hecho, el caso se deja para revisar a mano.',
+      'gradebook. Caso por caso podés elegir con qué cuenta se queda el alumno y con qué ' +
+      'correo, igual que con los docentes: la otra le pasa sus entregas, sus notas y sus ' +
+      'materias del curso, y queda deshabilitada, eliminada o solo fuera del curso. El botón ' +
+      'de abajo resuelve de una vez los casos obvios —la cuenta duplicada está vacía— sacándola ' +
+      'del curso sin tocar correos ni borrar nada.',
     icono: 'group_remove',
     severidad: 'alta',
+    // Las dos vías conviven a propósito: la masiva para los duplicados vacíos, que son la
+    // mayoría y no tienen nada que decidir, y la elección grupo por grupo para el resto
+    // (ver la REGLA DE ORO de arriba: con qué correo queda el alumno no está en los datos).
     aplicable: true,
+    interactivo: true,
     parametros: [],
 
     async diagnosticar() {
       const { grupos } = await calcularDniDuplicados();
-      const divisiones = await Division.find().select('_id name').lean();
-      const nombreDivision = Object.fromEntries(divisiones.map(d => [d._id.toString(), d.name]));
 
       const ambiguos = grupos.filter(g => g.ambigua).length;
       const cuentasASacar = grupos.reduce((acc, g) => acc + g.sacar.length, 0);
 
       const filas = grupos.map(g => {
-        const curso = nombreDivision[g.divisionId] || 'curso';
         const etiqueta = c => `${c.u.name} (${c.u.email})`;
         return {
-          principal: `${curso} · DNI ${g.dni}`,
+          principal: `${g.curso} · DNI ${g.dni}`,
           secundario: g.ambigua
             ? g.cuentas.map(c => `${etiqueta(c)} — ${c.trabajos} entrega(s)/nota(s)`).join('  ·  ')
             : `Se conserva ${etiqueta(g.conservar)}` +
@@ -935,14 +1382,30 @@ const FIXES = [
 
       return {
         total: grupos.length,
+        // Los ambiguos primero: son los que el botón masivo NO puede resolver, así que son
+        // los que de verdad hay que mirar uno por uno. Se pintan hasta MUESTRA_MAX bloques
+        // para no hacer una página de miles de formularios; al resolver los de arriba y
+        // recargar, aparecen los siguientes.
+        grupos: presentarGruposAlumnos(
+          [...grupos].sort((a, b) => (b.ambigua === a.ambigua ? 0 : b.ambigua ? 1 : -1)
+            || a.curso.localeCompare(b.curso, 'es', { numeric: true })
+            || a.dni.localeCompare(b.dni))
+        ).slice(0, MUESTRA_MAX),
         muestra: filas.slice(0, MUESTRA_MAX),
         nota: grupos.length
-          ? `Se van a sacar ${cuentasASacar} cuenta(s) de las materias del curso donde están duplicadas. ` +
-            'Las cuentas NO se borran: quedan sin ese curso y se las puede deshabilitar o eliminar ' +
-            'después desde el panel de administración. Tampoco se toca nada fuera de ese curso. ' +
+          ? 'Abajo está cada caso por separado: elegí la cuenta que se queda, con qué correo y qué ' +
+            'pasa con la otra. ' +
+            (cuentasASacar
+              ? `Si preferís resolver de una vez los ${cuentasASacar} caso(s) obvios, "Aplicar arreglo" ` +
+                'saca del curso la cuenta vacía y conserva la que tiene las entregas y las notas: no ' +
+                'borra ninguna cuenta, no toca ningún correo y no toca nada fuera de ese curso. '
+              : '') +
             (ambiguos
-              ? `${ambiguos} caso(s) quedan afuera porque las dos cuentas tienen entregas o notas propias: ` +
-                'ahí hay que decidir con qué cuenta se queda el alumno antes de sacar la otra.'
+              ? `${ambiguos} caso(s) quedan afuera del botón masivo porque las dos cuentas tienen ` +
+                'entregas o notas propias: esos van sí o sí uno por uno, y van primeros en la lista. '
+              : '') +
+            (grupos.length > MUESTRA_MAX
+              ? `Se muestran los primeros ${MUESTRA_MAX} de ${grupos.length}: al resolverlos y recargar aparecen los siguientes.`
               : '')
           : null,
       };
@@ -997,6 +1460,10 @@ const FIXES = [
                  'entrega ni nota: si además hay que darlas de baja, se hace desde el panel de administración.',
       };
     },
+
+    // Resolución caso por caso desde POST /superadmin/otros/:id/fusionar, con elección de
+    // cuenta y de correo. Es la misma puerta que usan los docentes duplicados.
+    fusionar: fusionarAlumnos,
   },
 
   /* ─────────────────────────────────────────────────────────────────────── */
@@ -1020,7 +1487,8 @@ const FIXES = [
     parametros: [],
 
     async diagnosticar() {
-      const { grupos } = await calcularDocentesDuplicados();
+      const { grupos: crudos } = await calcularDocentesDuplicados();
+      const grupos = presentarGruposDocentes(crudos);
       const cuentasDeMas = grupos.reduce((acc, g) => acc + g.cuentas.length - 1, 0);
       const conMateriasRepartidas = grupos.filter(
         g => g.cuentas.filter(c => c.titular || c.suplente).length > 1

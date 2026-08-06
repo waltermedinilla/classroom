@@ -93,6 +93,8 @@ const ACTIONS = {
   'suggestion.create':        { label: 'envió una sugerencia',     icon: 'lightbulb',        color: '#fbbc04', category: 'suggestion' },
   'suggestion.status_change': { label: 'marcó una sugerencia',     icon: 'check_circle',     color: '#137333', category: 'suggestion' },
   'suggestion.respond':       { label: 'respondió una sugerencia', icon: 'reply',            color: '#1a73e8', category: 'suggestion' },
+  // El usuario contesta la respuesta del equipo y sigue el hilo (POST /suggestions/mine/:id/reply)
+  'suggestion.reply':         { label: 'siguió el hilo de',        icon: 'forum',            color: '#fbbc04', category: 'suggestion' },
   'suggestion.delete':        { label: 'eliminó una sugerencia',   icon: 'delete',           color: '#ea4335', category: 'suggestion' },
 
   // ── Importación desde Excel ──────────────────────────────────────────────

@@ -54,8 +54,10 @@
     .fix-param { display: flex; align-items: center; gap: 8px; font-size: 13px; }
     .fix-param select { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-primary); font-size: 13px; }
 
-    /* Arreglos que se resuelven grupo por grupo (docentes con el mismo DNI): la elección
-       de qué cuenta se conserva es humana, así que cada grupo trae su propio botón. */
+    /* Arreglos que se resuelven grupo por grupo (docentes y alumnos con el mismo DNI): la
+       elección de qué cuenta se conserva —y con qué correo queda— es humana, así que cada
+       grupo trae su propio botón. El bloque es uno solo para los dos arreglos: los textos y
+       los números de cada cuenta los arma services/dbFixes.js. */
     .dupe-group {
       border: 1px solid var(--border); border-radius: 10px;
       padding: 14px 16px; margin-top: 12px;
@@ -81,7 +83,11 @@
     }
     .dupe-chip.sugerida { background: #e6f4ea; color: #137333; }
     .dupe-chip.inactiva { background: #fce8e6; color: #c5221f; }
-    .dupe-chip.materias { background: #fef7e0; color: #b06000; }
+    .dupe-chip.datos    { background: #fef7e0; color: #b06000; }
+    .dupe-aviso {
+      font-size: 12px; line-height: 1.5; background: #fef7e0; color: #b06000;
+      border-radius: 8px; padding: 9px 12px; margin-bottom: 10px;
+    }
     .dupe-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
     .dupe-actions select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-primary); font-size: 12.5px; }
     .dupe-result { font-size: 12.5px; margin-top: 10px; padding: 9px 12px; border-radius: 8px; display: none; }
@@ -191,9 +197,9 @@
                   Herramienta
                 </span>
               <% } else if (fix.interactivo) { %>
-                <span class="solo-diag" title="No hay una regla automática: la elección la hacés vos, caso por caso">
+                <span class="solo-diag" title="La elección —qué cuenta se conserva y con qué correo— la hacés vos, caso por caso">
                   <span class="material-symbols-outlined" style="font-size:13px">rule</span>
-                  Elegís caso por caso
+                  <%= fix.aplicable ? 'Masivo o caso por caso' : 'Elegís caso por caso' %>
                 </span>
               <% } else if (!fix.aplicable) { %>
                 <span class="solo-diag" title="No hay una regla automática que lo resuelva sin inventar datos">
@@ -327,17 +333,20 @@
             </table>
           </div>
 
-          <%# Arreglo interactivo: en vez de un botón único, un bloque por grupo con la
-              elección de qué cuenta se conserva. Ver 'docentes-dni-duplicado'. %>
+          <%# Arreglo interactivo: un bloque por grupo con la elección de qué cuenta se
+              conserva y con qué correo queda. Sirve igual para 'docentes-dni-duplicado' y
+              para 'dni-duplicado-en-curso': el título, los números de cada cuenta y qué se
+              puede hacer con la sobrante vienen armados desde services/dbFixes.js. %>
           <% if (fix.interactivo && fix.total > 0) { %>
             <div data-grupos>
               <% fix.grupos.forEach(g => { %>
                 <div class="dupe-group" data-clave="<%= g.clave %>">
                   <div class="dupe-head">
-                    <span class="material-symbols-outlined" style="font-size:17px">badge</span>
-                    DNI <%= g.dni %> · <%= g.escuela %>
+                    <span class="material-symbols-outlined" style="font-size:17px"><%= g.icono || 'badge' %></span>
+                    <%= g.titulo %>
                   </div>
-                  <div class="dupe-sub">Elegí la cuenta que se queda: la otra le transfiere todo lo que tiene a cargo.</div>
+                  <div class="dupe-sub"><%= g.ayuda %></div>
+                  <% if (g.aviso) { %><div class="dupe-aviso"><%= g.aviso %></div><% } %>
 
                   <% g.cuentas.forEach(c => { %>
                     <label class="dupe-account">
@@ -345,22 +354,16 @@
                       <div style="min-width:0">
                         <div class="dupe-name">
                           <%= c.nombre %>
-                          <% if (c.id === g.sugeridaId) { %><span class="dupe-chip sugerida">sugerida</span><% } %>
-                          <% if (!c.activa) { %><span class="dupe-chip inactiva">deshabilitada</span><% } %>
-                          <% if (c.titular || c.suplente) { %><span class="dupe-chip materias">con materias</span><% } %>
+                          <% (c.chips || []).forEach(ch => { %><span class="dupe-chip <%= ch.tipo %>"><%= ch.texto %></span><% }) %>
                         </div>
                         <div class="dupe-mail"><%= c.email %></div>
-                        <div class="dupe-stats">
-                          <%= c.titular %> materia(s) como titular · <%= c.suplente %> como suplente ·
-                          <%= c.actividades %> actividad(es) · <%= c.novedades %> novedad(es) ·
-                          <%= c.ultimoAcceso ? 'último acceso ' + new Date(c.ultimoAcceso).toLocaleDateString('es-AR') : 'nunca se conectó' %>
-                        </div>
+                        <div class="dupe-stats"><%= c.detalle %></div>
                       </div>
                     </label>
                   <% }) %>
 
                   <%# Segunda decisión, independiente de la primera: el caso más común es
-                      quedarse con la cuenta que ya tiene las materias pero con el correo
+                      quedarse con la cuenta que ya tiene el trabajo hecho pero con el correo
                       institucional, que está en la otra. %>
                   <div class="dupe-actions">
                     <label style="font-size:12.5px;color:var(--text-secondary)">Queda con el correo:</label>
@@ -374,8 +377,9 @@
                   <div class="dupe-actions">
                     <label style="font-size:12.5px;color:var(--text-secondary)">La otra cuenta:</label>
                     <select data-sobrante>
-                      <option value="deshabilitar">se deshabilita (se puede revertir)</option>
-                      <option value="eliminar">se elimina</option>
+                      <% (g.opcionesSobrante || []).forEach(o => { %>
+                        <option value="<%= o.value %>"><%= o.label %></option>
+                      <% }) %>
                     </select>
                     <button class="btn btn-primary" data-fusionar style="font-size:12.5px;padding:6px 16px">
                       <span class="material-symbols-outlined" style="font-size:16px">merge_type</span>
@@ -390,7 +394,10 @@
 
           <div class="fix-actions">
             <% if (fix.total > 0) { %>
-              <% if (!fix.interactivo) { %>
+              <%# En los interactivos la lista de afectados ya está arriba, grupo por grupo.
+                  Salvo que además tengan botón masivo: ahí sigue haciendo falta ver de un
+                  vistazo sobre qué casos correría ese botón. %>
+              <% if (!fix.interactivo || fix.aplicable) { %>
                 <button class="btn btn-outline" data-toggle-preview style="font-size:13px;padding:7px 16px">
                   <span class="material-symbols-outlined">visibility</span>
                   Ver a quiénes afecta
@@ -729,7 +736,7 @@
 
             // El grupo resuelto se reemplaza por el resultado: si quedara editable, un
             // segundo clic fusionaría contra un estado que ya no existe.
-            grupo.querySelectorAll('.dupe-account, .dupe-actions, .dupe-sub').forEach(el => el.remove());
+            grupo.querySelectorAll('.dupe-account, .dupe-actions, .dupe-sub, .dupe-aviso').forEach(el => el.remove());
             salida.className = 'dupe-result ok';
             salida.textContent = data.mensaje;
             salida.style.display = 'block';
@@ -777,9 +784,19 @@
             return;
           }
 
+          // Una tarjeta puede tener las dos vías (masiva + caso por caso): los bloques de
+          // abajo se calcularon contra el estado anterior, así que quedan inservibles. El
+          // servidor recalcula el grupo antes de fusionar, o sea que un clic tardío no
+          // rompe nada — pero fallaría, y es más claro desactivarlos y pedir recarga.
+          const grupos = card.querySelector('[data-grupos]');
+          if (grupos && data.restantes > 0) {
+            grupos.querySelectorAll('[data-fusionar]').forEach(b => { b.disabled = true; });
+          }
+
           result.className = 'fix-result ok';
           result.textContent = data.mensaje + (data.restantes > 0
-            ? ` Quedan ${data.restantes} caso(s) que este arreglo no cubre.`
+            ? ` Quedan ${data.restantes} caso(s) que este arreglo no cubre.` +
+              (grupos ? ' Recargá la página para resolverlos uno por uno con los datos al día.' : '')
             : '');
           result.style.display = 'block';
 
@@ -788,6 +805,7 @@
           card.querySelector('[data-total]').textContent = data.restantes;
           if (data.restantes === 0) {
             card.className = 'fix-card limpio';
+            grupos?.remove();
             card.querySelector('[data-total]').style.color = '#34a853';
             preview.style.display = 'none';
             btn.remove();

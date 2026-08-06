@@ -11,6 +11,11 @@
 <body>
   <%- include('partials/header') %>
 
+  <%# Alumno que llegó al tope de materias: no se le ofrece ninguna vía para sumar más
+      (ver services/enrollment.js). Se calcula en routes/courses.js y es siempre false
+      para el resto de los roles. %>
+  <% const cupoLleno = locals.cupoMateriasLleno === true; %>
+
   <main class="main-content">
     <div class="dashboard-topbar">
       <h2>Tus clases</h2>
@@ -19,14 +24,18 @@
               del alumno (ver services/joinByCode.js). Se había eliminado el 2026-07-30. La
               solicitud sigue existiendo para todo lo que el código no cubre: pedir el alta
               en un curso que no es el suyo, o cuando todavía no tiene ninguna materia.
-              Los docentes no crean materias desde acá (decisión del 2026-07-25). */ %>
-        <% if (locals.joinByCode && user.role === 'student') { %>
+              Los docentes no crean materias desde acá (decisión del 2026-07-25).
+
+              Las dos vías del alumno desaparecen cuando llegó al tope de materias
+              (MAX_MATERIAS_ALUMNO en services/enrollment.js): con el curso completo, lo que
+              falte lo carga el administrador. */ %>
+        <% if (locals.joinByCode && user.role === 'student' && !cupoLleno) { %>
           <button class="btn btn-primary" data-analytics="join_by_code_open" onclick="showJoinModal()">
             <span class="material-symbols-outlined">key</span>
             Unirme con un código
           </button>
         <% } %>
-        <% if (user.role !== 'teacher') { %>
+        <% if (user.role !== 'teacher' && !cupoLleno) { %>
           <button class="btn btn-outline" data-analytics="request_join_open" onclick="showRequestModal()">
             <span class="material-symbols-outlined">outgoing_mail</span>
             Enviar solicitud para unirme
@@ -297,7 +306,7 @@
     </div>
   </div>
 
-  <% if (locals.joinByCode && user.role === 'student') { %>
+  <% if (locals.joinByCode && user.role === 'student' && !cupoLleno) { %>
   <%# Código de clase — el docente lo dicta y el alumno se suma a esa materia.
       Solo funciona con materias de SU curso; la regla y el flag están en
       services/joinByCode.js. Los mensajes de error los escribe el servidor: son los que
@@ -379,7 +388,9 @@
   <%# Vía del alumno para pedir el alta cuando el código no aplica (otro curso, o todavía sin
       ninguna materia): junta DNI y nombre completo y los manda como una sugerencia común,
       que el superadmin ve en /superadmin/suggestions junto al resto.
-      No matricula ni toca la base más que creando esa sugerencia. %>
+      No matricula ni toca la base más que creando esa sugerencia.
+      No se pinta para el alumno que ya llegó al tope de materias. %>
+  <% if (!cupoLleno) { %>
   <div class="modal-overlay" id="requestModal">
     <div class="modal">
       <div class="modal-header">
@@ -412,6 +423,7 @@
       </div>
     </div>
   </div>
+  <% } %>
 
   <%- include('partials/footer') %>
   <script src="/js/dashboard.js"></script>

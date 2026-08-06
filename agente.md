@@ -61,6 +61,7 @@ El admin puede "ver como" cualquier otro usuario (excepto el admin protegido):
 - Sección "Unidas por ti" — tarjetas verdes
 - Modal "Crear clase": nombre (req), sección, materia, aula
 - Modal "Unirse a clase": código de 6 caracteres
+- Alumno con 9 materias o más (`MAX_MATERIAS_ALUMNO` en `services/enrollment.js`): no ve «Unirme con un código» ni «Enviar solicitud para unirme»
 - JS: `public/js/dashboard.js`
 
 ### 4. Curso (`/courses/:id`)
@@ -341,6 +342,57 @@ Variables CSS para colores, sombras, radios. Componentes:
 ---
 
 ## Historial de Cambios (Changelog)
+
+### 2026-08-06 — Tope de 9 materias: el alumno con el curso completo ya no pide más altas
+
+**Pedido**: "quiero que si el alumno tiene un total de 9 materias o más, ya no le figure el botón de «Enviar solicitud para unirme» ni el botón de «Unirme con un código»".
+
+**La regla**: `MAX_MATERIAS_ALUMNO = 9` en `services/enrollment.js`, que es donde ya vivía todo lo que sabe de matrícula. Con 9 materias o más el curso está completo, y las dos vías por las que el alumno puede pedir sumar materias desaparecen de su panel. Un solo número para las dos, porque el motivo es el mismo: lo que llegue de ahí para arriba son altas equivocadas.
+
+**No toca el alta administrativa.** El admin, el preceptor y el docente siguen pudiendo matricular por encima del tope — hay alumnos con 14 y 20 materias en la base, y esto no los desmatricula ni les cambia nada de lo que ya tienen. Es un freno a la vía del alumno, no una regla de la base ni una validación de `Course`.
+
+**Dónde se aplica**: `routes/courses.js` (GET `/`) calcula `cupoMateriasLleno` con las materias donde el alumno figura como tal y `views/dashboard.ejs` esconde los dos botones **y sus dos modales** — dejar los modales en el DOM sin botón es dejar la función accesible desde la consola. Del lado del servidor, `services/joinByCode.js` rechaza el código con un 400 que explica el motivo, para que un request armado a mano tampoco pase. La solicitud no necesita guarda equivalente: va a `POST /suggestions`, que es el endpoint genérico de sugerencias y no matricula a nadie.
+
+**Verificado**: render de `views/dashboard.ejs` con 8, 9 y 20 materias — con 8 aparecen los dos botones y los dos modales, con 9 y con 20 no aparece ninguno. El spec de smoke `course-join-with-code` sigue valiendo: su alumno tiene 1 materia, muy por debajo del tope. **No requiere ningún cambio en la base de producción.**
+
+### 2026-08-06 — Sugerencias: hilo de conversación
+
+**Pedido**: "si bien los usuarios me mandan mensajes, quiero seguir con el hilo de la conversación, en caso que vuelvan a responder sobre lo que yo les envié. Sino que abran una nueva sugerencia".
+
+**Punto de partida**: una sugerencia era un único ida y vuelta — `text` del usuario, `response` del superadmin, y ahí terminaba. Si el usuario quería aclarar algo tenía que mandar una sugerencia nueva, que llegaba suelta y sin contexto de la anterior.
+
+**La regla, que es la mitad del pedido**: el hilo sirve para seguir UNA conversación. El usuario solo puede responder **si el equipo ya le contestó algo**; mientras su sugerencia está pendiente no hay nada que continuar y lo que corresponde es abrir una nueva. Lo mismo cuando la conversación llega a los 20 mensajes: ahí ya es otro tema. En los dos casos el error lo dice con esas palabras, no con un "no se puede".
+
+**Dónde vive el hilo, y por qué no todo junto**: los dos primeros mensajes siguen en `text` y `response`; lo que viene después va a `messages[]` (`from: 'user' | 'staff'`, autor, texto, fecha, `editedAt`). Meter también los dos primeros adentro del array habría exigido **migrar la base de producción** para no perder el historial — así, `messages[]` está vacío en todas las sugerencias que ya existen y se siguen leyendo exactamente igual. `services/suggestionThread.js` (nuevo) es el único módulo que sabe esto: arma el hilo completo y responde "¿de quién es el turno?" y "¿puede seguir el hilo?". Rutas y vistas piden el hilo armado y no vuelven a mirar los campos sueltos.
+
+**Cómo vuelve a la vista del superadmin**: cuando el usuario responde, la sugerencia vuelve a `status: 'pending'`. Es lo que la devuelve a la solapa donde el superadmin entra por default — si quedara en "Respondidas", la repregunta se archivaría sin que nadie la viera. La tarjeta suma un chip **TE RESPONDIÓ** y los dos listados pasan a ordenarse por `updatedAt` para que el hilo con novedad suba. Marcar como leída se guarda con `timestamps: false` a propósito: abrir la bandeja no es actividad de la conversación y no tiene que reordenar nada.
+
+**Responder ≠ editar**. El botón "Responder" ya no desaparece al contestar (antes sí, y era lo que hacía imposible seguir). El endpoint `POST /superadmin/suggestions/:id/respond` ahora distingue tres cosas por el mismo camino: primera respuesta (llena `response`), respuesta de seguimiento (suma al hilo, sin pisar nada) y edición (corrige **lo último** que escribió el equipo, esté en `response` o en el hilo). El modo lo decide el botón que abrió el editor, no el estado de la tarjeta — una sugerencia respondida se puede tanto editar como continuar, así que deducirlo del estado era ambiguo.
+
+**Del lado del usuario**: la bandeja del sobre muestra la conversación completa con su caja de respuesta. Ruta nueva `POST /suggestions/mine/:id/reply` (solo sobre sugerencias propias, 404 si no lo son), auditoría `suggestion.reply`.
+
+**Verificado**: smoke **197/197** con 5 specs nuevos (`suggestions-thread-*`), incluidos el bloqueo antes de la primera respuesta, que la segunda respuesta del equipo no pise la primera, que editar toque el último mensaje y no el inicial, y que nadie pueda escribir en el hilo de otro. **No requiere ningún cambio en la base de producción.**
+
+### 2026-08-06 — Alumnos duplicados por DNI: elegir la cuenta y el correo, como con los docentes
+
+**Pedido**: "que si figuran en el fix de *Dos alumnos con el mismo DNI en un curso*, se pueda hacer como con los docentes, eligiendo qué correo va a utilizar".
+
+**Punto de partida**: el arreglo `dni-duplicado-en-curso` de `/superadmin/otros` era solo masivo. Sacaba del curso la cuenta vacía y conservaba la que tenía las entregas, sin tocar correos, y salteaba los casos donde las dos cuentas tenían trabajo. Funciona para el duplicado obvio, pero no cubre el caso real que motivó el pedido: la cuenta que cursa es la vieja y el correo bueno está en la nueva.
+
+**Decisión**: las dos vías conviven en la misma tarjeta. El botón masivo sigue igual (los duplicados vacíos son la mayoría y no tienen nada que decidir) y abajo aparece un bloque por caso con las tres elecciones: qué cuenta se conserva, con qué correo queda y qué pasa con la otra. La alternativa —reemplazar el masivo por la elección caso por caso, como en docentes— se descartó porque acá los grupos pueden ser decenas.
+
+**Qué se transfiere** (`fusionarAlumnos` en `services/dbFixes.js`): entregas, notas, acuses de lectura, comentarios en novedades, sugerencias y las materias del curso donde figuraba solo la cuenta sobrante. Dos detalles que no son obvios:
+
+- **Los choques no se pisan.** `Submission` y `ActivityView` tienen índice único `{activity, student}` y `grades[]` una entrada por alumno: si las dos cuentas entregaron o tienen nota en la MISMA actividad, lo de la sobrante se queda donde está y se informa en el mensaje. Pisarlo sería borrar la entrega real de un alumno.
+- **La fecha de inscripción se hereda**, no se pone "hoy". `routes/activities.js` usa `enrollmentDates` para ocultar las tareas vencidas antes del alta: con la fecha de hoy le desaparecerían al alumno las tareas viejas del curso, incluidas las que él mismo ya entregó. Si la sobrante no tenía fecha (altas viejas = "siempre estuvo"), tampoco se le pone una a la conservada.
+
+La cuenta sobrante puede quedar **solo fuera del curso** (opción nueva, es lo que hacía el arreglo masivo), **deshabilitada** (default) o **eliminada** — y si le quedaron entregas propias no se elimina aunque se pida, igual que en docentes. La tarjeta avisa con un chip cuando una de las cuentas además cursa en otro curso, porque ahí darla de baja le saca el acceso allá.
+
+**El correo funciona igual que en docentes**: `pasarCorreo()` (extraído de `fusionarDocentes`, ahora compartido) intercambia los correos entre las dos cuentas pasando por uno temporal, porque `User.email` es único global y no admite que las dos tengan el mismo valor ni por un instante.
+
+**Refactors que trajo**: el bloque de grupos de `views/superadmin/otros.ejs` es ahora **uno solo** para los dos arreglos interactivos — título, detalle de cada cuenta, chips y opciones de la sobrante los arma `services/dbFixes.js` (`presentarGruposAlumnos`/`presentarGruposDocentes`), porque los números que hay que mirar para elegir no son los mismos para un docente que para un alumno. Y `POST /superadmin/otros/:id/fusionar` dejó de armar el mensaje y el detalle de auditoría: los devuelve el propio arreglo, junto con el `schoolId` del evento (antes se deducía partiendo la clave del grupo, que en alumnos es `divisionId|dni` y no `schoolId|dni`).
+
+**Verificado**: smoke **192/192** con 5 specs nuevos (`alumnos-dup-*`), incluidos el rechazo de una cuenta o un correo ajenos al grupo, que la nota quede en el gradebook a nombre de la cuenta conservada y que el login funcione con el correo adoptado y la contraseña de siempre.
 
 ### 2026-08-04 — Analítica de producto con PostHog (apagada por default)
 
@@ -1868,6 +1920,7 @@ El rol nuevo tocó **más de 20 archivos** solo para registrarse: 6 `<select>` d
 - El spec `suggestions-student-sees-answer-and-badge` depende de `suggestions-superadmin-can-respond` pero no declara su mismo `requiresEnv`: si se corre el smoke sin credenciales de superadmin, falla en cascada en vez de saltearse.
 - **`POST /courses/create` no valida el rol del llamante**: cualquier usuario autenticado con escuela (incluido un alumno) puede crear una materia por POST directo y queda como `owner`, lo que por `isTeacher()` le habilita calificar y gestionar alumnos de esa materia. El botón está oculto en la vista para alumnos y docentes, pero esconder el botón no cierra el endpoint — mismo criterio que se aplicó al apagar "unirse por código". Ya se bloqueó explícitamente para `preceptor` y `jefe` (este último lo detectó el smoke al crear el rol, 2026-08-06); **falta el resto**. Convertirlo en lista blanca exige decidir antes si `directivo` y `soe` conservan la posibilidad: hoy la UI se las ofrece en `views/dashboard.ejs:37`.
 - ✅ **RESUELTO (2026-07-30)** — los 9 specs que fallaban por `JOIN_BY_CODE_ENABLED` quedaron arreglados al eliminar la matriculación por código. Baseline actual: **126/126**.
+- **Alumnos con el mismo DNI que NO comparten curso**: `dni-duplicado-en-curso` ya deja fusionarlos eligiendo cuenta y correo (2026-08-06), pero solo agrupa dentro de una misma división. En el mirror quedan 4 pares que no comparten curso y no tiene herramienta ninguna. Agruparlos por escuela+DNI, como en docentes, exige antes decidir en qué curso queda el alumno fusionado — y ese dato no está en la base.
 - **Completar el DNI de las 118 cuentas que no lo tienen** (109 alumnos, 8 docentes, el superadmin). Hasta que estén todas, el DNI no puede marcarse `required` en el schema. Falta decidir si se hace con un listado en `/admin` o con un script de backfill contra los padrones de la escuela.
 - Limpieza de archivos huérfanos cuando se cancela el creador full-page sin guardar (los adjuntos ya subidos quedan en disco).
 - Relación `Subject` ↔ `Course` por texto (frágil ante renombrados). Migrar a ObjectId ref.
