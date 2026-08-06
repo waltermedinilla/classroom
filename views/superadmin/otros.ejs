@@ -87,6 +87,71 @@
     .dupe-result { font-size: 12.5px; margin-top: 10px; padding: 9px 12px; border-radius: 8px; display: none; }
     .dupe-result.ok    { background: #e6f4ea; color: #137333; }
     .dupe-result.error { background: #fce8e6; color: #c5221f; }
+
+    /* Compositor: la tarjeta es un formulario (alta masiva de materias en varios cursos) */
+    .am-block { margin-top: 18px; }
+    .am-label {
+      font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+      color: var(--text-secondary); margin-bottom: 8px;
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .am-label .am-mini {
+      font-size: 11px; font-weight: 600; text-transform: none; letter-spacing: 0;
+      color: #1a73e8; background: none; border: none; cursor: pointer; padding: 0;
+    }
+    .am-label .am-mini:hover { text-decoration: underline; }
+    .am-hint { font-size: 11.5px; color: var(--text-hint); font-weight: 400; text-transform: none; letter-spacing: 0; }
+    .am-cursos {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      max-height: 190px; overflow-y: auto;
+      border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+    }
+    .am-curso {
+      display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+      border: 1px solid var(--border); border-radius: 20px; padding: 6px 13px 6px 10px;
+      font-size: 12.5px; background: var(--background); user-select: none;
+    }
+    .am-curso:has(input:checked) { border-color: #1a73e8; background: #e8f0fe; color: #1a73e8; font-weight: 600; }
+    .am-curso .am-n { font-size: 10.5px; color: var(--text-hint); font-weight: 400; }
+    .am-curso:has(input:checked) .am-n { color: #1a73e8; }
+    .am-fila {
+      display: grid; grid-template-columns: 1fr 1fr 150px 32px; gap: 8px;
+      align-items: center; margin-bottom: 8px;
+    }
+    .am-fila input, .am-fila select {
+      width: 100%; padding: 8px 11px; font-size: 13px;
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface); color: var(--text-primary); outline: none;
+    }
+    .am-fila input:focus, .am-fila select:focus { border-color: #1a73e8; }
+    .am-quitar {
+      background: none; border: none; cursor: pointer; color: var(--text-hint);
+      padding: 4px; display: flex; align-items: center; justify-content: center; line-height: 1;
+    }
+    .am-quitar:hover { color: #ea4335; }
+    .am-cabecera {
+      display: grid; grid-template-columns: 1fr 1fr 150px 32px; gap: 8px;
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+      color: var(--text-hint); margin-bottom: 6px; padding: 0 2px;
+    }
+    .am-check { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; margin-top: 16px; cursor: pointer; }
+    .am-check input { margin-top: 2px; flex-shrink: 0; }
+    .am-plan {
+      display: none; margin-top: 14px; border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px 16px; max-height: 340px; overflow-y: auto; font-size: 12.5px;
+    }
+    .am-plan h4 { font-size: 13px; margin: 0 0 10px; }
+    .am-plan-curso { border-top: 1px solid var(--border); padding: 9px 0; }
+    .am-plan-curso:first-of-type { border-top: none; }
+    .am-plan-nombre { font-weight: 600; margin-bottom: 3px; }
+    .am-plan-item { color: var(--text-secondary); line-height: 1.6; }
+    .am-plan-item .am-nuevo  { color: #137333; font-weight: 600; }
+    .am-plan-item .am-existe { color: var(--text-hint); }
+    @media (max-width: 700px) {
+      .am-fila, .am-cabecera { grid-template-columns: 1fr; }
+      .am-cabecera { display: none; }
+      .am-fila { border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
+    }
   </style>
 </head>
 <body>
@@ -110,7 +175,9 @@
     </div>
 
     <% fixes.forEach(fix => { %>
-      <div class="fix-card <%= fix.error ? '' : (fix.total === 0 ? 'limpio' : 'sev-' + fix.severidad) %>" data-fix="<%= fix.id %>">
+      <%# Los compositores no son un problema con contador: no llevan la clase "limpio",
+          que los pintaría como "sin casos pendientes" cuando en realidad son una herramienta. %>
+      <div class="fix-card <%= fix.error ? '' : ((fix.total === 0 && !fix.compositor) ? 'limpio' : 'sev-' + fix.severidad) %>" data-fix="<%= fix.id %>">
         <div class="fix-head">
           <div class="fix-icon">
             <span class="material-symbols-outlined"><%= fix.icono %></span>
@@ -118,7 +185,12 @@
           <div style="flex:1;min-width:0">
             <h3 class="fix-title">
               <%= fix.titulo %>
-              <% if (fix.interactivo) { %>
+              <% if (fix.compositor) { %>
+                <span class="solo-diag" title="No corrige nada: crea lo que vos cargues">
+                  <span class="material-symbols-outlined" style="font-size:13px">build</span>
+                  Herramienta
+                </span>
+              <% } else if (fix.interactivo) { %>
                 <span class="solo-diag" title="No hay una regla automática: la elección la hacés vos, caso por caso">
                   <span class="material-symbols-outlined" style="font-size:13px">rule</span>
                   Elegís caso por caso
@@ -132,16 +204,18 @@
             </h3>
             <p class="fix-desc"><%= fix.descripcion %></p>
           </div>
-          <div class="fix-count">
-            <% if (fix.error) { %>
-              <div class="fix-count-num" style="color:#ea4335;font-size:20px">error</div>
-            <% } else { %>
-              <div class="fix-count-num" data-total style="color:<%= fix.total === 0 ? '#34a853' : fix.severidad === 'alta' ? '#ea4335' : '#ea8600' %>">
-                <%= fix.total %>
-              </div>
-              <div class="fix-count-lbl">afectados</div>
-            <% } %>
-          </div>
+          <% if (!fix.compositor || fix.error) { %>
+            <div class="fix-count">
+              <% if (fix.error) { %>
+                <div class="fix-count-num" style="color:#ea4335;font-size:20px">error</div>
+              <% } else { %>
+                <div class="fix-count-num" data-total style="color:<%= fix.total === 0 ? '#34a853' : fix.severidad === 'alta' ? '#ea4335' : '#ea8600' %>">
+                  <%= fix.total %>
+                </div>
+                <div class="fix-count-lbl">afectados</div>
+              <% } %>
+            </div>
+          <% } %>
         </div>
 
         <% if (fix.error) { %>
@@ -153,6 +227,90 @@
             <div class="fix-nota" data-nota style="display:none"></div>
           <% } %>
 
+          <%# ── Compositor: la tarjeta es un formulario ────────────────────────────
+              Los cursos y los docentes se pintan desde el JSON de abajo, no desde EJS: hay
+              que refiltrarlos cada vez que cambia la escuela elegida, y hacerlo dos veces
+              (una en el servidor y otra en el navegador) es garantía de que se desincronicen. %>
+          <% if (fix.compositor && fix.opciones) { %>
+            <script type="application/json" data-opciones>
+              <%- JSON.stringify(fix.opciones).replace(/</g, '\\u003c') %>
+            </script>
+
+            <div data-compositor>
+              <% if (fix.opciones.escuelas.length > 1) { %>
+                <div class="am-block">
+                  <div class="am-label">Escuela</div>
+                  <select data-escuela style="padding:8px 11px;font-size:13px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text-primary)">
+                    <% fix.opciones.escuelas.forEach(e => { %>
+                      <option value="<%= e.id %>"><%= e.nombre %></option>
+                    <% }) %>
+                  </select>
+                </div>
+              <% } else if (fix.opciones.escuelas.length === 1) { %>
+                <input type="hidden" data-escuela value="<%= fix.opciones.escuelas[0].id %>">
+              <% } %>
+
+              <div class="am-block">
+                <div class="am-label">
+                  Cursos donde cargarlas
+                  <button type="button" class="am-mini" data-todos>Todos</button>
+                  <button type="button" class="am-mini" data-ninguno>Ninguno</button>
+                  <span class="am-hint" data-elegidos></span>
+                </div>
+                <div class="am-cursos" data-cursos></div>
+              </div>
+
+              <div class="am-block">
+                <div class="am-label">
+                  Materias
+                  <span class="am-hint">Se cargan igual que una materia común: nombre, quién está a cargo y el aula.</span>
+                </div>
+                <div class="am-cabecera">
+                  <div>Nombre de la materia</div>
+                  <div>A cargo de</div>
+                  <div>Aula (opcional)</div>
+                  <div></div>
+                </div>
+                <div data-materias></div>
+                <button type="button" class="btn btn-outline" data-agregar style="font-size:12.5px;padding:6px 14px;margin-top:4px">
+                  <span class="material-symbols-outlined" style="font-size:17px">add</span>
+                  Agregar materia
+                </button>
+                <datalist data-nombres>
+                  <% fix.opciones.nombres.forEach(n => { %><option value="<%= n %>"><% }) %>
+                </datalist>
+              </div>
+
+              <%# Por omisión se matricula: una materia nueva y vacía en un curso que ya tiene
+                  alumnos deja a todo el curso con matrícula parcial — el problema que viene a
+                  resolver el primer arreglo de esta misma pantalla. %>
+              <label class="am-check">
+                <input type="checkbox" data-matricular checked>
+                <span>
+                  Inscribir en las materias nuevas a los alumnos que ya cursan en ese curso.
+                  <span class="am-hint">
+                    Si lo destildás, las materias quedan vacías y hay que matricular a mano.
+                    Las tareas vencidas antes de hoy no les figuran como pendientes.
+                  </span>
+                </span>
+              </label>
+
+              <div class="am-plan" data-plan></div>
+
+              <div class="fix-actions">
+                <button type="button" class="btn btn-outline" data-previsualizar style="font-size:13px;padding:7px 16px">
+                  <span class="material-symbols-outlined">visibility</span>
+                  Ver qué se va a crear
+                </button>
+                <button type="button" class="btn btn-primary" data-crear style="font-size:13px;padding:7px 18px">
+                  <span class="material-symbols-outlined">library_add</span>
+                  Crear materias
+                </button>
+              </div>
+            </div>
+          <% } %>
+
+          <% if (!fix.compositor) { %>
           <div class="fix-preview" data-preview>
             <table>
               <tbody data-preview-body>
@@ -263,6 +421,7 @@
               </span>
             <% } %>
           </div>
+          <% } %>
 
           <div class="fix-result" data-result></div>
         <% } %>
@@ -272,6 +431,242 @@
 
   <%- include('../partials/footer') %>
   <script>
+    /* ── Compositor: cargar un grupo de materias en un grupo de cursos ───────────
+       A diferencia del resto de la pantalla, acá no hay un diagnóstico contra el cual
+       apretar un botón: lo que se va a crear lo escribe la persona. Por eso el "Crear"
+       pasa siempre por la vista previa del servidor —el mismo cálculo que después
+       aplica— y recién con esos números pide confirmación. */
+    document.querySelectorAll('[data-compositor]').forEach(form => {
+      const card     = form.closest('.fix-card');
+      const id       = card.dataset.fix;
+      const opciones = JSON.parse(card.querySelector('[data-opciones]').textContent);
+      const result   = card.querySelector('[data-result]');
+      const cursosEl = form.querySelector('[data-cursos]');
+      const filasEl  = form.querySelector('[data-materias]');
+      const escuelaEl= form.querySelector('[data-escuela]');
+      const elegidos = form.querySelector('[data-elegidos]');
+      const planEl   = form.querySelector('[data-plan]');
+      const datalist = form.querySelector('[data-nombres]');
+      datalist.id = 'am-nombres-' + id;
+
+      // Los nombres de cursos y docentes salen de la base: se arman con textContent y no
+      // con innerHTML para que un nombre con < o & no pueda inyectar nada en la página.
+      function el(tag, cls, texto) {
+        const n = document.createElement(tag);
+        if (cls) n.className = cls;
+        if (texto !== undefined) n.textContent = texto;
+        return n;
+      }
+
+      const escuelaActual = () => (escuelaEl ? escuelaEl.value : (opciones.escuelas[0] || {}).id || '');
+      const elegidosIds   = () => [...cursosEl.querySelectorAll('input:checked')].map(i => i.value);
+
+      function contar() {
+        const n = elegidosIds().length;
+        elegidos.textContent = n ? n + ' curso(s) elegidos' : 'ninguno elegido todavía';
+      }
+
+      function pintarCursos() {
+        const escuela = escuelaActual();
+        const cursos  = opciones.cursos.filter(c => c.escuela === escuela);
+        cursosEl.innerHTML = '';
+        if (!cursos.length) {
+          cursosEl.appendChild(el('span', 'am-hint', 'Esta escuela todavía no tiene cursos cargados.'));
+          contar();
+          return;
+        }
+        cursos.forEach(c => {
+          const label = el('label', 'am-curso');
+          const input = document.createElement('input');
+          input.type  = 'checkbox';
+          input.value = c.id;
+          input.addEventListener('change', contar);
+          label.append(input, el('span', null, c.nombre), el('span', 'am-n', c.materias + ' mat.'));
+          cursosEl.appendChild(label);
+        });
+        contar();
+      }
+
+      // El docente tiene que ser de la misma escuela que el curso: al cambiar de escuela se
+      // repueblan los selects y se pierde la elección anterior si ya no corresponde.
+      function pintarDocentes(select) {
+        const escuela = escuelaActual();
+        const previo  = select.value;
+        select.innerHTML = '';
+        select.appendChild(Object.assign(document.createElement('option'), {
+          value: '', textContent: 'Elegí quién la dicta...',
+        }));
+        opciones.docentes.filter(d => d.escuela === escuela).forEach(d => {
+          const o = document.createElement('option');
+          o.value = d.id;
+          o.textContent = d.nombre + ' · ' + d.email;
+          select.appendChild(o);
+        });
+        if ([...select.options].some(o => o.value === previo)) select.value = previo;
+      }
+
+      function agregarFila() {
+        const fila = el('div', 'am-fila');
+
+        const nombre = document.createElement('input');
+        nombre.type = 'text';
+        nombre.placeholder = 'Ej: Matemática';
+        nombre.dataset.nombre = '';
+        nombre.setAttribute('list', datalist.id);
+
+        const docente = document.createElement('select');
+        docente.dataset.docente = '';
+
+        const aula = document.createElement('input');
+        aula.type = 'text';
+        aula.placeholder = 'Ej: Aula 12';
+        aula.dataset.aula = '';
+
+        const quitar = el('button', 'am-quitar');
+        quitar.type  = 'button';
+        quitar.title = 'Quitar esta materia';
+        const cruz = el('span', 'material-symbols-outlined', 'close');
+        cruz.setAttribute('style', 'font-size:18px');
+        quitar.appendChild(cruz);
+        quitar.addEventListener('click', () => {
+          fila.remove();
+          if (!filasEl.children.length) agregarFila(); // que nunca quede el bloque vacío
+        });
+
+        fila.append(nombre, docente, aula, quitar);
+        filasEl.appendChild(fila);
+        pintarDocentes(docente);
+        return nombre;
+      }
+
+      const leerMaterias = () => [...filasEl.querySelectorAll('.am-fila')].map(f => ({
+        nombre:    f.querySelector('[data-nombre]').value,
+        docenteId: f.querySelector('[data-docente]').value,
+        aula:      f.querySelector('[data-aula]').value,
+      }));
+
+      const cuerpo = () => ({
+        divisionIds: elegidosIds(),
+        materias:    leerMaterias(),
+        matricular:  form.querySelector('[data-matricular]').checked,
+      });
+
+      function mostrarError(mensaje) {
+        planEl.style.display = 'none';
+        result.className   = 'fix-result error';
+        result.textContent = mensaje;
+        result.style.display = 'block';
+      }
+
+      async function pedir(accion) {
+        const res  = await fetch('/superadmin/otros/' + id + '/' + accion, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cuerpo()),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'No se pudo completar la operación.');
+        return data;
+      }
+
+      function pintarPlan(data) {
+        planEl.innerHTML = '';
+        planEl.appendChild(el('h4', null,
+          'Se van a crear ' + data.totalCrear + ' materia(s)' +
+          (data.totalIntactas ? '. ' + data.totalIntactas + ' ya existen y quedan como están.' : '.')
+        ));
+        data.cursos.forEach(c => {
+          if (!c.crear.length && !c.intactas.length) return;
+          const bloque = el('div', 'am-plan-curso');
+          bloque.appendChild(el('div', 'am-plan-nombre', c.nombre));
+          c.crear.forEach(m => {
+            const linea = el('div', 'am-plan-item');
+            linea.appendChild(el('span', 'am-nuevo', 'nueva: '));
+            linea.appendChild(document.createTextNode(
+              m.nombre + ' — ' + m.docente + (m.aula ? ' · ' + m.aula : ' · sin aula')
+            ));
+            bloque.appendChild(linea);
+          });
+          c.intactas.forEach(m => {
+            bloque.appendChild(el('div', 'am-plan-item am-existe',
+              'ya estaba: ' + m.comoEsta + ' (no se toca)'));
+          });
+          planEl.appendChild(bloque);
+        });
+        planEl.style.display = 'block';
+      }
+
+      async function conBoton(btn, etiqueta, fn) {
+        const original = btn.innerHTML;
+        btn.disabled  = true;
+        btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> ' + etiqueta;
+        result.style.display = 'none';
+        try {
+          await fn();
+        } catch (err) {
+          mostrarError(err.message);
+        } finally {
+          btn.disabled  = false;
+          btn.innerHTML = original;
+        }
+      }
+
+      form.querySelector('[data-todos]').addEventListener('click', () => {
+        cursosEl.querySelectorAll('input').forEach(i => { i.checked = true; });
+        contar();
+      });
+      form.querySelector('[data-ninguno]').addEventListener('click', () => {
+        cursosEl.querySelectorAll('input').forEach(i => { i.checked = false; });
+        contar();
+      });
+      form.querySelector('[data-agregar]').addEventListener('click', () => { agregarFila().focus(); });
+
+      if (escuelaEl && escuelaEl.tagName === 'SELECT') {
+        escuelaEl.addEventListener('change', () => {
+          pintarCursos();
+          filasEl.querySelectorAll('[data-docente]').forEach(pintarDocentes);
+        });
+      }
+
+      form.querySelector('[data-previsualizar]').addEventListener('click', (e) => {
+        conBoton(e.currentTarget, 'Calculando...', async () => {
+          pintarPlan(await pedir('previsualizar'));
+        });
+      });
+
+      form.querySelector('[data-crear]').addEventListener('click', (e) => {
+        conBoton(e.currentTarget, 'Creando...', async () => {
+          // La confirmación se arma con los números del servidor, no con los del formulario:
+          // lo que importa no es cuántas materias se escribieron sino cuántas faltan de verdad.
+          const previo = await pedir('previsualizar');
+          pintarPlan(previo);
+          if (previo.totalCrear === 0) {
+            result.className   = 'fix-result ok';
+            result.textContent = 'No hay nada para crear: todas esas materias ya existen en los cursos elegidos.';
+            result.style.display = 'block';
+            return;
+          }
+          const cursosTocados = previo.cursos.filter(c => c.crear.length).length;
+          if (!confirm(
+            'Se van a crear ' + previo.totalCrear + ' materia(s) en ' + cursosTocados + ' curso(s).\n' +
+            (previo.totalIntactas ? previo.totalIntactas + ' ya existen y no se van a tocar.\n' : '') +
+            '\nEsto escribe directo en la base y no se puede deshacer. ¿Confirmás?'
+          )) return;
+
+          const data = await pedir('aplicar');
+          planEl.style.display = 'none';
+          result.className   = 'fix-result ok';
+          result.textContent = data.mensaje + ' Recargá la página para ver los conteos actualizados.';
+          result.style.display = 'block';
+        });
+      });
+
+      pintarCursos();
+      agregarFila();
+      agregarFila();
+      agregarFila();
+    });
+
     document.querySelectorAll('.fix-card').forEach(card => {
       const id      = card.dataset.fix;
       const preview = card.querySelector('[data-preview]');

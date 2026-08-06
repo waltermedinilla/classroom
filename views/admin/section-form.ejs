@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= seccion ? 'Editar sección' : 'Nueva sección' %> - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .sf-label {
+      display: block; font-size: 13px; font-weight: 600;
+      color: var(--text-secondary); margin-bottom: 6px;
+    }
+    .sf-hint { font-size: 12px; color: var(--text-hint); font-weight: 400; line-height: 1.5; }
+    .sf-caja {
+      border: 1px solid var(--border); border-radius: 10px;
+      max-height: 340px; overflow-y: auto; background: var(--surface);
+    }
+    .sf-div {
+      border-bottom: 1px solid var(--border);
+    }
+    .sf-div:last-child { border-bottom: none; }
+    .sf-div-head {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; cursor: pointer; user-select: none;
+    }
+    .sf-div-head:hover { background: var(--background); }
+    .sf-div-head input { flex-shrink: 0; cursor: pointer; }
+    .sf-div-nombre { font-size: 13.5px; font-weight: 600; }
+    .sf-div-cuenta { font-size: 11.5px; color: var(--text-hint); margin-left: auto; padding-left: 10px; }
+    .sf-chevron { transition: transform .15s; color: var(--text-hint); font-size: 20px; }
+    .sf-div.abierta .sf-chevron { transform: rotate(90deg); }
+    .sf-materias { display: none; padding: 2px 14px 12px 46px; }
+    .sf-div.abierta .sf-materias { display: block; }
+    .sf-materia {
+      display: flex; align-items: center; gap: 9px;
+      padding: 5px 0; font-size: 13px; cursor: pointer;
+    }
+    .sf-materias.bloqueada { opacity: .45; pointer-events: none; }
+    .sf-nota-entera {
+      font-size: 11.5px; color: #137333; padding: 4px 0 0; display: none;
+    }
+    .sf-div.entera .sf-nota-entera { display: block; }
+    .sf-resumen {
+      margin-top: 10px; padding: 11px 14px; border-radius: 8px;
+      background: var(--background); font-size: 13px; color: var(--text-secondary);
+    }
+    .sf-resumen strong { color: var(--text-primary); }
+    .sf-jefe {
+      display: flex; align-items: flex-start; gap: 10px; cursor: pointer;
+      padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px;
+      margin-bottom: 8px; background: var(--surface);
+    }
+    .sf-jefe:has(input:checked) { border-color: #3f51b5; background: #e0e7ff; }
+    .sf-jefe input { margin-top: 3px; flex-shrink: 0; }
+    .sf-jefe-nombre { font-size: 13.5px; font-weight: 600; }
+    .sf-jefe-mail { font-size: 12px; color: var(--text-secondary); word-break: break-all; }
+    .sf-aviso {
+      display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; line-height: 1.5;
+      background: #fef4e5; color: #e67e00; padding: 10px 13px; border-radius: 8px; margin-bottom: 12px;
+    }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content" style="max-width:720px">
+    <a href="/admin/secciones" class="btn btn-outline" style="margin-bottom:24px">
+      <span class="material-symbols-outlined">arrow_back</span>
+      Volver a secciones
+    </a>
+
+    <div class="modal" style="box-shadow:none;border:1px solid var(--border);animation:none">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">groups</span>
+          <h3><%= seccion ? 'Editar sección' : 'Nueva sección' %></h3>
+        </div>
+      </div>
+      <div class="modal-body">
+        <% if (!seccion) { %>
+        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:20px;line-height:1.55">
+          Una sección junta cursos completos y materias sueltas bajo un nombre. Quien la tenga a cargo
+          ve las actividades que publican los docentes de esas materias, sin poder modificar nada.
+        </p>
+        <% } %>
+
+        <form id="seccionForm" data-url="<%= seccion ? '/admin/secciones/' + seccion._id + '/edit' : '/admin/secciones/create' %>">
+
+          <label class="sf-label" for="nombre">Nombre de la sección *</label>
+          <div class="input-group" style="margin-bottom:20px">
+            <span class="material-symbols-outlined input-icon">groups</span>
+            <input type="text" id="nombre" placeholder="Ej: Ciclo Básico, Turno Tarde, Ciencias Exactas"
+                   value="<%= seccion ? seccion.name : '' %>" required>
+          </div>
+
+          <label class="sf-label">
+            Contenido
+            <span class="sf-hint">
+              Tildá el curso entero para incluir todas sus materias —incluidas las que se creen
+              más adelante— o abrí el curso y elegí materias sueltas.
+            </span>
+          </label>
+
+          <div class="input-group" style="margin-bottom:10px">
+            <span class="material-symbols-outlined input-icon">search</span>
+            <input type="text" id="buscador" placeholder="Filtrar por curso o materia...">
+          </div>
+
+          <div class="sf-caja" id="arbol"></div>
+          <div class="sf-resumen" id="resumen"></div>
+
+          <label class="sf-label" style="margin-top:24px">
+            A cargo de
+            <span class="sf-hint">
+              Solo aparecen los usuarios con el rol Jefe de Sección. Si no ves a la persona,
+              primero asignale ese rol desde <a href="/admin/users">Usuarios</a>.
+            </span>
+          </label>
+
+          <% if (!jefes.length) { %>
+            <div class="sf-aviso">
+              <span class="material-symbols-outlined" style="font-size:17px">warning</span>
+              <span>
+                Todavía no hay ningún usuario con el rol Jefe de Sección en esta escuela.
+                Podés crear la sección igual y asignarle jefes después.
+              </span>
+            </div>
+          <% } else { %>
+            <div style="max-height:240px;overflow-y:auto">
+              <% jefes.forEach(j => { %>
+                <label class="sf-jefe">
+                  <input type="checkbox" class="sf-jefe-check" value="<%= j.id %>"
+                    <%= seccion && seccion.heads.includes(j.id) ? 'checked' : '' %>>
+                  <div style="min-width:0">
+                    <div class="sf-jefe-nombre">
+                      <%= j.nombre %><%= j.activo ? '' : ' — cuenta deshabilitada' %>
+                    </div>
+                    <div class="sf-jefe-mail"><%= j.email %></div>
+                  </div>
+                </label>
+              <% }) %>
+            </div>
+          <% } %>
+
+          <div class="form-error" id="formError" style="margin-top:12px"></div>
+
+          <button type="submit" class="btn btn-primary btn-full" style="margin-top:20px">
+            <span class="material-symbols-outlined">check</span>
+            <%= seccion ? 'Guardar cambios' : 'Crear sección' %>
+          </button>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <%- include('../partials/footer') %>
+
+  <%# El árbol se pinta en el navegador y no desde EJS porque hay que refiltrarlo con el
+      buscador y recalcular el resumen en cada clic. Son ~40 divisiones y ~420 materias:
+      chico como para mandarlo entero de una. El `<` escapado evita que un nombre de materia
+      con un signo raro cierre el <script> antes de tiempo. %>
+  <script type="application/json" id="datos">
+    <%- JSON.stringify({
+          divisiones,
+          materias,
+          elegidas: {
+            divisions: seccion ? seccion.divisions : [],
+            courses:   seccion ? seccion.courses   : [],
+          },
+        }).replace(/</g, '\\u003c') %>
+  </script>
+
+  <script>
+    const DATOS   = JSON.parse(document.getElementById('datos').textContent);
+    const arbolEl = document.getElementById('arbol');
+    const resumen = document.getElementById('resumen');
+
+    // Estado en memoria. `divisiones` son cursos ENTEROS y `materias` son las sueltas; se
+    // guardan separados porque así se persisten (ver models/Section.js): el curso entero
+    // tiene que seguir incluyendo las materias que se creen mañana.
+    const elegidas = {
+      divisiones: new Set(DATOS.elegidas.divisions),
+      materias:   new Set(DATOS.elegidas.courses),
+    };
+
+    const materiasPorDivision = new Map();
+    DATOS.materias.forEach(m => {
+      if (!materiasPorDivision.has(m.division)) materiasPorDivision.set(m.division, []);
+      materiasPorDivision.get(m.division).push(m);
+    });
+
+    // Los nombres salen de la base: se arman con textContent, nunca con innerHTML.
+    function el(tag, cls, texto) {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (texto !== undefined) n.textContent = texto;
+      return n;
+    }
+
+    function icono(nombre, extraCls) {
+      return el('span', 'material-symbols-outlined' + (extraCls ? ' ' + extraCls : ''), nombre);
+    }
+
+    function pintar() {
+      arbolEl.innerHTML = '';
+      DATOS.divisiones.forEach(d => {
+        const materias = materiasPorDivision.get(d.id) || [];
+        const entera   = elegidas.divisiones.has(d.id);
+
+        const cont = el('div', 'sf-div' + (entera ? ' entera' : ''));
+        cont.dataset.division = d.id;
+        cont.dataset.texto    = (d.nombre + ' ' + materias.map(m => m.nombre).join(' ')).toLowerCase();
+
+        // ── Cabecera: el checkbox del curso ENTERO ──────────────────────────
+        const head = el('div', 'sf-div-head');
+        const chk  = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.checked = entera;
+        chk.addEventListener('click', e => e.stopPropagation()); // no abre/cierra el acordeón
+        chk.addEventListener('change', () => {
+          if (chk.checked) elegidas.divisiones.add(d.id);
+          else elegidas.divisiones.delete(d.id);
+          pintar();
+        });
+
+        head.append(
+          icono('chevron_right', 'sf-chevron'),
+          chk,
+          el('span', 'sf-div-nombre', d.nombre),
+          el('span', 'sf-div-cuenta', materias.length + ' materia' + (materias.length === 1 ? '' : 's')),
+        );
+        head.addEventListener('click', () => cont.classList.toggle('abierta'));
+        cont.appendChild(head);
+
+        // ── Materias sueltas ────────────────────────────────────────────────
+        const lista = el('div', 'sf-materias' + (entera ? ' bloqueada' : ''));
+        if (!materias.length) {
+          lista.appendChild(el('div', 'sf-hint', 'Este curso todavía no tiene materias cargadas.'));
+        }
+        materias.forEach(m => {
+          const label = el('label', 'sf-materia');
+          const c = document.createElement('input');
+          c.type = 'checkbox';
+          // Con el curso entero tildado, las sueltas se muestran marcadas y deshabilitadas:
+          // están incluidas igual, y dejarlas en blanco haría pensar que quedaron afuera.
+          c.checked = entera || elegidas.materias.has(m.id);
+          c.disabled = entera;
+          c.addEventListener('change', () => {
+            if (c.checked) elegidas.materias.add(m.id);
+            else elegidas.materias.delete(m.id);
+            actualizarResumen();
+          });
+          label.append(c, el('span', null, m.nombre));
+          lista.appendChild(label);
+        });
+
+        const nota = el('div', 'sf-nota-entera', 'Curso completo: entran también las materias que se creen más adelante.');
+        lista.appendChild(nota);
+        cont.appendChild(lista);
+        arbolEl.appendChild(cont);
+      });
+
+      filtrar();
+      actualizarResumen();
+    }
+
+    // Cuántas materias abarca la selección, con el mismo criterio que el servidor: una
+    // materia que está por los dos caminos (suelta y dentro de un curso entero) cuenta una.
+    function actualizarResumen() {
+      const alcance = new Set();
+      elegidas.divisiones.forEach(dId => {
+        (materiasPorDivision.get(dId) || []).forEach(m => alcance.add(m.id));
+      });
+      elegidas.materias.forEach(id => alcance.add(id));
+
+      // Las sueltas que además están dentro de un curso entero no se muestran aparte: el
+      // servidor las guarda igual, pero contarlas dos veces confundiría.
+      const sueltasReales = [...elegidas.materias].filter(id => {
+        const m = DATOS.materias.find(x => x.id === id);
+        return m && !elegidas.divisiones.has(m.division);
+      }).length;
+
+      resumen.innerHTML = '';
+      if (!alcance.size) {
+        resumen.appendChild(el('span', null, 'Todavía no elegiste nada. La sección se puede guardar vacía, pero sus jefes no van a ver ninguna actividad.'));
+        return;
+      }
+      const partes = [];
+      if (elegidas.divisiones.size) partes.push(elegidas.divisiones.size + ' curso' + (elegidas.divisiones.size === 1 ? '' : 's') + ' completo' + (elegidas.divisiones.size === 1 ? '' : 's'));
+      if (sueltasReales)            partes.push(sueltasReales + ' materia' + (sueltasReales === 1 ? '' : 's') + ' suelta' + (sueltasReales === 1 ? '' : 's'));
+
+      resumen.appendChild(el('span', null, partes.join(' + ') + ' → '));
+      resumen.appendChild(el('strong', null, alcance.size + ' materia' + (alcance.size === 1 ? '' : 's')));
+      resumen.appendChild(el('span', null, ' en total'));
+    }
+
+    // Filtro del buscador: esconde las divisiones cuyo nombre —o el de alguna de sus
+    // materias— no matchee, y abre las que sí para que se vea dónde está lo buscado.
+    function filtrar() {
+      const q = document.getElementById('buscador').value.trim().toLowerCase();
+      arbolEl.querySelectorAll('.sf-div').forEach(d => {
+        const coincide = !q || d.dataset.texto.includes(q);
+        d.style.display = coincide ? '' : 'none';
+        if (q && coincide) d.classList.add('abierta');
+      });
+    }
+
+    document.getElementById('buscador').addEventListener('input', filtrar);
+    pintar();
+
+    document.getElementById('seccionForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById('formError');
+      errorEl.classList.remove('show');
+      const btn = e.target.querySelector('button[type="submit"]');
+      const etiqueta = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> Guardando...';
+
+      // Las materias sueltas que ya están dentro de un curso entero no se mandan: son
+      // redundantes y quedarían guardadas para siempre, incluso si mañana se destilda el curso.
+      const courseIds = [...elegidas.materias].filter(id => {
+        const m = DATOS.materias.find(x => x.id === id);
+        return m && !elegidas.divisiones.has(m.division);
+      });
+
+      const res = await fetch(e.target.dataset.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name:        document.getElementById('nombre').value.trim(),
+          divisionIds: [...elegidas.divisiones],
+          courseIds,
+          headIds:     [...document.querySelectorAll('.sf-jefe-check:checked')].map(c => c.value),
+        }),
+      });
+      const data = await res.json();
+      btn.disabled = false;
+      btn.innerHTML = etiqueta;
+
+      if (!res.ok) {
+        errorEl.textContent = data.error || 'No se pudo guardar.';
+        errorEl.classList.add('show');
+        return;
+      }
+      window.location.href = '/admin/secciones';
+    });
+  </script>
+</body>
+</html>

@@ -44,6 +44,12 @@ const ACTIONS = {
   'division.edit':        { label: 'editó una división',       icon: 'edit',                 color: '#1a73e8', category: 'division' },
   'division.delete':      { label: 'eliminó una división',     icon: 'delete',               color: '#ea4335', category: 'division' },
 
+  // ── Secciones (Section = recorte con nombre a cargo de un Jefe de Sección) ─
+  // OJO: no son las "secciones" de config/sections.js (esas son las solapas del panel).
+  'section.create':       { label: 'creó una sección',         icon: 'groups',               color: '#1a73e8', category: 'section' },
+  'section.edit':         { label: 'editó una sección',        icon: 'edit',                 color: '#1a73e8', category: 'section' },
+  'section.delete':       { label: 'eliminó una sección',      icon: 'delete',               color: '#ea4335', category: 'section' },
+
   // ── Usuarios ──────────────────────────────────────────────────────────────
   'user.create':          { label: 'creó un usuario',          icon: 'person_add',           color: '#137333', category: 'user' },
   'user.edit':            { label: 'editó los datos de',       icon: 'edit',                 color: '#1a73e8', category: 'user' },
@@ -107,6 +113,7 @@ const CATEGORIES = {
   announcement: 'Novedades',
   course:       'Cursos',
   division:     'Divisiones',
+  section:      'Secciones',
   user:         'Usuarios',
   subject:      'Materias',
   school:       'Escuelas',

@@ -52,7 +52,7 @@
     <!-- Encabezado del perfil -->
     <div class="profile-header">
       <div class="profile-avatar">
-        <% const _avatarBg = user.role === 'admin' ? '#ea4335' : user.role === 'teacher' ? '#1a73e8' : user.role === 'directivo' ? '#9334e6' : user.role === 'preceptor' ? '#ea8600' : user.role === 'soe' ? '#0d7377' : '#5f6368'; %>
+        <% const _avatarBg = user.role === 'admin' ? '#ea4335' : user.role === 'teacher' ? '#1a73e8' : user.role === 'directivo' ? '#9334e6' : user.role === 'preceptor' ? '#ea8600' : user.role === 'jefe' ? '#3f51b5' : user.role === 'soe' ? '#0d7377' : '#5f6368'; %>
         <div class="profile-avatar-wrap" id="avatarWrap" style="border-radius:50%">
           <% if (user.avatar) { %>
             <div class="avatar-huge avatar-img" style="width:80px;height:80px"><img src="<%= user.avatar %>" alt="<%= user.name %>"></div>

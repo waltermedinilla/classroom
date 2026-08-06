@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= docente.name %> — Jefatura de Sección</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <%- include('../partials/jefatura-styles') %>
+  <style>
+    .profile-header {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px; margin-bottom: 20px;
+      display: flex; align-items: center; gap: 20px;
+    }
+    .avatar-lg {
+      width: 72px; height: 72px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: #1a73e8; color: #fff; font-size: 28px; font-weight: 700;
+    }
+    .profile-meta { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+
+    /* Gráfico de la serie mensual: barras CSS puras, sin librería de charting. Mismo
+       markup que views/directivo/teacher-detail.ejs — comparten services/serieMensual.js. */
+    .serie-box {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 18px 20px; margin-bottom: 8px;
+    }
+    .serie-legend { display: flex; gap: 18px; font-size: 12px; color: var(--text-secondary); margin-bottom: 14px; }
+    .serie-legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+    .dot-creadas { background: #1a73e8; }
+    .dot-corr    { background: #34a853; }
+    .serie-grid { display: flex; gap: 10px; align-items: flex-end; overflow-x: auto; padding-bottom: 4px; }
+    .serie-col  { flex: 1; min-width: 44px; text-align: center; }
+    .serie-bars { display: flex; gap: 4px; align-items: flex-end; justify-content: center; height: 124px; }
+    .serie-bar  { width: 16px; border-radius: 3px 3px 0 0; position: relative; min-height: 2px; }
+    .bar-creadas { background: #1a73e8; }
+    .bar-corr    { background: #34a853; }
+    .serie-num { position: absolute; top: -15px; left: 50%; transform: translateX(-50%); font-size: 10px; font-weight: 700; color: var(--text-secondary); }
+    .serie-mes { margin-top: 6px; font-size: 11px; color: var(--text-hint); text-transform: uppercase; }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/jefatura-nav', { activePage: 'docentes' }) %>
+
+    <a href="/jefatura/docentes" class="back-link">
+      <span class="material-symbols-outlined" style="font-size:16px">chevron_left</span>
+      Volver al listado
+    </a>
+
+    <div class="profile-header">
+      <div class="avatar-lg"><%= docente.name.charAt(0).toUpperCase() %></div>
+      <div style="flex:1">
+        <h2 style="margin:0 0 4px"><%= docente.name %></h2>
+        <div class="profile-meta">
+          <%= docente.email %>
+          <% if (docente.active === false) { %>
+            <span class="badge-pill badge-warn" style="margin-left:8px">Deshabilitado</span>
+          <% } %>
+        </div>
+        <div class="profile-meta">
+          Todo lo de esta pantalla está acotado a tus secciones: si además dicta en otro
+          curso, eso no aparece acá.
+        </div>
+      </div>
+    </div>
+
+    <div class="mini-stats">
+      <div class="mini-stat">
+        <div class="mini-stat-value"><%= stats.materias %></div>
+        <div class="mini-stat-label">Materias en tu sección</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value"><%= stats.alumnos %></div>
+        <div class="mini-stat-label">Alumnos únicos</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value"><%= stats.actividades %></div>
+        <div class="mini-stat-label">Actividades publicadas</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value" style="color:<%= stats.pendientes ? '#ea4335' : '#137333' %>"><%= stats.pendientes %></div>
+        <div class="mini-stat-label">Vencidas sin calificar</div>
+      </div>
+    </div>
+
+    <div class="section-h">
+      <span class="material-symbols-outlined" style="color:#1a73e8">insights</span>
+      Evolución de los últimos <%= serie.meses.length %> meses
+    </div>
+    <%
+      // Escala común a las dos series para que sean comparables entre sí dentro del gráfico.
+      const maxSerie = Math.max(...serie.creadas, ...serie.corregidas, 1);
+      const sinDatos = serie.creadas.every(v => v === 0) && serie.corregidas.every(v => v === 0);
+    %>
+    <div class="serie-box">
+      <% if (sinDatos) { %>
+        <div style="text-align:center;color:var(--text-secondary);padding:16px 0">
+          Sin actividad registrada en este período.
+        </div>
+      <% } else { %>
+        <div class="serie-legend">
+          <span><i class="dot dot-creadas"></i> Actividades creadas</span>
+          <span><i class="dot dot-corr"></i> Correcciones hechas</span>
+        </div>
+        <div class="serie-grid">
+          <% serie.meses.forEach((m, i) => { %>
+            <div class="serie-col">
+              <div class="serie-bars">
+                <div class="serie-bar bar-creadas"
+                  style="height:<%= serie.creadas[i] === 0 ? 2 : Math.max(4, Math.round((serie.creadas[i] / maxSerie) * 110)) %>px"
+                  title="<%= m %>: <%= serie.creadas[i] %> creadas">
+                  <% if (serie.creadas[i] > 0) { %><span class="serie-num"><%= serie.creadas[i] %></span><% } %>
+                </div>
+                <div class="serie-bar bar-corr"
+                  style="height:<%= serie.corregidas[i] === 0 ? 2 : Math.max(4, Math.round((serie.corregidas[i] / maxSerie) * 110)) %>px"
+                  title="<%= m %>: <%= serie.corregidas[i] %> <%= serie.corregidas[i] === 1 ? 'corrección' : 'correcciones' %>">
+                  <% if (serie.corregidas[i] > 0) { %><span class="serie-num"><%= serie.corregidas[i] %></span><% } %>
+                </div>
+              </div>
+              <div class="serie-mes"><%= m %></div>
+            </div>
+          <% }) %>
+        </div>
+      <% } %>
+    </div>
+
+    <div class="section-h">
+      <span class="material-symbols-outlined" style="color:#1a73e8">menu_book</span>
+      Materias que dicta en tu sección
+    </div>
+    <div style="overflow-x:auto">
+      <table class="simple-table">
+        <thead>
+          <tr><th>Materia</th><th>Curso</th><th>Rol</th><th style="text-align:center">Alumnos</th></tr>
+        </thead>
+        <tbody>
+          <% materias.forEach(m => { %>
+            <tr>
+              <td><%= m.nombre %></td>
+              <td style="color:var(--text-secondary)"><%= m.division %></td>
+              <td>
+                <span class="badge-pill <%= m.esTitular ? 'badge-ok' : 'badge-muted' %>">
+                  <%= m.esTitular ? 'Titular' : 'Suplente' %>
+                </span>
+              </td>
+              <td style="text-align:center"><%= m.alumnos %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section-h">
+      <span class="material-symbols-outlined" style="color:#ea8600">assignment</span>
+      Actividades publicadas (más recientes primero)
+    </div>
+    <% if (!actividades.length) { %>
+      <div class="empty-state">
+        <p>Todavía no publicó actividades en las materias de tu sección.</p>
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="simple-table">
+          <thead>
+            <tr>
+              <th>Actividad</th><th>Materia</th><th>Vencía</th>
+              <th style="text-align:center">Entregas</th>
+              <th style="text-align:center">Calificadas</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            <%
+              // Mismo semáforo que el listado de actividades y que el panel directivo.
+              const badgeDe = (a) => {
+                if (a.submitted > 0 && a.graded === 0 && a.overdue) return ['badge-warn',  'Sin calificar'];
+                if (a.overdue && a.graded < a.submitted)            return ['badge-media', 'Parcial'];
+                if (a.overdue)                                      return ['badge-muted', 'Vencida'];
+                return ['badge-ok', 'En curso'];
+              };
+            %>
+            <% actividades.forEach(a => { const [cls, txt] = badgeDe(a); %>
+              <tr>
+                <td><a href="/jefatura/actividades/<%= a._id %>" class="fila-link"><%= a.title %></a></td>
+                <td style="color:var(--text-secondary)"><%= a.courseName %></td>
+                <td style="color:var(--text-secondary);white-space:nowrap">
+                  <% if (a.dueDate) { %>
+                    <%= new Date(a.dueDate).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' }) %>
+                  <% } else { %>
+                    <span style="color:var(--text-hint)">Sin fecha</span>
+                  <% } %>
+                </td>
+                <td style="text-align:center"><%= a.submitted %></td>
+                <td style="text-align:center"><%= a.graded %></td>
+                <td><span class="badge-pill <%= cls %>"><%= txt %></span></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

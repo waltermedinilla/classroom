@@ -2,7 +2,11 @@ const mongoose = require('mongoose');
 const bcrypt   = require('bcryptjs');
 
 // Lista completa de roles válidos en el sistema (en orden de jerarquía descendente)
-const ROLES = ['superadmin', 'admin', 'directivo', 'teacher', 'preceptor', 'soe', 'student'];
+// 'jefe' = Jefe de Sección: ve, sin poder tocar nada, las actividades de las materias de
+// las Secciones que tiene a cargo (models/Section.js). Su alcance NO vive acá: vive en
+// Section.heads, así que agregarlo o sacarlo de una sección no pasa por el cache de 45s
+// de este documento — solo el cambio de rol sí.
+const ROLES = ['superadmin', 'admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'student'];
 
 const userSchema = new mongoose.Schema({
   name: {

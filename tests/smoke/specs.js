@@ -58,6 +58,11 @@ const preceptor = {
   email:    `smoke.preceptor.${RUN_ID}@example.com`,
   password: 'SmokeTest1234',
 };
+const jefe = {
+  name:     'Smoke Jefe',
+  email:    `smoke.jefe.${RUN_ID}@example.com`,
+  password: 'SmokeTest1234',
+};
 // Alumno dado de alta POR el preceptor (no por el admin), para verificar que su alta
 // matricula igual que la del panel de administración.
 const preceptorStudent = {
@@ -2795,6 +2800,432 @@ const specs = [
       if (state.dupConMateriaId)  await client.post('admin', `/admin/users/${state.dupConMateriaId}/delete`, { expectStatus: 200 });
     },
   },
+  // ── Alta masiva de materias en varios cursos (/superadmin/otros) ──────────
+  // Lo que hay que probar no es que cree —eso es un insertMany— sino lo contrario: que
+  // NO toque la materia que ya estaba. Por eso la segunda tanda va con otro docente y
+  // otra aula a propósito, y se verifica contra Mongo que sigan siendo los originales.
+  // Divisiones propias: los specs de matrícula cuentan las materias de state.divisionId.
+  {
+    id: 'alta-masiva-setup',
+    title: 'El admin crea dos divisiones vacías para el alta masiva',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const a = await client.post('admin', '/admin/divisions/create', {
+        body: { name: `SMOKE-AM1-${RUN_ID}` }, expectStatus: 201,
+      });
+      const b = await client.post('admin', '/admin/divisions/create', {
+        body: { name: `SMOKE-AM2-${RUN_ID}` }, expectStatus: 201,
+      });
+      state.amDivisionA = a.json.division._id;
+      state.amDivisionB = b.json.division._id;
+
+      // Un segundo docente, solo para probar que la segunda tanda NO le pasa las materias
+      // que ya existen. No queda a cargo de nada, así que su borrado no choca con el 409.
+      const otro = await client.post('admin', '/admin/users/create', {
+        body: {
+          name: `Smoke AM Otro Docente ${RUN_ID}`, email: `am.otro.${RUN_ID}@example.com`,
+          password: 'SmokeTest1234', role: 'teacher', dni: dniSmoke(22),
+        },
+        expectStatus: 201,
+      });
+      state.amOtroDocenteId = otro.json.user._id;
+
+      state.amMaterias = [
+        { nombre: `AM Uno ${RUN_ID}`, docenteId: state.scopedTeacherId, aula: 'Aula original' },
+        { nombre: `AM Dos ${RUN_ID}`, docenteId: state.scopedTeacherId, aula: '' },
+      ];
+    },
+  },
+  {
+    id: 'alta-masiva-panel-renderiza',
+    title: 'El panel Otros pinta la tarjeta-formulario con los cursos y docentes de la escuela',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('superadmin', '/superadmin/otros', { expectStatus: 200 });
+      assert(res.text.includes('data-fix="alta-masiva-materias"'), 'debería aparecer la tarjeta del alta masiva');
+      assert(res.text.includes('data-compositor'), 'la tarjeta debería pintarse como formulario, no como contador + botón');
+      // El JSON de opciones va embebido en la página: si la división recién creada figura,
+      // es que llegó la lista real de cursos y no una vacía.
+      assert(res.text.includes(`SMOKE-AM1-${RUN_ID}`), 'las divisiones de la escuela deberían llegar como opciones');
+      assert(res.text.includes('data-crear') && res.text.includes('data-previsualizar'),
+        'deberían estar los botones de crear y de vista previa');
+      // Con total = 0 una tarjeta común se pinta como "limpio" y esconde los botones: el
+      // compositor tiene que quedar fuera de esa rama o el formulario no sirve para nada.
+      // El class va ANTES del data-fix en el div de la tarjeta, así que se mira hacia atrás.
+      const i = res.text.indexOf('data-fix="alta-masiva-materias"');
+      const apertura = res.text.slice(Math.max(0, i - 120), i);
+      assert(!apertura.includes('limpio'), `el compositor no debería pintarse como tarjeta "limpia" — abre con: ${apertura.trim()}`);
+    },
+  },
+  {
+    id: 'alta-masiva-previsualiza',
+    title: 'La vista previa anuncia 2 materias × 2 cursos sin escribir nada',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('superadmin', '/superadmin/otros/alta-masiva-materias/previsualizar', {
+        body: { divisionIds: [state.amDivisionA, state.amDivisionB], materias: state.amMaterias },
+        expectStatus: 200,
+      });
+      assert(res.json.totalCrear === 4, `debería anunciar 4 materias a crear, anunció ${res.json.totalCrear}`);
+      assert(res.json.totalIntactas === 0, `no debería haber materias existentes todavía, dice ${res.json.totalIntactas}`);
+      assert(res.json.cursos.length === 2, `debería detallar los 2 cursos, detalló ${res.json.cursos.length}`);
+    },
+  },
+  {
+    id: 'alta-masiva-rechaza-carga-incompleta',
+    title: 'Sin cursos, sin materias, sin docente o con el nombre repetido devuelve 400',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const cursos = [state.amDivisionA];
+      const casos = [
+        ['sin cursos',      { divisionIds: [],     materias: state.amMaterias }],
+        ['sin materias',    { divisionIds: cursos, materias: [] }],
+        ['sin docente',     { divisionIds: cursos, materias: [{ nombre: 'X', docenteId: '', aula: '' }] }],
+        // Mismo nombre con otra tilde y otra caja: si esto pasara, crearía la materia
+        // duplicada dentro del mismo curso.
+        ['nombre repetido', { divisionIds: cursos, materias: [
+          { nombre: 'Educación Física', docenteId: state.scopedTeacherId, aula: '' },
+          { nombre: 'educacion fisica', docenteId: state.scopedTeacherId, aula: '' },
+        ] }],
+      ];
+      for (const [caso, body] of casos) {
+        const res = await client.post('superadmin', '/superadmin/otros/alta-masiva-materias/aplicar', {
+          body, expectStatus: 400,
+        });
+        assert(res.json?.error, `el caso "${caso}" debería devolver un mensaje de error`);
+      }
+    },
+  },
+  {
+    id: 'alta-masiva-crea',
+    title: 'Se crean las 4 materias, con su docente, su aula y su código propio',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state, assert }) {
+      const res = await client.post('superadmin', '/superadmin/otros/alta-masiva-materias/aplicar', {
+        body: { divisionIds: [state.amDivisionA, state.amDivisionB], materias: state.amMaterias },
+        expectStatus: 200,
+      });
+      assert(res.json.afectados === 4, `debería crear 4 materias, creó ${res.json.afectados}`);
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const creadas = await mongo.db().collection('courses')
+          .find({ division: { $in: [state.amDivisionA, state.amDivisionB].map(id => new ObjectId(id)) } })
+          .toArray();
+        assert(creadas.length === 4, `deberían quedar 4 materias en las dos divisiones, hay ${creadas.length}`);
+
+        const conAula = creadas.filter(c => c.room === 'Aula original');
+        assert(conAula.length === 2, `2 deberían tener el aula cargada, tienen ${conAula.length}`);
+        assert(creadas.every(c => String(c.owner) === state.scopedTeacherId), 'todas deberían quedar a cargo del docente elegido');
+        assert(new Set(creadas.map(c => c.code)).size === 4, 'cada materia debería tener su propio código de unión');
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'alta-masiva-no-pisa-lo-que-ya-existe',
+    title: 'Repetir la tanda con otro docente y otra aula no toca las materias que ya están',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state, assert }) {
+      // El pedido original: "en caso de que encuentre dicha materia, la deje como está".
+      // El nombre va escrito distinto (minúsculas) para que además pruebe la normalización.
+      const res = await client.post('superadmin', '/superadmin/otros/alta-masiva-materias/aplicar', {
+        body: {
+          divisionIds: [state.amDivisionA, state.amDivisionB],
+          materias: state.amMaterias.map(m => ({
+            nombre: m.nombre.toLowerCase(), docenteId: state.amOtroDocenteId,
+            aula: 'AULA QUE NO DEBE PISAR',
+          })),
+        },
+        expectStatus: 200,
+      });
+      assert(res.json.afectados === 0, `no debería crear nada, creó ${res.json.afectados}`);
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const despues = await mongo.db().collection('courses')
+          .find({ division: { $in: [state.amDivisionA, state.amDivisionB].map(id => new ObjectId(id)) } })
+          .toArray();
+        assert(despues.length === 4, `deberían seguir siendo 4 materias, hay ${despues.length}`);
+        assert(!despues.some(c => c.room === 'AULA QUE NO DEBE PISAR'), 'el aula de las materias existentes no debía cambiar');
+        assert(despues.every(c => String(c.owner) === state.scopedTeacherId), 'el docente de las materias existentes no debía cambiar');
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'cleanup-alta-masiva',
+    title: 'Limpieza: borra las materias del alta masiva y sus dos divisiones',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state }) {
+      if (!state.amDivisionA) return;
+      // Las materias van directo por Mongo: se crearon en masa y no hay un listado en JSON
+      // del que sacar sus ids. La división no se puede borrar mientras tenga materias.
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        await mongo.db().collection('courses').deleteMany({
+          division: { $in: [state.amDivisionA, state.amDivisionB].map(id => new ObjectId(id)) },
+        });
+      } finally {
+        await mongo.close();
+      }
+      await client.post('admin', `/admin/divisions/${state.amDivisionA}/delete`, { expectStatus: 200 });
+      await client.post('admin', `/admin/divisions/${state.amDivisionB}/delete`, { expectStatus: 200 });
+      if (state.amOtroDocenteId) await client.post('admin', `/admin/users/${state.amOtroDocenteId}/delete`, { expectStatus: 200 });
+    },
+  },
+
+  // ── Rol Jefe de Sección + panel /jefatura ─────────────────────────────────
+  // Lo que se verifica acá es sobre todo el FAIL-CLOSED y la BARRERA: un jefe sin sección
+  // no tiene que ver nada, y con sección no tiene que ver un milímetro fuera de ella. Es lo
+  // único que separa a un jefe de las notas de los alumnos del resto de la escuela.
+  //
+  // Todo el escenario usa divisiones propias (IN y OUT) para no alterar los conteos de los
+  // specs de matrícula, que cuentan las materias de state.divisionId.
+  {
+    id: 'jefatura-setup',
+    title: 'Se arma el escenario: dos divisiones (una dentro de la sección y otra fuera) con su actividad',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const dentro = await client.post('admin', '/admin/divisions/create', {
+        body: { name: `SMOKE-JEF-IN-${RUN_ID}` }, expectStatus: 201,
+      });
+      const fuera = await client.post('admin', '/admin/divisions/create', {
+        body: { name: `SMOKE-JEF-OUT-${RUN_ID}` }, expectStatus: 201,
+      });
+      state.jefDivIn  = dentro.json.division._id;
+      state.jefDivOut = fuera.json.division._id;
+
+      const matIn = await client.post('admin', '/admin/courses/create', {
+        body: { name: `Materia Jef IN ${RUN_ID}`, divisionId: state.jefDivIn, teacherId: state.scopedTeacherId },
+        expectStatus: 201,
+      });
+      const matOut = await client.post('admin', '/admin/courses/create', {
+        body: { name: `Materia Jef OUT ${RUN_ID}`, divisionId: state.jefDivOut, teacherId: state.scopedTeacherId },
+        expectStatus: 201,
+      });
+      state.jefCourseIn  = matIn.json.course._id;
+      state.jefCourseOut = matOut.json.course._id;
+
+      const actIn = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.jefCourseIn, title: `Actividad DENTRO ${RUN_ID}`, type: 'tarea' },
+        expectStatus: 201,
+      });
+      const actOut = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.jefCourseOut, title: `Actividad FUERA ${RUN_ID}`, type: 'tarea' },
+        expectStatus: 201,
+      });
+      state.jefActIn  = actIn.json.activity._id;
+      state.jefActOut = actOut.json.activity._id;
+    },
+  },
+  {
+    id: 'jefatura-alta-del-rol',
+    title: 'El admin da de alta un Jefe de Sección y crea una sección todavía sin jefes',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const u = await client.post('admin', '/admin/users/create', {
+        body: { name: jefe.name, email: jefe.email, password: jefe.password, role: 'jefe', dni: dniSmoke(23) },
+        expectStatus: 201,
+      });
+      state.jefeId = u.json.user._id;
+      assert(u.json.user.role === 'jefe', `debería quedar con rol jefe, quedó ${u.json.user.role}`);
+
+      // La sección se crea con la división IN ENTERA y sin jefes: así el spec de abajo
+      // prueba el fail-closed con una sección que sí tiene contenido.
+      const s = await client.post('admin', '/admin/secciones/create', {
+        body: { name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [], headIds: [] },
+        expectStatus: 201,
+      });
+      state.seccionId = s.json.seccion._id;
+    },
+  },
+  {
+    id: 'jefatura-rechaza-jefe-que-no-tiene-el-rol',
+    title: 'Poner como jefe a alguien que no tiene el rol devuelve 400',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Sin esto se podría guardar un alcance para una cuenta que nunca va a poder entrar
+      // al panel, y la pantalla de secciones mostraría un jefe que no lo es.
+      const res = await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+        body: {
+          name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [],
+          headIds: [state.scopedTeacherId],
+        },
+        expectStatus: 400,
+      });
+      assert(res.json?.error, 'debería explicar por qué no se puede');
+    },
+  },
+  {
+    id: 'jefatura-login',
+    title: 'El Jefe de Sección inicia sesión',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      await client.post('jefe', '/login', {
+        body: { email: jefe.email, password: jefe.password },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'jefatura-sin-seccion-no-ve-nada',
+    title: 'Sin sección asignada no ve NINGUNA actividad (fail-closed)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // El spec más importante del bloque: el rol se puede asignar por caminos que no
+      // preguntan por secciones, así que el estado por defecto tiene que ser "no ve nada".
+      const res = await client.get('jefe', '/jefatura', { expectStatus: 200 });
+      assert(/Todavía no tenés secciones a cargo/.test(res.text),
+        'debería mostrar la pantalla de sin alcance');
+      assert(!res.text.includes(`Actividad DENTRO ${RUN_ID}`),
+        'no debería listar ninguna actividad sin sección asignada');
+      assert(!res.text.includes(`Actividad FUERA ${RUN_ID}`),
+        'no debería listar ninguna actividad sin sección asignada');
+    },
+  },
+  {
+    id: 'jefatura-asignar-jefe',
+    title: 'El admin le asigna la sección al jefe',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+        body: {
+          name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [],
+          headIds: [state.jefeId],
+        },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'jefatura-ve-solo-su-seccion',
+    title: 'Ve las actividades de su sección y NO las de afuera',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // El cambio de jefes no pasa por el cache de 45s del doc de usuario: se resuelve
+      // leyendo Section en cada request, así que tiene efecto en este mismo request.
+      const res = await client.get('jefe', '/jefatura', { expectStatus: 200 });
+      assert(res.text.includes(`Actividad DENTRO ${RUN_ID}`),
+        'debería listar la actividad de su sección');
+      assert(!res.text.includes(`Actividad FUERA ${RUN_ID}`),
+        'NO debería listar la actividad de una división fuera de su sección');
+    },
+  },
+  {
+    id: 'jefatura-materia-nueva-entra-sola',
+    title: 'Una materia creada después aparece sin tocar la sección (resolución dinámica)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // La sección guarda la DIVISIÓN, no la lista de materias. Si guardara las materias,
+      // esto no aparecería nunca y habría que reeditar la sección en cada alta.
+      const mat = await client.post('admin', '/admin/courses/create', {
+        body: { name: `Materia Jef NUEVA ${RUN_ID}`, divisionId: state.jefDivIn, teacherId: state.scopedTeacherId },
+        expectStatus: 201,
+      });
+      state.jefCourseNueva = mat.json.course._id;
+
+      const act = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.jefCourseNueva, title: `Actividad NUEVA ${RUN_ID}`, type: 'tarea' },
+        expectStatus: 201,
+      });
+      state.jefActNueva = act.json.activity._id;
+
+      const res = await client.get('jefe', '/jefatura', { expectStatus: 200 });
+      assert(res.text.includes(`Actividad NUEVA ${RUN_ID}`),
+        'la materia nueva de la división debería entrar al alcance sin editar la sección');
+    },
+  },
+  {
+    id: 'jefatura-drill-down',
+    title: 'Abre las entregas de una actividad suya y la ficha del docente',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const entregas = await client.get('jefe', `/jefatura/actividades/${state.jefActIn}`, { expectStatus: 200 });
+      assert(entregas.text.includes('Alumnos de la materia'), 'debería mostrar la nómina de la materia');
+
+      const listado = await client.get('jefe', '/jefatura/docentes', { expectStatus: 200 });
+      // El docente del alcance es el "scoped teacher", que se dio de alta con teacher.name.
+      assert(listado.text.includes(teacher.name), 'el docente de la sección debería figurar en el listado');
+
+      const ficha = await client.get('jefe', `/jefatura/docentes/${state.scopedTeacherId}`, { expectStatus: 200 });
+      assert(ficha.text.includes(`Actividad DENTRO ${RUN_ID}`), 'la ficha debería listar su actividad de la sección');
+      assert(!ficha.text.includes(`Actividad FUERA ${RUN_ID}`),
+        'la ficha NO debería mostrar lo que el docente hace fuera de la sección');
+    },
+  },
+  {
+    id: 'jefatura-fuera-de-alcance-403',
+    title: 'Una actividad o un docente fuera de la sección devuelven 403',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // Es la barrera real: la actividad de afuera no aparece en la grilla, pero nada impide
+      // escribir su id en la URL — y del otro lado hay notas de alumnos.
+      await client.get('jefe', `/jefatura/actividades/${state.jefActOut}`, { expectStatus: 403 });
+      // Un usuario que no dicta nada en la sección tampoco se puede abrir como docente.
+      await client.get('jefe', `/jefatura/docentes/${state.scopedStudentId}`, { expectStatus: 403 });
+    },
+  },
+  {
+    id: 'jefatura-no-entra-a-otros-paneles',
+    title: 'No entra a Administración, Directivo ni Preceptoría, y no puede crear materias',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.get('jefe', '/admin/users', { expectStatus: 403 });
+      await client.get('jefe', '/directivo',   { expectStatus: 403 });
+      await client.get('jefe', '/preceptor',   { expectStatus: 403 });
+      await client.get('jefe', '/admin/secciones', { expectStatus: 403 });
+      // Es un rol de SOLO LECTURA: no debe poder escribir por ninguna ruta de otro panel.
+      await client.post('jefe', '/courses/create', {
+        body: { name: `No debería crearse ${RUN_ID}`, divisionId: state.jefDivIn },
+        expectStatus: 403,
+      });
+    },
+  },
+  {
+    id: 'jefatura-rol-no-autoasignable',
+    title: 'Nadie puede auto-registrarse como Jefe de Sección (queda como alumno)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post(null, '/register', {
+        body: {
+          name: 'Smoke Fake Jefe', email: `fake.jefe.${RUN_ID}@example.com`,
+          password: 'SmokeTest1234', role: 'jefe', dni: dniSmoke(24),
+          divisionId: state.selfEnrollDivisionId,
+        },
+        expectStatus: 201,
+      });
+      state.fakeJefeId = res.json.user._id;
+      assert(res.json.user.role === 'student',
+        `el rol jefe no debe ser auto-asignable, quedó como ${res.json.user.role}`);
+    },
+  },
+  {
+    id: 'cleanup-jefatura',
+    title: 'Limpieza: borra la sección, el jefe, las materias y las divisiones del escenario',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      if (state.seccionId) await client.post('admin', `/admin/secciones/${state.seccionId}/delete`, { expectStatus: 200 });
+      // Las materias van antes que las divisiones: una división con materias adentro no se
+      // puede borrar. Y el docente titular tampoco, mientras siga a cargo de estas materias.
+      for (const id of [state.jefCourseIn, state.jefCourseOut, state.jefCourseNueva]) {
+        if (id) await client.post('admin', `/admin/courses/${id}/delete`, { expectStatus: 200 });
+      }
+      for (const id of [state.jefDivIn, state.jefDivOut]) {
+        if (id) await client.post('admin', `/admin/divisions/${id}/delete`, { expectStatus: 200 });
+      }
+      if (state.jefeId) await client.post('admin', `/admin/users/${state.jefeId}/delete`, { expectStatus: 200 });
+    },
+  },
+
   {
     // Regresión del 2026-08-03: en producción /admin/courses tiraba 500 para el admin.
     // Dos materias tenían `owner` apuntando a un usuario ya borrado; populate() devolvía
@@ -2894,7 +3325,7 @@ const specs = [
     requiresEnv: ['MONGODB_URI'],
     async run({ env, state }) {
       const { MongoClient, ObjectId } = require('mongodb');
-      const ids = [state.teacherId, state.studentId, state.fakePreceptorId]
+      const ids = [state.teacherId, state.studentId, state.fakePreceptorId, state.fakeJefeId]
         .filter(Boolean).map(s => new ObjectId(s));
       if (!ids.length) return;
 

@@ -1765,6 +1765,98 @@ El `.env` local tiene `NODE_ENV=production`, y con eso Express prende `view cach
 
 ---
 
+## Cargar un grupo de materias en un grupo de cursos — solapa Otros (2026-08-05)
+
+Novena tarjeta de `/superadmin/otros`, `alta-masiva-materias`. Se elige un conjunto de cursos, se escribe una lista de materias —nombre, quién está a cargo y el aula, los mismos tres campos que el alta de a una— y se crean en todos los cursos elegidos de una sola pasada. Al armar el ciclo lectivo la misma grilla se repite en las 40 divisiones: cargarla a mano son 40 × 10 pasadas por `/admin/courses/create`.
+
+**La materia que ya existe en ese curso no se toca.** Ni el docente, ni el aula, ni los alumnos, ni el `code` con el que los alumnos se unen. La tarjeta solo crea lo que falta, así que correrla dos veces con la misma lista no duplica nada — la segunda vez informa "ya existían" y no escribe.
+
+### Un tipo nuevo de tarjeta: `compositor`
+Las tarjetas de este panel son "un problema con un contador y un botón". Esta no: lo que hay que crear **no está en la base**, lo escribe la persona. Se agregó la marca `compositor: true` al contrato de `services/dbFixes.js`; la vista, al verla, pinta un formulario propio en vez del par contador/botón, y `diagnosticar()` devuelve `opciones` (cursos, docentes, nombres sugeridos) en vez de una lista de afectados.
+
+No es una excepción a la REGLA DE ORO del archivo sino la otra cara: ahí donde hace falta criterio humano, acá el criterio humano **es** el input y el arreglo se limita a repetirlo sin deducir nada.
+
+### Por qué el nombre se compara normalizado
+`claveMateria()` saca tildes, baja a minúsculas y colapsa espacios antes de preguntar si la materia ya está. Comparando el string crudo, escribir "Educacion fisica" donde ya existe "Educación Física" crearía una segunda materia en el mismo curso — justo los duplicados que hubo que consolidar a mano. El nombre se guarda **tal como se escribió**; la normalización es solo para decidir si ya existe.
+
+### Por qué matricula por omisión
+Una materia nueva y vacía en un curso que ya tiene alumnos deja a **todo** el curso con matrícula parcial, o sea que crearía el problema que resuelve la primera tarjeta del mismo panel. Por eso el tilde "Inscribir a los alumnos que ya cursan" viene puesto: toma los alumnos de las materias que el curso ya tenía (`Division` no tiene lista de alumnos propia) y los inscribe con `enrollmentDates = ahora`, igual que `matricula-parcial`, para que no les figuren como pendientes las tareas ya vencidas. Un curso sin materias previas queda vacío: no hay de dónde sacarlos.
+
+### Dos cosas que se agregaron al panel para esto
+- **`POST /:id/previsualizar`** — vista previa por arreglo. El botón "Crear materias" pasa siempre por acá antes de pedir confirmación, así el número que se confirma sale del servidor y no del formulario. Es el mismo cálculo que después aplica, recalculado contra la base en las dos llamadas: una pestaña vieja no puede crear sobre un estado que ya cambió.
+- **`aplicar()` puede devolver `schoolId` y `meta`** — el `schoolId` fija la escuela del evento de auditoría (el superadmin no tiene escuela propia: sin eso el evento quedaba con `school: null` y el admin de la escuela no lo veía en su panel). El `meta` es el resumen que reemplaza al body crudo, que acá son decenas de cursos por decenas de materias y no entra en un renglón de auditoría.
+
+El `code` de cada materia se genera en el servicio contra los que ya existen y contra los de la misma tanda, en vez de dejárselo al `default` del modelo: `insertMany` no reintenta ante una colisión del índice único y en una tanda de cientos ese choque tumbaría el documento.
+
+### Errores de carga, con su mensaje
+Cursos sin elegir, lista vacía, materia sin nombre, materia sin docente, el mismo nombre dos veces en la lista, un docente que no es de la escuela, cursos de dos escuelas distintas en la misma tanda. Todos devuelven **400 con el texto tal cual** (el servicio marca el error con `status: 400`), no el 500 genérico que hacía pensar que se rompió algo.
+
+### Cobertura
+6 specs nuevos en el smoke (`alta-masiva-*`), con dos divisiones propias para no alterar los conteos de los specs de matrícula. El que más importa es `alta-masiva-no-pisa-lo-que-ya-existe`: repite la tanda con **otro docente y otra aula** y verifica contra Mongo que las materias que ya estaban conserven las originales. Baseline: **174/174**.
+
+---
+
+## Rol "Jefe de Sección" + Secciones (2026-08-06)
+
+Faltaba la figura intermedia entre el directivo (ve toda la escuela) y el preceptor (ve divisiones, pero su panel es de gestión de alumnos): alguien responsable de un recorte del establecimiento que **no coincide con una división ni con una materia**, y cuyo trabajo es mirar qué están dando los docentes de ese recorte.
+
+Dos piezas nuevas: la entidad **Sección** (`models/Section.js`, la crea el admin en `/admin/secciones`) y el rol **`jefe`**, de solo lectura, con panel propio en `/jefatura`.
+
+### ⚠️ Tres cosas se llaman "sección" y no son lo mismo
+| Qué | Dónde | Significa |
+|---|---|---|
+| `Section` | `models/Section.js` | **Entidad de datos**: el recorte con nombre |
+| `SECTIONS` | `config/sections.js` | Las **solapas** de cada panel |
+| `sectionGuard` | `middleware/sections.js` | El **enforcement** de esas solapas |
+
+Comparten la palabra y nada más. Los tres archivos lo dicen en su encabezado.
+
+### Forma del modelo, y por qué
+```js
+{ name, school, divisions: [Division], courses: [Course], heads: [User] }
+index({ name: 1, school: 1 }, { unique: true })   // como Division
+index({ heads: 1 })                                // "mis secciones", 1ª query de cada request
+```
+
+- **`divisions` y `courses` separados, no aplanados a una lista de materias.** Guardar "1°1° entero" como las 13 materias que hoy tiene congelaría la sección: una materia creada mañana —o cargada con el alta masiva de `/superadmin/otros`— no entraría nunca. Guardando la división, el alcance se resuelve **en cada request**. Misma semántica que `allDivisions:true` del preceptor. Hay un smoke dedicado a esto (`jefatura-materia-nueva-entra-sola`).
+- **`heads` en la Sección, no `assignedSections` en User.** Además de ser lo que se pidió (se administra desde la pantalla de la sección), **no toca el schema de `User`**: cero migración, cero backfill. Y tiene una consecuencia útil: los jefes **no** quedan pegados al doc de usuario, que vive cacheado 45 s, así que agregar o sacar un jefe se ve en el request siguiente. Lo único que sigue tardando hasta 45 s es el cambio de **rol**. Por eso `POST /admin/secciones/:id/edit` **no** llama `invalidateUser` — y no es un olvido.
+
+### Alcance: fail-closed, resuelto a materias
+`middleware/jefatura.js` es el espejo de `middleware/preceptor.js`, con la diferencia de que resuelve a **materias** (`req.scopeCourseIds`), que es el grano contra el que cuelgan las actividades. Dos queries por request, las dos indexadas.
+
+Sin secciones **no ve nada**. El rol se puede asignar por caminos que no preguntan por secciones (cambio individual o en lote desde `/admin` y `/superadmin`), así que el estado por omisión tiene que ser "no ve nada" — si "vacío" significara "toda la escuela", esos caminos entregarían el establecimiento entero. Es el spec más importante del bloque (`jefatura-sin-seccion-no-ve-nada`).
+
+Tres barreras, una por tipo de `:id`: `materiaEnScope`, `actividadEnScope` (por su materia) y `docenteEnScope` (dicta alguna materia del alcance, como titular **o** suplente).
+
+### Se cuenta por `author`, no por `owner`
+El pedido fue ver "las actividades que **hagan** los docentes": importa quién hizo el trabajo, no quién figura como titular, así que un suplente que sostiene la materia aparece con su producción y no en cero. Es una **divergencia consciente** con `routes/directivo.js`, que en sus columnas de conteo atribuye la materia al `owner` (ver el comentario de `directivo.js:644`). Está anotada en el encabezado de `routes/jefatura.js`.
+
+### Las cuatro pantallas
+| Ruta | Qué |
+|---|---|
+| `GET /jefatura` | Listado de actividades. **Todos los filtros se expresan en Mongo** y se pagina con `skip`/`limit` — a diferencia del directivo, que trae todo a memoria. El conteo de entregas se hace solo sobre las 25 de la página |
+| `GET /jefatura/actividades/:id` | Entregas: la **nómina completa**, no solo quienes entregaron — para un jefe el dato es quién NO entregó. Quien se incorporó después del vencimiento sale como "No le correspondía" y no como falta |
+| `GET /jefatura/docentes` | Docentes de la sección, por defecto los que más vencidas sin calificar tienen |
+| `GET /jefatura/docentes/:id` | Ficha acotada al alcance + serie de 6 meses |
+
+`services/serieMensual.js` salió de `routes/directivo.js` para que los dos paneles no muestren meses distintos del mismo docente. Mismo criterio con el que nació `services/divisionDetail.js`.
+
+### El selector de contenido
+40 divisiones × ~11 materias = **456 materias**: una lista plana de checkboxes es inusable. Es un **acordeón por división** con buscador y contador vivo al pie ("1 curso completo + 2 materias sueltas → 15 materias"). Tildar el curso entero **atenúa y deshabilita** sus materias sueltas, y esas materias **no se mandan** en el POST: guardarlas sería redundante hoy y quedarían pegadas si mañana se destilda el curso.
+
+### Privacidad — decisión explícita del usuario (2026-08-05)
+El jefe ve **entregas y notas de alumnos**, que son menores. Se planteó el reparo y se confirmó el pedido. Queda acotado por diseño: solo desde una actividad de una materia de sus secciones, **sin** buscador de alumnos, **sin** ficha de alumno y **sin** datos de contacto. Si algún día se agrega una pantalla de alumnos a este panel, esto hay que volver a discutirlo.
+
+### Bug preexistente que encontró el smoke
+`jefatura-no-entra-a-otros-paneles` falló en la primera corrida: el jefe **podía crear materias** por `POST /courses/create`, quedando como `owner` y ganando por `isTeacher()` permiso para calificar. Es el agujero que ya estaba en el backlog ("no valida el rol del llamante"). Se lo bloqueó igual que al preceptor. **El agujero general sigue abierto**: convertirlo en lista blanca exige decidir antes si directivo y SOE conservan la posibilidad, que hoy la UI les ofrece.
+
+### Alcance del cambio
+El rol nuevo tocó **más de 20 archivos** solo para registrarse: 6 `<select>` de rol, 5 bloques de `superadmin/school-profile.ejs`, los colores de avatar en 2 vistas, el monitor, el importador y los mapas de nombres. La matriz de `/superadmin/roles` **sí** es data-driven (sale de `User.getRoles()` + `SECTIONS`), así que esa se armó sola.
+
+**13 specs nuevos** (`jefatura-*`). Baseline: **187/187**. No hubo cambios de base: la colección `sections` nace vacía y no hay campo nuevo en `User`.
+
+---
+
 ## Plan de Futuras Actualizaciones (Roadmap)
 
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`). Resumen de lo pendiente:
@@ -1774,7 +1866,7 @@ El `.env` local tiene `NODE_ENV=production`, y con eso Express prende `view cach
 - **`npm install` en el servidor antes de desplegar v1.0.7**: `sharp` pasó de `devDependencies` a `dependencies` y el webhook de deploy no corre `npm install`. Sin eso la app arranca igual (degradación prevista) pero no optimiza nada.
 - Extender el optimizador a las **fotos en entregas de alumnos** (hoy 0 MB, pero va a crecer). Preset más conservador (2000 px, calidad 85) porque puede ser una foto de una hoja escrita que el docente necesita leer. El spec `entrega-pdf-no-se-toca` ya fija que los PDFs no se toquen.
 - El spec `suggestions-student-sees-answer-and-badge` depende de `suggestions-superadmin-can-respond` pero no declara su mismo `requiresEnv`: si se corre el smoke sin credenciales de superadmin, falla en cascada en vez de saltearse.
-- **`POST /courses/create` no valida el rol del llamante**: cualquier usuario autenticado con escuela (incluido un alumno) puede crear una materia por POST directo y queda como `owner`, lo que por `isTeacher()` le habilita calificar y gestionar alumnos de esa materia. El botón está oculto en la vista para alumnos y docentes, pero esconder el botón no cierra el endpoint — mismo criterio que se aplicó al apagar "unirse por código". Ya se bloqueó explícitamente para `preceptor`; falta el resto.
+- **`POST /courses/create` no valida el rol del llamante**: cualquier usuario autenticado con escuela (incluido un alumno) puede crear una materia por POST directo y queda como `owner`, lo que por `isTeacher()` le habilita calificar y gestionar alumnos de esa materia. El botón está oculto en la vista para alumnos y docentes, pero esconder el botón no cierra el endpoint — mismo criterio que se aplicó al apagar "unirse por código". Ya se bloqueó explícitamente para `preceptor` y `jefe` (este último lo detectó el smoke al crear el rol, 2026-08-06); **falta el resto**. Convertirlo en lista blanca exige decidir antes si `directivo` y `soe` conservan la posibilidad: hoy la UI se las ofrece en `views/dashboard.ejs:37`.
 - ✅ **RESUELTO (2026-07-30)** — los 9 specs que fallaban por `JOIN_BY_CODE_ENABLED` quedaron arreglados al eliminar la matriculación por código. Baseline actual: **126/126**.
 - **Completar el DNI de las 118 cuentas que no lo tienen** (109 alumnos, 8 docentes, el superadmin). Hasta que estén todas, el DNI no puede marcarse `required` en el schema. Falta decidir si se hace con un listado en `/admin` o con un script de backfill contra los padrones de la escuela.
 - Limpieza de archivos huérfanos cuando se cancela el creador full-page sin guardar (los adjuntos ya subidos quedan en disco).

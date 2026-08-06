@@ -33,8 +33,9 @@
           </button>
         <% } %>
         <% /* El preceptor tampoco: no dicta materias, las administra desde /preceptor.
-              El endpoint POST /courses/create además lo rechaza por rol. */ %>
-        <% if (user.role !== 'student' && user.role !== 'teacher' && user.role !== 'preceptor') { %>
+              El jefe de sección, menos: su rol es de solo lectura.
+              El endpoint POST /courses/create además los rechaza por rol. */ %>
+        <% if (user.role !== 'student' && user.role !== 'teacher' && user.role !== 'preceptor' && user.role !== 'jefe') { %>
         <button class="btn btn-primary" data-analytics="create_course_open" onclick="showCreateModal()">
           <span class="material-symbols-outlined">add</span>
           Crear clase

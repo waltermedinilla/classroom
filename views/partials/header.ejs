@@ -299,7 +299,7 @@ const _activeTheme = (function() {
         // Durante una suplantación, res.locals.user es el usuario suplantado, así que el
         // rótulo acompaña al rol que se está viendo. Es lo correcto.
         const _rolAdministrativo = typeof user !== 'undefined' && user
-          && ['admin', 'superadmin', 'directivo', 'preceptor'].includes(user.role);
+          && ['admin', 'superadmin', 'directivo', 'preceptor', 'jefe'].includes(user.role);
 
         // can() resuelve rol + lo que el superadmin haya deshabilitado para esta escuela
         // en /superadmin/roles (config/sections.js). Donde abajo se conserva además el
@@ -339,6 +339,22 @@ const _activeTheme = (function() {
         <% } %>
         <%# El preceptor puede además estar matriculado en materias como cualquier usuario;
             "/" ya no lo lleva ahí, así que el acceso a sus clases va explícito. %>
+        <% if (puede('app_courses')) { %>
+        <a href="/courses" class="drawer-item">
+          <span class="material-symbols-outlined">menu_book</span>
+          <span>Mis clases</span>
+        </a>
+        <% } %>
+      <% } %>
+      <% if (typeof user !== 'undefined' && user && user.role === 'jefe' && !impersonating) { %>
+        <% if (puede('jefe_dashboard')) { %>
+        <a href="/jefatura" class="drawer-item">
+          <span class="material-symbols-outlined">groups</span>
+          <span>Mis secciones</span>
+        </a>
+        <% } %>
+        <%# Igual que el preceptor: puede estar matriculado en materias como cualquier
+            usuario, y "/" ya no lo lleva ahí. %>
         <% if (puede('app_courses')) { %>
         <a href="/courses" class="drawer-item">
           <span class="material-symbols-outlined">menu_book</span>

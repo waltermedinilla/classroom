@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Docentes — Jefatura de Sección</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <%- include('../partials/jefatura-styles') %>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content main-content-ancho">
+    <%- include('../partials/jefatura-nav', { activePage: 'docentes' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Docentes</h2>
+        <div class="secciones-linea">
+          <% if (scopeAll) { %>
+            <span>Todas las secciones de la escuela</span>
+          <% } %>
+          <% secciones.forEach(s => { %>
+            <span class="seccion-chip">
+              <span class="material-symbols-outlined" style="font-size:13px">groups</span>
+              <%= s.name %>
+            </span>
+          <% }) %>
+        </div>
+      </div>
+    </div>
+
+    <form method="GET" class="filters-bar">
+      <input type="search" name="search" placeholder="Buscar por nombre..." value="<%= search %>">
+      <select name="sort">
+        <option value="pendientes" <%= sort === 'pendientes' ? 'selected' : '' %>>Más pendientes de corregir primero</option>
+        <option value="acts-desc"  <%= sort === 'acts-desc'  ? 'selected' : '' %>>Más actividades publicadas primero</option>
+        <option value="nombre"     <%= sort === 'nombre'     ? 'selected' : '' %>>Por nombre</option>
+      </select>
+      <button type="submit" class="btn btn-outline">
+        <span class="material-symbols-outlined">filter_alt</span> Aplicar
+      </button>
+      <% if (search) { %>
+        <a href="/jefatura/docentes" class="btn btn-outline">Limpiar</a>
+      <% } %>
+    </form>
+
+    <div style="font-size:12px;color:var(--text-hint);margin-bottom:8px">
+      <% if (total === 0) { %>
+        Sin resultados
+      <% } else { %>
+        <strong><%= total %></strong> docente<%= total === 1 ? '' : 's' %> en tus secciones
+      <% } %>
+    </div>
+
+    <% if (!docentes.length) { %>
+      <div class="empty-state">
+        <span class="material-symbols-outlined" style="font-size:36px;color:var(--text-hint)">badge</span>
+        <p>
+          <%= search
+              ? 'Ningún docente coincide con la búsqueda.'
+              : 'Las materias de tu sección todavía no tienen docentes asignados.' %>
+        </p>
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="simple-table">
+          <thead>
+            <tr>
+              <th>Docente</th>
+              <th style="text-align:center">Materias</th>
+              <th style="text-align:center">Actividades</th>
+              <th style="text-align:center">Este mes</th>
+              <th style="text-align:center">Sin calificar</th>
+              <th>Última actividad</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% docentes.forEach(d => { %>
+              <tr>
+                <td>
+                  <a href="/jefatura/docentes/<%= d._id %>" class="fila-link"><%= d.nombre %></a>
+                  <% if (!d.activo) { %><span class="badge-pill badge-muted" style="margin-left:6px">Deshabilitado</span><% } %>
+                </td>
+                <td style="text-align:center"><%= d.materias %></td>
+                <td style="text-align:center"><%= d.actividades %></td>
+                <td style="text-align:center"><%= d.delMes %></td>
+                <td style="text-align:center">
+                  <% if (d.pendientes) { %>
+                    <span class="badge-pill badge-warn"><%= d.pendientes %></span>
+                  <% } else { %>
+                    <span style="color:var(--text-hint)">0</span>
+                  <% } %>
+                </td>
+                <td style="color:var(--text-secondary);white-space:nowrap">
+                  <% if (d.ultima) { %>
+                    <%= new Date(d.ultima).toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' }) %>
+                  <% } else { %>
+                    <span style="color:var(--text-hint)">Nunca publicó</span>
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <%- include('../partials/pagination') %>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

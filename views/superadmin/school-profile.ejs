@@ -295,6 +295,7 @@
         directivo: 'Directivo',
         teacher:   'Docente',
         preceptor: 'Preceptor',
+        jefe: 'Jefe de Sección',
         soe:       'SOE',
         student:   'Alumno',
       };
@@ -308,7 +309,7 @@
       };
       const roleIcons = {
         admin: 'manage_accounts', directivo: 'supervisor_account',
-        teacher: 'school', preceptor: 'badge', soe: 'psychology', student: 'person',
+        teacher: 'school', preceptor: 'badge', jefe: 'groups', soe: 'psychology', student: 'person',
       };
     %>
 
@@ -400,7 +401,7 @@
         <!-- Left: role counts + recent users -->
         <div>
           <div class="sp-role-grid">
-            <% ['admin','directivo','teacher','preceptor','soe','student'].forEach(role => { %>
+            <% ['admin','directivo','teacher','preceptor','jefe','soe','student'].forEach(role => { %>
               <div class="sp-role-card">
                 <span class="material-symbols-outlined" style="font-size:22px;color:<%= roleColors[role] %>"><%= roleIcons[role] %></span>
                 <div class="sp-role-count" style="color:<%= roleColors[role] %>"><%= roleCounts[role] %></div>
@@ -501,14 +502,14 @@
             <div style="padding:14px 16px">
               <% if (totalUsers > 0) { %>
                 <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;gap:1px;margin-bottom:14px">
-                  <% ['admin','directivo','teacher','preceptor','soe','student'].forEach(role => {
+                  <% ['admin','directivo','teacher','preceptor','jefe','soe','student'].forEach(role => {
                     const pct = Math.round(roleCounts[role]/totalUsers*100);
                     if (pct > 0) { %>
                     <div style="width:<%= pct %>%;background:<%= roleColors[role] %>" title="<%= roleLabels[role] %>: <%= roleCounts[role] %>"></div>
                   <% } }) %>
                 </div>
               <% } %>
-              <% ['admin','directivo','teacher','preceptor','soe','student'].forEach(role => {
+              <% ['admin','directivo','teacher','preceptor','jefe','soe','student'].forEach(role => {
                 if (roleCounts[role] > 0) { %>
                 <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;font-size:12px;border-bottom:1px solid var(--border)">
                   <span style="display:flex;align-items:center;gap:6px">
@@ -535,7 +536,7 @@
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
         <div class="sp-filter-row" style="margin:0">
           <button class="sp-filter-chip active" onclick="filterRole('', this)">Todos (<%= totalUsers %>)</button>
-          <% ['admin','directivo','teacher','preceptor','soe','student'].forEach(role => {
+          <% ['admin','directivo','teacher','preceptor','jefe','soe','student'].forEach(role => {
             if (roleCounts[role] > 0) { %>
             <button class="sp-filter-chip" onclick="filterRole('<%= role %>',this)" style="--role-color:<%= roleColors[role] %>">
               <%= roleLabels[role] %>s (<%= roleCounts[role] %>)
@@ -576,7 +577,7 @@
                 </td>
                 <td>
                   <select class="sp-inline-select" onchange="changeRole('<%= u._id %>', this.value)" data-original="<%= u.role %>">
-                    <% ['admin','directivo','teacher','preceptor','soe','student'].forEach(r => { %>
+                    <% ['admin','directivo','teacher','preceptor','jefe','soe','student'].forEach(r => { %>
                       <option value="<%= r %>" <%= u.role === r ? 'selected' : '' %>><%= roleLabels[r] %></option>
                     <% }) %>
                   </select>

@@ -38,6 +38,9 @@ const SECTIONS = [
   { key: 'admin_divisions',      panel: 'admin', label: 'Cursos',     icon: 'class',        path: '/admin/divisions',      roles: ['admin', 'superadmin'] },
   { key: 'admin_courses',        panel: 'admin', label: 'Materias',   icon: 'menu_book',    path: '/admin/courses',        roles: ['admin', 'superadmin'] },
   { key: 'admin_subjects',       panel: 'admin', label: 'Catálogo',   icon: 'auto_stories', path: '/admin/subjects',       roles: ['admin', 'superadmin'] },
+  // Secciones = el alcance del rol Jefe de Sección (models/Section.js). Nada que ver con
+  // las "secciones" de este archivo, que son las solapas — coinciden en la palabra y nada más.
+  { key: 'admin_sections',       panel: 'admin', label: 'Secciones',  icon: 'groups',       path: '/admin/secciones',      roles: ['admin', 'superadmin'] },
   { key: 'admin_import',         panel: 'admin', label: 'Importar',   icon: 'upload_file',  path: '/admin/import',         roles: ['admin', 'superadmin'] },
   { key: 'admin_audit',          panel: 'admin', label: 'Auditoría',  icon: 'history',      path: '/admin/audit',          roles: ['admin', 'superadmin'] },
   { key: 'admin_theme',          panel: 'admin', label: 'Tema',       icon: 'palette',      path: '/admin/theme',          roles: ['admin', 'superadmin'] },
@@ -58,9 +61,15 @@ const SECTIONS = [
   // flag "rol habilitado" aparte.
   { key: 'preceptor_dashboard', panel: 'preceptor', label: 'Mis cursos', icon: 'school', path: '/preceptor', roles: ['preceptor', 'directivo', 'admin', 'superadmin'], locked: true },
 
+  // ── Panel Jefatura de Sección (base: middleware/jefatura.js ROLES_CON_ACCESO) ──
+  // 'Actividades' es la pantalla de entrada del panel, por eso va locked (ver la INVARIANTE
+  // de arriba). 'Docentes' sí se puede apagar: es una vista derivada de la misma información.
+  { key: 'jefe_dashboard', panel: 'jefatura', label: 'Actividades', icon: 'assignment', path: '/jefatura',          roles: ['jefe', 'directivo', 'admin', 'superadmin'], locked: true },
+  { key: 'jefe_teachers',  panel: 'jefatura', label: 'Docentes',    icon: 'badge',      path: '/jefatura/docentes', roles: ['jefe', 'directivo', 'admin', 'superadmin'] },
+
   // ── General: los accesos del menú lateral (header.ejs) ─────────────────────
-  { key: 'app_courses', panel: 'app', label: 'Mis clases',     icon: 'menu_book',       path: '/courses',               roles: ['admin', 'directivo', 'teacher', 'preceptor', 'soe', 'student'], locked: true },
-  { key: 'app_profile', panel: 'app', label: 'Mi perfil',      icon: 'account_circle',  path: '/courses/profile',       roles: ['admin', 'directivo', 'teacher', 'preceptor', 'soe', 'student'] },
+  { key: 'app_courses', panel: 'app', label: 'Mis clases',     icon: 'menu_book',       path: '/courses',               roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'student'], locked: true },
+  { key: 'app_profile', panel: 'app', label: 'Mi perfil',      icon: 'account_circle',  path: '/courses/profile',       roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'student'] },
   { key: 'app_pending', panel: 'app', label: 'Mis pendientes', icon: 'pending_actions', path: '/activities/my-pending', roles: ['student'] },
 
   // ── Panel Superadministración: TODO locked ────────────────────────────────
@@ -90,6 +99,7 @@ const PANELS = [
   { id: 'admin',      label: 'Administración' },
   { id: 'directivo',  label: 'Directivo' },
   { id: 'preceptor',  label: 'Preceptoría' },
+  { id: 'jefatura',   label: 'Jefatura de Sección' },
   { id: 'app',        label: 'General' },
   { id: 'superadmin', label: 'Superadministración' },
 ];

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Secciones - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .sec-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 11.5px; padding: 3px 10px; border-radius: 12px;
+      background: var(--background); color: var(--text-secondary); margin: 2px 4px 2px 0;
+    }
+    .sec-aviso {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 12px;
+      background: #fef4e5; color: #e67e00;
+    }
+    .sec-total { font-size: 12px; color: var(--text-hint); display: block; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content main-content-ancho">
+    <%- include('../partials/admin-nav', { activePage: 'sections' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Secciones</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          <%= secciones.length %> sección<%= secciones.length !== 1 ? 'es' : '' %> —
+          cada una es el alcance de sus Jefes de Sección: pueden ver las actividades de esas materias.
+        </p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/admin/secciones/create" class="btn btn-primary">
+          <span class="material-symbols-outlined">add</span>
+          Nueva Sección
+        </a>
+      </div>
+    </div>
+
+    <div class="filter-bar">
+      <form method="GET" action="/admin/secciones" class="filter-form">
+        <div class="input-group" style="flex:1">
+          <span class="material-symbols-outlined input-icon">search</span>
+          <input type="text" name="search" placeholder="Buscar sección..." value="<%= search %>">
+        </div>
+        <button type="submit" class="btn btn-outline">Buscar</button>
+        <% if (search) { %>
+          <a href="/admin/secciones" class="btn btn-outline">Limpiar</a>
+        <% } %>
+      </form>
+    </div>
+
+    <% if (secciones.length === 0) { %>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">groups</span></div>
+        <p><%= search ? 'No se encontraron secciones con ese nombre' : 'Todavía no hay secciones creadas' %></p>
+        <% if (!search) { %>
+          <p style="font-size:13px;color:var(--text-hint);max-width:520px;margin:8px auto 0">
+            Una sección junta cursos completos y materias sueltas bajo un nombre. Quien la tenga a cargo
+            ve las actividades que publican los docentes de esas materias, sin poder modificar nada.
+          </p>
+          <a href="/admin/secciones/create" class="btn btn-primary" style="margin-top:20px">Crear la primera sección</a>
+        <% } %>
+      </div>
+    <% } else { %>
+      <table class="users-table acciones-fijas">
+        <thead>
+          <tr>
+            <th>Sección</th>
+            <th>Contenido</th>
+            <th>A cargo de</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% secciones.forEach(s => { %>
+          <tr>
+            <td>
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:36px;height:36px;border-radius:50%;background:#e0e7ff;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                  <span class="material-symbols-outlined" style="color:#3f51b5;font-size:18px">groups</span>
+                </div>
+                <strong><%= s.name %></strong>
+              </div>
+            </td>
+            <td>
+              <% if (!s.divisions.length && !s.courses.length) { %>
+                <span class="sec-aviso">
+                  <span class="material-symbols-outlined" style="font-size:14px">warning</span>
+                  Sin contenido
+                </span>
+              <% } else { %>
+                <% s.divisions.slice(0, 4).forEach(d => { %>
+                  <span class="sec-chip">
+                    <span class="material-symbols-outlined" style="font-size:13px">class</span>
+                    <%= d.name %> completo
+                  </span>
+                <% }) %>
+                <% if (s.divisions.length > 4) { %>
+                  <span class="sec-chip">+<%= s.divisions.length - 4 %> curso(s)</span>
+                <% } %>
+                <% if (s.courses.length) { %>
+                  <span class="sec-chip">
+                    <span class="material-symbols-outlined" style="font-size:13px">menu_book</span>
+                    <%= s.courses.length %> materia<%= s.courses.length !== 1 ? 's' : '' %> suelta<%= s.courses.length !== 1 ? 's' : '' %>
+                  </span>
+                <% } %>
+                <span class="sec-total"><%= s.materias %> materia<%= s.materias !== 1 ? 's' : '' %> en total</span>
+              <% } %>
+            </td>
+            <td>
+              <% if (!s.heads.length) { %>
+                <span class="sec-aviso">
+                  <span class="material-symbols-outlined" style="font-size:14px">warning</span>
+                  Sin jefe asignado
+                </span>
+              <% } else { %>
+                <% s.heads.forEach(h => { %>
+                  <span class="sec-chip" title="<%= h.email %>">
+                    <span class="material-symbols-outlined" style="font-size:13px">badge</span>
+                    <%= h.name %><%= h.active === false ? ' (deshabilitado)' : '' %>
+                  </span>
+                <% }) %>
+              <% } %>
+            </td>
+            <td>
+              <div style="display:flex;gap:8px">
+                <a href="/admin/secciones/<%= s._id %>/edit" class="btn btn-outline" style="padding:6px 12px;font-size:13px">
+                  <span class="material-symbols-outlined" style="font-size:16px">edit</span>
+                  Editar
+                </a>
+                <%# data-* y no onclick: el nombre lo escribe el admin y por acá pasaría a un
+                    string de JS. Con el atributo, EJS lo escapa como cualquier otro texto. %>
+                <button class="btn btn-outline btn-borrar-seccion" style="padding:6px 12px;font-size:13px;color:#ea4335;border-color:#ea4335"
+                  data-id="<%= s._id %>" data-nombre="<%= s.name %>" data-jefes="<%= s.heads.length %>">
+                  <span class="material-symbols-outlined" style="font-size:16px">delete</span>
+                  Eliminar
+                </button>
+              </div>
+            </td>
+          </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+  <script>
+    // Borrar una sección no destruye datos de la escuela: solo les saca el alcance a sus
+    // jefes. El confirm() lo dice para que no parezca que se van a borrar las materias.
+    document.querySelectorAll('.btn-borrar-seccion').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const { id, nombre, jefes } = btn.dataset;
+        const aviso = Number(jefes)
+          ? `\n\n${jefes} jefe(s) de sección se quedan sin este alcance y dejan de ver esas actividades.`
+          : '';
+        if (!confirm(`¿Eliminar la sección "${nombre}"?${aviso}\n\nLos cursos, las materias y las actividades no se tocan.`)) return;
+        const res  = await fetch(`/admin/secciones/${id}/delete`, { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) location.reload();
+        else alert(data.error || 'Error al eliminar');
+      });
+    });
+  </script>
+</body>
+</html>

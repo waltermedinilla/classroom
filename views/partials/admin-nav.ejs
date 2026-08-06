@@ -35,6 +35,12 @@
     Catálogo
   </a>
   <% } %>
+  <% if (puede('admin_sections')) { %>
+  <a href="/admin/secciones" class="admin-nav-item <%= activePage === 'sections' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">groups</span>
+    Secciones
+  </a>
+  <% } %>
   <% if (puede('admin_import')) { %>
   <a href="/admin/import" class="admin-nav-item <%= activePage === 'import' ? 'active' : '' %>">
     <span class="material-symbols-outlined">upload_file</span>

@@ -1,0 +1,79 @@
+<%# Estilos compartidos por las cuatro pantallas de /jefatura.
+    Los paneles de directivo y preceptoría repiten este mismo bloque copiado en cada vista;
+    acá va una sola vez porque son cuatro pantallas que nacieron juntas y tienen que verse
+    iguales. Cada vista suma abajo su propio <style> con lo que solo ella usa. %>
+<style>
+  .filters-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
+  .filters-bar input, .filters-bar select {
+    padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px;
+    font-size: 14px; background: var(--surface); color: var(--text-primary);
+  }
+
+  .simple-table {
+    width: 100%; border-collapse: collapse; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+  }
+  .simple-table th, .simple-table td {
+    padding: 11px 14px; text-align: left; font-size: 13.5px;
+    border-bottom: 1px solid var(--border);
+  }
+  .simple-table th {
+    background: var(--background); font-weight: 600; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary);
+    white-space: nowrap;
+  }
+  .simple-table tr:last-child td { border-bottom: none; }
+  .simple-table tr:hover td { background: var(--background); }
+
+  a.fila-link { color: var(--text-primary); text-decoration: none; font-weight: 500; }
+  a.fila-link:hover { color: var(--primary); text-decoration: underline; }
+
+  .badge-pill {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; letter-spacing: .3px; white-space: nowrap;
+  }
+  .badge-warn  { background: #fce8e6; color: #c5221f; }
+  .badge-media { background: #fef4e5; color: #e67e00; }
+  .badge-ok    { background: #e6f4ea; color: #137333; }
+  .badge-muted { background: var(--border); color: var(--text-secondary); }
+
+  .back-link {
+    display: inline-flex; align-items: center; gap: 4px;
+    color: var(--primary); text-decoration: none; font-size: 13px; margin-bottom: 12px;
+  }
+  .back-link:hover { text-decoration: underline; }
+
+  .mini-stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px; margin-bottom: 20px;
+  }
+  .mini-stat {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 18px;
+  }
+  .mini-stat-value { font-size: 22px; font-weight: 700; line-height: 1; }
+  .mini-stat-label { font-size: 12px; color: var(--text-secondary); margin-top: 4px; text-transform: uppercase; letter-spacing: .3px; }
+
+  .section-h {
+    font-size: 15px; font-weight: 600; margin: 24px 0 10px;
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  /* Las secciones a cargo, debajo del título de cada pantalla: es la única pista visible
+     de por qué el jefe ve estas materias y no otras. */
+  .secciones-linea {
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    font-size: 12px; color: var(--text-secondary); margin-top: 6px;
+  }
+  .seccion-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: #e0e7ff; color: #3f51b5; padding: 2px 10px; border-radius: 11px;
+    font-size: 11.5px; font-weight: 600;
+  }
+
+  .empty-state {
+    text-align: center; padding: 60px 20px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--text-secondary);
+  }
+</style>

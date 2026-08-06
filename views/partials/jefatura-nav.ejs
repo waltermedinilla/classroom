@@ -1,0 +1,17 @@
+<%# Mismo criterio que directivo-nav: cada solapa depende de can(), que resuelve rol + lo
+    configurado en /superadmin/roles para esta escuela (ver config/sections.js). %>
+<% const puede = (k) => (typeof can === 'function' ? can(k) : true); %>
+<nav class="admin-nav">
+  <% if (puede('jefe_dashboard')) { %>
+  <a href="/jefatura" class="admin-nav-item <%= activePage === 'actividades' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">assignment</span>
+    Actividades
+  </a>
+  <% } %>
+  <% if (puede('jefe_teachers')) { %>
+  <a href="/jefatura/docentes" class="admin-nav-item <%= activePage === 'docentes' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">badge</span>
+    Docentes
+  </a>
+  <% } %>
+</nav>

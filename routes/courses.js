@@ -168,12 +168,17 @@ router.post('/self-enroll', requireAuth, async (req, res) => {
 router.post('/create', requireAuth, async (req, res) => {
   try {
     const { name, divisionId, room } = req.body;
-    // El preceptor no dicta materias: su rol es administrar los cursos a cargo desde
-    // /preceptor. Sin este chequeo podría crear una materia y quedar como owner, lo que
-    // por isTeacher() le habilitaría calificar y gestionar alumnos de esa materia.
-    // NOTA: esta ruta no valida el rol para el resto de los usuarios — un alumno logueado
-    // puede hacer el mismo POST. Es un agujero preexistente, pendiente de arreglo aparte.
-    if (res.locals.user?.role === 'preceptor') {
+    // Ni el preceptor ni el jefe de sección dictan materias: las administran o las miran
+    // desde su panel. Sin este chequeo podrían crear una materia y quedar como owner, lo
+    // que por isTeacher() les habilitaría calificar y gestionar alumnos de esa materia —
+    // en el caso del jefe, además, rompería la propiedad de que su rol es de SOLO LECTURA.
+    // Lo detectó el smoke `jefatura-no-entra-a-otros-paneles`.
+    //
+    // NOTA: esta ruta sigue sin validar el rol para el resto de los usuarios — un alumno
+    // logueado puede hacer el mismo POST. Es un agujero preexistente (está en el backlog):
+    // convertir esto en una lista blanca exige decidir antes si directivo y SOE conservan
+    // la posibilidad, que hoy la UI les ofrece.
+    if (['preceptor', 'jefe'].includes(res.locals.user?.role)) {
       return res.status(403).json({ error: 'Tu rol no puede crear materias' });
     }
     const school = res.locals.user?.school;

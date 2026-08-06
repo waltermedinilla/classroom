@@ -1404,6 +1404,7 @@ select, .select-input {
 .role-directivo { background: #f3e8fd; color: #9334e6; }
 .role-teacher { background: #e8f0fe; color: #1a73e8; }
 .role-preceptor { background: #fef7e0; color: #ea8600; }
+.role-jefe { background: #e0e7ff; color: #3f51b5; }
 .role-soe { background: #e0f7fa; color: #0d7377; }
 .role-student { background: #e6f4ea; color: #137333; }
 /* El superadmin no se muestra como badge en las tablas de usuarios (nadie lo administra

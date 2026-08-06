@@ -38,6 +38,7 @@ const adminRoutes        = require('./routes/admin');
 const superadminRoutes   = require('./routes/superadmin');
 const directivoRoutes    = require('./routes/directivo');
 const preceptorRoutes    = require('./routes/preceptor');
+const jefaturaRoutes     = require('./routes/jefatura');
 const backupRoutes       = require('./routes/backup');
 const dbFixesRoutes      = require('./routes/dbFixes');
 const suggestionRoutes   = require('./routes/suggestions');
@@ -320,6 +321,7 @@ app.use((req, res, next) => {
     directivo:  'Directivo',
     teacher:    'Docente',
     preceptor:  'Preceptor',
+    jefe:       'Jefe de Sección',
     soe:        'SOE',
     student:    'Alumno',
   };
@@ -454,6 +456,9 @@ app.get('/', (req, res) => {
   // trabajo. /courses le sigue quedando accesible desde el menú por si está matriculado
   // en alguna materia.
   if (res.locals.user.role === 'preceptor') return res.redirect('/preceptor');
+  // El jefe de sección, igual: en /courses solo vería las materias donde alguien lo haya
+  // inscripto, que no es su trabajo. Su panel es el seguimiento de sus secciones.
+  if (res.locals.user.role === 'jefe') return res.redirect('/jefatura');
   // Admin/superadmin caen en su propio panel, no en /courses — ese dashboard
   // ("Tus clases") es para docente/alumno. Antes, si el admin también era
   // dueño de alguna materia (Course.owner puede serlo, ver routes/admin.js),
@@ -492,6 +497,7 @@ app.use('/superadmin/roles', rolesRoutes);
 app.use('/superadmin',  superadminRoutes);
 app.use('/directivo',   directivoRoutes);
 app.use('/preceptor',   preceptorRoutes);
+app.use('/jefatura',    jefaturaRoutes);
 app.use('/suggestions', suggestionRoutes);
 
 // ── Manejador de errores global ──────────────────────────────────────────────

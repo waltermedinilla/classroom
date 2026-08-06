@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= actividad.title %> — Jefatura de Sección</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <%- include('../partials/jefatura-styles') %>
+  <style>
+    .cabecera {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px 24px; margin-bottom: 20px;
+    }
+    .cabecera h2 { margin: 0 0 6px; }
+    .cabecera-meta { font-size: 13px; color: var(--text-secondary); line-height: 1.7; }
+    .cabecera-meta strong { color: var(--text-primary); font-weight: 600; }
+    .nota-valor { font-weight: 700; }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/jefatura-nav', { activePage: 'actividades' }) %>
+
+    <a href="/jefatura" class="back-link">
+      <span class="material-symbols-outlined" style="font-size:16px">chevron_left</span>
+      Volver a actividades
+    </a>
+
+    <div class="cabecera">
+      <h2><%= actividad.title %></h2>
+      <div class="cabecera-meta">
+        <strong><%= actividad.course.name %></strong> · <%= actividad.course.division?.name || 'sin curso' %>
+        · a cargo de <strong><%= actividad.author?.name || 'sin docente' %></strong><br>
+        Tipo: <%= actividad.type %>
+        <% if (actividad.points !== null && actividad.points !== undefined) { %> · Puntaje: <%= actividad.points %><% } %>
+        ·
+        <% if (vence) { %>
+          Vencía el <%= vence.toLocaleDateString('es-AR', { day: 'numeric', month: 'long', year: 'numeric' }) %>
+        <% } else { %>
+          Sin fecha de entrega
+        <% } %>
+      </div>
+    </div>
+
+    <div class="mini-stats">
+      <div class="mini-stat">
+        <div class="mini-stat-value"><%= resumen.entregaron %>/<%= resumen.alumnos %></div>
+        <div class="mini-stat-label">Entregaron</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value" style="color:<%= resumen.sinEntregar ? '#ea4335' : '#137333' %>"><%= resumen.sinEntregar %></div>
+        <div class="mini-stat-label">Sin entregar</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value" style="color:<%= resumen.tarde ? '#ea8600' : 'inherit' %>"><%= resumen.tarde %></div>
+        <div class="mini-stat-label">Fuera de término</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value"><%= resumen.calificadas %></div>
+        <div class="mini-stat-label">Calificadas</div>
+      </div>
+    </div>
+
+    <div class="section-h">
+      <span class="material-symbols-outlined" style="color:#1a73e8">group</span>
+      Alumnos de la materia
+    </div>
+
+    <% if (!filas.length) { %>
+      <div class="empty-state">
+        <span class="material-symbols-outlined" style="font-size:36px;color:var(--text-hint)">group_off</span>
+        <p>Esta materia todavía no tiene alumnos matriculados.</p>
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="simple-table">
+          <thead>
+            <tr>
+              <th>Alumno</th>
+              <th>Entrega</th>
+              <th>Cuándo</th>
+              <th style="text-align:center">Nota</th>
+              <th>Devolución</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% filas.forEach(f => { %>
+              <tr>
+                <td>
+                  <%= f.nombre %>
+                  <% if (!f.activo) { %><span class="badge-pill badge-muted" style="margin-left:6px">Deshabilitado</span><% } %>
+                </td>
+                <td>
+                  <% if (f.entrego && f.tarde) { %>
+                    <span class="badge-pill badge-media">Fuera de término</span>
+                  <% } else if (f.entrego) { %>
+                    <span class="badge-pill badge-ok">Entregó</span>
+                  <% } else if (f.tardio) { %>
+                    <%# Se incorporó a la materia después del vencimiento: marcarlo como
+                        "sin entregar" sería reprocharle una tarea que nunca le tocó. %>
+                    <span class="badge-pill badge-muted" title="Se incorporó a la materia después del vencimiento">No le correspondía</span>
+                  <% } else { %>
+                    <span class="badge-pill badge-warn">Sin entregar</span>
+                  <% } %>
+                </td>
+                <td style="color:var(--text-secondary);white-space:nowrap">
+                  <% if (f.cuando) { %>
+                    <%= f.cuando.toLocaleDateString('es-AR', { day: '2-digit', month: 'short' }) %>
+                    <span style="color:var(--text-hint)"><%= f.cuando.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) %></span>
+                  <% } else { %>
+                    <span style="color:var(--text-hint)">—</span>
+                  <% } %>
+                </td>
+                <td style="text-align:center">
+                  <% if (f.nota !== null) { %>
+                    <span class="nota-valor"><%= f.nota %></span>
+                  <% } else { %>
+                    <span style="color:var(--text-hint)">Sin calificar</span>
+                  <% } %>
+                </td>
+                <td style="color:var(--text-secondary);max-width:320px">
+                  <%= f.feedback || '' %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

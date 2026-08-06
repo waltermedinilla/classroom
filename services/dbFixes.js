@@ -14,19 +14,33 @@
 //                 false → SOLO diagnóstico: no existe una regla automática correcta.
 //                         La tarjeta lo dice explícitamente en vez de ofrecer un botón
 //                         que invente datos. Ver el comentario de 'usuarios-sin-dni'.
+//   compositor    true → no es un problema con un contador, es una HERRAMIENTA: la tarjeta
+//                 pinta un formulario propio (lo que hay que crear no está en la base, lo
+//                 escribe la persona) y el resultado del diagnóstico son las OPCIONES de
+//                 ese formulario, no una lista de afectados. Ver 'alta-masiva-materias'.
 //   parametros    [] o lista de campos que el arreglo necesita para poder correr; la vista
 //                 los pinta como <select> y los manda en el body del POST
-//   diagnosticar() → { total, muestra: [{...}], nota? }
+//   diagnosticar() → { total, muestra: [{...}], nota?, opciones? }
 //                 `muestra` son hasta MUESTRA_MAX filas para la vista previa; nunca la
 //                 lista completa, que puede ser de miles.
-//   aplicar(params) → { afectados, mensaje }
+//   previsualizar(params) → forma libre; lo que la tarjeta muestre antes de aplicar.
+//                 Opcional: solo lo tienen los arreglos que reciben datos cargados a mano,
+//                 donde ver el efecto ANTES de escribir vale más que un contador.
+//   aplicar(params) → { afectados, mensaje, schoolId?, meta? }
+//                 `schoolId` fija la escuela del evento de auditoría (el superadmin no
+//                 tiene escuela propia: sin esto el admin de la escuela no ve el evento).
 //
 // REGLA DE ORO de este archivo: un arreglo solo es `aplicable` si existe UNA respuesta
 // correcta derivable de los datos. Si hace falta criterio humano (a qué curso va este
 // alumno, cuál es el DNI de esta persona), el arreglo se queda en diagnóstico y deriva al
 // panel que corresponda. Inventar el dato es peor que no arreglarlo.
+//
+// Los `compositor` no son la excepción a esa regla sino la otra cara: ahí el criterio
+// humano ES el input (la persona escribe qué materias van y a cargo de quién), y el
+// arreglo se limita a repetirlo sobre los cursos elegidos sin deducir nada.
 
 const mongoose     = require('mongoose');
+const { v4: uuidv4 } = require('uuid');
 const User         = require('../models/User');
 const Course       = require('../models/Course');
 const School       = require('../models/School');
@@ -34,6 +48,7 @@ const Division     = require('../models/Division');
 const Activity     = require('../models/Activity');
 const Submission   = require('../models/Submission');
 const Announcement = require('../models/Announcement');
+const Subject      = require('../models/Subject');
 
 // Cuántas filas se mandan a la vista previa. El resto queda en el conteo.
 const MUESTRA_MAX = 50;
@@ -519,6 +534,227 @@ async function fusionarDocentes({ clave, keepId, sobrante = 'deshabilitar', emai
       intercambiadoCon: correoCambiado && accion !== 'eliminar' ? cuentaConservada.email : null,
     },
   };
+}
+
+/* ─── Alta masiva de materias ──────────────────────────────────────────────
+   Todo lo de acá abajo es del arreglo 'alta-masiva-materias'. Recordar el vocabulario
+   del modelo, que va al revés del de la escuela:
+     Division = el "curso" de la escuela (1°1°, 2°3°)
+     Course   = la MATERIA dictada dentro de ese curso, con su docente y su aula
+   Así que "meter un grupo de materias en un grupo de cursos" es crear un Course por cada
+   par (Division elegida × materia escrita), salteando los que ya existen.            */
+
+// Un dato mal cargado no es una falla del servidor: la ruta usa este `status` para
+// devolver 400 con el mensaje tal cual, en vez de un 500 genérico.
+function errorDeCarga(mensaje) {
+  const err = new Error(mensaje);
+  err.status = 400;
+  return err;
+}
+
+// Nombre normalizado para decidir SI LA MATERIA YA EXISTE en el curso: sin tildes, sin
+// mayúsculas y con los espacios colapsados. Comparar el string crudo haría que
+// "Educación Física" y "Educacion fisica" convivan como dos materias distintas en el
+// mismo curso — justo el duplicado que hubo que consolidar a mano.
+function claveMateria(nombre) {
+  return String(nombre || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Todo lo que el formulario necesita para pintarse. Los cursos y los docentes se mandan
+// con su escuela: la vista filtra por la escuela elegida sin volver al servidor.
+async function opcionesAltaMasiva() {
+  const [escuelas, divisiones, docentes, usadas, catalogo, porDivision] = await Promise.all([
+    School.find().sort({ name: 1 }).select('_id name').lean(),
+    Division.find().sort({ name: 1 }).select('_id name school').lean(),
+    // `$ne: false` y no `true`: las cuentas viejas pueden no tener el campo.
+    User.find({ role: 'teacher', active: { $ne: false } }).sort({ name: 1 }).select('_id name email school').lean(),
+    Course.distinct('name'),
+    Subject.find().select('name').lean(),
+    Course.aggregate([{ $group: { _id: '$division', n: { $sum: 1 } } }]),
+  ]);
+
+  const cuantasMaterias = Object.fromEntries(porDivision.map(d => [String(d._id), d.n]));
+
+  // Sugerencias del campo "nombre": las materias que ya se dictan MÁS el catálogo de
+  // Subject (el mismo datalist que ofrece el alta de a una). Escribir el nombre igual que
+  // el que ya está en uso es lo que evita duplicados nuevos.
+  const nombres = [...new Set(
+    [...usadas, ...catalogo.map(s => s.name)].map(n => String(n || '').trim()).filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b, 'es'));
+
+  return {
+    escuelas: escuelas.map(e => ({ id: String(e._id), nombre: e.name })),
+    cursos: divisiones.map(d => ({
+      id: String(d._id),
+      nombre: d.name,
+      escuela: String(d.school || ''),
+      materias: cuantasMaterias[String(d._id)] || 0,
+    })),
+    docentes: docentes.map(t => ({
+      id: String(t._id), nombre: t.name, email: t.email, escuela: String(t.school || ''),
+    })),
+    nombres,
+  };
+}
+
+// Valida lo cargado y arma el plan: qué se crea en cada curso y qué ya estaba.
+// Lo comparten previsualizar() y aplicar() — el plan se recalcula contra la base en el
+// momento de aplicar, así que una pestaña vieja no puede crear sobre un estado que cambió.
+async function planearAltaMasiva({ divisionIds, materias } = {}) {
+  const ids = [...new Set((Array.isArray(divisionIds) ? divisionIds : []).map(String).filter(Boolean))];
+  if (!ids.length) throw errorDeCarga('Elegí al menos un curso.');
+  if (ids.some(id => !mongoose.Types.ObjectId.isValid(id))) {
+    throw errorDeCarga('Hay un curso inválido en la selección. Recargá la página.');
+  }
+
+  const divisiones = await Division.find({ _id: { $in: ids } }).select('_id name school').lean();
+  if (divisiones.length !== ids.length) {
+    throw errorDeCarga('Alguno de los cursos elegidos ya no existe. Recargá la página.');
+  }
+
+  // Una tanda va toda a la misma escuela: el docente y la materia se validan contra ella.
+  const escuelas = new Set(divisiones.map(d => String(d.school || '')));
+  if (escuelas.size > 1) throw errorDeCarga('Los cursos elegidos son de escuelas distintas: hacé una tanda por escuela.');
+  const schoolId = divisiones[0].school;
+  if (!schoolId) throw errorDeCarga('Los cursos elegidos no tienen escuela asignada.');
+
+  // Filas del todo vacías = alguien agregó una fila y no la usó; se ignoran en silencio.
+  // Una fila a medio llenar, en cambio, es un error que hay que avisar.
+  const filas = (Array.isArray(materias) ? materias : [])
+    .map(m => ({
+      nombre:    String(m?.nombre    || '').replace(/\s+/g, ' ').trim(),
+      docenteId: String(m?.docenteId || '').trim(),
+      aula:      String(m?.aula      || '').trim(),
+    }))
+    .filter(m => m.nombre || m.docenteId || m.aula);
+
+  if (!filas.length) throw errorDeCarga('No cargaste ninguna materia.');
+
+  const sinNombre = filas.find(m => !m.nombre);
+  if (sinNombre) throw errorDeCarga('Hay una materia sin nombre.');
+  const sinDocente = filas.find(m => !m.docenteId);
+  if (sinDocente) throw errorDeCarga(`Falta elegir quién está a cargo de "${sinDocente.nombre}".`);
+
+  // Dos filas con el mismo nombre crearían la materia duplicada en cada curso de la tanda.
+  const vistas = new Set();
+  for (const m of filas) {
+    const clave = claveMateria(m.nombre);
+    if (vistas.has(clave)) throw errorDeCarga(`"${m.nombre}" está cargada dos veces en la lista.`);
+    vistas.add(clave);
+  }
+
+  // Mismo criterio que POST /admin/courses/create: el docente tiene que existir y ser de
+  // la escuela. No se exige role 'teacher' — una materia a cargo de un directivo es válida
+  // y el formulario ya ofrece solo docentes.
+  const docenteIds = [...new Set(filas.map(m => m.docenteId))];
+  if (docenteIds.some(id => !mongoose.Types.ObjectId.isValid(id))) {
+    throw errorDeCarga('Hay un docente inválido en la lista. Recargá la página.');
+  }
+  const docentes = await User.find({ _id: { $in: docenteIds }, school: schoolId }).select('_id name email').lean();
+  const porDocenteId = new Map(docentes.map(d => [String(d._id), d]));
+  for (const m of filas) {
+    const docente = porDocenteId.get(m.docenteId);
+    if (!docente) throw errorDeCarga(`El docente elegido para "${m.nombre}" no existe o no es de esta escuela.`);
+    m.docente = docente;
+  }
+
+  // Lo que ya está cargado en esos cursos: es lo que NO se toca.
+  const existentes = await Course.find({ division: { $in: divisiones.map(d => d._id) } })
+    .select('_id name division').lean();
+  const presentesPorCurso = new Map(); // divisionId → Map(clave → nombre tal como está)
+  for (const c of existentes) {
+    const k = String(c.division);
+    if (!presentesPorCurso.has(k)) presentesPorCurso.set(k, new Map());
+    presentesPorCurso.get(k).set(claveMateria(c.name), c.name);
+  }
+
+  const plan = divisiones
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }))
+    .map(d => {
+      const presentes = presentesPorCurso.get(String(d._id)) || new Map();
+      const crear    = [];
+      const intactas = [];
+      for (const m of filas) {
+        const yaEsta = presentes.get(claveMateria(m.nombre));
+        if (yaEsta !== undefined) intactas.push({ nombre: m.nombre, comoEsta: yaEsta });
+        else crear.push(m);
+      }
+      return { id: String(d._id), nombre: d.name, crear, intactas };
+    });
+
+  return {
+    schoolId,
+    plan,
+    totalCrear:    plan.reduce((acc, p) => acc + p.crear.length,    0),
+    totalIntactas: plan.reduce((acc, p) => acc + p.intactas.length, 0),
+  };
+}
+
+// Inscribe en cada materia recién creada a los alumnos de su curso.
+//
+// "Los alumnos del curso" no es un campo de Division: es la unión de los alumnos de las
+// materias que ese curso YA tenía. Por eso un curso sin materias previas queda vacío —
+// no hay de dónde sacarlos, y ahí la matrícula se hace desde el panel de administración.
+async function matricularCursoCompleto(creados) {
+  const nuevasPorCurso = new Map(); // divisionId → [courseId]
+  for (const c of creados) {
+    const k = String(c.division);
+    if (!nuevasPorCurso.has(k)) nuevasPorCurso.set(k, []);
+    nuevasPorCurso.get(k).push(c._id);
+  }
+
+  const nuevos = new Set(creados.map(c => String(c._id)));
+  const previas = await Course.find({
+    division: { $in: [...nuevasPorCurso.keys()].map(id => new mongoose.Types.ObjectId(id)) },
+  }).select('_id division students').lean();
+
+  const alumnosPorCurso = new Map(); // divisionId → Set(studentId)
+  for (const c of previas) {
+    if (nuevos.has(String(c._id))) continue; // recién creada: todavía no tiene a nadie
+    const k = String(c.division);
+    if (!alumnosPorCurso.has(k)) alumnosPorCurso.set(k, new Set());
+    for (const s of (c.students || [])) alumnosPorCurso.get(k).add(String(s));
+  }
+
+  // Solo alumnos: si un docente quedó dentro de students[] por un error viejo, no es a él
+  // a quien hay que arrastrar a las materias nuevas.
+  const candidatos = [...new Set([...alumnosPorCurso.values()].flatMap(set => [...set]))];
+  const alumnos = new Set(
+    (await User.find({ _id: { $in: candidatos }, role: 'student' }).select('_id').lean())
+      .map(u => String(u._id))
+  );
+
+  const ahora = new Date();
+  const ops   = [];
+  let inscripciones = 0;
+  let sinAlumnos    = 0;
+
+  for (const [divisionId, courseIds] of nuevasPorCurso) {
+    const ids = [...(alumnosPorCurso.get(divisionId) || new Set())].filter(id => alumnos.has(id));
+    if (!ids.length) { sinAlumnos++; continue; }
+    for (const courseId of courseIds) {
+      inscripciones += ids.length;
+      ops.push({
+        updateOne: {
+          filter: { _id: courseId },
+          update: {
+            $addToSet: { students: { $each: ids.map(id => new mongoose.Types.ObjectId(id)) } },
+            // enrollmentDates = ahora, igual que en 'matricula-parcial': routes/activities.js
+            // lo usa para no mostrarle al alumno las tareas vencidas antes de su alta.
+            $set: Object.fromEntries(ids.map(id => [`enrollmentDates.${id}`, ahora])),
+          },
+        },
+      });
+    }
+  }
+
+  if (ops.length) await Course.bulkWrite(ops, { ordered: false });
+  return { inscripciones, sinAlumnos };
 }
 
 const FIXES = [
@@ -1028,6 +1264,126 @@ const FIXES = [
       };
     },
   },
+
+  /* ─────────────────────────────────────────────────────────────────────── */
+  {
+    id: 'alta-masiva-materias',
+    titulo: 'Cargar un grupo de materias en varios cursos',
+    descripcion:
+      'El alta de a una (Administración → Materias) sirve para el día a día, pero al armar el ciclo ' +
+      'lectivo hay que repetir la misma grilla de materias en decenas de cursos. Elegí los cursos, ' +
+      'escribí las materias con su docente a cargo y el aula, y se crean en todos de una sola vez. ' +
+      'La materia que YA exista en un curso se deja como está: no se pisa el docente, ni el aula, ni ' +
+      'los alumnos, ni el código con el que se unen.',
+    icono: 'library_add',
+    severidad: 'baja',
+    aplicable: true,
+    compositor: true,
+    parametros: [],
+
+    // El "diagnóstico" de un compositor son las opciones del formulario: no hay nada que
+    // contar, porque lo que se va a crear todavía no está en la base.
+    async diagnosticar() {
+      const opciones = await opcionesAltaMasiva();
+      const materias = await Course.countDocuments();
+      return {
+        total: 0,
+        muestra: [],
+        opciones,
+        nota:
+          `Hay ${opciones.cursos.length} curso(s) y ${materias} materia(s) cargadas. ` +
+          'Esto solo crea lo que falta: nada de lo que ya está se modifica ni se borra.',
+      };
+    },
+
+    // Vista previa antes de escribir: con decenas de cursos por tanda, el conteo de una
+    // tarjeta no alcanza para darse cuenta de que uno se equivocó de docente o de curso.
+    async previsualizar(body) {
+      const { plan, totalCrear, totalIntactas } = await planearAltaMasiva(body || {});
+      return {
+        totalCrear,
+        totalIntactas,
+        cursos: plan.map(p => ({
+          nombre:   p.nombre,
+          crear:    p.crear.map(m => ({ nombre: m.nombre, docente: m.docente.name, aula: m.aula })),
+          intactas: p.intactas,
+        })),
+      };
+    },
+
+    async aplicar(body) {
+      const { schoolId, plan, totalCrear, totalIntactas } = await planearAltaMasiva(body || {});
+
+      // Por omisión SÍ se matricula: una materia nueva y vacía en un curso que ya tiene
+      // alumnos deja a todo el curso con matrícula parcial (ver 'matricula-parcial'), o sea
+      // que se estaría creando el problema que el arreglo de más arriba viene a resolver.
+      const matricular = body?.matricular !== false;
+
+      if (!totalCrear) {
+        return {
+          afectados: 0,
+          schoolId,
+          mensaje: `No se creó ninguna materia: las ${totalIntactas} ya existían en esos cursos y quedaron como estaban.`,
+        };
+      }
+
+      // El `code` lo genera el default del modelo, pero insertMany no reintenta ante una
+      // colisión del índice único: en una tanda de cientos, un choque tumbaría ese
+      // documento. Se generan acá contra los que ya existen y contra los de esta misma tanda.
+      const usados = new Set((await Course.find().select('code').lean()).map(c => c.code));
+      const nuevoCodigo = () => {
+        let code;
+        do { code = uuidv4().slice(0, 6).toUpperCase(); } while (usados.has(code));
+        usados.add(code);
+        return code;
+      };
+
+      const docs = [];
+      for (const p of plan) {
+        for (const m of p.crear) {
+          docs.push({
+            name:     m.nombre,
+            room:     m.aula || '',
+            code:     nuevoCodigo(),
+            division: new mongoose.Types.ObjectId(p.id),
+            school:   schoolId,
+            owner:    m.docente._id,
+          });
+        }
+      }
+
+      const creados = await Course.insertMany(docs);
+      const cursosTocados = plan.filter(p => p.crear.length).length;
+
+      let inscripciones = 0;
+      let sinAlumnos    = 0;
+      if (matricular) {
+        const r = await matricularCursoCompleto(creados);
+        inscripciones = r.inscripciones;
+        sinAlumnos    = r.sinAlumnos;
+      }
+
+      return {
+        afectados: creados.length,
+        schoolId,
+        meta: { cursos: cursosTocados, creadas: creados.length, intactas: totalIntactas, inscripciones },
+        mensaje:
+          `Se crearon ${creados.length} materia(s) en ${cursosTocados} curso(s). ` +
+          (totalIntactas
+            ? `${totalIntactas} ya existían y quedaron como estaban (mismo docente, misma aula, mismos alumnos). `
+            : '') +
+          (matricular
+            ? (inscripciones
+                ? `Se agregaron ${inscripciones} inscripción(es): los alumnos de cada curso ya ven las materias nuevas. ` +
+                  'Las tareas que venzan antes de hoy no les van a figurar como pendientes. '
+                : 'No había alumnos que inscribir. ') +
+              (sinAlumnos
+                ? `${sinAlumnos} curso(s) quedaron sin alumnos porque no tenían ninguna materia previa de donde tomarlos.`
+                : '')
+            : 'No se inscribió a nadie: las materias nuevas quedan vacías.'),
+      };
+    },
+  },
 ];
 
 const getFix = (id) => FIXES.find(f => f.id === id) || null;
@@ -1054,11 +1410,15 @@ async function diagnosticarTodos() {
         id: fix.id, titulo: fix.titulo, descripcion: fix.descripcion,
         icono: fix.icono, severidad: fix.severidad, aplicable: fix.aplicable,
         interactivo: fix.interactivo === true,
+        compositor: fix.compositor === true,
         parametros: await resolverParametros(fix),
         total: d.total, muestra: d.muestra, nota: d.nota || null,
         // Solo los arreglos interactivos lo traen: es el detalle que la tarjeta necesita
         // para dejar elegir (ver 'docentes-dni-duplicado').
         grupos: d.grupos || [],
+        // Solo los compositores: lo que necesita su formulario para pintarse
+        // (ver 'alta-masiva-materias').
+        opciones: d.opciones || null,
         error: null,
       };
     } catch (err) {
@@ -1067,7 +1427,8 @@ async function diagnosticarTodos() {
         id: fix.id, titulo: fix.titulo, descripcion: fix.descripcion,
         icono: fix.icono, severidad: fix.severidad, aplicable: fix.aplicable,
         interactivo: fix.interactivo === true,
-        parametros: [], total: null, muestra: [], nota: null, grupos: [],
+        compositor: fix.compositor === true,
+        parametros: [], total: null, muestra: [], nota: null, grupos: [], opciones: null,
         error: err.message,
       };
     }

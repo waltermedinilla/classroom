@@ -37,7 +37,7 @@
 
     <div class="profile-header">
       <div class="profile-avatar">
-        <div class="avatar-huge" style="width:80px;height:80px;font-size:36px;background:<%= target.role === 'superadmin' ? '#6200ea' : target.role === 'admin' ? '#ea4335' : target.role === 'teacher' ? '#1a73e8' : target.role === 'directivo' ? '#9334e6' : target.role === 'preceptor' ? '#ea8600' : target.role === 'soe' ? '#0d7377' : '#5f6368' %>">
+        <div class="avatar-huge" style="width:80px;height:80px;font-size:36px;background:<%= target.role === 'superadmin' ? '#6200ea' : target.role === 'admin' ? '#ea4335' : target.role === 'teacher' ? '#1a73e8' : target.role === 'directivo' ? '#9334e6' : target.role === 'preceptor' ? '#ea8600' : target.role === 'jefe' ? '#3f51b5' : target.role === 'soe' ? '#0d7377' : '#5f6368' %>">
           <%= target.name.charAt(0).toUpperCase() %>
         </div>
       </div>
@@ -108,6 +108,7 @@
               <option value="directivo" <%= target.role === 'directivo' ? 'selected' : '' %>>Directivo</option>
               <option value="teacher" <%= target.role === 'teacher' ? 'selected' : '' %>>Docente</option>
               <option value="preceptor" <%= target.role === 'preceptor' ? 'selected' : '' %>>Preceptor</option>
+              <option value="jefe" <%= target.role === 'jefe' ? 'selected' : '' %>>Jefe de Sección</option>
               <option value="soe" <%= target.role === 'soe' ? 'selected' : '' %>>SOE</option>
               <option value="student" <%= target.role === 'student' ? 'selected' : '' %>>Alumno</option>
             </select>

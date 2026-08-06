@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Actividades — Jefatura de Sección</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <%- include('../partials/jefatura-styles') %>
+  <style>
+    .tipo-chip {
+      font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
+      color: var(--text-hint); margin-left: 6px;
+    }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content main-content-ancho">
+    <%- include('../partials/jefatura-nav', { activePage: 'actividades' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Actividades</h2>
+        <div class="secciones-linea">
+          <% if (scopeAll) { %>
+            <span>Todas las secciones de la escuela</span>
+          <% } %>
+          <% secciones.forEach(s => { %>
+            <span class="seccion-chip">
+              <span class="material-symbols-outlined" style="font-size:13px">groups</span>
+              <%= s.name %>
+            </span>
+          <% }) %>
+        </div>
+      </div>
+    </div>
+
+    <form method="GET" class="filters-bar">
+      <input type="search" name="search" placeholder="Buscar por título..." value="<%= search %>">
+      <select name="division">
+        <option value="">Todos los cursos</option>
+        <% divisiones.forEach(d => { %>
+          <option value="<%= d._id %>" <%= divisionFiltro === d._id.toString() ? 'selected' : '' %>><%= d.name %></option>
+        <% }) %>
+      </select>
+      <select name="docente">
+        <option value="">Todos los docentes</option>
+        <% docentes.forEach(t => { %>
+          <option value="<%= t._id %>" <%= docenteFiltro === t._id.toString() ? 'selected' : '' %>><%= t.name %></option>
+        <% }) %>
+      </select>
+      <select name="estado">
+        <option value="">Cualquier estado</option>
+        <option value="sin-calificar" <%= estado === 'sin-calificar' ? 'selected' : '' %>>Vencidas sin calificar</option>
+        <option value="vencidas"      <%= estado === 'vencidas'      ? 'selected' : '' %>>Vencidas</option>
+        <option value="en-curso"      <%= estado === 'en-curso'      ? 'selected' : '' %>>En curso</option>
+      </select>
+      <select name="sort">
+        <option value="recientes"   <%= sort === 'recientes'   ? 'selected' : '' %>>Más recientes primero</option>
+        <option value="vencimiento" <%= sort === 'vencimiento' ? 'selected' : '' %>>Por fecha de entrega</option>
+      </select>
+      <button type="submit" class="btn btn-outline">
+        <span class="material-symbols-outlined">filter_alt</span> Aplicar
+      </button>
+      <% if (search || divisionFiltro || docenteFiltro || estado) { %>
+        <a href="/jefatura" class="btn btn-outline">Limpiar</a>
+      <% } %>
+    </form>
+
+    <div style="font-size:12px;color:var(--text-hint);margin-bottom:8px">
+      <% if (total === 0) { %>
+        Sin resultados
+      <% } else { %>
+        Mostrando <%= (page - 1) * 25 + 1 %>–<%= Math.min(page * 25, total) %>
+        de <strong><%= total %></strong> actividad<%= total === 1 ? '' : 'es' %>
+      <% } %>
+    </div>
+
+    <% if (!actividades.length) { %>
+      <div class="empty-state">
+        <span class="material-symbols-outlined" style="font-size:36px;color:var(--text-hint)">search_off</span>
+        <p>
+          <% if (search || divisionFiltro || docenteFiltro || estado) { %>
+            No hay actividades que coincidan con los filtros.
+          <% } else { %>
+            Los docentes de tu sección todavía no publicaron ninguna actividad.
+          <% } %>
+        </p>
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="simple-table">
+          <thead>
+            <tr>
+              <th>Actividad</th>
+              <th>Materia</th>
+              <th>Curso</th>
+              <th>Docente</th>
+              <th>Vencía</th>
+              <th style="text-align:center">Entregas</th>
+              <th style="text-align:center">Calificadas</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            <%
+              // Mismo semáforo que la ficha de docente del panel directivo, para que la
+              // misma actividad no se lea distinta según quién la mire.
+              const badgeDe = (a) => {
+                if (a.submitted > 0 && a.graded === 0 && a.overdue) return ['badge-warn',  'Sin calificar'];
+                if (a.overdue && a.graded < a.submitted)            return ['badge-media', 'Parcial'];
+                if (a.overdue)                                      return ['badge-muted', 'Vencida'];
+                return ['badge-ok', 'En curso'];
+              };
+            %>
+            <% actividades.forEach(a => { const [cls, txt] = badgeDe(a); %>
+              <tr>
+                <td>
+                  <a href="/jefatura/actividades/<%= a._id %>" class="fila-link"><%= a.title %></a>
+                  <span class="tipo-chip"><%= a.type %></span>
+                </td>
+                <td style="color:var(--text-secondary)"><%= a.courseName %></td>
+                <td style="color:var(--text-secondary)"><%= a.divisionName %></td>
+                <td style="color:var(--text-secondary)"><%= a.docente %></td>
+                <td style="color:var(--text-secondary);white-space:nowrap">
+                  <% if (a.dueDate) { %>
+                    <%= new Date(a.dueDate).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' }) %>
+                  <% } else { %>
+                    <span style="color:var(--text-hint)">Sin fecha</span>
+                  <% } %>
+                </td>
+                <td style="text-align:center"><%= a.submitted %></td>
+                <td style="text-align:center"><%= a.graded %></td>
+                <td><span class="badge-pill <%= cls %>"><%= txt %></span></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <%- include('../partials/pagination') %>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

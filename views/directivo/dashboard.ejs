@@ -50,6 +50,57 @@
       font-size: 15px; font-weight: 600;
       margin: 28px 0 8px; color: var(--text-primary);
     }
+
+    /* ─── Modal "Novedades para el directivo" ─── */
+    /* Reutiliza .modal-overlay y .modal del style.css; solo agrega layout interno. */
+    #updates-modal .modal { max-width: 640px; }
+    .updates-hero {
+      display: flex; align-items: center; gap: 14px;
+      padding: 22px 24px 6px;
+    }
+    .updates-hero-icon {
+      width: 44px; height: 44px; border-radius: 50%;
+      background: #e8f0fe; color: #1a73e8;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .updates-hero-title { font-size: 20px; font-weight: 600; color: var(--text-primary); line-height: 1.2; }
+    .updates-hero-sub { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
+    .updates-section-title {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
+      color: var(--text-secondary);
+      padding: 14px 24px 2px;
+    }
+    .updates-list {
+      list-style: none; margin: 0; padding: 4px 24px;
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .updates-item {
+      display: flex; gap: 12px;
+      padding: 12px 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .updates-item:last-child { border-bottom: none; }
+    .updates-item-icon {
+      width: 34px; height: 34px; border-radius: 8px;
+      background: var(--surface-2, #f1f3f4); color: var(--text-primary);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .updates-item-icon .material-symbols-outlined { font-size: 20px !important; }
+    .updates-item-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+    .updates-item-desc { font-size: 13px; color: var(--text-secondary); margin-top: 2px; line-height: 1.4; }
+    .updates-footer {
+      padding: 16px 24px 20px;
+      display: flex; justify-content: flex-end; gap: 10px;
+      border-top: 1px solid var(--border);
+    }
+    @media (max-width: 480px) {
+      .updates-hero { padding: 18px 18px 4px; }
+      .updates-list { padding: 6px 18px 4px; }
+      .updates-footer { padding: 14px 18px 18px; }
+      .updates-hero-title { font-size: 18px; }
+    }
   </style>
 </head>
 <body>
@@ -65,6 +116,10 @@
           <%= school ? school.name : 'Vista institucional (solo lectura)' %>
         </p>
       </div>
+      <button type="button" class="btn-outline" id="updates-open-btn">
+        <span class="material-symbols-outlined">campaign</span>
+        Ver actualizaciones
+      </button>
     </div>
 
     <div class="stats-grid">
@@ -137,6 +192,180 @@
       </div>
     </div>
   </main>
+
+  <!-- ─── Modal Novedades (aparece 1 sola vez por versión, por navegador) ─── -->
+  <div id="updates-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="updates-title">
+    <div class="modal">
+      <div class="updates-hero">
+        <div class="updates-hero-icon">
+          <span class="material-symbols-outlined">campaign</span>
+        </div>
+        <div>
+          <div id="updates-title" class="updates-hero-title">Novedades del sistema</div>
+          <div class="updates-hero-sub">Un resumen de las últimas actualizaciones en toda la plataforma.</div>
+        </div>
+      </div>
+
+      <div class="updates-section-title">Panel Directivo</div>
+      <ul class="updates-list">
+        <li class="updates-item">
+          <div class="updates-item-icon"><span class="material-symbols-outlined">dashboard</span></div>
+          <div>
+            <div class="updates-item-title">Panel institucional con alertas</div>
+            <div class="updates-item-desc">Seis tarjetas con el pulso de la escuela (alumnos, docentes, materias, divisiones, conectados ahora y altas del mes) y tres alertas de "requiere atención" que te llevan directo al problema.</div>
+          </div>
+        </li>
+        <li class="updates-item">
+          <div class="updates-item-icon"><span class="material-symbols-outlined">group</span></div>
+          <div>
+            <div class="updates-item-title">Alumnos con foco y actividad docente</div>
+            <div class="updates-item-desc">Detección automática de alumnos con bajo rendimiento, silenciosos o con muchas tardías, y serie de seis meses por docente (actividades creadas y correcciones hechas) para ver quién crece y quién se apagó.</div>
+          </div>
+        </li>
+        <li class="updates-item">
+          <div class="updates-item-icon"><span class="material-symbols-outlined">school</span></div>
+          <div>
+            <div class="updates-item-title">Vista por división y promedios normalizados</div>
+            <div class="updates-item-desc">Nuevo listado por división con materias, alumnos únicos, tasa de entrega y promedio. Las notas se llevan a escala 0–10 antes de promediar, con distribución en cuatro tramos.</div>
+          </div>
+        </li>
+      </ul>
+
+      <div class="updates-section-title">Docentes y alumnos</div>
+      <ul class="updates-list">
+        <li class="updates-item">
+          <div class="updates-item-icon"><span class="material-symbols-outlined">description</span></div>
+          <div>
+            <div class="updates-item-title">Previsualización de Google Drive y adjuntos</div>
+            <div class="updates-item-desc">Los links de Drive, Documentos, Hojas y Presentaciones se abren embebidos dentro de la app. Los alumnos y docentes ven una vista previa de los archivos de una entrega antes de enviarla.</div>
+          </div>
+        </li>
+        <li class="updates-item">
+          <div class="updates-item-icon"><span class="material-symbols-outlined">visibility</span></div>
+          <div>
+            <div class="updates-item-title">Acuse de lectura de actividades</div>
+            <div class="updates-item-desc">Ahora el docente puede saber qué alumnos abrieron cada tarea. Aparece en el detalle de la actividad, en el listado por curso y en una solapa nueva "Tareas" del panel de administración.</div>
+          </div>
+        </li>
+        <li class="updates-item">
+          <div class="updates-item-icon"><span class="material-symbols-outlined">edit_note</span></div>
+          <div>
+            <div class="updates-item-title">Ver y editar la entrega en modo lectura</div>
+            <div class="updates-item-desc">El alumno puede releer su entrega una vez enviada. El docente decide, por actividad, si permite reeditar; por defecto queda cerrada.</div>
+          </div>
+        </li>
+        <li class="updates-item">
+          <div class="updates-item-icon"><span class="material-symbols-outlined">account_circle</span></div>
+          <div>
+            <div class="updates-item-title">Perfil personal ampliado</div>
+            <div class="updates-item-desc">Presentación, intereses (lista cerrada, no texto libre), proyecto a futuro y datos de contacto — celular, Instagram, Facebook. Todos los usuarios ven un aviso amable para completarlo.</div>
+          </div>
+        </li>
+      </ul>
+
+      <div class="updates-section-title">Administración</div>
+      <ul class="updates-list">
+        <li class="updates-item">
+          <div class="updates-item-icon"><span class="material-symbols-outlined">admin_panel_settings</span></div>
+          <div>
+            <div class="updates-item-title">Roles y permisos por escuela</div>
+            <div class="updates-item-desc">El superadmin habilita o deshabilita cada solapa para cada rol desde /superadmin/roles. Apagar una la saca del menú y del acceso por URL. Cada rol arranca en su panel — el administrador entra directo a /admin, el directivo a /directivo — sin pasar por la vista de materias.</div>
+          </div>
+        </li>
+        <li class="updates-item">
+          <div class="updates-item-icon"><span class="material-symbols-outlined">supervisor_account</span></div>
+          <div>
+            <div class="updates-item-title">Nuevo rol Preceptor</div>
+            <div class="updates-item-desc">Panel propio en /preceptor acotado a las divisiones que el admin le asigne. Ve materias, docentes y alumnos, y gestiona altas y bajas.</div>
+          </div>
+        </li>
+        <li class="updates-item">
+          <div class="updates-item-icon"><span class="material-symbols-outlined">healing</span></div>
+          <div>
+            <div class="updates-item-title">Solapa "Otros" — sanar la base de datos</div>
+            <div class="updates-item-desc">Utilidades del admin para arreglar matrículas parciales, unificar docentes duplicados por DNI y consolidar materias repetidas. Todas con vista previa antes de aplicar.</div>
+          </div>
+        </li>
+        <li class="updates-item">
+          <div class="updates-item-icon"><span class="material-symbols-outlined">fact_check</span></div>
+          <div>
+            <div class="updates-item-title">Auditoría de acciones sensibles</div>
+            <div class="updates-item-desc">Se registran cambios de rol, altas y bajas, restauraciones y modificaciones críticas. El superadmin puede revisar el historial con filtros.</div>
+          </div>
+        </li>
+      </ul>
+
+      <div class="updates-section-title">Sistema</div>
+      <ul class="updates-list">
+        <li class="updates-item">
+          <div class="updates-item-icon"><span class="material-symbols-outlined">backup</span></div>
+          <div>
+            <div class="updates-item-title">Backup, restauración y modo mantenimiento</div>
+            <div class="updates-item-desc">Backups completos con restauración desde el panel del superadmin y modo mantenimiento que cierra el acceso a los usuarios finales sin bajar la app.</div>
+          </div>
+        </li>
+        <li class="updates-item">
+          <div class="updates-item-icon"><span class="material-symbols-outlined">image</span></div>
+          <div>
+            <div class="updates-item-title">Optimización automática de imágenes</div>
+            <div class="updates-item-desc">Toda imagen subida se recomprime y redimensiona en el momento. La biblioteca de imágenes pasó de 74 MB a 3 MB tras el barrido inicial, con mejor velocidad de carga.</div>
+          </div>
+        </li>
+        <li class="updates-item">
+          <div class="updates-item-icon"><span class="material-symbols-outlined">devices</span></div>
+          <div>
+            <div class="updates-item-title">Rediseño responsive unificado</div>
+            <div class="updates-item-desc">Todas las pantallas de todos los roles se rediseñaron para verse bien en celular, tablet y escritorio, con navegación consistente.</div>
+          </div>
+        </li>
+        <li class="updates-item">
+          <div class="updates-item-icon"><span class="material-symbols-outlined">rocket_launch</span></div>
+          <div>
+            <div class="updates-item-title">Despliegue automático más confiable</div>
+            <div class="updates-item-desc">Cada push a producción actualiza el servidor sin intervención manual y con verificación de que los dos workers levantaron la versión nueva. Antes fallaba en silencio y hacía falta reiniciar a mano.</div>
+          </div>
+        </li>
+      </ul>
+
+      <div class="updates-footer">
+        <button type="button" class="btn-primary" id="updates-close">Entendido</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      // Versionamos la clave: si en el futuro sumamos novedades, cambiar la versión
+      // hace que el modal vuelva a aparecer solo aunque el usuario lo haya cerrado antes.
+      var KEY = 'directivo_updates_v2_dismissed';
+      var modal = document.getElementById('updates-modal');
+      if (!modal) return;
+
+      function open() { modal.classList.add('show'); }
+      function close() {
+        modal.classList.remove('show');
+        try { localStorage.setItem(KEY, String(Date.now())); } catch (e) {}
+      }
+
+      // Auto-open: solo la primera vez que este directivo ve esta versión.
+      var seen = false;
+      try { seen = !!localStorage.getItem(KEY); } catch (e) {}
+      if (!seen) open();
+
+      // Botón "Ver actualizaciones" en la topbar: siempre abre, aunque ya lo haya
+      // cerrado antes. No borra el flag — la próxima carga sigue sin auto-abrir.
+      var openBtn = document.getElementById('updates-open-btn');
+      if (openBtn) openBtn.addEventListener('click', open);
+
+      document.getElementById('updates-close').addEventListener('click', close);
+      modal.addEventListener('click', function (e) {
+        if (e.target === modal) close();
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && modal.classList.contains('show')) close();
+      });
+    })();
+  </script>
 
   <%- include('../partials/footer') %>
 </body>

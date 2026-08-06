@@ -52,6 +52,26 @@ router.get('/:id/diagnostico', async (req, res) => {
   }
 });
 
+/* ─── Vista previa de un arreglo que recibe datos cargados a mano ────────── */
+// Los compositores ('alta-masiva-materias') escriben lo que la persona escribió, no lo que
+// dedujo un diagnóstico: ver el efecto exacto antes de aplicar es la única red que hay,
+// porque acá tampoco existe el "deshacer". El plan se recalcula igual dentro de aplicar(),
+// así que esta vista previa no es una promesa: es el mismo cálculo, un rato antes.
+router.post('/:id/previsualizar', async (req, res) => {
+  const fix = getFix(req.params.id);
+  if (!fix) return res.status(404).json({ error: 'Ese arreglo no existe' });
+  if (typeof fix.previsualizar !== 'function') {
+    return res.status(400).json({ error: 'Este arreglo no tiene vista previa.' });
+  }
+  try {
+    res.json(await fix.previsualizar(req.body || {}));
+  } catch (err) {
+    res.status(err.status || 500).json({
+      error: err.status ? err.message : 'No se pudo calcular la vista previa: ' + err.message,
+    });
+  }
+});
+
 /* ─── Resolver UN grupo de un arreglo interactivo ────────────────────────── */
 // Los arreglos interactivos (hoy solo 'docentes-dni-duplicado') no tienen un botón único:
 // cada grupo se resuelve por separado porque la elección —cuál de las dos cuentas se
@@ -162,8 +182,17 @@ router.post('/:id/aplicar', async (req, res) => {
         arreglo: fix.id,
         detectados: antes.total,
         afectados: resultado.afectados,
-        ...(req.body && Object.keys(req.body).length ? { parametros: JSON.stringify(req.body) } : {}),
+        // Los compositores mandan en el body todo lo que se cargó a mano (decenas de cursos
+        // por decenas de materias): eso no entra en un renglón de auditoría, así que el
+        // arreglo devuelve su propio resumen y el body crudo se corta.
+        ...(resultado.meta || {}),
+        ...(req.body && Object.keys(req.body).length
+          ? { parametros: JSON.stringify(req.body).slice(0, 1000) }
+          : {}),
       },
+      // El superadmin no tiene escuela propia: sin esto el evento queda con school:null y no
+      // lo ve el admin de la escuela en su panel de auditoría, aunque el cambio sea suyo.
+      resultado.schoolId ? { schoolId: resultado.schoolId } : {},
     );
 
     const despues = await fix.diagnosticar();
@@ -174,7 +203,12 @@ router.post('/:id/aplicar', async (req, res) => {
       restantes: despues.total,
     });
   } catch (err) {
-    res.status(500).json({ error: 'No se pudo aplicar: ' + err.message });
+    // `status` lo pone el propio arreglo cuando el problema es el dato cargado (un curso sin
+    // elegir, un docente que no es de la escuela): eso es 400 con el mensaje tal cual, no un
+    // 500 que haga pensar que se rompió el servidor.
+    res.status(err.status || 500).json({
+      error: err.status ? err.message : 'No se pudo aplicar: ' + err.message,
+    });
   }
 });
 

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jefatura de Sección - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <div style="max-width:580px;margin:60px auto;text-align:center">
+      <span class="material-symbols-outlined" style="font-size:64px;color:var(--text-hint)">groups</span>
+      <% if (motivo === 'sin-escuela') { %>
+        <h2 style="margin-top:16px">Tu cuenta no está asignada a ninguna escuela</h2>
+        <p style="color:var(--text-secondary);margin-top:10px;font-size:14px;line-height:1.6">
+          Pedile a un administrador que te asigne a la escuela y a las secciones que vas a tener a cargo.
+        </p>
+      <% } else if (motivo === 'secciones-vacias') { %>
+        <h2 style="margin-top:16px">Tus secciones todavía están vacías</h2>
+        <p style="color:var(--text-secondary);margin-top:10px;font-size:14px;line-height:1.6">
+          Ya figurás a cargo, pero a esas secciones todavía no les cargaron ningún curso ni materia.
+          Un administrador tiene que completarlas desde Administración → Secciones.
+        </p>
+      <% } else { %>
+        <h2 style="margin-top:16px">Todavía no tenés secciones a cargo</h2>
+        <p style="color:var(--text-secondary);margin-top:10px;font-size:14px;line-height:1.6">
+          Como Jefe de Sección vas a ver acá las actividades que publican los docentes de las
+          materias de tu sección, con las entregas y las notas de cada una.
+          Un administrador tiene que asignarte una sección primero.
+        </p>
+      <% } %>
+    </div>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>
