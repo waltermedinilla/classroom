@@ -107,6 +107,10 @@
         <span class="material-symbols-outlined">people</span>
         Personas
       </button>
+      <button class="tab" data-tab="envivo">
+        <span class="material-symbols-outlined">sensors</span>
+        En vivo
+      </button>
     </div>
 
     <!-- Tab: Novedades -->
@@ -329,6 +333,26 @@
       </div>
     </div>
     <% } %>
+
+    <!-- Tab: En vivo -->
+    <%# El estado inicial va vacío a propósito: GET /courses/:id no consulta la sala. Es la
+        ruta más visitada de la app y no tiene por qué pagar dos queries más por una solapa
+        que la mayoría de las visitas no abre. El partial se llena solo con su primer poll,
+        que dispara apenas la solapa se hace visible (ver aLaVista() en el partial). %>
+    <div class="tab-content hidden" id="envivoTab">
+      <%- include('partials/live-room', {
+            sala: {
+              estado: 'cerrada', sessionId: null, seq: 0, puedoEscribir: false, mensajes: [],
+              settings: { studentsCanWrite: true, reactionsOn: true },
+              presencia: { presentes: 0, total: course.students.length, conectados: [], ausentes: [] },
+            },
+            modo:     'visible',
+            esGestor: course.canManage(user),
+            esAlumno: !course.canManage(user),
+            emojis:   liveEmojis,
+            pollMs:   livePollMs,
+          }) %>
+    </div>
   </main>
 
   <!-- FAB solo para docente del curso -->

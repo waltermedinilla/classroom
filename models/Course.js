@@ -123,4 +123,43 @@ courseSchema.methods.canManage = function (user) {
   return false;
 };
 
+// "¿Puede ENTRAR a la sala en vivo de esta materia?" — es canManage() MÁS el equipo directivo
+// de la escuela, MÁS el preceptor que tiene esta división en su alcance.
+//
+// Va SEPARADO de canManage() a propósito, y esa separación es el punto: canManage concede
+// crear actividades, calificar, borrar y publicar novedades. Sumar 'directivo' o 'preceptor'
+// allá para que puedan mirar una clase les abriría de golpe la gestión completa de las 419
+// materias de la escuela. Acá solo se concede entrar y leer: abrir la sala, cerrarla, moderar,
+// silenciar y configurarla siguen pidiendo canManage() en routes/rooms.js.
+//
+// El segundo argumento es el alcance del preceptor YA RESUELTO por loadPreceptorScope
+// (middleware/preceptor.js). No se resuelve acá adentro porque necesita una query a Division
+// y un método de instancia sincrónico no puede hacerla.
+//
+// FAIL-CLOSED: sin alcance no hay acceso. Nunca existe la convención "vacío = todas" — es la
+// misma regla que sostiene assignedDivisions en models/User.js, y por el mismo motivo: el rol
+// 'preceptor' se puede asignar por caminos que no preguntan por divisiones, y en todos ellos
+// el usuario queda sin alcance. Si "vacío" significara "todas", esos caminos entregarían las
+// salas de la escuela entera por omisión.
+courseSchema.methods.canWatchLive = function (user, scopeDivisionIds = []) {
+  if (!user) return false;
+  if (this.canManage(user)) return true;
+
+  // Dirección ve toda su escuela. Sin escuela cargada de un lado o del otro no se concede
+  // nada (mismo cuidado con el `select` que documenta canManage: la query tiene que traer
+  // `school` o el chequeo falla por omisión, no por permiso).
+  if (user.role === 'directivo') {
+    if (!user.school || !this.school) return false;
+    return idToString(this.school) === idToString(user.school);
+  }
+
+  if (user.role === 'preceptor') {
+    if (!Array.isArray(scopeDivisionIds) || scopeDivisionIds.length === 0) return false;
+    if (!this.division) return false;
+    return scopeDivisionIds.map(String).includes(idToString(this.division));
+  }
+
+  return false;
+};
+
 module.exports = mongoose.model('Course', courseSchema);

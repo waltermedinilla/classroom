@@ -39,6 +39,17 @@ const ACTIONS = {
   'course.remove_coteacher': { label: 'quitó un suplente',      icon: 'group_remove',         color: '#ea8600', category: 'course' },
   'course.merge':           { label: 'fusionó materias duplicadas', icon: 'merge_type',       color: '#9334e6', category: 'course' },
 
+  // ── Sala en vivo (models/RoomSession.js) ──────────────────────────────────
+  // 'room.observe' es el ingreso SILENCIOSO del equipo directivo: no deja rastro dentro de la
+  // sala (no aparece su círculo ni hay aviso), así que este registro es el único lugar donde
+  // queda constancia. Silencioso para la clase, visible para la institución.
+  'room.open':           { label: 'abrió la sala en vivo',           icon: 'sensors',     color: '#137333', category: 'course' },
+  'room.close':          { label: 'cerró la sala en vivo',           icon: 'sensors_off', color: '#ea8600', category: 'course' },
+  'room.observe':        { label: 'observó una sala en vivo',        icon: 'visibility',  color: '#9334e6', category: 'course' },
+  'room.join_staff':     { label: 'ingresó a una sala en vivo',      icon: 'login',       color: '#0d7377', category: 'course' },
+  'room.delete_message': { label: 'borró un mensaje de la sala',     icon: 'delete',      color: '#ea4335', category: 'course' },
+  'room.mute':           { label: 'silenció a un alumno en la sala', icon: 'volume_off',  color: '#ea8600', category: 'course' },
+
   // ── Divisiones (Division = "1°1°", "2°A", etc.) ───────────────────────────
   'division.create':      { label: 'creó una división',        icon: 'add_box',              color: '#1a73e8', category: 'division' },
   'division.edit':        { label: 'editó una división',       icon: 'edit',                 color: '#1a73e8', category: 'division' },

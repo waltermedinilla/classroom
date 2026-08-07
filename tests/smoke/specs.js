@@ -3503,6 +3503,571 @@ const specs = [
       await client.get('admin', `/admin/users/${state.scopedTeacherId}`, { expectStatus: 200 });
     },
   },
+  // ── Sala en vivo (specs/sala-en-vivo.spec.md) ────────────────────────────
+  // Corren con el curso del smoke todavía vivo: state.courseId, su docente
+  // (scopedTeacher) y su alumno matriculado (scopedStudent).
+  {
+    id: 'sala-setup-sesiones',
+    title: 'Setup: actores propios de la sala (dirección y preceptoría) con sesión válida',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Este bloque corre al FINAL del archivo, y para entonces los usuarios directivo y
+      // preceptor del smoke ya fueron borrados por 'directivo-cleanup' y 'cleanup-preceptor'.
+      // Con la cuenta borrada, checkUser no hidrata res.locals.user y todo responde 403 con
+      // un JWT que sigue siendo válido. Por eso la sala crea los suyos, y los borra al final.
+      const dir = await client.post('admin', '/admin/users/create', {
+        body: { name: 'Smoke Sala Directivo', email: `smoke.sala.dir.${RUN_ID}@example.com`,
+                password: 'SmokeTest1234', role: 'directivo', dni: dniSmoke(30) },
+        expectStatus: 201,
+      });
+      state.salaDirectivoId = dir.json.user._id;
+      await client.post('salaDirectivo', '/login', {
+        body: { email: `smoke.sala.dir.${RUN_ID}@example.com`, password: 'SmokeTest1234' },
+        expectStatus: 200,
+      });
+
+      const pre = await client.post('admin', '/admin/users/create', {
+        body: { name: 'Smoke Sala Preceptor', email: `smoke.sala.pre.${RUN_ID}@example.com`,
+                password: 'SmokeTest1234', role: 'preceptor', dni: dniSmoke(31) },
+        expectStatus: 201,
+      });
+      state.salaPreceptorId = pre.json.user._id;
+      // Con la división del curso de prueba a cargo: es lo que le da acceso a esa sala.
+      await client.post('admin', `/admin/users/${state.salaPreceptorId}/divisions`, {
+        body: { divisionIds: [state.divisionId], allDivisions: false },
+        expectStatus: 200,
+      });
+      await client.post('salaPreceptor', '/login', {
+        body: { email: `smoke.sala.pre.${RUN_ID}@example.com`, password: 'SmokeTest1234' },
+        expectStatus: 200,
+      });
+      // El jar de cookies de `scopedStudent` viene VACÍO desde
+      // 'cache-invalidation-on-disable': ese spec deshabilita al alumno, y checkUser
+      // responde con clearCookie('token') — que el cliente de test guarda como cookie
+      // vacía. Re-habilitarlo no le devuelve la sesión al cliente. Ningún spec volvía a
+      // usar ese actor después, así que el jar roto nunca se notó hasta que la sala
+      // empezó a usarlo: sin esto, todas las llamadas del alumno responden 302 a /login.
+      //
+      // Los otros dos se re-loguean por higiene: hace que este bloque no dependa del
+      // estado de sesión que dejaron 200 specs anteriores.
+      await client.post('scopedStudent', '/login', {
+        body: { email: state.scopedStudentEmail, password: student.password },
+        expectStatus: 200,
+      });
+      await client.post('scopedTeacher', '/login', {
+        body: { email: state.scopedTeacherEmail, password: teacher.password },
+        expectStatus: 200,
+      });
+
+      const ok = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
+      assert(ok.status === 200, 'el alumno debería tener sesión válida antes de entrar a la sala');
+    },
+  },
+  {
+    id: 'sala-abrir-cerrar',
+    title: 'La docente abre la sala, reabrirla no duplica, el alumno no puede abrirla',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const abrir = await client.post('scopedTeacher', `/courses/${state.courseId}/sala/abrir`, { expectStatus: 200 });
+      assert(abrir.json.creada === true, 'la primera apertura debería crear la sesión');
+      state.salaSessionId = abrir.json.sessionId;
+
+      // Idempotencia: dos docentes tocando "Abrir" a la vez es un caso real (RN-02).
+      const otra = await client.post('scopedTeacher', `/courses/${state.courseId}/sala/abrir`, { expectStatus: 200 });
+      assert(otra.json.creada === false, 'reabrir no debería crear una segunda sesión');
+      assert(otra.json.sessionId === state.salaSessionId, 'debería devolver la MISMA sesión');
+
+      // El alumno no abre salas.
+      await client.post('scopedStudent', `/courses/${state.courseId}/sala/abrir`, { expectStatus: 403 });
+    },
+  },
+  {
+    id: 'sala-presencia',
+    title: 'El poll del alumno crea UNA sola presencia y lo muestra conectado',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      let res;
+      for (let i = 0; i < 3; i++) {
+        res = await client.get('scopedStudent', `/courses/${state.courseId}/sala/poll`, {
+          expectStatus: 200, headers: { Accept: 'application/json' },
+        });
+      }
+      assert(res.json.estado === 'abierta', 'la sala debería figurar abierta');
+      assert(res.json.presencia.presentes === 1,
+        `debería haber 1 alumno presente, hubo ${res.json.presencia.presentes}`);
+      assert(res.json.presencia.total >= 1, 'el total debería contar la matrícula del curso');
+      assert(res.json.presencia.conectados.some(c => c.rol === 'student'),
+        'el alumno debería aparecer en la lista de conectados');
+
+      // El docente polleando NO suma al conteo de alumnos presentes (RN-07).
+      const conDocente = await client.get('scopedTeacher', `/courses/${state.courseId}/sala/poll`, {
+        expectStatus: 200, headers: { Accept: 'application/json' },
+      });
+      assert(conDocente.json.presencia.presentes === 1,
+        `la docente no debe sumar a "presentes"; quedó en ${conDocente.json.presencia.presentes}`);
+      assert(conDocente.json.presencia.conectados[0].rol === 'teacher',
+        'la docente debería aparecer primera en la fila de círculos');
+    },
+  },
+  {
+    id: 'sala-mensajes-cursor',
+    title: 'El cursor por seq no pierde mensajes ni reenvía los ya vistos',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const m1 = await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes`, {
+        body: { text: 'presente 👋' }, expectStatus: 200,
+      });
+      const desde = m1.json.mensaje.seq;
+      state.salaMensajeId = m1.json.mensaje.id;
+
+      // Dos mensajes en paralelo: el $inc atómico tiene que darles seq distintos y
+      // consecutivos, incluso si caen en el mismo milisegundo (RN-04). Es el test que
+      // justifica no usar createdAt como cursor.
+      const [a, b] = await Promise.all([
+        client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes`, { body: { text: 'uno' }, expectStatus: 200 }),
+        client.post('scopedTeacher', `/courses/${state.courseId}/sala/mensajes`, { body: { text: 'dos' }, expectStatus: 200 }),
+      ]);
+      const seqs = [a.json.mensaje.seq, b.json.mensaje.seq].sort((x, y) => x - y);
+      assert(seqs[0] !== seqs[1], `dos mensajes simultáneos recibieron el mismo seq (${seqs[0]})`);
+      assert(seqs[1] - seqs[0] === 1, `los seq deberían ser consecutivos, fueron ${seqs.join(' y ')}`);
+
+      const nuevos = await client.get('scopedStudent', `/courses/${state.courseId}/sala/poll?since=${desde}`, {
+        expectStatus: 200, headers: { Accept: 'application/json' },
+      });
+      assert(nuevos.json.mensajes.length === 2,
+        `since=${desde} debería devolver 2 mensajes, devolvió ${nuevos.json.mensajes.length}`);
+
+      const alDia = await client.get('scopedStudent', `/courses/${state.courseId}/sala/poll?since=${seqs[1]}`, {
+        expectStatus: 200, headers: { Accept: 'application/json' },
+      });
+      assert(alDia.json.mensajes.length === 0,
+        'con el cursor al día no debería reenviar nada (si no, cada poll manda la conversación entera)');
+    },
+  },
+  {
+    id: 'sala-validaciones',
+    title: 'Mensaje vacío 400, texto largo se corta, emoji inválido 400',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes`, {
+        body: { text: '   ' }, expectStatus: 400,
+      });
+      const largo = await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes`, {
+        body: { text: 'x'.repeat(800) }, expectStatus: 200,
+      });
+      assert(largo.json.mensaje.texto.length === 500,
+        `el texto debería cortarse en 500, quedó en ${largo.json.mensaje.texto.length}`);
+
+      await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeId}/reaccion`, {
+        body: { emoji: '💣' }, expectStatus: 400,
+      });
+      await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeId}/reaccion`, {
+        body: { emoji: '👍' }, expectStatus: 200,
+      });
+      // Toggle: la segunda pulsada saca la reacción en vez de duplicarla.
+      const off = await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeId}/reaccion`, {
+        body: { emoji: '👍' }, expectStatus: 200,
+      });
+      assert((off.json.mensaje.reacciones || []).length === 0,
+        'reaccionar dos veces con el mismo emoji debería quitar la reacción');
+    },
+  },
+  {
+    id: 'sala-xss',
+    title: 'Un mensaje con <script> no se ejecuta en la sala',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const payload = '<script>alert(1)</script>';
+      await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes`, {
+        body: { text: payload }, expectStatus: 200,
+      });
+      const html = await client.get('scopedTeacher', `/courses/${state.courseId}/sala`, { expectStatus: 200 });
+      assert(!html.text.includes(payload),
+        'el HTML de la sala contiene el <script> del mensaje sin escapar');
+      assert(html.text.includes('\\u003cscript') || html.text.includes('&lt;script'),
+        'el payload debería aparecer escapado (en el JSON embebido o en el HTML)');
+    },
+  },
+  {
+    id: 'sala-moderacion',
+    title: 'La docente borra y silencia; el alumno no puede moderar',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Borrar es solo del docente.
+      await client.delete('scopedStudent', `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeId}`, { expectStatus: 403 });
+      await client.delete('scopedTeacher', `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeId}`, { expectStatus: 200 });
+
+      const tras = await client.get('scopedTeacher', `/courses/${state.courseId}/sala/poll?since=0`, {
+        expectStatus: 200, headers: { Accept: 'application/json' },
+      });
+      const borrado = tras.json.mensajes.find(m => m.id === state.salaMensajeId);
+      assert(borrado && borrado.borrado === true, 'el mensaje debería figurar como eliminado');
+      assert(borrado.texto === 'Mensaje eliminado', 'no debería viajar el texto original al cliente');
+
+      // Silenciar: el alumno sigue leyendo y sigue presente, pero no escribe (RN-13).
+      await client.post('scopedTeacher', `/courses/${state.courseId}/sala/silenciar/${state.scopedStudentId}`, {
+        body: { muted: true }, expectStatus: 200,
+      });
+      await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes`, {
+        body: { text: 'no debería entrar' }, expectStatus: 403,
+      });
+      const mudo = await client.get('scopedStudent', `/courses/${state.courseId}/sala/poll`, {
+        expectStatus: 200, headers: { Accept: 'application/json' },
+      });
+      assert(mudo.json.puedoEscribir === false, 'el silenciado no debería poder escribir');
+      assert(mudo.json.presencia.presentes === 1, 'el silenciado sigue contando como presente');
+      await client.post('scopedTeacher', `/courses/${state.courseId}/sala/silenciar/${state.scopedStudentId}`, {
+        body: { muted: false }, expectStatus: 200,
+      });
+
+      // Modo "solo yo escribo": corta al alumno, no a la docente.
+      await client.post('scopedTeacher', `/courses/${state.courseId}/sala/config`, {
+        body: { studentsCanWrite: false }, expectStatus: 200,
+      });
+      await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes`, {
+        body: { text: 'tampoco' }, expectStatus: 403,
+      });
+      await client.post('scopedTeacher', `/courses/${state.courseId}/sala/mensajes`, {
+        body: { text: 'la docente sí puede' }, expectStatus: 200,
+      });
+      await client.post('scopedTeacher', `/courses/${state.courseId}/sala/config`, {
+        body: { studentsCanWrite: true }, expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'sala-acceso',
+    title: 'Quién entra a la sala y quién no (alumno ajeno, dirección, preceptoría)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // El alumno del curso, sí.
+      await client.get('scopedStudent', `/courses/${state.courseId}/sala`, { expectStatus: 200 });
+      // El alumno autoregistrado en OTRA división, no — ni con el link.
+      await client.get('student', `/courses/${state.courseId}/sala`, { expectStatus: 403 });
+      // Dirección, sí. Con ?modo=observacion, que es como se entra desde la tarjeta del
+      // panel: sin el parámetro entraría VISIBLE y le arruinaría el escenario a
+      // 'sala-observacion', que verifica justamente que no aparezca.
+      await client.get('salaDirectivo', `/courses/${state.courseId}/sala?modo=observacion`, { expectStatus: 200 });
+      // Preceptoría con la división a cargo, sí.
+      await client.get('salaPreceptor', `/courses/${state.courseId}/sala`, { expectStatus: 200 });
+
+      // Ni dirección ni preceptoría gestionan la sala: canWatchLive no concede canManage.
+      for (const actor of ['salaDirectivo', 'salaPreceptor']) {
+        await client.post(actor, `/courses/${state.courseId}/sala/abrir`,  { expectStatus: 403 });
+        await client.post(actor, `/courses/${state.courseId}/sala/cerrar`, { expectStatus: 403 });
+        await client.post(actor, `/courses/${state.courseId}/sala/config`, { body: { reactionsOn: false }, expectStatus: 403 });
+        await client.post(actor, `/courses/${state.courseId}/sala/silenciar/${state.scopedStudentId}`, { body: { muted: true }, expectStatus: 403 });
+        await client.delete(actor,  `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeId}`, { expectStatus: 403 });
+      }
+
+      // Id malformado → 404, no 500.
+      await client.get('scopedTeacher', '/courses/no-es-un-objectid/sala', { expectStatus: 404 });
+      await client.get('scopedTeacher', '/courses/000000000000000000000000/sala', { expectStatus: 404 });
+    },
+  },
+  {
+    id: 'sala-observacion',
+    title: 'Dirección entra sin aparecer, no puede escribir, y queda en auditoría',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const antes = await client.get('scopedStudent', `/courses/${state.courseId}/sala/poll`, {
+        expectStatus: 200, headers: { Accept: 'application/json' },
+      });
+
+      await client.get('salaDirectivo', `/courses/${state.courseId}/sala?modo=observacion`, { expectStatus: 200 });
+
+      const despues = await client.get('scopedStudent', `/courses/${state.courseId}/sala/poll`, {
+        expectStatus: 200, headers: { Accept: 'application/json' },
+      });
+      assert(despues.json.presencia.conectados.length === antes.json.presencia.conectados.length,
+        'el ingreso en observación NO debe cambiar la lista de conectados que ve el curso');
+      assert(!despues.json.presencia.conectados.some(c => c.rol === 'directivo'),
+        'dirección no debería aparecer en la sala al entrar en observación');
+
+      // En observación no se escribe: si pudiera, se revelaría igual pero de la peor manera.
+      await client.post('salaDirectivo', `/courses/${state.courseId}/sala/mensajes`, {
+        body: { text: 'no debería poder' }, expectStatus: 403,
+      });
+
+      // Silencioso para la clase, visible para la institución.
+      const audit = await client.get('admin', '/admin/audit?action=room.observe', { expectStatus: 200 });
+      assert(audit.text.includes('observó una sala en vivo'),
+        'el ingreso en observación tiene que quedar registrado en /admin/audit');
+    },
+  },
+  {
+    id: 'sala-observacion-presentarse',
+    title: 'Al presentarse, dirección aparece en la sala y puede escribir',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.post('salaDirectivo', `/courses/${state.courseId}/sala/presentarme`, { expectStatus: 200 });
+
+      const visto = await client.get('scopedStudent', `/courses/${state.courseId}/sala/poll?since=0`, {
+        expectStatus: 200, headers: { Accept: 'application/json' },
+      });
+      assert(visto.json.presencia.conectados.some(c => c.rol === 'directivo'),
+        'después de presentarse, dirección debería aparecer entre los conectados');
+      assert(visto.json.mensajes.some(m => m.kind === 'system' && /ingres/i.test(m.texto)),
+        'debería haberse anunciado su ingreso con un mensaje de sistema');
+
+      await client.post('salaDirectivo', `/courses/${state.courseId}/sala/mensajes`, {
+        body: { text: 'buenas, sigo la clase' }, expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'preceptor-envivo-ingreso-visible',
+    title: 'El preceptor entra a la vista de todos y no puede esconderse',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Con ?modo=observacion escrito a mano: para el preceptor se ignora (RN-26). Es el
+      // test que impide que el modo silencioso se filtre a otro rol por la URL.
+      await client.get('salaPreceptor', `/courses/${state.courseId}/sala?modo=observacion`, { expectStatus: 200 });
+
+      const visto = await client.get('scopedStudent', `/courses/${state.courseId}/sala/poll?since=0`, {
+        expectStatus: 200, headers: { Accept: 'application/json' },
+      });
+      assert(visto.json.presencia.conectados.some(c => c.rol === 'preceptor'),
+        'el preceptor tiene que aparecer en la sala aunque pida modo observación');
+      const avisos = visto.json.mensajes.filter(m => m.kind === 'system' && /preceptor/i.test(m.texto));
+      assert(avisos.length === 1, `su ingreso debería anunciarse una sola vez, hubo ${avisos.length} avisos`);
+
+      // Vuelve a entrar: no se duplica el aviso (si no, cada F5 llenaría el chat).
+      await client.get('salaPreceptor', `/courses/${state.courseId}/sala`, { expectStatus: 200 });
+      const otra = await client.get('scopedStudent', `/courses/${state.courseId}/sala/poll?since=0`, {
+        expectStatus: 200, headers: { Accept: 'application/json' },
+      });
+      assert(otra.json.mensajes.filter(m => m.kind === 'system' && /preceptor/i.test(m.texto)).length === 1,
+        'recargar la sala no debería volver a anunciar al preceptor');
+
+      // Y puede hablar sin tener que presentarse.
+      await client.post('salaPreceptor', `/courses/${state.courseId}/sala/mensajes`, {
+        body: { text: '¿está Pérez en el aula?' }, expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'envivo-tarjetas',
+    title: 'Los paneles de dirección y preceptoría muestran la clase en curso',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const dir = await client.get('salaDirectivo', '/directivo/en-vivo/poll', {
+        expectStatus: 200, headers: { Accept: 'application/json' },
+      });
+      const sala = dir.json.salas.find(s => s.courseId === state.courseId);
+      assert(sala, 'la sala abierta del curso de prueba debería aparecer en el panel de dirección');
+      assert(sala.materia.includes(RUN_ID), 'la tarjeta debería nombrar la materia');
+      assert(typeof sala.presentes === 'number' && typeof sala.total === 'number',
+        'la tarjeta debería traer presentes y total');
+      assert(sala.desdeMin >= 0 && Number.isFinite(sala.desdeMin), 'los minutos no pueden ser NaN');
+
+      // Se busca NaN/Infinity como VALOR RENDERIZADO (entre tags, después de ":" o de "="),
+      // no como subcadena suelta: "NaN" aparece de casualidad dentro de nombres propios y
+      // "undefined" es una palabra del propio JavaScript del partial. Un assert que mire el
+      // HTML entero da falsos positivos y hace desconfiar de todo el spec.
+      const html = await client.get('salaDirectivo', '/directivo/en-vivo', { expectStatus: 200 });
+      const basura = html.text.match(/(?:>|:\s*|=\s*"?)(NaN|Infinity)\b/);
+      assert(!basura,
+        `el panel no debería mostrar ${basura ? basura[1] : ''} — contexto: ` +
+        (basura ? JSON.stringify(html.text.slice(Math.max(0, basura.index - 80), basura.index + 40)) : ''));
+
+      // El preceptor ve la misma sala (su división está en el alcance) y entra visible.
+      const pre = await client.get('salaPreceptor', '/preceptor/en-vivo/poll', {
+        expectStatus: 200, headers: { Accept: 'application/json' },
+      });
+      assert(pre.json.salas.some(s => s.courseId === state.courseId),
+        'la sala debería aparecer también en el panel de preceptoría');
+
+      const preHtml = await client.get('salaPreceptor', '/preceptor/en-vivo', { expectStatus: 200 });
+      assert(preHtml.text.includes("INGRESO = 'visible'"),
+        'las tarjetas de preceptoría tienen que llevar al ingreso VISIBLE');
+      assert(html.text.includes("INGRESO = 'observacion'"),
+        'las tarjetas de dirección tienen que llevar al ingreso en observación');
+    },
+  },
+  {
+    id: 'envivo-forbidden',
+    title: 'El docente y el alumno no entran a los paneles de clases en vivo',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      await client.get('scopedTeacher', '/directivo/en-vivo', { expectStatus: 403 });
+      await client.get('scopedTeacher', '/preceptor/en-vivo', { expectStatus: 403 });
+      await client.get('scopedStudent', '/directivo/en-vivo', { expectStatus: 403 });
+      // El preceptor tampoco entra al panel de dirección: su pantalla es /preceptor/en-vivo.
+      await client.get('salaPreceptor', '/directivo/en-vivo', { expectStatus: 403 });
+    },
+  },
+  {
+    id: 'preceptor-envivo-alcance',
+    title: 'Sin divisiones asignadas, el preceptor no ve ninguna sala ni entra por URL',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Es el test que separa a un preceptor de las salas del resto de la escuela: si el
+      // filtro por alcance se rompe, se rompe acá y no en producción.
+      const antes = await client.get('salaPreceptor', '/preceptor/en-vivo/poll', {
+        expectStatus: 200, headers: { Accept: 'application/json' },
+      });
+      assert(antes.json.salas.length >= 1, 'con su división a cargo debería ver al menos una sala');
+
+      try {
+        await client.post('admin', `/admin/users/${state.salaPreceptorId}/divisions`, {
+          body: { divisionIds: [], allDivisions: false }, expectStatus: 200,
+        });
+
+        const sin = await client.get('salaPreceptor', '/preceptor/en-vivo/poll', {
+          expectStatus: 200, headers: { Accept: 'application/json' },
+        });
+        assert(sin.json.salas.length === 0,
+          `sin alcance no debería ver ninguna sala, vio ${sin.json.salas.length}`);
+
+        // Y filtrar la pantalla no alcanza: la URL directa también tiene que rebotar.
+        await client.get('salaPreceptor', `/courses/${state.courseId}/sala`, { expectStatus: 403 });
+      } finally {
+        await client.post('admin', `/admin/users/${state.salaPreceptorId}/divisions`, {
+          body: { divisionIds: [state.divisionId], allDivisions: false }, expectStatus: 200,
+        });
+      }
+    },
+  },
+  {
+    id: 'envivo-section-can-be-denied',
+    title: 'El superadmin puede apagar la solapa "En vivo" de cada panel',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state }) {
+      // preceptor_envivo es la PRIMERA solapa configurable del panel de preceptoría (la otra,
+      // el dashboard, va locked por ser el destino del redirect de "/"). Este spec verifica
+      // que apagarla devuelve 403 en la ruta y no solo la esconde del menú.
+      const casos = [
+        { rol: 'directivo', key: 'directivo_envivo', actor: 'salaDirectivo', url: '/directivo/en-vivo' },
+        { rol: 'preceptor', key: 'preceptor_envivo', actor: 'salaPreceptor', url: '/preceptor/en-vivo' },
+      ];
+      for (const c of casos) {
+        const toggle = (enabled) => client.post('superadmin', '/superadmin/roles/toggle', {
+          body: { schoolId: state.rolesSchoolId, role: c.rol, key: c.key, enabled },
+          expectStatus: 200,
+        });
+        // try/finally, igual que roles-toggle-hides-and-blocks: si un assert falla a mitad,
+        // la solapa tiene que volver a habilitarse o los specs de abajo heredan el bloqueo.
+        try {
+          await toggle(false);
+          await client.get(c.actor, c.url, { expectStatus: 403 });
+        } finally {
+          await toggle(true);
+        }
+      }
+      await client.get('salaDirectivo', '/directivo/en-vivo', { expectStatus: 200 });
+      await client.get('salaPreceptor', '/preceptor/en-vivo', { expectStatus: 200 });
+    },
+  },
+  {
+    id: 'sala-historial-y-export',
+    title: 'Al cerrar, la clase queda archivada con su transcripción y su asistencia',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.post('scopedTeacher', `/courses/${state.courseId}/sala/cerrar`, { expectStatus: 200 });
+
+      // Con la sala cerrada ya nadie escribe.
+      await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes`, {
+        body: { text: 'tarde' }, expectStatus: 409,
+      });
+
+      const lista = await client.get('scopedTeacher', `/courses/${state.courseId}/sala/clases`, { expectStatus: 200 });
+      assert(lista.text.includes('presentes'), 'el listado de clases debería mostrar los presentes');
+
+      const detalle = await client.get('scopedTeacher', `/courses/${state.courseId}/sala/clases/${state.salaSessionId}`, { expectStatus: 200 });
+      assert(detalle.text.includes('Asistencia'), 'el detalle debería mostrar la asistencia');
+      // Un mensaje que NO fue borrado: 'presente 👋' es justo el que borra 'sala-moderacion',
+      // así que ahí la transcripción muestra "Mensaje eliminado" y no serviría como prueba
+      // de que el texto se conserva.
+      assert(detalle.text.includes('la docente sí puede'),
+        'el detalle debería mostrar el texto de los mensajes no borrados');
+      assert(detalle.text.includes('Mensaje eliminado'), 'los borrados deberían figurar como tales');
+
+      const csv = await client.get('scopedTeacher',
+        `/courses/${state.courseId}/sala/clases/${state.salaSessionId}/export?tipo=asistencia`, { expectStatus: 200 });
+      assert((csv.text || '').includes('Alumno;DNI;Estado'),
+        'el CSV de asistencia debería traer su encabezado');
+
+      const csvT = await client.get('scopedTeacher',
+        `/courses/${state.courseId}/sala/clases/${state.salaSessionId}/export?tipo=transcripcion`, { expectStatus: 200 });
+      assert((csvT.text || '').includes('Mensaje'), 'el CSV de transcripción debería traer su encabezado');
+
+      // Una clase de otra materia no se lee cambiando el id en la URL.
+      await client.get('scopedTeacher', `/courses/${state.courseId}/sala/clases/000000000000000000000000`, { expectStatus: 404 });
+      await client.get('scopedTeacher', `/courses/${state.courseId}/sala/clases/no-es-un-id`, { expectStatus: 404 });
+    },
+  },
+  {
+    id: 'sala-purga',
+    title: 'La purga borra los mensajes viejos y conserva sesión y asistencia',
+    requiresEnv: ['MONGODB_URI'],
+    async run({ env, state, assert }) {
+      if (!state.salaSessionId) return;
+      const { MongoClient, ObjectId } = require('mongodb');
+      const { execFileSync } = require('child_process');
+      const path = require('path');
+
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const db  = mongo.db();
+        const sid = new ObjectId(state.salaSessionId);
+
+        const msgsAntes = await db.collection('roommessages').countDocuments({ session: sid });
+        const presAntes = await db.collection('roompresences').countDocuments({ session: sid });
+        assert(msgsAntes > 0 && presAntes > 0, 'la sesión de prueba debería tener mensajes y presencia');
+
+        // Se la envejece: cerrada hace 4 meses (el corte son 3).
+        const viejo = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000);
+        await db.collection('roomsessions').updateOne({ _id: sid }, { $set: { closedAt: viejo } });
+
+        // --dry-run no borra nada.
+        const raiz = path.join(__dirname, '..', '..');
+        execFileSync('node', ['cleanup-rooms.js', '--dry-run'], { cwd: raiz, stdio: 'pipe' });
+        assert(await db.collection('roommessages').countDocuments({ session: sid }) === msgsAntes,
+          '--dry-run no debería borrar ningún mensaje');
+
+        execFileSync('node', ['cleanup-rooms.js', '--si'], { cwd: raiz, stdio: 'pipe' });
+
+        assert(await db.collection('roommessages').countDocuments({ session: sid }) === 0,
+          'la purga debería haber borrado los mensajes de la clase vieja');
+        assert(await db.collection('roomsessions').countDocuments({ _id: sid }) === 1,
+          'la purga NO debe borrar la sesión');
+        assert(await db.collection('roompresences').countDocuments({ session: sid }) === presAntes,
+          'la purga NO debe tocar la asistencia: es el registro que se conserva');
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'cleanup-salas-db',
+    title: 'Limpieza: borra las salas de prueba',
+    requiresEnv: ['MONGODB_URI'],
+    async run({ env, state }) {
+      if (!state.courseId) return;
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const cid = new ObjectId(state.courseId);
+        await mongo.db().collection('roommessages').deleteMany({ course: cid });
+        await mongo.db().collection('roompresences').deleteMany({ course: cid });
+        await mongo.db().collection('roomsessions').deleteMany({ course: cid });
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'cleanup-sala-usuarios',
+    title: 'Limpieza: el admin borra el directivo y el preceptor propios de la sala',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      if (state.salaDirectivoId) await client.post('admin', `/admin/users/${state.salaDirectivoId}/delete`, { expectStatus: 200 });
+      if (state.salaPreceptorId) await client.post('admin', `/admin/users/${state.salaPreceptorId}/delete`, { expectStatus: 200 });
+    },
+  },
   {
     id: 'cleanup-course',
     title: 'Limpieza: el admin borra el curso de prueba (cascada)',
@@ -3609,6 +4174,7 @@ const specs = [
           state.announcementId, state.teacherId, state.studentId,
           state.coTeacherId, state.coTeacherStudentId, state.coTeacherActivityId,
           state.preceptorId, state.preceptorStudentId, state.otherDivisionId,
+          state.salaDirectivoId, state.salaPreceptorId,
           state.fakePreceptorId, state.dniNormalizedId, state.thirdDivisionId,
           state.joinCourseId, state.joinOtherCourseId, state.joinOtherDivisionId,
           state.dupConMateriaId, state.dupVaciaId, state.dupCourseId,

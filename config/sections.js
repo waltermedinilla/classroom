@@ -54,12 +54,20 @@ const SECTIONS = [
   { key: 'directivo_students',  panel: 'directivo', label: 'Alumnos',    icon: 'group',     path: '/directivo/students',  roles: ['directivo', 'admin', 'superadmin'] },
   { key: 'directivo_teachers',  panel: 'directivo', label: 'Docentes',   icon: 'badge',     path: '/directivo/teachers',  roles: ['directivo', 'admin', 'superadmin'] },
   { key: 'directivo_grades',    panel: 'directivo', label: 'Promedios',  icon: 'grade',     path: '/directivo/grades',    roles: ['directivo', 'admin', 'superadmin'] },
+  // Clases que se están dictando ahora (salas en vivo). Se puede apagar por escuela: mirar
+  // una clase en curso es una capacidad institucionalmente sensible y no toda escuela va a
+  // querer dársela a dirección.
+  { key: 'directivo_envivo',    panel: 'directivo', label: 'En vivo',    icon: 'sensors',   path: '/directivo/en-vivo',   roles: ['directivo', 'admin', 'superadmin'] },
 
   // ── Panel Preceptoría (base: middleware/preceptor.js ROLES_CON_ACCESO) ─────
   // Es la única solapa del panel: deshabilitarla equivale a borrarle el rol a alguien,
   // que no es lo que esta pantalla resuelve. Si algún día hace falta, lo correcto es un
   // flag "rol habilitado" aparte.
   { key: 'preceptor_dashboard', panel: 'preceptor', label: 'Mis cursos', icon: 'school', path: '/preceptor', roles: ['preceptor', 'directivo', 'admin', 'superadmin'], locked: true },
+  // Primera solapa CONFIGURABLE de este panel: a diferencia del dashboard, apagarla no deja a
+  // nadie afuera del panel (la INVARIANTE del redirect de "/" sigue apuntando al dashboard,
+  // que sigue locked). Muestra las salas en vivo de las divisiones a cargo del preceptor.
+  { key: 'preceptor_envivo',    panel: 'preceptor', label: 'En vivo',    icon: 'sensors', path: '/preceptor/en-vivo', roles: ['preceptor', 'directivo', 'admin', 'superadmin'] },
 
   // ── Panel Jefatura de Sección (base: middleware/jefatura.js ROLES_CON_ACCESO) ──
   // 'Actividades' es la pantalla de entrada del panel, por eso va locked (ver la INVARIANTE

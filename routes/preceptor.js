@@ -28,6 +28,8 @@ const {
   enrollStudentInDivisionCourses, unenrollStudentFromDivision, contarEntregasEnDivision,
 } = require('../services/enrollment');
 const { normalizeDni } = require('../services/dni');
+// Salas en vivo: el mismo service que alimenta la sala y el panel de dirección.
+const liveRoom = require('../services/liveRoom');
 const { logAudit } = require('../middleware/audit');
 const { invalidateUser } = require('../middleware/cache');
 
@@ -461,6 +463,54 @@ router.post('/students/:id/toggle-active', async (req, res) => {
     );
 
     res.json({ ok: true, active: student.active });
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+/* ─── Clases en vivo ──────────────────────────────────────────────────────── */
+// Las salas abiertas de las divisiones a cargo. Mismas tarjetas que el panel de dirección
+// (partials/live-cards.ejs), con dos diferencias que importan:
+//
+//   1. ALCANCE. Se filtra por req.scopeDivisionIds, que resuelve loadPreceptorScope. Un array
+//      vacío significa "ninguna", jamás "todas" — getOpenSessions devuelve [] en ese caso.
+//      Filtrar las tarjetas no alcanza por sí solo: entrar a la sala por URL también valida el
+//      alcance, en Course.canWatchLive() (routes/rooms.js). Las dos barreras son necesarias.
+//   2. INGRESO VISIBLE. El preceptor entra a la vista de todos: aparece su círculo y se avisa
+//      en la sala. Es lo contrario del ingreso de dirección, y es a propósito: quien controla
+//      la asistencia tiene que notarse. Eso lo decide el ROL en routes/rooms.js, no esta
+//      pantalla — un directivo que entre desde acá sigue entrando en observación.
+
+async function panelEnVivoPreceptor(school, scopeDivisionIds) {
+  const opciones = { divisionIds: scopeDivisionIds };
+  const [salas, cerradasHoy] = await Promise.all([
+    liveRoom.getOpenSessions(school, opciones),
+    liveRoom.getTodayClosed(school, opciones),
+  ]);
+  return { salas, cerradasHoy };
+}
+
+router.get('/en-vivo', async (req, res) => {
+  if (!res.locals.user.school) return res.render('preceptor/no-scope', { motivo: 'sin-cursos' });
+
+  try {
+    const datos = await panelEnVivoPreceptor(res.locals.user.school, req.scopeDivisionIds);
+    res.render('preceptor/en-vivo', {
+      ...datos,
+      ingreso:  res.locals.user.role === 'preceptor' ? 'visible' : 'observacion',
+      scopeAll: res.locals.scopeAll,
+      pollMs:   liveRoom.DIRECTIVO_POLL_MS,
+      activePage: 'envivo',
+    });
+  } catch (err) {
+    res.status(500).send('Error del servidor');
+  }
+});
+
+router.get('/en-vivo/poll', async (req, res) => {
+  if (!res.locals.user.school) return res.json({ salas: [], cerradasHoy: [] });
+  try {
+    res.json(await panelEnVivoPreceptor(res.locals.user.school, req.scopeDivisionIds));
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
   }

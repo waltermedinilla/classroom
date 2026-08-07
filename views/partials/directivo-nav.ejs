@@ -32,6 +32,12 @@
     Docentes
   </a>
   <% } %>
+  <% if (puede('directivo_envivo')) { %>
+  <a href="/directivo/en-vivo" class="admin-nav-item <%= activePage === 'envivo' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">sensors</span>
+    En vivo
+  </a>
+  <% } %>
   <% if (puede('directivo_grades')) { %>
   <a href="/directivo/grades" class="admin-nav-item <%= activePage === 'grades' ? 'active' : '' %>">
     <span class="material-symbols-outlined">grade</span>

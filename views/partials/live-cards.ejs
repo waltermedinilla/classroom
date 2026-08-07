@@ -1,0 +1,149 @@
+<%#
+  Tarjetas de las clases que se están dictando ahora. UN SOLO partial para los dos paneles
+  (dirección y preceptoría): lo único que cambia entre ellos es `ingreso`, que decide a dónde
+  lleva el botón y qué dice.
+
+  Espera en locals: salas, cerradasHoy, ingreso ('observacion' | 'visible'), pollMs, scopeAll.
+%>
+<style>
+  .lc-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:12px; }
+  .lc-card { background:#fff; border:1px solid #dadce0; border-radius:12px; padding:14px 16px;
+             display:flex; flex-direction:column; text-decoration:none; color:inherit; }
+  .lc-card:hover { border-color:#1a73e8; }
+  .lc-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .lc-vivo { font-size:11px; background:#e6f4ea; color:#137333; padding:3px 9px; border-radius:12px; }
+  .lc-div { font-size:12px; color:#5f6368; }
+  .lc-materia { font-size:15px; font-weight:500; margin-bottom:2px; }
+  .lc-docente { font-size:13px; color:#5f6368; margin-bottom:12px; }
+  .lc-bolas { display:flex; align-items:center; margin-bottom:10px; }
+  .lc-bola { width:26px; height:26px; border-radius:50%; color:#fff; display:flex; align-items:center;
+             justify-content:center; font-size:11px; box-shadow:0 0 0 2px #fff; }
+  .lc-bola + .lc-bola { margin-left:-8px; }
+  .lc-pres { font-size:13px; color:#5f6368; margin-left:10px; }
+  .lc-pres.bajo { color:#b06000; }
+  .lc-pie { display:flex; justify-content:space-between; align-items:center; gap:8px;
+            border-top:1px solid #f1f3f4; padding-top:10px; margin-top:auto; }
+  .lc-meta { font-size:12px; color:#80868b; }
+  .lc-entrar { font-size:13px; color:#1a73e8; white-space:nowrap; }
+  .lc-chip { font-size:12px; background:#f8f9fa; border:1px solid #dadce0; border-radius:8px;
+             padding:6px 12px; color:#5f6368; text-decoration:none; display:inline-block; }
+</style>
+
+<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+  <h2 style="margin:0;font-size:20px">Clases en vivo</h2>
+  <span style="font-size:13px;color:#5f6368" id="lcEstado">
+    <%= salas.length %> <%= salas.length === 1 ? 'sala abierta' : 'salas abiertas' %>
+  </span>
+</div>
+
+<% if (ingreso === 'observacion') { %>
+  <p style="font-size:13px;color:#5f6368;margin:0 0 14px">
+    Al entrar mirás sin aparecer en la sala: ni la docente ni los alumnos ven que estás.
+    Queda registrado en la auditoría, y desde adentro podés presentarte si querés participar.
+  </p>
+<% } else { %>
+  <p style="font-size:13px;color:#5f6368;margin:0 0 14px">
+    Al entrar, el curso ve que estás en la sala y podés escribir.
+  </p>
+<% } %>
+
+<div class="lc-grid" id="lcGrid"></div>
+
+<div id="lcVacio" style="display:none">
+  <div class="empty-state">
+    <div class="empty-icon"><span class="material-symbols-outlined">sensors_off</span></div>
+    <p>No hay ninguna clase en vivo en este momento.</p>
+    <% if (typeof scopeAll !== 'undefined' && scopeAll === false) { %>
+      <p style="font-size:13px;color:#5f6368">Solo se muestran las divisiones que tenés a cargo.</p>
+    <% } %>
+  </div>
+</div>
+
+<div id="lcCerradas" style="margin-top:22px"></div>
+
+<script>
+(function () {
+  const ESTADO_INICIAL = {
+    salas:       <%- JSON.stringify(salas).replace(/</g, '\\u003c') %>,
+    cerradasHoy: <%- JSON.stringify(cerradasHoy).replace(/</g, '\\u003c') %>,
+  };
+  const INGRESO = '<%= ingreso %>';
+  const POLL    = <%= pollMs %>;
+
+  const COLORES = ['#1a73e8','#34a853','#ea4335','#fbbc04','#9334e6','#0d7377','#e91e63','#ff5722','#795548','#607d8b'];
+  function color(s) {
+    let h = 0; s = String(s || '');
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return COLORES[Math.abs(h) % COLORES.length];
+  }
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const hhmm = (d) => new Date(d).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+
+  function hace(seg) {
+    if (seg === null || seg === undefined) return 'sin mensajes';
+    if (seg < 60) return 'último hace ' + seg + ' s';
+    return 'último hace ' + Math.round(seg / 60) + ' min';
+  }
+
+  function pintar(datos) {
+    const grid = document.getElementById('lcGrid');
+    const salas = datos.salas || [];
+
+    document.getElementById('lcVacio').style.display = salas.length ? 'none' : '';
+    document.getElementById('lcEstado').textContent =
+      salas.length + (salas.length === 1 ? ' sala abierta' : ' salas abiertas');
+
+    grid.innerHTML = salas.map(s => {
+      // Sin alumnos matriculados no se muestra un porcentaje: "0 de 0" no informa nada y
+      // dividir daría NaN.
+      const pres = s.total > 0
+        ? s.presentes + ' de ' + s.total + ' presentes'
+        : 'sin alumnos matriculados';
+      const bajo = s.total > 0 && s.presentes / s.total < 0.5 ? ' bajo' : '';
+      const url  = '/courses/' + s.courseId + '/sala' +
+                   (INGRESO === 'observacion' ? '?modo=observacion' : '');
+      const bolas = (s.avatares || [])
+        .map(a => '<div class="lc-bola" style="background:' + color(a.inicial) + '">' + esc(a.inicial) + '</div>')
+        .join('');
+
+      return '<a class="lc-card" href="' + url + '">' +
+        '<div class="lc-top">' +
+          '<span class="lc-vivo">● en vivo · ' + s.desdeMin + ' min</span>' +
+          '<span class="lc-div">' + esc(s.division) + '</span>' +
+        '</div>' +
+        '<div class="lc-materia">' + esc(s.materia) + '</div>' +
+        '<div class="lc-docente">' + esc(s.docente) + (s.aula ? ' · ' + esc(s.aula) : '') + '</div>' +
+        '<div class="lc-bolas">' + bolas + '<span class="lc-pres' + bajo + '">' + pres + '</span></div>' +
+        '<div class="lc-pie">' +
+          '<span class="lc-meta">' + s.mensajes + ' mensajes · ' + hace(s.ultimoMensajeHace) + '</span>' +
+          '<span class="lc-entrar">' + (INGRESO === 'observacion' ? 'Entrar sin avisar' : 'Ingresar') + ' →</span>' +
+        '</div>' +
+      '</a>';
+    }).join('');
+
+    const cerradas = datos.cerradasHoy || [];
+    document.getElementById('lcCerradas').innerHTML = cerradas.length
+      ? '<div style="font-size:14px;font-weight:500;color:#5f6368;margin-bottom:8px">Cerradas hoy</div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+        cerradas.map(c =>
+          '<a class="lc-chip" href="/courses/' + c.courseId + '/sala/clases/' + c.sessionId + '">' +
+            esc(c.materia) + ' · ' + esc(c.division) + ' · ' + hhmm(c.desde) + '–' + hhmm(c.hasta) +
+            ' · ' + c.presentes + ' de ' + c.total +
+          '</a>').join('') +
+        '</div>'
+      : '';
+  }
+
+  async function refrescar() {
+    if (document.hidden) return;
+    try {
+      const r = await fetch(location.pathname + '/poll', { headers: { Accept: 'application/json' } });
+      if (r.ok) pintar(await r.json());
+    } catch (e) { /* un refresco perdido no rompe nada */ }
+  }
+
+  pintar(ESTADO_INICIAL);
+  setInterval(refrescar, POLL);
+})();
+</script>

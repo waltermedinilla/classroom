@@ -1,12 +1,17 @@
-<%# preceptor_dashboard está locked en config/sections.js (es la única solapa del panel:
-    apagarla equivaldría a borrarle el rol a alguien), así que hoy esto siempre da true.
-    Va igual para que el día que el panel tenga más solapas el patrón ya esté puesto. %>
+<%# preceptor_dashboard está locked en config/sections.js (es el destino del redirect de "/"),
+    así que ese if siempre da true. 'En vivo' sí se puede apagar por escuela. %>
 <% const puede = (k) => (typeof can === 'function' ? can(k) : true); %>
 <nav class="admin-nav">
   <% if (puede('preceptor_dashboard')) { %>
   <a href="/preceptor" class="admin-nav-item <%= activePage === 'dashboard' ? 'active' : '' %>">
     <span class="material-symbols-outlined">school</span>
     Mis cursos
+  </a>
+  <% } %>
+  <% if (puede('preceptor_envivo')) { %>
+  <a href="/preceptor/en-vivo" class="admin-nav-item <%= activePage === 'envivo' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">sensors</span>
+    En vivo
   </a>
   <% } %>
 </nav>

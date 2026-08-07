@@ -13,6 +13,8 @@ const { sectionGuard } = require('../middleware/sections');
 const { getDivisionDetail } = require('../services/divisionDetail');
 // Ventana de la serie mensual de actividad docente. Compartida con routes/jefatura.js.
 const { inicioVentanaSerie, etiquetasMeses, mesCorto } = require('../services/serieMensual');
+// Salas en vivo: el mismo service que alimenta la sala y el panel de preceptoría.
+const liveRoom = require('../services/liveRoom');
 
 const router = express.Router();
 router.use(requireAuth, requireDirectivo, sectionGuard('directivo'));
@@ -1026,6 +1028,53 @@ router.get('/divisions/:id', async (req, res) => {
     });
   } catch (err) {
     res.status(500).send('Error del servidor');
+  }
+});
+
+/* ─── Clases en vivo ──────────────────────────────────────────────────────── */
+// Qué se está dictando ahora mismo en la escuela, en tarjetas. Desde acá se entra a
+// cualquier sala.
+//
+// El ingreso de dirección es SILENCIOSO (?modo=observacion): no aparece en la lista de
+// conectados ni se anuncia. Queda registrado en la auditoría, que es donde consta — ver
+// routes/rooms.js. Esa decisión es del rol, no de esta pantalla: un directivo que entre desde
+// el panel de preceptoría sigue entrando en observación.
+
+// Arma el payload de la pantalla. Lo comparten el render y el poll para que no puedan
+// mostrar cosas distintas.
+async function panelEnVivo(school) {
+  const [salas, cerradasHoy] = await Promise.all([
+    liveRoom.getOpenSessions(school),
+    liveRoom.getTodayClosed(school),
+  ]);
+  return { salas, cerradasHoy };
+}
+
+router.get('/en-vivo', async (req, res) => {
+  const school = res.locals.user.school;
+  if (!school) return res.render('directivo/no-school');
+
+  try {
+    const datos = await panelEnVivo(school);
+    res.render('directivo/en-vivo', {
+      ...datos,
+      ingreso:  'observacion',
+      scopeAll: true,
+      pollMs:   liveRoom.DIRECTIVO_POLL_MS,
+      activePage: 'envivo',
+    });
+  } catch (err) {
+    res.status(500).send('Error del servidor');
+  }
+});
+
+router.get('/en-vivo/poll', async (req, res) => {
+  const school = res.locals.user.school;
+  if (!school) return res.json({ salas: [], cerradasHoy: [] });
+  try {
+    res.json(await panelEnVivo(school));
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor' });
   }
 });
 

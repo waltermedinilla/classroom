@@ -16,6 +16,8 @@ const { SYSTEM_OWNER_EMAIL } = require('../config/maintenance');
 // Lista cerrada de intereses del perfil. Se pasa a la vista para pintar los chips y se
 // reusa en PATCH /profile/about para validar lo que llega (ver config/interests.js).
 const { INTERESTS, MAX_INTERESTS } = require('../config/interests');
+// Constantes de la sala en vivo (la solapa "En vivo" del detalle de materia).
+const live = require('../services/liveRoom');
 // Subida de imágenes: multer en memoria + redimensionado/compresión a WebP antes de
 // escribir en disco (ver middleware/image-upload.js y config/imagePresets.js).
 const {
@@ -571,6 +573,9 @@ router.get('/:id', requireAuth, async (req, res) => {
     res.render('course', {
       course, featuredTeacher, joinByCode: JOIN_BY_CODE_ACTIVO,
       manageTeachers, schoolTeachers,
+      // Constantes de la solapa "En vivo" (services/liveRoom.js). Son valores fijos, no
+      // consultas: la sala se llena sola con su primer poll — ver el comentario en course.ejs.
+      liveEmojis: live.EMOJIS, livePollMs: live.POLL_MS,
     });
   } catch (err) {
     res.status(500).send('Error del servidor');

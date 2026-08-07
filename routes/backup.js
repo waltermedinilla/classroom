@@ -23,6 +23,9 @@ const Announcement = require('../models/Announcement');
 const Suggestion    = require('../models/Suggestion');
 const Division      = require('../models/Division');
 const Subject       = require('../models/Subject');
+const RoomSession   = require('../models/RoomSession');
+const RoomMessage   = require('../models/RoomMessage');
+const RoomPresence  = require('../models/RoomPresence');
 
 const router = express.Router();
 
@@ -62,6 +65,14 @@ const COLLECTIONS = [
   { name: 'suggestions',   model: Suggestion },
   { name: 'divisions',     model: Division },
   { name: 'subjects',      model: Subject },
+  // Sala en vivo. Van las tres juntas y no se separan: una transcripción sin su sesión no
+  // se puede fechar ni atribuir a una materia, y la asistencia sin la sesión no dice de qué
+  // clase es. Ojo: esta lista es el ÚNICO lugar que decide qué se respalda — el backup no es
+  // un mongodump. Una colección que no esté acá no se guarda y nadie se entera hasta que
+  // hace falta restaurarla.
+  { name: 'roomsessions',  model: RoomSession },
+  { name: 'roommessages',  model: RoomMessage },
+  { name: 'roompresences', model: RoomPresence },
 ];
 
 // Doble capa de autorización: superadmin (rol) + el email específico (SYSTEM_OWNER_EMAIL,

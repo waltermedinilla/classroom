@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clase del <%= new Date(sesion.openedAt).toLocaleDateString('es-AR') %> · <%= course.name %></title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <div style="max-width:900px;margin:0 auto">
+      <a href="/courses/<%= course._id %>/sala/clases" style="font-size:14px;color:#1a73e8;text-decoration:none">← Todas las clases</a>
+
+      <h2 style="margin:8px 0 4px">
+        <%= new Date(sesion.openedAt).toLocaleDateString('es-AR', { weekday:'long', day:'numeric', month:'long', year:'numeric' }) %>
+      </h2>
+      <p style="margin:0 0 16px;color:#5f6368;font-size:14px">
+        <%= course.name %> · <%= course.division?.name || '' %> ·
+        <%= new Date(sesion.openedAt).toLocaleTimeString('es-AR', { hour:'2-digit', minute:'2-digit' }) %>
+        <% if (sesion.closedAt) { %>
+          – <%= new Date(sesion.closedAt).toLocaleTimeString('es-AR', { hour:'2-digit', minute:'2-digit' }) %>
+        <% } else { %> · <strong style="color:#137333">en vivo</strong><% } %>
+      </p>
+
+      <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap">
+        <a class="btn btn-outline" href="/courses/<%= course._id %>/sala/clases/<%= sesion._id %>/export?tipo=asistencia">
+          <span class="material-symbols-outlined" style="font-size:18px;vertical-align:-4px">download</span>
+          Asistencia (CSV)
+        </a>
+        <a class="btn btn-outline" href="/courses/<%= course._id %>/sala/clases/<%= sesion._id %>/export?tipo=transcripcion">
+          <span class="material-symbols-outlined" style="font-size:18px;vertical-align:-4px">download</span>
+          Conversación (CSV)
+        </a>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 280px;gap:16px;align-items:start">
+
+        <!-- Conversación -->
+        <div style="background:#fff;border:1px solid #dadce0;border-radius:12px;padding:16px;min-width:0">
+          <h3 style="margin:0 0 12px;font-size:16px">Conversación</h3>
+
+          <% if (purgada) { %>
+            <%# La asistencia de esta clase sigue estando (a la derecha): lo único que se
+                purgó a los 3 meses son los mensajes. Decirlo explícitamente evita que la
+                pantalla parezca rota. %>
+            <div style="background:#f8f9fa;border:1px solid #dadce0;border-radius:8px;padding:16px;color:#5f6368;font-size:14px">
+              La conversación de esta clase ya no está disponible: los mensajes se conservan
+              3 meses. El registro de asistencia sí se conserva y está acá al lado.
+            </div>
+          <% } else if (!mensajes.length) { %>
+            <p style="color:#5f6368;font-size:14px">No se escribió ningún mensaje en esta clase.</p>
+          <% } else { %>
+            <% mensajes.forEach(function (m) { %>
+              <% if (m.kind === 'system') { %>
+                <div style="text-align:center;font-size:12px;color:#80868b;margin:10px 0">
+                  <%= m.text %> · <%= new Date(m.createdAt).toLocaleTimeString('es-AR', { hour:'2-digit', minute:'2-digit' }) %>
+                </div>
+              <% } else { %>
+                <div style="margin-bottom:12px">
+                  <div style="font-size:12px;color:#5f6368">
+                    <%= m.authorName || '—' %> ·
+                    <%= new Date(m.createdAt).toLocaleTimeString('es-AR', { hour:'2-digit', minute:'2-digit' }) %>
+                  </div>
+                  <div style="background:<%= m.deletedAt ? '#f8f9fa' : '#f1f3f4' %>;padding:8px 12px;
+                              border-radius:12px;border-top-left-radius:2px;font-size:14px;
+                              white-space:pre-wrap;word-break:break-word;
+                              <%= m.deletedAt ? 'font-style:italic;color:#80868b' : '' %>">
+                    <%= m.deletedAt ? 'Mensaje eliminado' : m.text %>
+                  </div>
+                </div>
+              <% } %>
+            <% }); %>
+          <% } %>
+        </div>
+
+        <!-- Asistencia -->
+        <div style="background:#fff;border:1px solid #dadce0;border-radius:12px;padding:16px">
+          <h3 style="margin:0 0 4px;font-size:16px">Asistencia</h3>
+          <p style="margin:0 0 12px;color:#5f6368;font-size:13px">
+            <%= presentes %> de <%= asistencia.length %> se conectaron
+          </p>
+          <% asistencia.forEach(function (a) { %>
+            <div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;
+                        border-bottom:1px solid #f1f3f4;font-size:13px">
+              <span style="<%= a.presente ? '' : 'color:#9aa0a6' %>"><%= a.nombre %></span>
+              <span style="white-space:nowrap;color:<%= a.presente ? '#137333' : '#9aa0a6' %>">
+                <%= a.presente ? '~' + a.minutos + ' min' : 'ausente' %>
+              </span>
+            </div>
+          <% }); %>
+        </div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

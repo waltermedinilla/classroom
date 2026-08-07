@@ -32,6 +32,7 @@ const APP_DIR = '/home/walter/classroom';
 
 const authRoutes         = require('./routes/auth');
 const courseRoutes       = require('./routes/courses');
+const roomRoutes         = require('./routes/rooms');
 const announcementRoutes = require('./routes/announcements');
 const activityRoutes     = require('./routes/activities');
 const adminRoutes        = require('./routes/admin');
@@ -82,13 +83,25 @@ app.use(helmet({
 // Cubre el uso normal de un alumno/docente navegando activamente. Se triplicó desde 400
 // el 2026-07-28 junto con los otros dos limiters — misma lógica que authLimiter/uploadLimiter:
 // ~300 personas de la escuela detrás de la misma IP pública NAT.
+// Rutas de la sala en vivo y de los paneles que la miran. Quedan FUERA de este limiter, y
+// no es una optimización: es lo que evita que la feature tire abajo la aplicación entera.
+// La sala se sostiene con un poll cada 4 s por persona; con 25 alumnos son ~375 requests por
+// minuto, y como toda la escuela sale por una sola IP pública NAT (el motivo documentado de
+// que authLimiter sea 3000), el cupo de 1200/15min se agota en poco más de tres minutos. Lo
+// que se cae después no es el chat: es login, actividades y entregas para todos.
+// La sala tiene su propio límite POR USUARIO en middleware/rate-limits.js, que es la unidad
+// correcta para esto.
+const LIVE_ROOM_PATHS = /^\/(courses\/[^/]+\/sala|(directivo|preceptor)\/en-vivo)(\/|$)/;
+
 const generalLimiter = rateLimit({
   windowMs:          15 * 60 * 1000, // Ventana de 15 minutos
   max:               1200,
   standardHeaders:   true,           // Incluye RateLimit-* en los encabezados
   legacyHeaders:     false,
   message:           { error: 'Demasiadas peticiones. Intentá de nuevo en 15 minutos.' },
-  skip: (req) => req.path.startsWith('/css/') || req.path.startsWith('/js/'), // No limita estáticos
+  skip: (req) => req.path.startsWith('/css/')
+              || req.path.startsWith('/js/')      // No limita estáticos
+              || LIVE_ROOM_PATHS.test(req.path),  // Ni el polling de la sala en vivo
 });
 
 // Límite para login/registro: 3000 intentos cada 15 minutos por IP.
@@ -473,6 +486,10 @@ app.use('/login',    authLimiter);
 app.use('/register', authLimiter);
 
 app.use('/',           authRoutes);
+// La sala en vivo va ANTES que courseRoutes. No hay colisión real (sus paths tienen el
+// segmento /sala y el GET /courses/:id es de un solo segmento), pero el orden explícito evita
+// que una ruta nueva en courses.js se coma /courses/:id/sala sin que nadie lo note.
+app.use('/courses',    roomRoutes);
 app.use('/courses',    courseRoutes);
 app.use('/announcements', announcementRoutes);
 app.use('/activities', activityRoutes);

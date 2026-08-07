@@ -1,0 +1,389 @@
+<%#
+  Sala en vivo de una materia. UN SOLO partial para dos contenedores:
+    - la solapa "En vivo" de views/course.ejs (docente y alumnos, ya dentro de la materia)
+    - views/rooms/standalone.ejs (dirección y preceptoría, que no tienen acceso a la materia)
+  Un solo lugar donde arreglar un bug de la sala.
+
+  Espera en locals: course, sala, modo, esGestor, esAlumno, emojis, pollMs, user.
+%>
+<style>
+  .lr-wrap { max-width: 900px; margin: 0 auto; }
+  .lr-aviso { background:#fef7e0; border:1px solid #fdd663; border-radius:8px; padding:10px 14px;
+              font-size:13px; color:#5f4b00; margin-bottom:14px; }
+  .lr-aviso small { display:block; margin-top:3px; opacity:.8; }
+  .lr-card { background:#fff; border:1px solid #dadce0; border-radius:12px; padding:14px 16px; margin-bottom:12px; }
+  .lr-barra { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  .lr-estado { display:flex; align-items:center; gap:8px; font-size:14px; }
+  .lr-punto { width:9px; height:9px; border-radius:50%; background:#34a853; flex:none; }
+  .lr-punto.off { background:#9aa0a6; }
+  .lr-acciones { display:flex; gap:8px; flex-wrap:wrap; }
+  .lr-circulos { display:flex; flex-wrap:wrap; gap:14px; margin-top:14px; }
+  .lr-persona { width:58px; text-align:center; }
+  .lr-bola { width:42px; height:42px; margin:0 auto; border-radius:50%; color:#fff; display:flex;
+             align-items:center; justify-content:center; font-size:16px; font-weight:500; overflow:hidden; }
+  .lr-bola img { width:100%; height:100%; object-fit:cover; }
+  .lr-on   { box-shadow:0 0 0 2px #fff, 0 0 0 4px #34a853; }
+  .lr-staff{ box-shadow:0 0 0 2px #fff, 0 0 0 4px #9334e6; }
+  .lr-off  { opacity:.45; }
+  .lr-nombre { font-size:11px; color:#5f6368; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lr-chat { height:380px; overflow-y:auto; padding-right:6px; }
+  .lr-msg { display:flex; gap:10px; margin-bottom:12px; }
+  .lr-msg-bola { width:32px; height:32px; flex:none; border-radius:50%; color:#fff; display:flex;
+                 align-items:center; justify-content:center; font-size:13px; }
+  .lr-msg-meta { font-size:12px; color:#5f6368; margin-bottom:3px; }
+  .lr-burbuja { background:#f1f3f4; padding:8px 12px; border-radius:12px; border-top-left-radius:2px;
+                font-size:14px; white-space:pre-wrap; word-break:break-word; }
+  .lr-msg.mio .lr-burbuja { background:#e8f0fe; }
+  .lr-burbuja.borrado { font-style:italic; color:#80868b; background:#f8f9fa; }
+  .lr-sistema { text-align:center; font-size:12px; color:#80868b; margin:10px 0; }
+  .lr-react { margin-top:4px; display:flex; gap:5px; flex-wrap:wrap; }
+  .lr-react button { font-size:12px; background:#fff; border:1px solid #dadce0; border-radius:12px;
+                     padding:2px 8px; cursor:pointer; }
+  .lr-react button.mia { background:#e8f0fe; border-color:#1a73e8; }
+  .lr-composer { display:flex; align-items:center; gap:8px; border:1px solid #dadce0; border-radius:8px; padding:6px 10px; }
+  .lr-composer input { flex:1; border:none; outline:none; font-size:14px; font-family:inherit; background:transparent; }
+  .lr-emojis { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+  .lr-emojis button { font-size:18px; background:none; border:none; cursor:pointer; line-height:1; padding:2px; }
+  .lr-vacio { text-align:center; color:#5f6368; padding:28px 12px; }
+  .lr-borrar { background:none; border:none; cursor:pointer; color:#80868b; font-size:11px; padding:0; }
+  @media (max-width: 600px) {
+    .lr-chat { height:300px; }
+    .lr-persona { width:50px; }
+    .lr-bola { width:36px; height:36px; font-size:14px; }
+  }
+</style>
+
+<div class="lr-wrap">
+
+  <%# RN-15 — aviso permanente. No dice quién ni cuándo mira (no rompe el modo observación),
+      pero hace que nadie escriba creyendo que está en un espacio privado. %>
+  <div class="lr-aviso">
+    Esta sala queda registrada y el equipo directivo puede supervisarla.
+    <small>El registro de conexión no reemplaza la asistencia oficial.</small>
+  </div>
+
+  <% if (modo === 'observacion') { %>
+    <div class="lr-card" style="background:#f3e8fd;border-color:#9334e6">
+      <div class="lr-barra">
+        <div class="lr-estado">
+          <span class="material-symbols-outlined" style="font-size:20px;color:#9334e6">visibility</span>
+          <span>Estás mirando sin aparecer en la sala. No podés escribir.</span>
+        </div>
+        <button class="btn btn-primary" id="lrPresentarme">Presentarme</button>
+      </div>
+    </div>
+  <% } %>
+
+  <!-- Estado + presencia -->
+  <div class="lr-card">
+    <div class="lr-barra">
+      <div class="lr-estado">
+        <span class="lr-punto" id="lrPunto"></span>
+        <span id="lrEstadoTexto">—</span>
+      </div>
+      <div class="lr-acciones">
+        <% if (esGestor) { %>
+          <button class="btn btn-primary"  id="lrAbrir"  style="display:none">Abrir sala</button>
+          <button class="btn btn-outline"  id="lrModo"   style="display:none"></button>
+          <button class="btn btn-outline"  id="lrCerrar" style="display:none">Cerrar sala</button>
+        <% } %>
+        <a class="btn btn-outline" href="/courses/<%= course._id %>/sala/clases">Clases anteriores</a>
+      </div>
+    </div>
+    <div class="lr-circulos" id="lrCirculos"></div>
+  </div>
+
+  <!-- Chat -->
+  <div class="lr-card">
+    <div class="lr-chat" id="lrChat">
+      <div class="lr-vacio">Cargando…</div>
+    </div>
+
+    <div id="lrComposerBox" style="display:none;margin-top:12px">
+      <div class="lr-composer">
+        <input type="text" id="lrTexto" maxlength="500" placeholder="Escribí un mensaje…" autocomplete="off">
+        <button class="lr-borrar" id="lrEnviar" aria-label="Enviar">
+          <span class="material-symbols-outlined" style="color:#1a73e8">send</span>
+        </button>
+      </div>
+      <div class="lr-emojis">
+        <% emojis.forEach(function (e) { %>
+          <button type="button" class="lr-emoji-btn" data-emoji="<%= e %>"><%= e %></button>
+        <% }); %>
+      </div>
+    </div>
+    <div id="lrMudo" style="display:none;color:#5f6368;font-size:13px;text-align:center;margin-top:10px"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // El estado inicial viene del render para que la sala se vea completa sin esperar al primer
+  // poll. Los "<" se escapan a mano: un mensaje que contenga un cierre de etiqueta script
+  // terminaría este bloque antes de tiempo, y JSON.stringify por sí solo no protege de eso.
+  //
+  // Y ojo con este comentario: escribir esa etiqueta de cierre literal ACÁ ADENTRO produce
+  // el mismo corte. El parser de HTML no sabe que está en un comentario de JavaScript — busca
+  // la secuencia de cierre y punto. Pasó: el resto del script se renderizó como marcado y la
+  // sala quedó muda, sin un solo error de sintaxis a la vista.
+  const SALA   = <%- JSON.stringify(sala).replace(/</g, '\\u003c') %>;
+  const CURSO  = '<%= course._id %>';
+  const MODO   = '<%= modo %>';
+  const GESTOR = <%= esGestor ? 'true' : 'false' %>;
+  const POLL   = <%= pollMs %>;
+  const BASE   = '/courses/' + CURSO + '/sala';
+
+  const COLORES = ['#1a73e8','#34a853','#ea4335','#fbbc04','#9334e6','#0d7377','#e91e63','#ff5722','#795548','#607d8b'];
+  // Color estable por persona: el mismo alumno tiene siempre el mismo círculo, tanto en la
+  // fila de presencia como en sus mensajes. Un hash del NOMBRE, no del id — los mensajes
+  // llevan el snapshot del nombre y no el id del autor, así que es el único dato que los dos
+  // lados comparten. Y no un random, que cambiaría en cada repintado.
+  function color(nombre) {
+    const s = String(nombre || '');
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return COLORES[Math.abs(h) % COLORES.length];
+  }
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const hora = (d) => new Date(d).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+
+  let seq       = SALA.seq || 0;
+  let estado    = SALA.estado;
+  let timer     = null;
+  const vistos  = new Set();
+
+  const $ = (id) => document.getElementById(id);
+
+  // ── Presencia ──────────────────────────────────────────────────────────────
+  function pintarPresencia(p) {
+    const cont = $('lrCirculos');
+    if (!p) { cont.innerHTML = ''; return; }
+    const bolas = [];
+    p.conectados.forEach(c => {
+      const anillo = c.rol === 'student' ? 'lr-on' : 'lr-staff';
+      const dentro = c.avatar
+        ? '<img src="' + esc(c.avatar) + '" alt="">'
+        : esc(c.inicial);
+      bolas.push(
+        '<div class="lr-persona" title="' + esc(c.nombre) + (c.etiqueta ? ' · ' + esc(c.etiqueta) : '') + '">' +
+          '<div class="lr-bola ' + anillo + '" style="background:' + color(c.nombre) + '">' + dentro + '</div>' +
+          '<div class="lr-nombre">' + esc(c.nombre.split(',')[0]) + '</div>' +
+        '</div>'
+      );
+    });
+    p.ausentes.forEach(a => {
+      bolas.push(
+        '<div class="lr-persona" title="' + esc(a.nombre) + ' · sin conectarse">' +
+          '<div class="lr-bola lr-off" style="background:#9aa0a6">' + esc(a.inicial) + '</div>' +
+          '<div class="lr-nombre" style="color:#9aa0a6">' + esc(a.nombre.split(',')[0]) + '</div>' +
+        '</div>'
+      );
+    });
+    cont.innerHTML = bolas.join('');
+  }
+
+  // ── Mensajes ───────────────────────────────────────────────────────────────
+  function pintarMensajes(msgs, reemplazar) {
+    const chat = $('lrChat');
+    if (reemplazar) { chat.innerHTML = ''; vistos.clear(); }
+
+    const pegadoAbajo = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60;
+
+    msgs.forEach(m => {
+      if (vistos.has(m.id)) return;
+      vistos.add(m.id);
+      const div = document.createElement('div');
+      if (m.kind === 'system') {
+        div.className = 'lr-sistema';
+        div.textContent = m.texto + ' · ' + hora(m.hora);
+      } else {
+        div.className = 'lr-msg' + (m.esMio ? ' mio' : '');
+        div.dataset.id = m.id;
+        div.innerHTML =
+          '<div class="lr-msg-bola" style="background:' + color(m.autor) + '">' +
+            esc((m.autor || '—').charAt(0).toUpperCase()) +
+          '</div>' +
+          '<div style="min-width:0">' +
+            '<div class="lr-msg-meta">' + esc(m.autor) + ' · ' + hora(m.hora) +
+              (GESTOR && !m.borrado
+                ? ' · <button class="lr-borrar" data-borrar="' + m.id + '">borrar</button>'
+                : '') +
+            '</div>' +
+            '<div class="lr-burbuja' + (m.borrado ? ' borrado' : '') + '">' + esc(m.texto) + '</div>' +
+            '<div class="lr-react" data-react="' + m.id + '">' + reacciones(m) + '</div>' +
+          '</div>';
+      }
+      chat.appendChild(div);
+    });
+
+    if (chat.children.length === 0) {
+      chat.innerHTML = '<div class="lr-vacio">Todavía no hay mensajes.</div>';
+    }
+    if (pegadoAbajo) chat.scrollTop = chat.scrollHeight;
+  }
+
+  function reacciones(m) {
+    return (m.reacciones || [])
+      .map(r => '<button data-reac="' + m.id + '" data-emoji="' + esc(r.emoji) + '"' +
+                (r.mia ? ' class="mia"' : '') + '>' + esc(r.emoji) + ' ' + r.n + '</button>')
+      .join('');
+  }
+
+  // ── Estado general ─────────────────────────────────────────────────────────
+  function pintarEstado(s) {
+    estado = s.estado;
+    const abierta = s.estado === 'abierta';
+    $('lrPunto').className = 'lr-punto' + (abierta ? '' : ' off');
+    $('lrEstadoTexto').textContent = abierta
+      ? 'Sala abierta · ' + s.presencia.presentes + ' de ' + s.presencia.total + ' presentes'
+      : 'La sala no está abierta';
+
+    if (GESTOR) {
+      $('lrAbrir').style.display  = abierta ? 'none' : '';
+      $('lrCerrar').style.display = abierta ? '' : 'none';
+      const modoBtn = $('lrModo');
+      modoBtn.style.display = abierta ? '' : 'none';
+      modoBtn.textContent = s.settings && s.settings.studentsCanWrite
+        ? 'Solo yo escribo' : 'Habilitar la palabra';
+    }
+
+    const puedo = s.puedoEscribir;
+    $('lrComposerBox').style.display = puedo ? '' : 'none';
+    const mudo = $('lrMudo');
+    if (!puedo && abierta) {
+      mudo.style.display = '';
+      mudo.textContent = MODO === 'observacion'
+        ? 'Estás en modo observación.'
+        : (s.settings && !s.settings.studentsCanWrite
+            ? 'La docente puso la sala en modo "solo docente".'
+            : 'No podés escribir en esta sala.');
+    } else {
+      mudo.style.display = 'none';
+    }
+  }
+
+  // ── Ciclo de poll ──────────────────────────────────────────────────────────
+
+  // ¿La sala está realmente a la vista?
+  // Embebida como solapa de la materia, este partial existe en el DOM aunque el alumno esté
+  // mirando Novedades. Sin este chequeo, abrir la materia lo marcaría "presente" en la clase
+  // sin que haya entrado a la sala — y el conteo de la docente pasaría a contar a cualquiera
+  // que tenga la página abierta, que es justo lo que la pantalla NO debe decir.
+  const RAIZ = document.currentScript && document.currentScript.previousElementSibling;
+  function aLaVista() {
+    const el = RAIZ && RAIZ.classList.contains('lr-wrap') ? RAIZ : document.querySelector('.lr-wrap');
+    return !!el && el.offsetParent !== null;
+  }
+
+  async function pollear() {
+    if (!aLaVista()) return;
+    try {
+      const r = await fetch(BASE + '/poll?since=' + seq, { headers: { Accept: 'application/json' } });
+      if (!r.ok) return;
+      const s = await r.json();
+
+      // Si la sala se cerró y se volvió a abrir, el seq del servidor arranca de cero otra vez:
+      // hay que repintar todo en vez de quedarse esperando mensajes que nunca van a llegar.
+      const reinicio = s.sessionId !== SALA.sessionId || s.seq < seq;
+      if (reinicio) { SALA.sessionId = s.sessionId; seq = 0; }
+
+      pintarEstado(s);
+      pintarPresencia(s.presencia);
+      if (s.mensajes && s.mensajes.length) {
+        pintarMensajes(s.mensajes, reinicio);
+        seq = Math.max(seq, ...s.mensajes.map(m => m.seq));
+      } else if (reinicio) {
+        pintarMensajes([], true);
+      }
+      if (s.seq > seq) seq = s.seq;
+    } catch (e) { /* un poll perdido no rompe nada: el próximo trae lo mismo */ }
+  }
+
+  function arrancar() {
+    if (timer) clearInterval(timer);
+    pollear();                       // sin esperar el primer intervalo: la sala se llena ya
+    timer = setInterval(pollear, POLL);
+  }
+
+  // Con la pestaña oculta no se pollea: no tiene sentido gastar requests (ni contar como
+  // presente) cuando nadie está mirando. Al volver, se refresca en el acto.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { clearInterval(timer); timer = null; }
+    else { pollear(); arrancar(); }
+  });
+
+  // ── Acciones ───────────────────────────────────────────────────────────────
+  const post = (url, body) => fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+
+  async function enviar() {
+    const input = $('lrTexto');
+    const texto = input.value.trim();
+    if (!texto) return;
+    input.value = '';
+    const r = await post(BASE + '/mensajes', { text: texto });
+    if (r.status === 429) { alert('Esperá un momento antes de escribir de nuevo.'); return; }
+    if (!r.ok) { const e = await r.json().catch(() => ({})); alert(e.error || 'No se pudo enviar.'); return; }
+    pollear();
+  }
+
+  $('lrEnviar').addEventListener('click', enviar);
+  $('lrTexto').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); enviar(); } });
+
+  document.querySelectorAll('.lr-emoji-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      const input = $('lrTexto');
+      input.value += b.dataset.emoji;
+      input.focus();
+    });
+  });
+
+  // Delegación: los mensajes se crean dinámicamente, no se les puede colgar el listener al pintar.
+  $('lrChat').addEventListener('click', async (e) => {
+    const borrar = e.target.closest('[data-borrar]');
+    if (borrar) {
+      if (!confirm('¿Borrar este mensaje? Queda registrado que lo borraste.')) return;
+      await fetch(BASE + '/mensajes/' + borrar.dataset.borrar, { method: 'DELETE', headers: { Accept: 'application/json' } });
+      vistos.clear(); seq = 0; pollear();
+      return;
+    }
+    const reac = e.target.closest('[data-reac]');
+    if (reac) {
+      await post(BASE + '/mensajes/' + reac.dataset.reac + '/reaccion', { emoji: reac.dataset.emoji });
+      vistos.clear(); seq = 0; pollear();
+    }
+  });
+
+  if (GESTOR) {
+    $('lrAbrir').addEventListener('click',  async () => { await post(BASE + '/abrir');  seq = 0; vistos.clear(); pollear(); });
+    $('lrCerrar').addEventListener('click', async () => {
+      if (!confirm('¿Cerrar la sala? Los alumnos ya no van a poder escribir.')) return;
+      await post(BASE + '/cerrar'); pollear();
+    });
+    $('lrModo').addEventListener('click', async () => {
+      const habilitado = $('lrModo').textContent.indexOf('Solo yo') === 0;
+      await post(BASE + '/config', { studentsCanWrite: !habilitado });
+      pollear();
+    });
+  }
+
+  const presentarme = $('lrPresentarme');
+  if (presentarme) {
+    presentarme.addEventListener('click', async () => {
+      if (!confirm('Al presentarte, el curso va a ver que entraste. No se puede deshacer.')) return;
+      await post(BASE + '/presentarme');
+      window.location.href = BASE;   // recarga ya sin ?modo=observacion
+    });
+  }
+
+  // ── Arranque ───────────────────────────────────────────────────────────────
+  pintarEstado(SALA);
+  pintarPresencia(SALA.presencia);
+  pintarMensajes(SALA.mensajes || [], true);
+  arrancar();
+})();
+</script>

@@ -343,6 +343,39 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-06 — Sala en vivo: presencia y chat dentro de la materia
+
+**Pedido**: "quiero que dentro de la materia haya una opción para que la profesora pueda habilitar un espacio, tipo sala de chat, para ver y poder hablar con los chicos conectados… que aparezcan pequeños círculos estilo perfil… la conversación también deberá ser backupeada". Después: tarjetas de las clases en curso para la directora, y lo mismo para el preceptor "pero ese sí que aparezca visible para todos".
+
+**Spec**: `specs/sala-en-vivo.spec.md` (29 reglas de negocio, 72 criterios de aceptación). Aprobada antes de escribir código.
+
+**La idea central**: la sala es una **sesión de clase**, no un chat perpetuo. La docente la abre al empezar y la cierra al terminar; fuera de esa ventana nadie escribe. Eso da, sin trabajo extra, el registro de asistencia por clase, y evita un chat de menores funcionando de madrugada sin ningún adulto.
+
+**Modelos nuevos** (3, ninguna migración — se crean solas al primer uso): `RoomSession` (una por clase; `closedAt: null` es el único criterio de "en vivo"), `RoomMessage` (con `seq` incremental por sesión) y `RoomPresence` (un documento por persona y sesión: **es** el registro de asistencia).
+
+**Transporte: polling, no WebSockets.** PM2 corre en cluster con 2 workers y un mensaje que entra al worker A no llegaría a los clientes del worker B sin sticky sessions ni adapter; con polling el estado compartido es Mongo y el problema no existe. Cero dependencias nuevas.
+
+**El cursor es `seq`, no `createdAt`** (`$inc` atómico sobre `RoomSession.lastSeq`): dos mensajes en el mismo milisegundo son indistinguibles por fecha y el poll se saltea uno — que es justo lo que pasa cuando media clase contesta a la vez.
+
+**⚠️ Rate limiting — lo más delicado de esta entrega**: las rutas de la sala quedan FUERA del `generalLimiter` (`skip` en `server.js`) y tienen un limiter propio **por usuario** en `middleware/rate-limits.js`. El cupo general es de 1200 req/15 min **por IP** y toda la escuela sale por una sola IP NAT: 25 alumnos polleando cada 4 s lo agotan en tres minutos y lo que se cae no es el chat, es login, actividades y entregas para todos. Mismo tipo de bug que el `uploadLimiter` del 2026-07-28.
+
+**Permisos**: método nuevo `Course.canWatchLive(user, scopeDivisionIds)` — **no se tocó `canManage()`**. Entrar a mirar y poder gestionar son cosas distintas: sumar `directivo` o `preceptor` a `canManage` les habría abierto crear actividades, calificar y borrar en las 419 materias. Abrir, cerrar, moderar y silenciar siguen pidiendo `canManage`.
+
+**Dirección entra en silencio; preceptoría, a la vista de todos.** Decisión explícita del usuario. El equipo directivo entra con `?modo=observacion`: no genera presencia, no se anuncia, no puede escribir, y tiene un botón "Presentarme" que lo hace visible. Queda registrado en auditoría (`room.observe`) — silencioso para la clase, visible para la institución. El preceptor entra siempre visible, con su círculo y un aviso en el chat: es quien controla la asistencia y su trabajo es que se note. **El modo lo decide el ROL y el estado de presencia, nunca el query param** (ver el bug de abajo).
+
+**Retención**: los mensajes de clases cerradas hace más de 3 meses se purgan con `npm run cleanup:rooms` (con `--dry-run` y confirmación explícita). Las sesiones y la presencia **no se purgan nunca**: la asistencia es lo que se consulta meses después. Una clase purgada muestra "La conversación ya no está disponible" y conserva su lista de presentes.
+
+**Backup**: las tres colecciones se agregaron al array `COLLECTIONS` de `routes/backup.js`. Sin esa línea no se respaldan y nadie se entera hasta que hace falta restaurar — el backup enumera colecciones a mano, no es un `mongodump`.
+
+**Paneles**: `/directivo/en-vivo` (toda la escuela) y `/preceptor/en-vivo` (acotado a `assignedDivisions`, fail-closed). Un solo partial de tarjetas y un solo `getOpenSessions()` para los dos, con un único aggregate por refresco. `preceptor_envivo` es la primera solapa configurable de ese panel — se puede apagar desde `/superadmin/roles`.
+
+**Tres bugs encontrados durante la verificación**, los tres reales:
+1. `express-rate-limit` v8 aborta el arranque si un `keyGenerator` propio usa `req.ip` sin el helper `ipKeyGenerator` (`ERR_ERL_KEY_GEN_IPV6`). El proceso moría al importar el módulo.
+2. **El modo observación se derivaba del query param**, y el POST de un mensaje no lo lleva: el directivo que estaba mirando en silencio podía escribir. Ahora se deriva de la **presencia en la base**, que es igual para todas las rutas y es exactamente lo que crea "Presentarme". Efecto extra buscado: quien ya se presentó no puede volver a esconderse.
+3. Un **comentario de JavaScript que contenía la etiqueta de cierre de script literal** cortaba el bloque: el resto del código se renderizaba como marcado y la sala quedaba muda, sin ningún error de sintaxis a la vista. El parser de HTML no sabe que está dentro de un comentario.
+
+**Verificado**: 216/216 smoke tests (17 escenarios nuevos), 23/23 unitarios (`npm run test:unit`, runner nuevo), y la sala probada en el navegador contra un curso real de 37 alumnos: apertura, círculos de presencia, envío con emoji, mensaje de sistema y aviso fijo. **No requiere ningún cambio en la base de producción.**
+
 ### 2026-08-06 — Tope de 9 materias: el alumno con el curso completo ya no pide más altas
 
 **Pedido**: "quiero que si el alumno tiene un total de 9 materias o más, ya no le figure el botón de «Enviar solicitud para unirme» ni el botón de «Unirme con un código»".
