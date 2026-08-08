@@ -213,14 +213,27 @@ app.post('/deploy', express.raw({ type: 'application/json' }), (req, res) => {
   // el mensaje de error del siguiente y el log mentía sobre la causa.
   const deployCmd = [
     `cd ${APP_DIR} || { echo "ERROR deploy: no se pudo entrar a ${APP_DIR}"; exit 1; }`,
-    // package-lock.json es un archivo GENERADO, y `npm install` lo reescribe. Si quedó
-    // modificado en el server (basta un npm install manual), el `git pull` de acá aborta
-    // con "Los cambios locales serán sobrescritos al fusionar" y el deploy entero muere
-    // antes de recargar. Pasó el 2026-07-29 y dejó producción dos versiones atrasada.
-    // La versión válida siempre es la del repo, así que se descarta la local sin más.
-    // `|| true` porque si el archivo está limpio (el caso normal) igual queremos seguir.
-    'git checkout -- package-lock.json 2>/dev/null || true',
-    'git pull || { echo "ERROR deploy: git pull fallo"; exit 1; }',
+    // ⚠️ `fetch` + `reset --hard`, NO `git pull`. El árbol de producción tiene que ser un
+    // ESPEJO de origin/main: nadie edita código en el server, así que no hay nada local que
+    // valga la pena conservar. `pull` hace un merge, y un merge se NIEGA a pisar archivos
+    // modificados o sin seguimiento. Consecuencia: basta que el árbol se ensucie UNA vez
+    // para que TODOS los deploys posteriores aborten en el mismo punto hasta que alguien
+    // entre por SSH. `reset --hard` no tiene ese pudor — pisa modificados y sin seguimiento
+    // por igual — así que el deploy se vuelve idempotente y se autorrepara.
+    //
+    // Pasó el 2026-08-08 y dejó producción tres commits atrás: un `git pull` anterior
+    // corrido como root había escrito los archivos y muerto antes de mover HEAD, dejando
+    // el árbol con los 15 archivos modificados de 1ac404a y sus 15 archivos nuevos sin
+    // seguimiento. Cada deploy siguiente moría igual, en "Los cambios locales de los
+    // siguientes archivos serán sobrescritos al fusionar".
+    //
+    // Esto además reemplaza al `git checkout -- package-lock.json` que iba acá antes:
+    // `npm install` reescribe ese archivo generado y ensuciaba el árbol (bug del
+    // 2026-07-29). El reset lo cubre junto con todo lo demás, sin caso especial.
+    'git fetch origin || { echo "ERROR deploy: git fetch fallo"; exit 1; }',
+    'git reset --hard origin/main || ' +
+      '{ echo "ERROR deploy: git reset --hard fallo. Si dice Permiso denegado, hay archivos ' +
+      `de root en el repo: chown -R walter:walter ${APP_DIR}"; exit 1; }`,
     'npm install --omit=dev --no-audit --no-fund || ' +
       '{ echo "ERROR deploy: npm install fallo, NO se recargan los workers para no dejarlos sin dependencias"; exit 1; }',
     '/usr/local/bin/pm2 reload classroom --update-env || { echo "ERROR deploy: pm2 reload fallo"; exit 1; }',

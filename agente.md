@@ -344,6 +344,47 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-08 — Fix: el deploy quedaba trabado para siempre si el árbol de producción se ensuciaba (v1.0.29)
+
+**Síntoma**: se pusheó la v1.0.28 y producción siguió mostrando la v1.0.26 en el footer. Ya había pasado con la v1.0.27, con el mismo desenlace: reload manual por SSH.
+
+**Causa raíz**, que `logs/deploy.log` tenía escrita textualmente:
+
+```
+error: Los cambios locales de los siguientes archivos serán sobrescritos al fusionar:
+        agente.md
+        config/sections.js
+        …
+error: Los siguientes archivos sin seguimiento en el árbol de trabajo serán sobrescritos al fusionar:
+        models/RoomMessage.js
+        routes/rooms.js
+        …
+Abortando
+ERROR deploy: git pull fallo
+```
+
+Los 15 archivos "modificados" y los 15 "sin seguimiento" eran **exactamente** los que toca el commit `1ac404a` (salas en vivo). O sea: el disco tenía el contenido de la v1.0.27 pero `HEAD` seguía en `0927d05` (v1.0.26). Eso solo pasa si un `git pull` **escribió los archivos y murió antes de mover HEAD**. El `find /home/walter/classroom -not -user walter` lo confirmó: había `routes/*.js`, `specs/` y hasta objetos de `.git/objects/` con dueño **root**, resaca de varios pulls manuales corridos como root en sesiones anteriores. Desde entonces el usuario `walter` —el que corre el deploy automático— no podía pisar esos archivos.
+
+**Lo grave no era el pull roto, sino que era irreversible sin intervención humana**: `git pull` hace un merge, y un merge se niega a sobrescribir archivos locales. Basta que el árbol se ensucie **una vez** para que **todos** los deploys posteriores mueran en el mismo punto, para siempre.
+
+**Fix**: el paso de actualización pasa de `git pull` a `git fetch origin && git reset --hard origin/main`. El árbol de producción es un espejo de `origin/main` —nadie edita código en el server—, así que no hay nada local que preservar, y `reset --hard` sí pisa modificados y sin seguimiento por igual. El deploy queda **idempotente y capaz de autorrepararse**. De paso vuelve innecesario el `git checkout -- package-lock.json` del 2026-07-29: era un caso especial del mismo problema general.
+
+El mensaje de error del reset incluye ahora la pista del `chown`, porque el otro modo de falla (archivos de root) se manifiesta como un "Permiso denegado" que no dice qué hacer.
+
+**Reparación manual que hubo que hacer una vez** (los pasos, en orden, por si reaparece):
+
+```bash
+chown -R walter:walter /home/walter/classroom
+sudo -u walter -H git -C /home/walter/classroom fetch origin
+sudo -u walter -H git -C /home/walter/classroom reset --hard origin/main
+sudo -u walter -H bash -c 'cd /home/walter/classroom && npm install --omit=dev --no-audit --no-fund'
+sudo -u walter -H /usr/local/bin/pm2 restart classroom --update-env
+```
+
+**⚠️ Bootstrap, la regla de siempre**: el push que instala este cambio lo procesa el webhook **viejo** que está en memoria, el que todavía usa `git pull`. Como el árbol quedó limpio, ese pull debería funcionar; recién el push siguiente estrena el `reset --hard`.
+
+**No requiere ningún cambio en la base de producción.**
+
 ### 2026-08-07 — Verificación de los 8 roles + `npm run test:roles`
 
 **Pedido**: "necesito que pruebes las configuraciones básicas de cada rol y confirmes que todo esté funcionando".
