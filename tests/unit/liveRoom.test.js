@@ -12,6 +12,7 @@ const assert = require('node:assert');
 
 const {
   isOnline, presenceSummary, shouldAutoClose, sanitizeText, minutosPresente,
+  hora, fechaDia, fechaLarga, fechaCorta, fechaHora, TZ,
   ONLINE_WINDOW_MS, AUTO_CLOSE_MS, MSG_MAX, POLL_MS,
 } = require('../../services/liveRoom');
 
@@ -186,4 +187,48 @@ test('minutosPresente: quien entró y se fue enseguida cuenta 1, no 0', () => {
   assert.strictEqual(minutosPresente({ pings: 1 }), 1);
   assert.strictEqual(minutosPresente({}), 1);
   assert.strictEqual(minutosPresente(null), 1);
+});
+
+// ── Hora de la sala ─────────────────────────────────────────────────────────
+//
+// El bug: la hora la formateaba cada navegador con su propia zona horaria, así que el mismo
+// mensaje se veía a una hora distinta en cada máquina del aula. Ahora la arma el servidor con
+// la zona fija de la escuela. Estos tests fijan ESE contrato: para un mismo instante, siempre
+// la misma hora, sin importar el reloj de quien mira.
+
+// 17:05 UTC = 14:05 en Buenos Aires (UTC−3, sin horario de verano).
+const INSTANTE = new Date('2026-08-06T17:05:00Z');
+
+test('hora: el mismo instante da siempre la misma hora, no la del que mira', () => {
+  assert.strictEqual(TZ, 'America/Argentina/Buenos_Aires');
+  assert.strictEqual(hora(INSTANTE), '14:05');
+  // Da igual cómo llegue el instante: Date, ISO o milisegundos son el mismo momento.
+  assert.strictEqual(hora(INSTANTE.toISOString()), '14:05');
+  assert.strictEqual(hora(INSTANTE.getTime()), '14:05');
+});
+
+test('hora: medianoche es 00:xx y no 24:xx', () => {
+  assert.strictEqual(hora(new Date('2026-08-07T03:10:00Z')), '00:10');
+});
+
+test('hora: cruzar la medianoche también cambia el día', () => {
+  // 02:30 UTC del 7 todavía son las 23:30 del 6 en la escuela.
+  const cruce = new Date('2026-08-07T02:30:00Z');
+  assert.strictEqual(hora(cruce), '23:30');
+  assert.strictEqual(fechaCorta(cruce), '06/08/2026');
+});
+
+test('fechas: día, larga y corta, todas en la zona de la escuela', () => {
+  assert.strictEqual(fechaDia(INSTANTE),   'jueves, 6 de agosto');
+  assert.strictEqual(fechaLarga(INSTANTE), 'jueves, 6 de agosto de 2026');
+  assert.strictEqual(fechaCorta(INSTANTE), '06/08/2026');
+  assert.strictEqual(fechaHora(INSTANTE),  '06/08/2026, 14:05:00');
+});
+
+test('fechas: una fecha nula o basura devuelve vacío, no "Invalid Date"', () => {
+  for (const f of [hora, fechaDia, fechaLarga, fechaCorta, fechaHora]) {
+    assert.strictEqual(f(null), '');
+    assert.strictEqual(f(undefined), '');
+    assert.strictEqual(f('no es una fecha'), '');
+  }
 });

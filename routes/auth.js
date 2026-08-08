@@ -8,8 +8,30 @@ const { normalizeDni } = require('../services/dni');
 const {
   AUTOMATRICULA_ACTIVA, cursosDisponibles, cursoElegible, automatricular,
 } = require('../services/selfEnroll');
+// Ventana de mantenimiento: mientras el sistema está EN ESPERA se corta la puerta de
+// entrada, pero el que ya está adentro sigue trabajando sin enterarse de nada
+// (ver specs/mantenimiento-ventana.spec.md).
+const { getPendingState, SYSTEM_OWNER_EMAIL } = require('../config/maintenance');
 
 const router = express.Router();
+
+const PENDING_INGRESS_ERROR = 'El sistema entra en mantenimiento en unos minutos y no se '
+  + 'admiten nuevos ingresos. Volvé a intentar más tarde.';
+
+// Devuelve la espera en curso si este ingreso hay que rechazarlo, o null si puede pasar.
+//
+// El dueño SIEMPRE puede entrar: si se le vence la cookie durante una espera que él mismo
+// programó, sin esta excepción quedaría afuera de su propio panel y sin forma de apagar el
+// mantenimiento (el mismo agujero que se tapó el 2026-07-27 con el redirect a /login).
+// Se chequea antes de validar la contraseña, pero no revela nada que el login no revele ya.
+function ingresoBloqueado(email) {
+  if (email && String(email).trim().toLowerCase() === SYSTEM_OWNER_EMAIL) return null;
+  return getPendingState();
+}
+
+function rechazarIngreso(res) {
+  return res.status(503).json({ maintenance: true, pending: true, error: PENDING_INGRESS_ERROR });
+}
 
 const maxAge = 7 * 24 * 60 * 60 * 1000;
 const cookieOpts = {
@@ -31,7 +53,9 @@ const createToken = (userId) => {
 // un bucle infinito /login → / → /login (el navegador muestra ERR_TOO_MANY_REDIRECTS).
 router.get('/login', (req, res) => {
   if (res.locals.user) return res.redirect('/');
-  res.render('login');
+  // Con una espera en curso el formulario se muestra igual, pero con el aviso arriba: que
+  // no lo descubra recién después de tipear la contraseña.
+  res.render('login', { maintenancePending: getPendingState() });
 });
 
 // GET /register — muestra el formulario de registro
@@ -51,6 +75,10 @@ router.get('/register', async (req, res) => {
 // Retorna: { user, materias } con 201, o error 400 si email duplicado / validación falla
 router.post('/register', async (req, res) => {
   try {
+    // Crear una cuenta es la forma más extrema de "querer entrar en este momento": si con
+    // una espera en curso no se admiten logins, tampoco altas nuevas.
+    if (getPendingState()) return rechazarIngreso(res);
+
     const { name, email, password, role, dni, divisionId } = req.body;
     // DNI obligatorio también acá: la regla es que nadie entra al sistema sin DNI, sin
     // importar por qué puerta (ver services/dni.js).
@@ -122,6 +150,10 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    // Mantenimiento en espera: no entra nadie nuevo (salvo el dueño). Los que ya tienen
+    // sesión abierta no pasan por acá y siguen trabajando normalmente.
+    if (ingresoBloqueado(email)) return rechazarIngreso(res);
+
     // Busca por email (insensible a mayúsculas por el índice lowercase del schema)
     const user = await User.findOne({ email });
     if (!user) {
@@ -169,6 +201,8 @@ router.get('/register/invite/:token', async (req, res) => {
 // Retorna: { user } 201 o error 400
 router.post('/register/invite/:token', async (req, res) => {
   try {
+    if (getPendingState()) return rechazarIngreso(res);
+
     const school = await School.findOne({ inviteToken: req.params.token });
     if (!school) return res.status(400).json({ error: 'El enlace no es válido o fue revocado.' });
 

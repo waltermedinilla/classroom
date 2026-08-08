@@ -158,7 +158,7 @@ Agregar `data-analytics="nombre_del_evento"` al `<button>`/`<a>` — no hace fal
 | Archivo | Export | Función |
 |---|---|---|
 | `middleware/auth.js` | `requireAuth` | Verifica JWT en cookie `token`, redirige a `/login` si inválido. Setea `req.userId` |
-| `middleware/auth.js` | `checkUser` | Global; setea `res.locals.user`, `res.locals.impersonating`. Actualiza `User.lastSeen` (throttle 5 min) |
+| `middleware/auth.js` | `checkUser` | Global; setea `res.locals.user`, `res.locals.impersonating`. Actualiza `User.lastSeen` (throttle **1 min**). Ese `lastSeen` es la única señal de "hay alguien trabajando": lo usan el monitor del superadmin y la ventana de mantenimiento |
 | `middleware/admin.js` | `requireAdmin` | Retorna 403 si el rol no es `admin` **ni** `superadmin` (el superadmin también pasa) |
 | `middleware/superadmin.js` | `requireSuperAdmin` | Retorna 403 si el rol no es exactamente `superadmin` |
 | `middleware/sections.js` | `sectionGuard(panel)` | Se monta una vez por router; resuelve qué sección corresponde al path y devuelve 403 si la escuela se la deshabilitó a ese rol. Cubre GET, POST y sub-paths |
@@ -338,10 +338,47 @@ Variables CSS para colores, sombras, radios. Componentes:
 8. ~~El smoke test `directivo-sees-courses-with-metrics` falla contra una BD espejada de producción por paginación.~~ **Arreglado el 2026-07-28**: el test ahora busca el curso con `?search=` en vez de esperarlo en la primera página. La suite quedó en **97/97**.
 9. Las cuatro rutas de detalle del panel directivo (`/courses/:id`, `/students/:id`, `/teachers/:id`, `/divisions/:id`) devuelven **500 en vez de 404 cuando el `:id` no es un ObjectId válido** — `findById` lanza `CastError` y cae en el `catch` genérico. Con un ID válido pero inexistente sí dan 404 correctamente. Fix: `if (!mongoose.isValidObjectId(req.params.id)) return res.status(404)...` al entrar a cada handler. Conviene revisar si el patrón se repite en `routes/admin.js` y `routes/superadmin.js`.
 10. En el listado de divisiones, **la suma de la columna "Alumnos" supera el total de alumnos de la escuela**. No es un error: los alumnos se cuentan únicos *dentro* de cada división, y un alumno puede cursar materias de más de una.
+11. ~~El superadmin entrando a `/admin` ve tres solapas que no llevan a ningún lado (Tema, Tareas y Plantillas, que son POR ESCUELA y él no tiene escuela).~~ **Arreglado el 2026-08-07** con el campo `needsSchool` de `config/sections.js` — ver el changelog de ese día. Las rutas siguen contestando lo mismo si se escribe la URL a mano: lo que cambió es que el nav ya no ofrece la puerta.
 
 ---
 
 ## Historial de Cambios (Changelog)
+
+### 2026-08-07 — Verificación de los 8 roles + `npm run test:roles`
+
+**Pedido**: "necesito que pruebes las configuraciones básicas de cada rol y confirmes que todo esté funcionando".
+
+**Cómo se probó**: un verificador nuevo que da de alta un usuario por rol y **los deja configurados como en la vida real** antes de mirarlos — el preceptor con una división a cargo, el jefe con una sección, el docente con una materia propia y el alumno matriculado en ella. Sin eso, preceptor y jefe caen en la vista `no-scope` (que no tiene nav, y está bien que no lo tenga) y medio panel parece roto sin estarlo. Después recorre, rol por rol: el redirect de `/`, las **37 secciones** del catálogo, las solapas del menú, el rol en español y el toggle de `/superadmin/roles`.
+
+**Resultado**: 8/8 roles correctos. **Cero fugas de permisos, cero 500, ninguna solapa de más ni de menos.** Un solo hallazgo, abajo.
+
+**El hallazgo — el superadmin tenía tres puertas que daban a una pared**. Entrando a `/admin` (puede, su rol está en `roles`), el nav le ofrecía Tema, Tareas y Plantillas: las tres administran la configuración de UNA escuela y el superadmin no tiene escuela propia, así que morían en "Escuela no encontrada" (404) y "Este usuario no tiene escuela asignada" (400). No era un agujero de permisos —el acceso base estaba bien— sino un callejón sin salida con una página de error pelada.
+
+**El arreglo va en el catálogo, no en la plantilla**: campo `needsSchool: true` en `config/sections.js` y una línea en `res.locals.can` (`server.js`), que es el único lugar por donde pasan todos los navs. Parchear `admin-nav.ejs` con un `user.school &&` habría arreglado esa pantalla y dejado el mismo agujero esperando en el próximo nav que use la misma solapa. **Las rutas no se tocaron**: escribiendo la URL a mano siguen contestando lo mismo, que es lo correcto — lo que cambió es que ya no se ofrece la puerta. El nav del superadmin en `/admin` pasó de 11 solapas a 8, y las que sí le sirven (Usuarios, Materias, Auditoría…) siguen ahí. Un admin de verdad, que sí tiene escuela, sigue viendo las 11.
+
+**Lo que se confirmó correcto y conviene no volver a investigar**: `/activities/my-pending` redirige (302) a `/courses` para todo el que no sea alumno; preceptor sin divisiones y jefe sin sección caen en `no-scope` sin nav (fail-closed a propósito); el drawer manda "Mis clases" a `/` y no al path literal; y `soe` sigue sin panel propio, aterrizando en `/courses` con las solapas generales.
+
+**Queda en el repo**: `tests/roles/check-roles.js` → **`npm run test:roles`**. Recorre la matriz entera en ~40 s, borra todo lo que crea (la limpieza va en un `finally`) y solo devuelve exit 1 ante una fuga de permisos o un 500 — un desajuste de nav se reporta pero no frena un deploy. El paso 4 replica a propósito la lógica de `res.locals.can` en una función sola y comentada: si esa lógica cambia y el test no, el test deja de valer.
+
+**Verificado**: `npm run test:roles` sin hallazgos, 216/216 smoke y 28/28 unitarios después del cambio en `server.js`. **No requiere ningún cambio en la base de producción.**
+
+### 2026-08-07 — Sala en vivo: la hora la pone el servidor (bug de zonas horarias)
+
+**Pedido**: "tengo problemas con la sala de chat… da cambiados las horas, puede tener cualquier horario, necesito que se establezca una sola, hazlo con el horario que obtiene del servidor".
+
+**El bug, en dos mitades**. La hora de cada mensaje la formateaba **el navegador** con `toLocaleTimeString()`, o sea con la zona horaria del equipo: las máquinas del aula tienen cualquier zona configurada, así que el mismo mensaje se veía a las 14:05 en una pantalla y a las 17:05 en la de al lado. La otra mitad es al revés: las vistas que ya se renderizaban del lado del servidor (clases anteriores, transcripción, CSV) usaban la zona del **proceso**, y producción corre en UTC — tres horas de más, en el registro que después se consulta como comprobante de asistencia.
+
+**Y encima cambiaba el formato, no solo el número**: `toLocaleTimeString('es-AR', { hour:'2-digit', minute:'2-digit' })` devuelve `"20:47"` en Node y **`"08:47 p. m."` en Chrome** (verificado en el navegador con este arreglo puesto). O sea que el mismo mensaje se veía con otro reloj y con otro formato según con qué abriera cada uno.
+
+**El arreglo**: una sola fuente de hora. `TZ = process.env.SCHOOL_TZ || 'America/Argentina/Buenos_Aires'` en `services/liveRoom.js`, con cinco formatters `Intl.DateTimeFormat` construidos **una vez** (esto corre por cada mensaje de cada poll) y exportados como `fmt`. El payload del poll manda `hora: "14:05"` ya armada en vez de la fecha cruda; las plantillas usan `fmt.hora()` / `fmt.fechaDia()` / `fmt.fechaLarga()`. **No quedó ni un `toLocaleTimeString` en el código de la sala**: si vuelve a aparecer uno, vuelve el bug.
+
+**Detalles que importan**: `hourCycle: 'h23'` y no `hour12: false` (con `hour12` algunos locales imprimen "24:15" a medianoche); una fecha nula o inválida devuelve `''` y no "Invalid Date", porque estos textos van derecho a la pantalla y al CSV. Regla nueva en la spec: **RN-30**.
+
+**Archivos**: `services/liveRoom.js`, `routes/rooms.js`, `views/partials/live-room.ejs`, `views/partials/live-cards.ejs`, `views/rooms/clases.ejs`, `views/rooms/session.ejs`, `cleanup-rooms.js`.
+
+**Verificado**: 28/28 unitarios (5 nuevos: mismo instante → misma hora venga como `Date`, ISO o milisegundos; medianoche 00:xx y no 24:xx; el cruce de medianoche también cambia el día) y 216/216 smoke, con una aserción nueva en `sala-mensajes-cursor` que exige que el `hora` del poll venga formateado y sea el de la escuela. **No requiere ningún cambio en la base de producción.**
+
+**Pendiente, fuera de esta entrega**: el resto de la app (actividades, entregas, auditoría, perfiles) sigue formateando fechas en el navegador o con la zona del servidor. Mismo bug latente en producción (UTC). Anotado en el backlog.
 
 ### 2026-08-06 — Sala en vivo: presencia y chat dentro de la materia
 
@@ -1939,6 +1976,83 @@ El jefe ve **entregas y notas de alumnos**, que son menores. Se planteó el repa
 El rol nuevo tocó **más de 20 archivos** solo para registrarse: 6 `<select>` de rol, 5 bloques de `superadmin/school-profile.ejs`, los colores de avatar en 2 vistas, el monitor, el importador y los mapas de nombres. La matriz de `/superadmin/roles` **sí** es data-driven (sale de `User.getRoles()` + `SECTIONS`), así que esa se armó sola.
 
 **13 specs nuevos** (`jefatura-*`). Baseline: **187/187**. No hubo cambios de base: la colección `sections` nace vacía y no hay campo nuevo en `User`.
+
+---
+
+## Matriculación del docente a una materia — las 5 vías (2026-08-07)
+
+Reporte del usuario: *"arreglá la matriculación de un docente a una materia, por todos los métodos existentes, algunos no funcionan"*. Se auditaron y probaron **todas** las vías de escritura sobre `Course.owner` / `Course.coTeachers`. Tres estaban rotas y una faltaba.
+
+### Un solo validador para las cuatro vías que ya existían
+`resolveCourseTeacher(teacherId, schoolId)` en `routes/admin.js` es ahora el punto de verdad de crear la materia, editarla, cambiar el titular y agregar un suplente. Antes **cada una validaba distinto**:
+
+| Ruta | Validaba antes |
+|---|---|
+| `POST /admin/courses/create` | escuela |
+| `POST /admin/courses/:id/assign-teacher` | escuela |
+| `POST /admin/courses/:id/co-teachers` | escuela |
+| `POST /admin/courses/:id/edit` | **nada más que la existencia del id** |
+
+Ese último era el bug de fondo: `User.findOne({ _id: teacherId })` aceptaba como titular a **un alumno, un preceptor o un docente de otra escuela**. La materia quedaba en manos de alguien que ni siquiera podía abrirla y en el listado figuraba con docente asignado — el problema no se veía hasta que el docente real reclamaba. Ahora se valida rol `teacher`, misma escuela y cuenta habilitada, con mensajes que dicen qué pasó (*"X tiene el rol Alumno: solo un Docente puede estar a cargo de una materia"*).
+
+Los `<select>` de docente de `/admin/courses`, `/admin/courses/create` y `/admin/courses/:id/edit` ahora filtran `active: { $ne: false }`, igual que ya hacía la solapa Personas: listar deshabilitados solo servía para que el admin eligiera y se comiera un error del validador.
+
+### El editar duplicaba al docente
+`POST /courses/:id/edit` no sacaba al nuevo titular de `coTeachers`. Promover a titular a alguien que ya era suplente lo dejaba **listado dos veces** (TITULAR y SUPLENTE) en la solapa Personas y en el propio formulario. `/assign-teacher` sí lo contemplaba desde siempre; se copió esa lógica.
+
+### La vía que faltaba: matricular desde el perfil del docente
+Al **preceptor** se le asignan sus cursos desde su perfil (`POST /admin/users/:id/divisions`, bloque "Cursos a cargo"). Al **docente** no había nada equivalente: había que entrar materia por materia. Con 457 materias, cargarle el horario a alguien que dicta ocho era impracticable — que es lo que el usuario estaba sufriendo.
+
+Nueva ruta **`POST /admin/users/:id/courses`** + bloque **"Materias que dicta"** en `views/admin/user-profile.ejs`, espejo del bloque del preceptor: acordeón agrupado por división (41 grupos), buscador, contador vivo y "Destildar todas".
+
+Dos decisiones que el código documenta:
+- **Siempre agrega como suplente (`coTeachers`), nunca como titular.** El titular es uno solo; pisarlo desde acá le sacaría la materia a otro docente sin avisar. Para cambiar al titular está el modal de `/admin/courses` o la solapa Personas.
+- **Las materias donde ya es titular vienen tildadas y `disabled`**, con badge TITULAR. Destildarlas dejaría la materia sin docente. La guarda **no** es solo de UI: la ruta ignora las bajas sobre materias donde el usuario es `owner`, así que un POST armado a mano tampoco puede huerfanar una materia (hay spec: *un POST armado a mano no puede sacarlo de donde es TITULAR*).
+
+De paso, el perfil ganó la sección **"Materias como suplente"**: hasta ahora `createdCourses` solo miraba `owner`, así que el perfil de un docente que **solo** era suplente se veía idéntico al de uno sin ninguna materia.
+
+### Qué se probó
+Suite propia de 44 chequeos sobre las 5 vías + las 4 pantallas que las exponen, y verificación en el navegador del bloque nuevo (457 materias en 41 grupos, buscador 457→34 al filtrar "matemática", guardado real y persistencia tras recargar). **Smoke: 216/216**, sin regresiones.
+
+**No hay cambio de base**: `coTeachers` ya existía y ya se poblaba (consolidación de materias duplicadas). No hace falta tocar la BD de producción.
+
+---
+
+## Ventana de mantenimiento: esperar a que la plataforma se vacíe (2026-08-07)
+
+Pedido del usuario: *"que me muestre cuándo puedo hacer el mantenimiento, pero si los usuarios están trabajando, que espere hasta que dejen de estarlo; solo se aplica a los que quieran entrar en ese momento"*.
+
+Hasta ahora el modo mantenimiento era todo-o-nada: se activaba y en la request siguiente todos veían el 503, incluida la docente a mitad de una corrección. Ahora hay un **tercer estado**. Spec completa en `specs/mantenimiento-ventana.spec.md`.
+
+| Estado | `maintenance.json` | Qué hace |
+|---|---|---|
+| normal | no existe | nada |
+| **en espera** | `{ pending: true }` | **no echa a nadie**; corta solo los ingresos nuevos y espera a que la plataforma se vacíe |
+| activo | `{ active: true }` | el 503 para todos menos el dueño (lo de siempre) |
+
+### La pieza central es un cambio de semántica, no de middleware
+`getMaintenanceState()` pasa a devolver el estado **solo si `active === true`**. Gracias a eso, el bloqueo global de `server.js` no cambió su lógica y una ventana en espera simplemente no bloquea a nadie con sesión abierta. Lo único que se corta mientras espera es la puerta de entrada, en `routes/auth.js`: `POST /login`, `POST /register` y el registro por invitación devuelven 503 con un mensaje explícito. **El dueño está exceptuado del bloqueo de login**: sin eso, una cookie vencida durante su propia ventana lo dejaría afuera del panel donde se apaga (mismo agujero que se tapó el 2026-07-27).
+
+### El promotor
+`setInterval` de 30 s en `server.js`, el primero del proyecto. Sin espera pedida no hace ni una query (solo la lectura del archivo de estado). Corre en **un solo worker** (`NODE_APP_INSTANCE`): con los dos, ambos podrían promover en el mismo tick y duplicar el evento de auditoría. Killswitch `MAINTENANCE_SCHEDULER=false`. Si Mongo no responde **no promueve**: activar un mantenimiento por no haber podido contar sería lo contrario de esperar.
+
+"Estar trabajando" = `User.lastSeen` dentro de los últimos N minutos (default 5, editable 1–60). No se inventó ninguna señal: `checkUser` ya escribe `lastSeen` con throttle de 1 min, así que hasta el poll de la sala en vivo cuenta como actividad. **El dueño se excluye del conteo**: mirando el panel refresca su propio `lastSeen` cada 10 s y bloquearía su mantenimiento para siempre.
+
+### El semáforo
+`/superadmin/backup` muestra en vivo 🟢 *listo para mantener* / 🟠 *N personas trabajando*, con **nombre, rol y hace cuánto** de hasta 25 personas (los nombres van escapados: salen de la BD y los escriben otras personas). Poll cada 10 s, **detenido con `document.hidden`** para que un panel olvidado no consuma. Endpoints nuevos en `routes/backup.js`: `GET /maintenance/activity`, `POST /maintenance/schedule`, `POST /maintenance/cancel`. `/maintenance/on` y `/off` no cambiaron.
+
+Detalles que el código documenta:
+- **Programar con la plataforma ya vacía activa en el acto**, sin pasar por "en espera" (esperar 30 s a descubrir lo que ya sabemos sería absurdo).
+- **Tope de espera opcional** (`maxWaitMinutes`): en horario escolar una espera indefinida puede no llegar nunca.
+- **Aviso a los que están adentro**: existe (`views/partials/maintenance-banner.ejs`) pero **apagado por default** — avisar acelera la espera, pero también puede provocar una avalancha de entregas de último momento.
+- **El `/restore` ya no pisa una espera**: guardaba un booleano y el `finally` la habría borrado; ahora guarda el estado crudo y lo restaura.
+
+### Qué se probó
+**Unitarios nuevos: 34** (`tests/unit/maintenanceWindow.test.js` + `maintenanceState.test.js`, total del proyecto 62/62). **Smoke: 220/220**, con 4 specs nuevos. Y el ciclo completo contra el server local: con 1 persona trabajando la ventana quedó en espera, el que ya estaba adentro siguió navegando (`/courses` 200) mientras un login nuevo recibía 503, y al minuto de silencio **el mantenimiento se activó solo** (`reason: auto`, `promotedBy: empty`).
+
+**No hay cambio de base**: ni schema, ni migración, ni backfill. Deploy = push, sin `npm install`.
+
+> ⚠️ **Rollback**: el código viejo trata *cualquier* `maintenance.json` como "activo". Si alguna vez hay que volver atrás esta feature con una ventana en espera puesta, hay que **cancelarla o borrar el archivo primero**, o el rollback bloquea a toda la escuela.
 
 ---
 

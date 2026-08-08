@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Clase del <%= new Date(sesion.openedAt).toLocaleDateString('es-AR') %> · <%= course.name %></title>
+  <%# Todas las fechas de esta página salen de fmt (services/liveRoom.js), que las arma con la
+      zona horaria de la escuela. Sin eso, el servidor de producción (UTC) las corre 3 horas. %>
+  <title>Clase del <%= fmt.fechaCorta(sesion.openedAt) %> · <%= course.name %></title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
   <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="stylesheet" href="/css/style.css">
@@ -16,13 +18,13 @@
       <a href="/courses/<%= course._id %>/sala/clases" style="font-size:14px;color:#1a73e8;text-decoration:none">← Todas las clases</a>
 
       <h2 style="margin:8px 0 4px">
-        <%= new Date(sesion.openedAt).toLocaleDateString('es-AR', { weekday:'long', day:'numeric', month:'long', year:'numeric' }) %>
+        <%= fmt.fechaLarga(sesion.openedAt) %>
       </h2>
       <p style="margin:0 0 16px;color:#5f6368;font-size:14px">
         <%= course.name %> · <%= course.division?.name || '' %> ·
-        <%= new Date(sesion.openedAt).toLocaleTimeString('es-AR', { hour:'2-digit', minute:'2-digit' }) %>
+        <%= fmt.hora(sesion.openedAt) %>
         <% if (sesion.closedAt) { %>
-          – <%= new Date(sesion.closedAt).toLocaleTimeString('es-AR', { hour:'2-digit', minute:'2-digit' }) %>
+          – <%= fmt.hora(sesion.closedAt) %>
         <% } else { %> · <strong style="color:#137333">en vivo</strong><% } %>
       </p>
 
@@ -57,13 +59,13 @@
             <% mensajes.forEach(function (m) { %>
               <% if (m.kind === 'system') { %>
                 <div style="text-align:center;font-size:12px;color:#80868b;margin:10px 0">
-                  <%= m.text %> · <%= new Date(m.createdAt).toLocaleTimeString('es-AR', { hour:'2-digit', minute:'2-digit' }) %>
+                  <%= m.text %> · <%= fmt.hora(m.createdAt) %>
                 </div>
               <% } else { %>
                 <div style="margin-bottom:12px">
                   <div style="font-size:12px;color:#5f6368">
                     <%= m.authorName || '—' %> ·
-                    <%= new Date(m.createdAt).toLocaleTimeString('es-AR', { hour:'2-digit', minute:'2-digit' }) %>
+                    <%= fmt.hora(m.createdAt) %>
                   </div>
                   <div style="background:<%= m.deletedAt ? '#f8f9fa' : '#f1f3f4' %>;padding:8px 12px;
                               border-radius:12px;border-top-left-radius:2px;font-size:14px;

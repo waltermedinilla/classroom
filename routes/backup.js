@@ -11,8 +11,13 @@ const { requireSuperAdmin } = require('../middleware/superadmin');
 const { invalidateAll }     = require('../middleware/cache');
 const { logAudit }          = require('../middleware/audit');
 const {
-  getMaintenanceState, setMaintenanceOn, setMaintenanceOff, SYSTEM_OWNER_EMAIL,
+  getMaintenanceState, getPendingState, readRawState, restoreRawState,
+  setMaintenanceOn, setMaintenancePending, setMaintenanceOff, SYSTEM_OWNER_EMAIL,
 } = require('../config/maintenance');
+const {
+  normalizeIdleMinutes, normalizeMaxWait, countActiveUsers, listActiveUsers,
+  minutesAgo, deadlineOf, ACTIVITY_LIST_MAX, IDLE_DEFAULT_MIN,
+} = require('../services/maintenanceWindow');
 
 const School       = require('../models/School');
 const User         = require('../models/User');
@@ -375,6 +380,12 @@ router.post('/restore', restoreLimiter, async (req, res) => {
   // Activa mantenimiento automáticamente durante la restauración, salvo que YA esté
   // activo (ej. lo prendió manualmente el dueño antes) — en ese caso no lo tocamos,
   // ni al empezar ni al terminar, para no apagar algo que no prendimos nosotros.
+  //
+  // Se guarda el estado CRUDO, no solo un booleano: si había una ventana de mantenimiento
+  // EN ESPERA, `alreadyInMaintenance` da false (una espera no bloquea) y el finally la
+  // borraría. Con el snapshot, el restore la interrumpe con un bloqueo real y al terminar
+  // la espera sigue viva, esperando a que la plataforma se vacíe.
+  const previousState = readRawState();
   const alreadyInMaintenance = !!getMaintenanceState();
   if (!alreadyInMaintenance) {
     setMaintenanceOn({
@@ -429,7 +440,7 @@ router.post('/restore', restoreLimiter, async (req, res) => {
     fs.unlink(tarPath, () => {});
     fs.unlink(manifestPath, () => {});
     if (extractDir) fs.rm(extractDir, { recursive: true, force: true }, () => {});
-    if (!alreadyInMaintenance) setMaintenanceOff();
+    if (!alreadyInMaintenance) restoreRawState(previousState);
   }
 });
 
@@ -437,16 +448,140 @@ router.post('/restore', restoreLimiter, async (req, res) => {
 // Modo mantenimiento (Caso A: la app sigue viva, la bloqueamos a propósito)
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.get('/maintenance-status', (req, res) => {
-  res.json({ state: getMaintenanceState() });
+// Estado completo de la pantalla: qué hay activo, qué hay en espera, y cuánta gente está
+// trabajando ahora mismo. `state` conserva exactamente su significado anterior (solo el
+// mantenimiento que BLOQUEA) — la vista y el smoke test viejo la siguen leyendo igual.
+router.get('/maintenance-status', async (req, res) => {
+  const pending     = getPendingState();
+  const idleMinutes = pending ? normalizeIdleMinutes(pending.idleMinutes) : IDLE_DEFAULT_MIN;
+
+  // El estado tiene que poder verse aunque la base esté rara: si el conteo falla, la
+  // pantalla muestra el estado igual y el semáforo queda en "no se pudo consultar".
+  let activity = null;
+  try {
+    const { count } = await countActiveUsers({ idleMinutes });
+    activity = { count, ready: count === 0, idleMinutes };
+  } catch {
+    activity = null;
+  }
+
+  res.json({ state: getMaintenanceState(), pending, activity });
 });
 
+// Semáforo en vivo. Lo llama el panel cada 10 s mientras la sección está a la vista: dos
+// queries sobre el índice {lastSeen:1} que ya existe (models/User.js). Mismo patrón (y
+// menos frecuencia) que /superadmin/monitor/stats, que poll-ea cada 5 s.
+router.get('/maintenance/activity', async (req, res) => {
+  const idleMinutes = normalizeIdleMinutes(req.query.idleMinutes);
+  const now = new Date();
+
+  try {
+    const [{ count, byRole }, users] = await Promise.all([
+      countActiveUsers({ idleMinutes, now }),
+      listActiveUsers({ idleMinutes, now, limit: ACTIVITY_LIST_MAX }),
+    ]);
+    const pending  = getPendingState();
+    const deadline = pending ? deadlineOf(pending) : null;
+
+    res.json({
+      now:       now.toISOString(),
+      idleMinutes,
+      count,
+      ready:     count === 0,
+      byRole,
+      users,
+      truncated: count > users.length,
+      active:    !!getMaintenanceState(),
+      pending:   pending ? {
+        requestedAt:   pending.requestedAt,
+        waitedMinutes: minutesAgo(pending.requestedAt, now),
+        deadline:      deadline ? deadline.toISOString() : null,
+        idleMinutes:   normalizeIdleMinutes(pending.idleMinutes),
+      } : null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo consultar quién está trabajando: ' + err.message });
+  }
+});
+
+// Programa el mantenimiento: si hay gente, queda EN ESPERA y lo activa solo el promotor
+// (server.js) cuando la plataforma se vacía.
+router.post('/maintenance/schedule', async (req, res) => {
+  if (getMaintenanceState()) {
+    return res.status(409).json({ error: 'El mantenimiento ya está activo.' });
+  }
+
+  const { message, eta, notifyActiveUsers } = req.body;
+  const idleMinutes    = normalizeIdleMinutes(req.body.idleMinutes);
+  const maxWaitMinutes = normalizeMaxWait(req.body.maxWaitMinutes);
+
+  let count;
+  try {
+    ({ count } = await countActiveUsers({ idleMinutes }));
+  } catch (err) {
+    // Sin poder contar no se programa nada: dejaría una espera que el promotor tampoco
+    // podría resolver, y el dueño creería que el sistema está esperando por él.
+    return res.status(500).json({ error: 'No se pudo contar quién está trabajando: ' + err.message });
+  }
+
+  // Plataforma ya vacía: no tiene sentido esperar 30 s a que el promotor descubra lo que
+  // ya sabemos. Se activa en el acto, como si hubiera apretado "Activar mantenimiento".
+  if (count === 0) {
+    const state = setMaintenanceOn({
+      message, eta, activatedBy: res.locals.user.email, reason: 'manual',
+    });
+    logAudit(req, 'system.maintenance_on', [], {
+      ...(message ? { mensaje: message } : {}), ...(eta ? { eta } : {}), sin_espera: true,
+    });
+    return res.json({ ok: true, activated: true, state });
+  }
+
+  // Reprogramar una espera en curso conserva su requestedAt: cambiar el mensaje no puede
+  // reiniciar el cronómetro de "hace cuánto estoy esperando" (ni el tope de RN-09).
+  const previo  = getPendingState();
+  const pending = setMaintenancePending({
+    message, eta, idleMinutes, maxWaitMinutes, notifyActiveUsers,
+    requestedBy: res.locals.user.email,
+    requestedAt: previo ? previo.requestedAt : undefined,
+  });
+
+  logAudit(req, 'system.maintenance_scheduled', [], {
+    ...(message ? { mensaje: message } : {}), ...(eta ? { eta } : {}),
+    idleMinutes, maxWaitMinutes, activosAlProgramar: count,
+  });
+
+  res.json({ ok: true, activated: false, pending, activity: { count, ready: false, idleMinutes } });
+});
+
+// Cancela SOLO una espera. Si el mantenimiento ya está activo hay que apagarlo con
+// /maintenance/off, que es explícito — cancelar no puede desbloquear la app por accidente.
+router.post('/maintenance/cancel', (req, res) => {
+  if (getMaintenanceState()) {
+    return res.status(409).json({
+      error: 'El mantenimiento ya está activo. Usá "Desactivar mantenimiento".',
+    });
+  }
+
+  const pending = getPendingState();
+  setMaintenanceOff(); // idempotente: cancelar algo que no existe no es un error
+  if (pending) {
+    logAudit(req, 'system.maintenance_cancelled', [],
+      { esperoMinutos: minutesAgo(pending.requestedAt) });
+  }
+
+  res.json({ ok: true });
+});
+
+// Activar YA MISMO, sin mirar a nadie. Es la salida de emergencia (algo se está rompiendo
+// y hay que cortar ahora) y pisa cualquier espera en curso.
 router.post('/maintenance/on', (req, res) => {
   const { message, eta } = req.body;
+  const desdeEspera = !!getPendingState();
   setMaintenanceOn({ message, eta, activatedBy: res.locals.user.email, reason: 'manual' });
 
   logAudit(req, 'system.maintenance_on', [],
-    { ...(message ? { mensaje: message } : {}), ...(eta ? { eta } : {}) },
+    { ...(message ? { mensaje: message } : {}), ...(eta ? { eta } : {}),
+      ...(desdeEspera ? { corto_espera: true } : {}) },
   );
 
   res.json({ ok: true, state: getMaintenanceState() });

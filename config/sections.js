@@ -27,6 +27,13 @@
 //   ownerOnly la sección ya está atada al email del dueño (config/maintenance.js). El
 //             flag acá es SOLO para que la pantalla explique el candado; la guarda real
 //             sigue viviendo en routes/backup.js y routes/dbFixes.js.
+//   needsSchool la pantalla administra datos de UNA escuela y necesita que el usuario tenga
+//             la suya. El superadmin NO tiene (school: null), así que estas solapas no se
+//             le pintan: antes se las ofrecía el nav de /admin y morían en "Escuela no
+//             encontrada". Lo resuelve res.locals.can en server.js, que es el único lugar
+//             por donde pasan todos los navs. No es una restricción de permisos —el acceso
+//             base sigue igual y la ruta sigue contestando lo mismo si se escribe la URL a
+//             mano—: es no ofrecer una puerta que da a una pared.
 //
 // INVARIANTE: los `*_dashboard` y `app_courses` van locked porque son los destinos del
 // redirect de "/" (server.js). Si alguna vez se desbloquean, ese redirect necesita una
@@ -43,9 +50,11 @@ const SECTIONS = [
   { key: 'admin_sections',       panel: 'admin', label: 'Secciones',  icon: 'groups',       path: '/admin/secciones',      roles: ['admin', 'superadmin'] },
   { key: 'admin_import',         panel: 'admin', label: 'Importar',   icon: 'upload_file',  path: '/admin/import',         roles: ['admin', 'superadmin'] },
   { key: 'admin_audit',          panel: 'admin', label: 'Auditoría',  icon: 'history',      path: '/admin/audit',          roles: ['admin', 'superadmin'] },
-  { key: 'admin_theme',          panel: 'admin', label: 'Tema',       icon: 'palette',      path: '/admin/theme',          roles: ['admin', 'superadmin'] },
-  { key: 'admin_tasks',          panel: 'admin', label: 'Tareas',     icon: 'checklist',    path: '/admin/tasks',          roles: ['admin', 'superadmin'] },
-  { key: 'admin_task_templates', panel: 'admin', label: 'Plantillas', icon: 'assignment',   path: '/admin/task-templates', roles: ['admin', 'superadmin'], flag: 'taskTemplatesEnabled' },
+  // Las tres de abajo editan la configuración de UNA escuela (el tema, las tareas y las
+  // plantillas asignadas): sin escuela propia no hay nada que abrir. De ahí el needsSchool.
+  { key: 'admin_theme',          panel: 'admin', label: 'Tema',       icon: 'palette',      path: '/admin/theme',          roles: ['admin', 'superadmin'], needsSchool: true },
+  { key: 'admin_tasks',          panel: 'admin', label: 'Tareas',     icon: 'checklist',    path: '/admin/tasks',          roles: ['admin', 'superadmin'], needsSchool: true },
+  { key: 'admin_task_templates', panel: 'admin', label: 'Plantillas', icon: 'assignment',   path: '/admin/task-templates', roles: ['admin', 'superadmin'], flag: 'taskTemplatesEnabled', needsSchool: true },
 
   // ── Panel Directivo (base: middleware/directivo.js) ────────────────────────
   { key: 'directivo_dashboard', panel: 'directivo', label: 'Resumen',    icon: 'dashboard', path: '/directivo',           roles: ['directivo', 'admin', 'superadmin'], locked: true },

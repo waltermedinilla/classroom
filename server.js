@@ -12,7 +12,13 @@ const logger       = require('./config/logger');
 const connectDB    = require('./config/db');
 const { checkUser } = require('./middleware/auth');
 const { schoolCache } = require('./middleware/cache');
-const { getMaintenanceState, SYSTEM_OWNER_EMAIL } = require('./config/maintenance');
+const {
+  readRawState, getPendingState, promotePending, SYSTEM_OWNER_EMAIL,
+} = require('./config/maintenance');
+const {
+  countActiveUsers, shouldPromote, minutesAgo, CHECK_INTERVAL_MS,
+} = require('./services/maintenanceWindow');
+const { logAudit } = require('./middleware/audit');
 const School     = require('./models/School');
 const Suggestion = require('./models/Suggestion');
 const TemplateAssignment = require('./models/TemplateAssignment');
@@ -357,6 +363,11 @@ app.use((req, res, next) => {
   res.locals.can = (key) => {
     const sec = SECTIONS_BY_KEY[key];
     if (sec && sec.flag && res.locals[sec.flag] === false) return false;
+    // Pantallas que administran UNA escuela: el superadmin no tiene escuela propia, así
+    // que el nav de /admin le ofrecía Tema, Tareas y Plantillas y las tres morían en
+    // "Escuela no encontrada". Se esconden en vez de dejar el callejón sin salida. La ruta
+    // no cambia: sigue contestando lo mismo si se escribe la URL a mano.
+    if (sec && sec.needsSchool && !(res.locals.user && res.locals.user.school)) return false;
     return isAllowed(res.locals.school, res.locals.user && res.locals.user.role, key);
   };
   // ── Analítica de producto (PostHog) ─────────────────────────────────────────
@@ -390,8 +401,29 @@ app.use((req, res, next) => {
 // a autenticarse si se le venció la cookie o se le reinició la máquina — sin este
 // redirect, la pantalla de mantenimiento no linkea al login y quedaría lockeado
 // (mitigable borrando maintenance.json a mano, pero incómodo en producción).
+// Hay un TERCER estado, "en espera" (ver specs/mantenimiento-ventana.spec.md): el dueño ya
+// pidió el mantenimiento pero la plataforma todavía tiene gente trabajando. En ese estado
+// acá NO se bloquea nada — el corte se aplica solo a los ingresos nuevos, en routes/auth.js —
+// y el promotor de más abajo lo asciende a mantenimiento real cuando se vacía.
+//
+// Se lee el estado crudo una sola vez (en vez de llamar a getMaintenanceState y después a
+// getPendingState) para no duplicar el acceso a disco en cada request.
 app.use((req, res, next) => {
-  const state = getMaintenanceState();
+  const raw = readRawState();
+
+  // Bandera para el banner opcional de los que YA están adentro. Siempre definida: la
+  // incluyen todas las vistas a través de partials/header.ejs.
+  res.locals.maintenancePending = null;
+
+  if (raw && raw.pending === true && raw.active !== true) {
+    if (raw.notifyActiveUsers && res.locals.user
+        && res.locals.user.email !== SYSTEM_OWNER_EMAIL) {
+      res.locals.maintenancePending = { message: raw.message, eta: raw.eta };
+    }
+    return next(); // una espera NUNCA le corta el trabajo a quien ya está adentro
+  }
+
+  const state = raw && raw.active === true ? raw : null;
   if (!state) return next();
   if (res.locals.user?.email === SYSTEM_OWNER_EMAIL) return next();
 
@@ -555,6 +587,50 @@ connectDB().then(() => {
   // se pasa de largo y el corte se ve como "error de conexión" a mitad de la subida.
   // headersTimeout sigue en el default (65 s), que es lo que frena un slowloris de headers.
   server.requestTimeout = 60 * 60 * 1000; // 1 h
+
+  // ── Promotor de la ventana de mantenimiento ────────────────────────────────
+  // Mira cada 30 s si la plataforma ya se vació para activar el mantenimiento que el dueño
+  // dejó EN ESPERA. Sin espera pedida no hace ni una query: solo la lectura del archivo de
+  // estado, que son unos pocos bytes (la misma que ya hace el middleware de arriba).
+  //
+  // Corre en UN SOLO worker. Con los 2 de PM2 ejecutándolo, ambos podrían leer "hay espera"
+  // en el mismo tick y escribir dos eventos de auditoría para una única promoción. PM2 setea
+  // NODE_APP_INSTANCE en modo cluster; en dev queda undefined y corre igual.
+  const schedulerWorker = !process.env.NODE_APP_INSTANCE || process.env.NODE_APP_INSTANCE === '0';
+
+  async function checkMaintenanceWindow() {
+    const pending = getPendingState();
+    if (!pending) return;
+
+    const now = new Date();
+    const { count } = await countActiveUsers({ idleMinutes: pending.idleMinutes, now });
+    const { promote, why } = shouldPromote({ pending, activeCount: count, now });
+    if (!promote) return;
+
+    promotePending(pending, why);
+    const espero = minutesAgo(pending.requestedAt, now);
+    logger.info(`Mantenimiento activado automáticamente (${why}) tras ${espero} min de espera`);
+
+    // logAudit espera un req; acá no hay uno. El shim le da el actor (quien programó la
+    // ventana) y el helper ya tolera que no haya ip ni user-agent.
+    logAudit(
+      { res: { locals: { user: { email: pending.requestedBy, name: 'Mantenimiento automático', role: 'superadmin' } } } },
+      'system.maintenance_on', [],
+      { automatico: true, motivo: why, esperoMinutos: espero },
+    );
+  }
+
+  if (process.env.MAINTENANCE_SCHEDULER !== 'false' && schedulerWorker) {
+    const timer = setInterval(() => {
+      // Si Mongo no responde NO se promueve: activar un mantenimiento por no haber podido
+      // contar sería exactamente lo contrario de esperar a que la gente termine.
+      checkMaintenanceWindow().catch(err => {
+        logger.warn('No se pudo evaluar la ventana de mantenimiento', { error: err.message });
+      });
+    }, CHECK_INTERVAL_MS);
+    timer.unref(); // no demora el shutdown
+    logger.info(`Promotor de mantenimiento activo (cada ${CHECK_INTERVAL_MS / 1000}s, PID ${process.pid})`);
+  }
 
   const shutdown = (signal) => {
     logger.info(`Cerrando servidor por ${signal} (PID ${process.pid})`);

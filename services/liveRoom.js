@@ -48,6 +48,48 @@ const EMOJIS = ['👋', '👍', '✋', '❓', '😀', '🎉', '✅', '😕', '�
 // Roles que, estando en la sala, no son "alumnos presentes" sino personal.
 const STAFF_ROLES = ['teacher', 'admin', 'superadmin', 'directivo', 'preceptor', 'jefe', 'soe'];
 
+// ── Hora de la sala ──────────────────────────────────────────────────────────
+
+// Zona horaria de la escuela. TODAS las horas de la sala se arman acá, en el servidor y con
+// esta zona fija: ni el reloj del navegador ni el del servidor deciden qué hora se muestra.
+//
+// El bug que esto arregla: la hora de cada mensaje la formateaba el navegador con
+// toLocaleTimeString(), es decir con la zona horaria del equipo. Las máquinas del aula tienen
+// cualquier zona configurada, así que el MISMO mensaje se veía a una hora distinta en cada
+// pantalla. Y el servidor de producción corre en UTC, con lo cual las vistas que ya se
+// renderizaban del lado del servidor (clases anteriores, transcripción, CSV) mostraban tres
+// horas de más. Una sola fuente de hora resuelve las dos mitades del problema.
+const TZ = process.env.SCHOOL_TZ || 'America/Argentina/Buenos_Aires';
+
+// Los formatters se construyen UNA sola vez. Intl.DateTimeFormat es caro de instanciar y esto
+// corre por cada mensaje de cada poll: 100 mensajes × 30 personas cada 4 segundos.
+const opts = (o) => new Intl.DateTimeFormat('es-AR', { timeZone: TZ, ...o });
+// hourCycle h23 y no hour12:false — con hour12 algunos locales imprimen "24:15" a medianoche.
+const F_HORA   = opts({ hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const F_DIA    = opts({ weekday: 'long', day: 'numeric', month: 'long' });
+const F_LARGA  = opts({ weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+const F_CORTA  = opts({ day: '2-digit', month: '2-digit', year: 'numeric' });
+const F_FECHAH = opts({ day: '2-digit', month: '2-digit', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+
+// Una fecha nula o basura devuelve '' en vez de "Invalid Date": estos textos van directo a la
+// pantalla y a los CSV.
+function formatear(f, d) {
+  if (!d) return '';
+  const t = new Date(d);
+  return Number.isNaN(t.getTime()) ? '' : f.format(t);
+}
+
+const hora       = (d) => formatear(F_HORA, d);    // 14:05
+const fechaDia   = (d) => formatear(F_DIA, d);     // jueves, 6 de agosto
+const fechaLarga = (d) => formatear(F_LARGA, d);   // jueves, 6 de agosto de 2026
+const fechaCorta = (d) => formatear(F_CORTA, d);   // 06/08/2026
+const fechaHora  = (d) => formatear(F_FECHAH, d);  // 06/08/2026, 14:05:00
+
+// Se pasa entero a las vistas como `fmt` (ver routes/rooms.js): así ninguna plantilla vuelve a
+// llamar a toLocaleTimeString por su cuenta.
+const fmt = { TZ, hora, fechaDia, fechaLarga, fechaCorta, fechaHora };
+
 // Etiqueta que acompaña al círculo de quien no es alumno.
 const ROLE_LABELS = {
   teacher:    'Docente',
@@ -368,6 +410,9 @@ async function getTodayClosed(schoolId, { divisionIds = undefined, now = new Dat
     division:  r.div[0]?.name || '—',
     desde:     r.openedAt,
     hasta:     r.closedAt,
+    // Ya formateadas por el servidor: la tarjeta del panel las imprime tal cual.
+    desdeHora: hora(r.openedAt),
+    hastaHora: hora(r.closedAt),
     presentes: r.pres.filter(p => !STAFF_ROLES.includes(p.userRole)).length,
     total:     (r.curso.students || []).length,
   }));
@@ -383,7 +428,9 @@ const csvCell = (v) => {
 };
 const csvRows = (rows) => '﻿' + rows.map(r => r.map(csvCell).join(';')).join('\r\n');
 
-const fecha = (d) => (d ? new Date(d).toLocaleString('es-AR') : '');
+// Fecha y hora del CSV: también en la zona de la escuela. Un export que dijera la hora en UTC
+// serviría para lo contrario de lo que se pide (saber a qué hora entró cada chico a clase).
+const fecha = fechaHora;
 
 // CSV de asistencia: una fila por alumno del curso, haya entrado o no.
 function csvAsistencia(roster, presences) {
@@ -423,7 +470,9 @@ function csvTranscripcion(messages) {
 module.exports = {
   // constantes
   POLL_MS, DIRECTIVO_POLL_MS, ONLINE_WINDOW_MS, AUTO_CLOSE_MS, PURGE_AFTER_MS,
-  MSG_MAX, MSG_PER_MIN, EMOJIS, STAFF_ROLES, ROLE_LABELS,
+  MSG_MAX, MSG_PER_MIN, EMOJIS, STAFF_ROLES, ROLE_LABELS, TZ,
+  // hora (zona fija de la escuela)
+  fmt, hora, fechaDia, fechaLarga, fechaCorta, fechaHora,
   // puras
   isOnline, presenceSummary, shouldAutoClose, sanitizeText, minutosPresente, initial,
   // con base

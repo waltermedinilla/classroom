@@ -30,6 +30,24 @@
         </svg>
         <p class="auth-subtitle">Inicia sesión para continuar</p>
       </div>
+
+      <%# Mantenimiento EN ESPERA: los que ya están adentro siguen trabajando, pero no se
+          admiten ingresos nuevos. Se avisa acá arriba para que nadie lo descubra recién
+          después de tipear la contraseña. %>
+      <% if (locals.maintenancePending) { %>
+        <div style="background:#fef7e0;border:1px solid #f0c040;border-radius:10px;
+                    padding:12px 14px;margin-bottom:16px;color:#7a5b00;font-size:13px;
+                    display:flex;gap:10px;align-items:flex-start;text-align:left">
+          <span class="material-symbols-outlined" style="color:#ea8600;font-size:20px;flex-shrink:0">build</span>
+          <div>
+            <strong>Mantenimiento en unos minutos.</strong>
+            <%= maintenancePending.message %>
+            Por ahora no se admiten ingresos nuevos.<% if (maintenancePending.eta) { %>
+            Duración estimada: <strong><%= maintenancePending.eta %></strong>.<% } %>
+          </div>
+        </div>
+      <% } %>
+
       <form class="auth-form" id="loginForm">
         <div class="input-group">
           <span class="material-symbols-outlined input-icon">email</span>

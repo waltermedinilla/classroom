@@ -166,6 +166,82 @@
     </div>
     <% } %>
 
+    <%# Materias del docente. Espejo del bloque de arriba: al preceptor se le asignan sus
+        cursos desde acá y al docente no se le podía asignar nada — había que entrar materia
+        por materia. Se lo agrega como SUPLENTE (ver POST /admin/users/:id/courses); las
+        materias donde ya es TITULAR vienen tildadas y bloqueadas, porque destildarlas
+        dejaría la materia sin docente. %>
+    <% if (target.role === 'teacher') { %>
+    <div class="profile-actions">
+      <div class="profile-action-card">
+        <h4>Materias que dicta</h4>
+        <%
+          const _titularIds  = schoolCourses.filter(c => String(c.owner) === String(target._id)).map(c => String(c._id));
+          const _suplenteIds = schoolCourses.filter(c => (c.coTeachers || []).some(t => String(t) === String(target._id))).map(c => String(c._id));
+          const _asignadas   = _titularIds.length + _suplenteIds.length;
+          /* Agrupadas por división: con ~450 materias, una lista plana es ilegible. */
+          const _porDivision = {};
+          schoolCourses.forEach(c => {
+            const k = c.division?.name || 'Sin curso asignado';
+            (_porDivision[k] = _porDivision[k] || []).push(c);
+          });
+          const _divisiones = Object.keys(_porDivision).sort((a, b) => a.localeCompare(b, 'es'));
+        %>
+        <% if (_asignadas === 0) { %>
+          <div style="background:#fef4e5;color:#e67e00;padding:10px 14px;border-radius:8px;font-size:13px;margin-top:12px;display:flex;gap:8px;align-items:flex-start">
+            <span class="material-symbols-outlined" style="font-size:18px">warning</span>
+            <span>Este docente todavía no tiene materias asignadas: al entrar no ve ninguna materia ni alumno.</span>
+          </div>
+        <% } %>
+
+        <% if (!schoolCourses.length) { %>
+          <p style="font-size:13px;color:var(--text-hint);margin-top:12px">
+            <%= target.school ? 'La escuela no tiene materias cargadas todavía.' : 'El usuario no está asignado a ninguna escuela.' %>
+          </p>
+        <% } else { %>
+          <p style="font-size:13px;color:var(--text-secondary);margin:12px 0 10px">
+            Tildá las materias que dicta. Queda como <strong>suplente</strong>, con los mismos permisos que el titular.
+            Las que ya dicta como titular aparecen bloqueadas — para cambiar un titular, entrá a la materia.
+          </p>
+          <div class="input-group" style="margin-bottom:10px">
+            <span class="material-symbols-outlined input-icon">search</span>
+            <input type="text" id="courseSearch" placeholder="Buscar materia o curso..." autocomplete="off">
+          </div>
+          <div style="display:flex;gap:14px;align-items:center;margin-bottom:10px;font-size:13px;flex-wrap:wrap">
+            <span id="courseCount" style="color:var(--text-secondary)"></span>
+            <button type="button" class="btn btn-outline" id="courseClearBtn" style="padding:3px 10px;font-size:12px">Destildar todas</button>
+          </div>
+          <div id="courseList" style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:10px">
+            <% _divisiones.forEach(divName => { %>
+              <div class="course-scope-group" data-division="<%= divName.toLowerCase() %>">
+                <div style="font-size:12px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.4px;margin:10px 0 4px"><%= divName %></div>
+                <% _porDivision[divName].forEach(c => { %>
+                  <% const esTitular = _titularIds.includes(String(c._id)); %>
+                  <label class="course-scope-item" data-name="<%= (c.name + ' ' + divName).toLowerCase() %>"
+                         style="display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0;cursor:<%= esTitular ? 'default' : 'pointer' %>">
+                    <input type="checkbox" class="scope-course" value="<%= c._id %>"
+                      <%= esTitular || _suplenteIds.includes(String(c._id)) ? 'checked' : '' %>
+                      <%= esTitular ? 'disabled data-titular="1"' : '' %>>
+                    <span style="<%= esTitular ? 'color:var(--text-secondary)' : '' %>"><%= c.name %></span>
+                    <% if (esTitular) { %>
+                      <span style="background:#e8f0fe;color:#1a73e8;font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;letter-spacing:.3px">TITULAR</span>
+                    <% } %>
+                  </label>
+                <% }) %>
+              </div>
+            <% }) %>
+          </div>
+          <div class="form-error" id="courseScopeError" style="margin-top:8px"></div>
+          <div id="courseScopeOk" style="display:none;background:#e6f4ea;color:#137333;padding:8px 12px;border-radius:8px;font-size:13px;margin-top:8px"></div>
+          <button type="button" class="btn btn-primary" id="courseScopeSaveBtn" style="margin-top:14px">
+            <span class="material-symbols-outlined">save</span>
+            Guardar materias
+          </button>
+        <% } %>
+      </div>
+    </div>
+    <% } %>
+
     <div class="section" style="margin-top:32px">
       <div class="section-header">
         <span class="material-symbols-outlined section-icon">star</span>
@@ -190,6 +266,32 @@
         </div>
       <% } %>
     </div>
+
+    <%# Materias donde es suplente. Antes no se mostraban en ningún lado: el perfil de un
+        docente que solo era suplente se veía igual al de uno sin ninguna materia. %>
+    <% if (coTaughtCourses.length) { %>
+    <div class="section">
+      <div class="section-header">
+        <span class="material-symbols-outlined section-icon">group_add</span>
+        <h3>Materias como suplente (<%= coTaughtCourses.length %>)</h3>
+      </div>
+      <div class="course-grid">
+        <% coTaughtCourses.forEach(c => { %>
+          <a href="/courses/<%= c._id %>" class="course-card" style="--card-color:#9334e6">
+            <div class="card-banner" style="min-height:80px">
+              <div class="card-banner-content">
+                <h4 style="font-size:20px"><%= c.name %></h4>
+                <% if (c.division) { %>
+                  <p style="font-size:12px;margin-top:4px;opacity:.85"><%= c.division.name %></p>
+                <% } %>
+              </div>
+            </div>
+            <div class="card-footer"><span>Titular: <%= c.owner?.name || 'Sin docente' %></span></div>
+          </a>
+        <% }) %>
+      </div>
+    </div>
+    <% } %>
 
     <div class="section">
       <div class="section-header">
@@ -285,6 +387,85 @@
         okEl.style.display = 'block';
         // Recarga para que el aviso de "sin cursos asignados" se actualice.
         setTimeout(() => location.reload(), 1000);
+      });
+    }
+
+    // ── Materias del docente ─────────────────────────────────────────────────
+    // Mismo patrón que el alcance del preceptor de arriba: los elementos solo existen si
+    // el usuario es docente Y la escuela tiene materias, así que va todo detrás de la guarda.
+    if (document.getElementById('courseScopeSaveBtn')) {
+      const searchEl = document.getElementById('courseSearch');
+      const countEl  = document.getElementById('courseCount');
+      const cajas    = () => [...document.querySelectorAll('.scope-course')];
+
+      function refrescarConteo() {
+        const tildadas = cajas().filter(c => c.checked).length;
+        const titular  = cajas().filter(c => c.dataset.titular).length;
+        countEl.textContent = titular
+          ? `${tildadas} materia(s) — ${titular} como titular`
+          : `${tildadas} materia(s) seleccionada(s)`;
+      }
+
+      // Filtro por nombre de materia o de curso. Se ocultan también los encabezados de
+      // división que quedan sin ninguna materia visible, si no queda el título suelto.
+      searchEl.addEventListener('input', () => {
+        const q = searchEl.value.trim().toLowerCase();
+        document.querySelectorAll('.course-scope-group').forEach(grupo => {
+          let visibles = 0;
+          grupo.querySelectorAll('.course-scope-item').forEach(item => {
+            const coincide = !q || item.dataset.name.includes(q);
+            item.style.display = coincide ? '' : 'none';
+            if (coincide) visibles++;
+          });
+          grupo.style.display = visibles ? '' : 'none';
+        });
+      });
+
+      document.getElementById('courseList').addEventListener('change', refrescarConteo);
+
+      // Solo destilda las suplencias: las de titular están disabled y no se tocan.
+      document.getElementById('courseClearBtn').addEventListener('click', () => {
+        cajas().forEach(c => { if (!c.disabled) c.checked = false; });
+        refrescarConteo();
+      });
+
+      refrescarConteo();
+
+      document.getElementById('courseScopeSaveBtn').addEventListener('click', async () => {
+        const errorEl = document.getElementById('courseScopeError');
+        const okEl    = document.getElementById('courseScopeOk');
+        const btn     = document.getElementById('courseScopeSaveBtn');
+        errorEl.classList.remove('show');
+        okEl.style.display = 'none';
+        btn.disabled = true;
+
+        // Se manda la lista completa de deseadas, incluidas las de titular: la ruta las
+        // ignora, pero mandarlas evita que un cambio de criterio allá las interprete como
+        // "destildadas". Las disabled no entran en :checked del querySelectorAll, así que
+        // se agregan aparte.
+        const courseIds = [
+          ...cajas().filter(c => c.checked && !c.disabled).map(c => c.value),
+          ...cajas().filter(c => c.dataset.titular).map(c => c.value),
+        ];
+
+        const res = await fetch('/admin/users/<%= target._id %>/courses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ courseIds }),
+        });
+        const data = await res.json();
+        btn.disabled = false;
+
+        if (!res.ok) { errorEl.textContent = data.error; errorEl.classList.add('show'); return; }
+        const partes = [];
+        if (data.agregadas) partes.push(`${data.agregadas} agregada(s)`);
+        if (data.quitadas)  partes.push(`${data.quitadas} quitada(s)`);
+        okEl.textContent = partes.length
+          ? `Materias guardadas: ${partes.join(', ')}. Ahora dicta ${data.titular + data.suplente} en total.`
+          : 'No hubo cambios que guardar.';
+        okEl.style.display = 'block';
+        // Recarga para refrescar el aviso ámbar y la grilla de materias de más abajo.
+        setTimeout(() => location.reload(), 1200);
       });
     }
 

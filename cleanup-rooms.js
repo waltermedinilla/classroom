@@ -25,12 +25,10 @@ const readline = require('readline');
 const RoomSession = require('./models/RoomSession');
 const RoomMessage = require('./models/RoomMessage');
 const Course      = require('./models/Course');
-const { PURGE_AFTER_MS } = require('./services/liveRoom');
+const { PURGE_AFTER_MS, fechaCorta: fecha } = require('./services/liveRoom');
 
 const DRY_RUN  = process.argv.includes('--dry-run');
 const SIN_PREGUNTAR = process.argv.includes('--si');
-
-const fecha = (d) => new Date(d).toLocaleDateString('es-AR');
 
 function preguntar(pregunta) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });

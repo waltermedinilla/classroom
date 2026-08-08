@@ -78,7 +78,9 @@
   }
   const esc = (s) => String(s == null ? '' : s)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  const hhmm = (d) => new Date(d).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+
+  // Las horas (desdeHora / hastaHora) vienen ya formateadas del servidor, con la zona de la
+  // escuela. Acá no se formatea ninguna: ver el comentario de TZ en services/liveRoom.js.
 
   function hace(seg) {
     if (seg === null || seg === undefined) return 'sin mensajes';
@@ -128,7 +130,7 @@
         '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
         cerradas.map(c =>
           '<a class="lc-chip" href="/courses/' + c.courseId + '/sala/clases/' + c.sessionId + '">' +
-            esc(c.materia) + ' · ' + esc(c.division) + ' · ' + hhmm(c.desde) + '–' + hhmm(c.hasta) +
+            esc(c.materia) + ' · ' + esc(c.division) + ' · ' + esc(c.desdeHora) + '–' + esc(c.hastaHora) +
             ' · ' + c.presentes + ' de ' + c.total +
           '</a>').join('') +
         '</div>'

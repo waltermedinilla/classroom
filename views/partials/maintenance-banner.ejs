@@ -1,0 +1,19 @@
+<%# Aviso para los que YA están trabajando cuando hay un mantenimiento EN ESPERA.
+    Solo aparece si el dueño tildó "avisar a los que están adentro" al programarlo
+    (apagado por default — ver specs/mantenimiento-ventana.spec.md). Nunca se le muestra
+    al dueño del sistema: él tiene el panel.
+    Se lee con `locals.` para que ninguna vista rompa si el middleware no llegó a correr. %>
+<% if (locals.maintenancePending) { %>
+  <div style="background:#fef7e0;border-bottom:1px solid #f0c040;color:#7a5b00;
+              padding:9px 16px;display:flex;align-items:center;gap:10px;
+              font-size:13.5px;line-height:1.35">
+    <span class="material-symbols-outlined" style="color:#ea8600;font-size:20px;flex-shrink:0">build</span>
+    <div style="min-width:0">
+      <strong>Mantenimiento programado.</strong>
+      <%= maintenancePending.message %>
+      Podés seguir trabajando: el sistema se va a bloquear recién cuando no quede nadie
+      usándolo, así que guardá lo que estés haciendo.<% if (maintenancePending.eta) { %>
+      <span style="white-space:nowrap">Duración estimada: <strong><%= maintenancePending.eta %></strong>.</span><% } %>
+    </div>
+  </div>
+<% } %>

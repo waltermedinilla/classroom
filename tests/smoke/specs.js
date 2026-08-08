@@ -2409,6 +2409,154 @@ const specs = [
     },
   },
 
+  // ── Ventana de mantenimiento (esperar a que la plataforma se vacíe) ────────
+  // Ver specs/mantenimiento-ventana.spec.md. Todos usan try/finally con
+  // /maintenance/off (y NO /cancel): off apaga cualquiera de los dos estados, así que
+  // limpia incluso si el escenario terminó activando el mantenimiento de verdad. Si algo
+  // quedara pegado, los specs siguientes se quedarían sin poder autenticar a sus actores.
+  {
+    id: 'maintenance-pending-blocks-ingress',
+    title: 'Mantenimiento EN ESPERA: corta los ingresos nuevos y NO toca a quien ya está trabajando',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert, env }) {
+      try {
+        // Umbral de 60 min a propósito: garantiza que los actores de este mismo smoke
+        // cuenten como "gente trabajando" y la ventana quede EN ESPERA en vez de
+        // activarse en el acto (que es lo que pasaría con la plataforma vacía).
+        const prog = await client.post('superadmin', '/superadmin/backup/maintenance/schedule', {
+          body: { message: 'Smoke: mantenimiento programado', eta: '5 minutos', idleMinutes: 60 },
+          expectStatus: 200,
+        });
+        assert(prog.json.activated === false,
+          'con los actores del smoke conectados debería quedar en espera, no activarse');
+        assert(prog.json.pending && prog.json.pending.pending === true,
+          'debería devolver el estado en espera');
+
+        const status = await client.get('superadmin', '/superadmin/backup/maintenance-status', { expectStatus: 200 });
+        assert(status.json.state === null,
+          'una espera NO puede figurar como mantenimiento activo: bloquearía a todos');
+        assert(status.json.pending, 'maintenance-status debería reportar la espera');
+
+        // El corazón del pedido: el que ya está adentro sigue trabajando sin enterarse.
+        await client.get('teacher', '/courses', { expectStatus: 200 });
+
+        // Pero no entra nadie nuevo, ni con credenciales válidas.
+        const rechazo = await client.post('ingressProbe', '/login', {
+          body: { email: teacher.email, password: teacher.password },
+          expectStatus: 503,
+        });
+        assert(rechazo.json && rechazo.json.pending === true,
+          'el 503 debería aclarar que es por un mantenimiento en espera');
+
+        // El dueño SÍ puede entrar: sin esta excepción, una cookie vencida durante su
+        // propia ventana lo dejaría afuera del panel donde se apaga.
+        await client.post('ownerProbe', '/login', {
+          body: { email: env.SMOKE_SUPERADMIN_EMAIL, password: env.SMOKE_SUPERADMIN_PASSWORD },
+          expectStatus: 200,
+        });
+
+        // Y el formulario lo avisa antes de que nadie tipee una contraseña.
+        const loginPage = await client.get(null, '/login', { expectStatus: 200 });
+        assert(loginPage.text.includes('Mantenimiento en unos minutos'),
+          'la pantalla de login debería avisar del mantenimiento inminente');
+
+        // Crear una cuenta es la forma más extrema de "querer entrar ahora".
+        await client.post('ingressProbe', '/register', {
+          body: {
+            name: 'Smoke Bloqueado', email: `smoke.blocked.${RUN_ID}@example.com`,
+            password: 'SmokeTest1234', role: 'teacher', dni: dniSmoke(90),
+          },
+          expectStatus: 503,
+        });
+      } finally {
+        await client.post('superadmin', '/superadmin/backup/maintenance/off', { body: {} });
+      }
+
+      // Cancelada la espera, la puerta se abre de nuevo en la request siguiente.
+      const limpio = await client.get('superadmin', '/superadmin/backup/maintenance-status', { expectStatus: 200 });
+      assert(limpio.json.pending === null, 'no debería quedar ninguna espera en curso');
+      await client.post('reingressProbe', '/login', {
+        body: { email: teacher.email, password: teacher.password },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'maintenance-activity-semaforo',
+    title: 'El semáforo dice cuánta gente está trabajando, sin contar al dueño',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const act = await client.get('superadmin', '/superadmin/backup/maintenance/activity?idleMinutes=2', { expectStatus: 200 });
+      assert(typeof act.json.count === 'number', 'debería devolver cuánta gente hay trabajando');
+      assert(typeof act.json.ready === 'boolean', 'debería devolver el semáforo listo/ocupado');
+      assert(Array.isArray(act.json.users), 'debería devolver quiénes son');
+      assert(act.json.ready === (act.json.count === 0), 'ready y count tienen que ser coherentes');
+
+      // El dueño no puede contar como "gente trabajando": mirando este mismo panel
+      // refresca su lastSeen cada 10 s y bloquearía su propio mantenimiento para siempre.
+      // El monitor (que NO lo excluye) sí lo ve conectado ahora — misma ventana de 2 min.
+      const mon = await client.get('superadmin', '/superadmin/monitor/stats', { expectStatus: 200 });
+      assert((mon.json.users.byRole.superadmin || 0) >= 1,
+        'el monitor debería ver al dueño conectado ahora mismo');
+      assert(!act.json.byRole.superadmin,
+        'el dueño no puede figurar entre la gente que está trabajando');
+
+      // Umbral fuera de rango: se recorta, no se rechaza.
+      const recortado = await client.get('superadmin', '/superadmin/backup/maintenance/activity?idleMinutes=999', { expectStatus: 200 });
+      assert(recortado.json.idleMinutes === 60, `debería recortar a 60 min, devolvió ${recortado.json.idleMinutes}`);
+      assert(recortado.json.users.length <= 25, 'la lista no debería pasar de 25 personas');
+      assert(recortado.json.truncated === (recortado.json.count > recortado.json.users.length),
+        'truncated tiene que ser coherente con count y la lista');
+    },
+  },
+  {
+    id: 'maintenance-window-conflicts',
+    title: 'Cancelar la espera, y no confundirla con el mantenimiento ya activo',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      try {
+        await client.post('superadmin', '/superadmin/backup/maintenance/schedule', {
+          body: { message: 'Smoke: espera a cancelar', idleMinutes: 60 }, expectStatus: 200,
+        });
+        await client.post('superadmin', '/superadmin/backup/maintenance/cancel', { body: {}, expectStatus: 200 });
+
+        const tras = await client.get('superadmin', '/superadmin/backup/maintenance-status', { expectStatus: 200 });
+        assert(tras.json.pending === null && tras.json.state === null,
+          'cancelar debería dejar el sistema funcionando normalmente');
+
+        // Cancelar dos veces no es un error (idempotente).
+        await client.post('superadmin', '/superadmin/backup/maintenance/cancel', { body: {}, expectStatus: 200 });
+
+        // Con el mantenimiento YA activo, ni se programa una espera ni se "cancela":
+        // desbloquear la app tiene que ser un acto explícito (/maintenance/off).
+        await client.post('superadmin', '/superadmin/backup/maintenance/on', {
+          body: { message: 'Smoke: activo' }, expectStatus: 200,
+        });
+        await client.post('superadmin', '/superadmin/backup/maintenance/schedule', {
+          body: { idleMinutes: 60 }, expectStatus: 409,
+        });
+        await client.post('superadmin', '/superadmin/backup/maintenance/cancel', { body: {}, expectStatus: 409 });
+
+        const activo = await client.get('superadmin', '/superadmin/backup/maintenance-status', { expectStatus: 200 });
+        assert(activo.json.state, 'el mantenimiento activo tiene que seguir intacto tras los 409');
+      } finally {
+        await client.post('superadmin', '/superadmin/backup/maintenance/off', { body: {} });
+      }
+
+      await client.get('scopedTeacher', '/courses', { expectStatus: 200 });
+    },
+  },
+  {
+    id: 'maintenance-window-denied-for-regular-admin',
+    title: 'Un admin de escuela NO puede ver el semáforo ni programar mantenimiento (403)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      await client.get('admin',  '/superadmin/backup/maintenance/activity', { expectStatus: 403 });
+      await client.post('admin', '/superadmin/backup/maintenance/schedule', { body: {}, expectStatus: 403 });
+      await client.post('admin', '/superadmin/backup/maintenance/cancel',   { body: {}, expectStatus: 403 });
+    },
+  },
+
   // ── Auditoría (fase 2: cobertura de todas las categorías nuevas) ──────────
   // Este spec corre AL FINAL del flujo (justo antes de cleanup), así ya se
   // dispararon eventos de: activity/submission/announcement/course/user/
@@ -3642,6 +3790,22 @@ const specs = [
       });
       assert(alDia.json.mensajes.length === 0,
         'con el cursor al día no debería reenviar nada (si no, cada poll manda la conversación entera)');
+
+      // La hora la manda el SERVIDOR ya formateada, no la fecha cruda. Si vuelve a viajar como
+      // fecha, cada navegador la interpreta con la zona horaria de su máquina y el mismo
+      // mensaje aparece a una hora distinta en cada pantalla del aula (era el bug real).
+      const hora = nuevos.json.mensajes[0].hora;
+      assert(/^\d{2}:\d{2}$/.test(hora),
+        `la hora del mensaje debería venir formateada "HH:MM" desde el servidor, vino ${JSON.stringify(hora)}`);
+      const enBsAs = (d) => new Intl.DateTimeFormat('es-AR', {
+        timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+      }).format(d);
+      // El minuto anterior también vale: el mensaje pudo escribirse justo antes de que el
+      // reloj cambiara de minuto, y ese borde no es un bug.
+      const ahora = new Date();
+      const esperadas = [enBsAs(ahora), enBsAs(new Date(ahora.getTime() - 60000))];
+      assert(esperadas.includes(hora),
+        `la hora debería ser la de la escuela (${esperadas.join(' o ')}), vino ${hora}`);
     },
   },
   {

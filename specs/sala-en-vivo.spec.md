@@ -504,6 +504,16 @@ apunte a la URL correcta — el partial de tarjetas es uno solo (RN-27).
   una sala desde la tarjeta de `/preceptor/en-vivo` sigue entrando en observación (RN-19).
   Si no, la pantalla por la que se accede se convertiría en una forma de elegir si te ven.
 
+- **RN-30 — La hora la pone el servidor, no el navegador.** Toda hora o fecha que muestre la
+  sala (mensajes, clases anteriores, transcripción y los CSV) se formatea en el servidor con
+  la zona horaria de la escuela — `TZ` en `services/liveRoom.js`, `America/Argentina/Buenos_Aires`,
+  configurable con `SCHOOL_TZ`. Al cliente le llega el texto ya armado (`"14:05"`), nunca la
+  fecha cruda. **Motivo**: formateada en el navegador, la hora salía de la zona horaria de cada
+  máquina; las del aula tienen cualquiera configurada, así que el mismo mensaje aparecía a una
+  hora distinta en cada pantalla. Y el servidor de producción corre en UTC, con lo cual las
+  vistas renderizadas del lado del servidor mostraban tres horas de más. Una transcripción de
+  clase con horas que dependen de quién la mira no sirve como registro de nada.
+
 ## Casos de uso
 
 | # | Caso de uso | Actor | Qué resuelve |

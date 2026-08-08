@@ -33,13 +33,15 @@
                       text-decoration:none;color:inherit">
               <div>
                 <div style="font-weight:500">
-                  <%= new Date(s.openedAt).toLocaleDateString('es-AR', { weekday:'long', day:'numeric', month:'long' }) %>
+                  <%# fmt viene de services/liveRoom.js: fecha y hora en la zona de la escuela,
+                      no en la del servidor (producción corre en UTC). %>
+                  <%= fmt.fechaDia(s.openedAt) %>
                   <% if (s.title) { %> · <%= s.title %><% } %>
                 </div>
                 <div style="font-size:13px;color:#5f6368">
-                  <%= new Date(s.openedAt).toLocaleTimeString('es-AR', { hour:'2-digit', minute:'2-digit' }) %>
+                  <%= fmt.hora(s.openedAt) %>
                   <% if (s.closedAt) { %>
-                    – <%= new Date(s.closedAt).toLocaleTimeString('es-AR', { hour:'2-digit', minute:'2-digit' }) %>
+                    – <%= fmt.hora(s.closedAt) %>
                     <% if (s.autoClosed) { %> · <span title="Nadie la cerró: se cerró sola por inactividad">cerrada automáticamente</span><% } %>
                   <% } %>
                 </div>

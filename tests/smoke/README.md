@@ -22,6 +22,13 @@ apunta a `localhost`/`127.0.0.1`, salvo que fuerces `SMOKE_ALLOW_REMOTE=true`.
 > `npm run test:images` corre `tests/images/` (optimizador de imágenes) con el runner
 > nativo `node --test`. Tarda menos de un segundo — conviene correrla antes que el smoke.
 
+> Y una suite **hermana** de esta, con las mismas env vars y el mismo cliente HTTP:
+> `npm run test:roles` (`tests/roles/check-roles.js`). Donde el smoke recorre *flujos*,
+> aquella recorre la *matriz* de los 8 roles × las 37 secciones de `config/sections.js`:
+> a dónde aterriza cada rol, a qué entra, qué solapas ve en el menú y si el toggle de
+> `/superadmin/roles` esconde **y** bloquea. Correla cuando toques roles, middlewares de
+> panel, `config/sections.js` o `res.locals.can`.
+
 Con eso solo corre el **Nivel 1** (registro, login, servidor arriba) — no necesita
 credenciales. Para el flujo completo (curso, actividades, entregas, calificaciones,
 sugerencias) necesita un admin de escuela real de tu Mongo local:

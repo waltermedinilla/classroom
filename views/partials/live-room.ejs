@@ -146,7 +146,11 @@
   }
   const esc = (s) => String(s == null ? '' : s)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  const hora = (d) => new Date(d).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+
+  // OJO: acá NO se formatea ninguna hora. `m.hora` ya viene armada por el servidor con la zona
+  // de la escuela (services/liveRoom.js). Formatearla acá con toLocaleTimeString era el bug:
+  // usaba la zona horaria del equipo, y como las máquinas del aula tienen cualquier zona
+  // puesta, el mismo mensaje se veía a una hora distinta en cada pantalla.
 
   let seq       = SALA.seq || 0;
   let estado    = SALA.estado;
@@ -196,7 +200,7 @@
       const div = document.createElement('div');
       if (m.kind === 'system') {
         div.className = 'lr-sistema';
-        div.textContent = m.texto + ' · ' + hora(m.hora);
+        div.textContent = m.texto + ' · ' + m.hora;
       } else {
         div.className = 'lr-msg' + (m.esMio ? ' mio' : '');
         div.dataset.id = m.id;
@@ -205,7 +209,7 @@
             esc((m.autor || '—').charAt(0).toUpperCase()) +
           '</div>' +
           '<div style="min-width:0">' +
-            '<div class="lr-msg-meta">' + esc(m.autor) + ' · ' + hora(m.hora) +
+            '<div class="lr-msg-meta">' + esc(m.autor) + ' · ' + esc(m.hora) +
               (GESTOR && !m.borrado
                 ? ' · <button class="lr-borrar" data-borrar="' + m.id + '">borrar</button>'
                 : '') +

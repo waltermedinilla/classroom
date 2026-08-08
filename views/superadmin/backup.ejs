@@ -359,33 +359,132 @@
       }
     }
 
-    // ─── Modo mantenimiento ───
+    // ─── Modo mantenimiento ─────────────────────────────────────────────────
+    // Tres estados: normal / EN ESPERA (programado, esperando a que la plataforma se
+    // vacíe) / ACTIVO. Ver specs/mantenimiento-ventana.spec.md.
+    const ROLE_NAMES = <%- JSON.stringify(roleNames) %>;
+
+    // Los nombres los escriben otras personas (salen de la BD). Sin escapar, un usuario
+    // llamado "<img onerror=...>" ejecutaría código en el panel del dueño.
+    const esc = (s) => String(s === null || s === undefined ? '' : s)
+      .replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+    let maintData      = { state: null, pending: null, activity: null };
+    let maintPollTimer = null;
+
     async function loadMaintenanceStatus() {
       try {
         const res  = await fetch('/superadmin/backup/maintenance-status');
         const data = await res.json();
-        renderMaintenanceSection(data.state);
+        maintData = data;
+        renderMaintenanceSection(data);
+        startActivityPoll();
       } catch {
         document.getElementById('maintenanceLoading').textContent = 'No se pudo consultar el estado';
       }
     }
 
-    function renderMaintenanceSection(state) {
+    // Con una espera en curso manda el umbral con el que se programó; si no, el que el
+    // dueño esté tanteando en el formulario (así ve el efecto ANTES de programar nada).
+    function idleMinutesEnUso() {
+      if (maintData.pending) return maintData.pending.idleMinutes || 5;
+      const el = document.getElementById('maintIdle');
+      const n  = el ? parseInt(el.value, 10) : 5;
+      return Number.isFinite(n) && n > 0 ? Math.min(60, n) : 5;
+    }
+
+    function startActivityPoll() {
+      clearInterval(maintPollTimer);
+      if (maintData.state) return; // ya está bloqueado: no hay a quién esperar
+      maintPollTimer = setInterval(pollActivity, 10000);
+      pollActivity();
+    }
+
+    async function pollActivity() {
+      // Un panel abierto y olvidado toda la tarde no tiene por qué seguir consultando.
+      if (document.hidden || maintData.state) return;
+      try {
+        const res  = await fetch('/superadmin/backup/maintenance/activity?idleMinutes=' + idleMinutesEnUso());
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error al consultar');
+        // El promotor pudo haber activado el mantenimiento solo mientras mirábamos (o el
+        // estado pudo cambiar desde el otro worker): ahí se recarga la sección entera.
+        if (data.active || (!!data.pending !== !!maintData.pending)) return loadMaintenanceStatus();
+        renderActivity(data);
+      } catch {
+        const box = document.getElementById('maintActivityBox');
+        if (box) box.innerHTML = '<span style="color:#c5221f;font-size:13px">No se pudo consultar quién está trabajando.</span>';
+      }
+    }
+
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) pollActivity(); });
+
+    // El semáforo. Se dibuja en su propio nodo para que el refresco cada 10 s no le borre
+    // al dueño lo que esté tipeando en el formulario de al lado.
+    function renderActivity(a) {
+      const box = document.getElementById('maintActivityBox');
+      if (!box) return;
+
+      const ready = a.count === 0;
+      const roles = Object.entries(a.byRole || {})
+        .map(([r, n]) => `${ROLE_NAMES[r] || r}: ${n}`).join(' · ');
+
+      const lista = (a.users || []).map(u => `
+        <div style="display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12.5px">
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(u.name)}</span>
+          <span style="color:var(--text-hint);white-space:nowrap">${esc(ROLE_NAMES[u.role] || u.role)} · ${u.minutesAgo === 0 ? 'ahora' : 'hace ' + u.minutesAgo + ' min'}</span>
+        </div>`).join('');
+
+      const espera = a.pending
+        ? `<div style="font-size:12px;margin-top:6px">Esperando hace <strong>${a.pending.waitedMinutes} min</strong>${
+             a.pending.deadline ? ' · se activa igual a las ' + new Date(a.pending.deadline).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : ''}</div>`
+        : '';
+
+      box.innerHTML = `
+        <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;
+                    background:${ready ? '#e6f4ea' : '#fef7e0'};border:1px solid ${ready ? '#137333' : '#f0c040'}">
+          <span style="font-size:18px;line-height:1.2">${ready ? '🟢' : '🟠'}</span>
+          <div style="color:${ready ? '#137333' : '#7a5b00'};min-width:0">
+            <strong style="font-size:13.5px">${ready
+              ? 'Listo para mantener: no hay nadie trabajando.'
+              : a.count + (a.count === 1 ? ' persona trabajando ahora mismo.' : ' personas trabajando ahora mismo.')}</strong>
+            <div style="font-size:11.5px;opacity:.9;margin-top:3px">
+              Cuenta a quien haya usado la plataforma en los últimos ${a.idleMinutes} min (vos no contás).${roles ? ' · ' + esc(roles) : ''}
+            </div>
+            ${espera}
+          </div>
+        </div>
+        ${lista ? `<details style="margin-top:8px">
+          <summary style="cursor:pointer;font-size:12.5px;color:var(--text-secondary)">Ver quiénes están${a.truncated ? ' (primeros ' + a.users.length + ')' : ''}</summary>
+          <div style="margin-top:6px;max-height:220px;overflow:auto">${lista}</div>
+        </details>` : ''}`;
+    }
+
+    function renderMaintenanceSection(data) {
       document.getElementById('maintenanceLoading').style.display = 'none';
       const content = document.getElementById('maintenanceContent');
       content.style.display = 'block';
 
+      const state   = data.state;
+      const pending = data.pending;
+      const inputCss = 'padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--surface);color:var(--text-primary)';
+
       if (state) {
         const date = new Date(state.activatedAt);
+        const origen = state.reason === 'restore' ? '(automático, durante una restauración)'
+                     : state.reason === 'auto'
+                        ? (state.promotedBy === 'deadline'
+                            ? '(automático, venció el tope de espera)'
+                            : '(automático, se vació la plataforma)')
+                        : '(manual)';
         content.innerHTML = `
           <div class="backup-warning" style="border-color:#ea4335;background:#fce8e6;color:#7a1a1a">
             <span class="material-symbols-outlined" style="color:#c5221f">error</span>
             <div>
               <strong>El sitio está EN MANTENIMIENTO ahora mismo.</strong> Todos los usuarios (excepto vos) ven la
               página de aviso en vez de la app.<br>
-              <span style="font-size:12px">Activado ${date.toLocaleString('es-AR')} por ${state.activatedBy}
-              ${state.reason === 'restore' ? '(automático, durante una restauración)' : '(manual)'}</span><br>
-              <span style="font-size:12px">Mensaje mostrado: "${state.message}"${state.eta ? ' · ETA: ' + state.eta : ''}</span>
+              <span style="font-size:12px">Activado ${date.toLocaleString('es-AR')} por ${esc(state.activatedBy)} ${origen}</span><br>
+              <span style="font-size:12px">Mensaje mostrado: "${esc(state.message)}"${state.eta ? ' · ETA: ' + esc(state.eta) : ''}</span>
             </div>
           </div>
           <button class="btn btn-primary" onclick="toggleMaintenance(false)">
@@ -393,41 +492,127 @@
             Desactivar mantenimiento
           </button>
           <div id="maintenanceActionStatus" style="margin-top:10px;font-size:13px"></div>`;
+
+      } else if (pending) {
+        const date = new Date(pending.requestedAt);
+        content.innerHTML = `
+          <div id="maintActivityBox" style="margin-bottom:12px"></div>
+          <div class="backup-warning" style="border-color:#ea8600;background:#fef7e0;color:#7a5b00">
+            <span class="material-symbols-outlined" style="color:#ea8600">hourglass_top</span>
+            <div>
+              <strong>Mantenimiento EN ESPERA.</strong> No se expulsó a nadie: los que ya estaban adentro
+              siguen trabajando y no entra nadie nuevo. Apenas la plataforma quede vacía, el mantenimiento
+              se activa solo (se controla cada 30 segundos).<br>
+              <span style="font-size:12px">Programado ${date.toLocaleString('es-AR')} por ${esc(pending.requestedBy)} ·
+              inactividad ${pending.idleMinutes} min ·
+              ${pending.maxWaitMinutes ? 'se activa igual tras ' + pending.maxWaitMinutes + ' min de espera' : 'sin tope de espera'}</span><br>
+              <span style="font-size:12px">Mensaje: "${esc(pending.message)}"${pending.eta ? ' · ETA: ' + esc(pending.eta) : ''}${
+                pending.notifyActiveUsers ? ' · los usuarios conectados están viendo el aviso' : ''}</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-outline" onclick="cancelMaintenanceWindow()">
+              <span class="material-symbols-outlined">event_busy</span>
+              Cancelar espera
+            </button>
+            <button class="btn btn-outline" style="border-color:#c5221f;color:#c5221f" onclick="toggleMaintenance(true)">
+              <span class="material-symbols-outlined">bolt</span>
+              Activar ahora igual
+            </button>
+          </div>
+          <div id="maintenanceActionStatus" style="margin-top:10px;font-size:13px"></div>`;
+
       } else {
         content.innerHTML = `
+          <div id="maintActivityBox" style="margin-bottom:12px"></div>
           <p style="font-size:13px;color:var(--text-secondary);margin:0 0 12px">
-            El sitio está funcionando normalmente. Activar este modo bloquea el acceso a todos los usuarios
-            excepto vos, mostrándoles una página de aviso.
+            <strong>Programar</strong> corta los ingresos nuevos y espera a que terminen los que ya están
+            trabajando: cuando no quede nadie, el mantenimiento se activa solo.
+            <strong>Activar ahora</strong> bloquea a todos en el acto, estén haciendo lo que estén haciendo.
           </p>
-          <div style="display:flex;flex-direction:column;gap:8px;max-width:420px">
-            <input type="text" id="maintMessage" placeholder="Mensaje (opcional, ej: Estamos actualizando el sistema)"
-              style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--surface);color:var(--text-primary)">
-            <input type="text" id="maintEta" placeholder="Tiempo estimado (opcional, ej: 10-15 minutos)"
-              style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--surface);color:var(--text-primary)">
+          <div style="display:flex;flex-direction:column;gap:8px;max-width:460px">
+            <input type="text" id="maintMessage" placeholder="Mensaje (opcional, ej: Estamos actualizando el sistema)" style="${inputCss}">
+            <input type="text" id="maintEta" placeholder="Tiempo estimado (opcional, ej: 10-15 minutos)" style="${inputCss}">
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <label style="font-size:12.5px;color:var(--text-secondary);display:flex;flex-direction:column;gap:4px;flex:1;min-width:180px">
+                Considerar inactivo tras (min)
+                <input type="number" id="maintIdle" value="5" min="1" max="60" style="${inputCss}" oninput="pollActivity()">
+              </label>
+              <label style="font-size:12.5px;color:var(--text-secondary);display:flex;flex-direction:column;gap:4px;flex:1;min-width:180px">
+                Esperar como máximo (min, opcional)
+                <input type="number" id="maintMaxWait" placeholder="sin límite" min="1" max="1440" style="${inputCss}">
+              </label>
+            </div>
+            <label style="font-size:12.5px;color:var(--text-secondary);display:flex;gap:8px;align-items:flex-start">
+              <input type="checkbox" id="maintNotify" style="margin-top:2px">
+              <span>Avisar a los que están trabajando (les muestra una franja para que vayan guardando).
+                Ojo: puede acelerar la espera, pero también provocar una avalancha de entregas de último momento.</span>
+            </label>
           </div>
-          <button class="btn btn-outline" style="margin-top:10px;border-color:#ea8600;color:#ea8600" onclick="toggleMaintenance(true)">
-            <span class="material-symbols-outlined">build</span>
-            Activar mantenimiento
-          </button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+            <button class="btn btn-primary" onclick="scheduleMaintenance()">
+              <span class="material-symbols-outlined">schedule</span>
+              Programar mantenimiento
+            </button>
+            <button class="btn btn-outline" style="border-color:#ea8600;color:#ea8600" onclick="toggleMaintenance(true)">
+              <span class="material-symbols-outlined">build</span>
+              Activar ahora
+            </button>
+          </div>
           <div id="maintenanceActionStatus" style="margin-top:10px;font-size:13px"></div>`;
       }
     }
 
-    async function toggleMaintenance(activate) {
+    async function maintAction(path, body, mensajeError) {
       const statusEl = document.getElementById('maintenanceActionStatus');
       statusEl.innerHTML = '<span class="spinner-inline"></span>Aplicando...';
       try {
-        const path = activate ? '/superadmin/backup/maintenance/on' : '/superadmin/backup/maintenance/off';
-        const body = activate
-          ? { message: document.getElementById('maintMessage').value.trim(), eta: document.getElementById('maintEta').value.trim() }
-          : {};
-        const res  = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const res  = await fetch(path, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}),
+        });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Error al aplicar el cambio');
-        renderMaintenanceSection(activate ? data.state : null);
+        if (!res.ok) throw new Error(data.error || mensajeError);
+        await loadMaintenanceStatus();
+        return data;
       } catch (err) {
-        statusEl.innerHTML = `<span style="color:#c5221f">✗ ${err.message}</span>`;
+        statusEl.innerHTML = `<span style="color:#c5221f">✗ ${esc(err.message)}</span>`;
+        return null;
       }
+    }
+
+    async function scheduleMaintenance() {
+      const data = await maintAction('/superadmin/backup/maintenance/schedule', {
+        message:           document.getElementById('maintMessage').value.trim(),
+        eta:               document.getElementById('maintEta').value.trim(),
+        idleMinutes:       document.getElementById('maintIdle').value,
+        maxWaitMinutes:    document.getElementById('maintMaxWait').value,
+        notifyActiveUsers: document.getElementById('maintNotify').checked,
+      }, 'Error al programar el mantenimiento');
+
+      // Caso "no había nadie": no se programó nada, se activó en el acto. Conviene decirlo,
+      // porque el dueño apretó "programar" y se encontró con el sitio ya bloqueado.
+      if (data && data.activated) {
+        document.getElementById('maintenanceActionStatus').innerHTML =
+          '<span style="color:#137333">✓ No había nadie trabajando: el mantenimiento se activó en el acto.</span>';
+      }
+    }
+
+    function cancelMaintenanceWindow() {
+      maintAction('/superadmin/backup/maintenance/cancel', {}, 'Error al cancelar la espera');
+    }
+
+    // Activar/desactivar YA MISMO. Con una espera en curso, el mensaje y la ETA salen de
+    // ella (el formulario no está en pantalla en ese estado).
+    function toggleMaintenance(activate) {
+      const path = activate ? '/superadmin/backup/maintenance/on' : '/superadmin/backup/maintenance/off';
+      let body = {};
+      if (activate) {
+        const msgEl = document.getElementById('maintMessage');
+        body = msgEl
+          ? { message: msgEl.value.trim(), eta: document.getElementById('maintEta').value.trim() }
+          : { message: maintData.pending?.message, eta: maintData.pending?.eta };
+      }
+      maintAction(path, body, 'Error al aplicar el cambio');
     }
 
     loadStats();

@@ -309,9 +309,13 @@ router.get('/users/:id', async (req, res) => {
   if (school && target.school?.toString() !== school.toString()) {
     return res.status(403).send('Acceso denegado');
   }
-  const [createdCourses, joinedCourses] = await Promise.all([
+  const [createdCourses, joinedCourses, coTaughtCourses] = await Promise.all([
     Course.find({ owner:    target._id }).populate('owner', 'name email').populate('school', 'name').populate('division', 'name'),
     Course.find({ students: target._id }).populate('owner', 'name email').populate('school', 'name').populate('division', 'name'),
+    // Materias donde es SUPLENTE. Iban por separado de las suyas como titular porque hasta
+    // ahora no se mostraban en ningún lado: el perfil de un docente que solo era suplente
+    // se veía idéntico al de uno sin ninguna materia.
+    Course.find({ coTeachers: target._id }).populate('owner', 'name email').populate('school', 'name').populate('division', 'name'),
   ]);
 
   // Alcance del preceptor: la vista muestra el bloque de asignación de cursos solo si el
@@ -323,10 +327,23 @@ router.get('/users/:id', async (req, res) => {
     ? await Division.find({ school: target.school }).sort({ name: 1 }).select('_id name').lean()
     : [];
 
+  // Materias de la escuela para el bloque "Materias que dicta" (espejo del bloque de
+  // cursos del preceptor). Mismo criterio que allá: se carga siempre que haya escuela, no
+  // solo si el usuario ya es docente, para que al cambiarle el rol a Docente desde esta
+  // misma pantalla el bloque aparezca cargado sin tener que recargar.
+  const schoolCourses = target.school
+    ? await Course.find({ school: target.school })
+        .populate('division', 'name')
+        .sort({ name: 1 })
+        .select('_id name division owner coTeachers')
+        .lean()
+    : [];
+
   res.render('admin/user-profile', {
-    target, createdCourses, joinedCourses, PROTECTED_ADMIN_EMAIL,
+    target, createdCourses, joinedCourses, coTaughtCourses, PROTECTED_ADMIN_EMAIL,
     schoolDivisions,
     assignedDivisionIds: (target.assignedDivisions || []).map(d => d.toString()),
+    schoolCourses,
   });
 });
 
@@ -369,6 +386,86 @@ router.post('/users/:id/divisions', async (req, res) => {
       ok: true,
       allDivisions: target.allDivisions,
       count: target.assignedDivisions.length,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /users/:id/courses — matricula a un DOCENTE en varias materias de una sola pasada,
+// desde su propio perfil. Es el espejo de /users/:id/divisions (el alcance del preceptor):
+// hasta ahora al docente solo se lo podía matricular materia por materia, entrando a cada
+// una — con 450 materias eso volvía impracticable cargar el horario de alguien que dicta
+// ocho. Body: { courseIds: String[] } con la lista COMPLETA de materias deseadas.
+//
+// Siempre lo agrega como SUPLENTE (Course.coTeachers), nunca como titular: el titular es
+// uno solo y pisarlo desde acá le sacaría la materia a otro docente sin avisar. Para
+// cambiar al titular está el modal de /admin/courses o la solapa Personas de la materia.
+//
+// Las materias donde YA es titular se ignoran: vienen tildadas y bloqueadas en la vista,
+// pero un POST armado a mano no debe poder destildarlas (quitarlo dejaría la materia sin
+// docente). Desmarcar una materia donde es suplente sí lo saca.
+router.post('/users/:id/courses', async (req, res) => {
+  try {
+    const school = res.locals.user.school;
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ error: 'Usuario no encontrado' });
+    if (school && target.school?.toString() !== school.toString()) {
+      return res.status(403).json({ error: 'Sin acceso' });
+    }
+    if (target.role !== 'teacher') {
+      return res.status(400).json({ error: 'Solo los docentes pueden tener materias a cargo' });
+    }
+    if (target.active === false) {
+      return res.status(400).json({ error: 'La cuenta está deshabilitada: habilitala antes de asignarle materias.' });
+    }
+    if (!target.school) {
+      return res.status(400).json({ error: 'El docente no está asignado a ninguna escuela' });
+    }
+
+    // Se filtra contra las materias de SU escuela: un id de otra escuela armado a mano
+    // se descarta acá, no se guarda para que después lo tenga que filtrar cada vista.
+    const pedidas = Array.isArray(req.body.courseIds) ? req.body.courseIds : [];
+    const validas = pedidas.length
+      ? await Course.find({ _id: { $in: pedidas.filter(id => mongoose.Types.ObjectId.isValid(id)) }, school: target.school })
+          .select('_id').lean()
+      : [];
+    const deseadas = new Set(validas.map(c => c._id.toString()));
+
+    // Estado actual: dónde es titular (intocable) y dónde es suplente (lo que sí se edita).
+    const [comoTitular, comoSuplente] = await Promise.all([
+      Course.find({ school: target.school, owner: target._id }).select('_id').lean(),
+      Course.find({ school: target.school, coTeachers: target._id }).select('_id').lean(),
+    ]);
+    const titulares = new Set(comoTitular.map(c => c._id.toString()));
+    const suplencias = new Set(comoSuplente.map(c => c._id.toString()));
+
+    const agregar = [...deseadas].filter(id => !titulares.has(id) && !suplencias.has(id));
+    const quitar  = [...suplencias].filter(id => !deseadas.has(id));
+
+    if (agregar.length) {
+      await Course.updateMany({ _id: { $in: agregar } }, { $addToSet: { coTeachers: target._id } });
+    }
+    if (quitar.length) {
+      await Course.updateMany({ _id: { $in: quitar } }, { $pull: { coTeachers: target._id } });
+    }
+
+    const suplenteFinal = suplencias.size + agregar.length - quitar.length;
+
+    if (agregar.length || quitar.length) {
+      logAudit(req, 'user.assign_courses',
+        [{ type: 'user', id: target._id, name: target.name }],
+        { agregadas: agregar.length, quitadas: quitar.length, total: titulares.size + suplenteFinal },
+        { schoolId: target.school || null },
+      );
+    }
+
+    res.json({
+      ok: true,
+      agregadas: agregar.length,
+      quitadas:  quitar.length,
+      titular:   titulares.size,
+      suplente:  suplenteFinal,
     });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -547,6 +644,42 @@ router.post('/users/:id/impersonate', async (req, res) => {
 });
 
 /* ─── Courses (admin CRUD) ─── */
+
+// Resuelve y valida al docente que se va a poner al frente de una materia.
+//
+// Punto de verdad único de las cuatro vías de matriculación: crear la materia, editarla,
+// cambiar el titular y agregar un suplente. Antes cada una validaba distinto y la de
+// editar (`POST /courses/:id/edit`) no validaba nada más que la existencia del id: aceptaba
+// como titular a un alumno, a un preceptor o a un docente de otra escuela. La materia
+// quedaba en manos de alguien que ni siquiera podía abrirla y en el listado figuraba con
+// docente asignado, así que el problema no se veía hasta que el docente real reclamaba.
+//
+// `schoolId` es la escuela contra la que validar: la del admin, o la de la materia cuando
+// quien opera es el superadmin (que no tiene escuela propia). Sin escuela de ningún lado
+// no se valida pertenencia — es el caso de las materias viejas sin `school`.
+//
+// Devuelve { teacher } o { error } con el mensaje ya redactado para la respuesta.
+async function resolveCourseTeacher(teacherId, schoolId) {
+  if (!teacherId) return { error: 'Falta el docente' };
+  if (!mongoose.Types.ObjectId.isValid(teacherId)) return { error: 'Docente no válido' };
+
+  const teacher = await User.findById(teacherId).select('_id name email role school active');
+  if (!teacher) return { error: 'Docente no válido' };
+
+  if (teacher.role !== 'teacher') {
+    return { error: `${teacher.name} tiene el rol ${ROLE_LABEL[teacher.role] || teacher.role}: solo un Docente puede estar a cargo de una materia.` };
+  }
+  if (schoolId && teacher.school?.toString() !== schoolId.toString()) {
+    return { error: 'El docente no pertenece a esta institución' };
+  }
+  // Un docente deshabilitado no puede entrar, así que asignarlo deja la materia sin
+  // docente real — y así la cuenta el tablero del directivo ("cursos sin docente").
+  if (teacher.active === false) {
+    return { error: `La cuenta de ${teacher.name} está deshabilitada: habilitala antes de asignarle materias.` };
+  }
+  return { teacher };
+}
+
 router.get('/courses', async (req, res) => {
   const school = res.locals.user.school;
   const sf     = school ? { school } : {};
@@ -567,7 +700,9 @@ router.get('/courses', async (req, res) => {
       .limit(LIMIT),
     Course.countDocuments(filter),
     Division.find(sf).sort({ name: 1 }),
-    User.find({ ...sf, role: 'teacher' }).sort({ name: 1 }).select('_id name email'),
+    // active: los deshabilitados no se ofrecen — resolveCourseTeacher los rechaza, así que
+    // listarlos solo servía para que el admin eligiera y se comiera un error.
+    User.find({ ...sf, role: 'teacher', active: { $ne: false } }).sort({ name: 1 }).select('_id name email'),
   ]);
 
   const totalPages  = Math.ceil(total / LIMIT);
@@ -580,7 +715,9 @@ router.get('/courses/create', async (req, res) => {
   const sf     = school ? { school } : {};
   const [divisions, teachers, subjects] = await Promise.all([
     Division.find(sf).sort({ name: 1 }),
-    User.find({ ...sf, role: 'teacher' }).sort({ name: 1 }).select('_id name email'),
+    // active: los deshabilitados no se ofrecen — resolveCourseTeacher los rechaza, así que
+    // listarlos solo servía para que el admin eligiera y se comiera un error.
+    User.find({ ...sf, role: 'teacher', active: { $ne: false } }).sort({ name: 1 }).select('_id name email'),
     Subject.find(sf).sort({ name: 1 }).select('name'),
   ]);
   res.render('admin/course-form', { course: null, divisions, teachers, subjects });
@@ -594,8 +731,8 @@ router.post('/courses/create', async (req, res) => {
 
     const division = await Division.findOne({ _id: divisionId, school });
     if (!division) return res.status(400).json({ error: 'División no válida' });
-    const teacher = await User.findOne({ _id: teacherId, school });
-    if (!teacher) return res.status(400).json({ error: 'Docente no válido' });
+    const { teacher, error } = await resolveCourseTeacher(teacherId, school);
+    if (error) return res.status(400).json({ error });
 
     const course = await Course.create({ name, room: room || '', division: division._id, owner: teacher._id, school });
 
@@ -625,7 +762,9 @@ router.get('/courses/:id/edit', async (req, res) => {
   if (school && course.school?.toString() !== school.toString()) return res.status(403).send('Acceso denegado');
   const [divisions, teachers, subjects] = await Promise.all([
     Division.find(sf).sort({ name: 1 }),
-    User.find({ ...sf, role: 'teacher' }).sort({ name: 1 }).select('_id name email'),
+    // active: los deshabilitados no se ofrecen — resolveCourseTeacher los rechaza, así que
+    // listarlos solo servía para que el admin eligiera y se comiera un error.
+    User.find({ ...sf, role: 'teacher', active: { $ne: false } }).sort({ name: 1 }).select('_id name email'),
     Subject.find(sf).sort({ name: 1 }).select('name'),
   ]);
   res.render('admin/course-form', { course, divisions, teachers, subjects });
@@ -647,9 +786,15 @@ router.post('/courses/:id/edit', async (req, res) => {
       updates.division = division._id;
     }
     if (teacherId) {
-      const teacher = await User.findOne({ _id: teacherId });
-      if (!teacher) return res.status(400).json({ error: 'Docente no válido' });
+      const { teacher, error } = await resolveCourseTeacher(teacherId, school || existing.school);
+      if (error) return res.status(400).json({ error });
       updates.owner = teacher._id;
+      // Si el nuevo titular ya figuraba como suplente hay que sacarlo de ahí, igual que en
+      // /assign-teacher: si no, queda listado dos veces (como TITULAR y como SUPLENTE) en
+      // la solapa Personas y en este mismo formulario.
+      if ((existing.coTeachers || []).some(t => t.toString() === teacher._id.toString())) {
+        updates.coTeachers = existing.coTeachers.filter(t => t.toString() !== teacher._id.toString());
+      }
     }
 
     const course = await Course.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
@@ -677,10 +822,8 @@ router.post('/courses/:id/assign-teacher', async (req, res) => {
     if (school && course.school?.toString() !== school.toString()) {
       return res.status(403).json({ error: 'Sin acceso' });
     }
-    const { teacherId } = req.body;
-    if (!teacherId) return res.status(400).json({ error: 'Falta el docente' });
-    const teacher = await User.findOne({ _id: teacherId, school: school || course.school });
-    if (!teacher) return res.status(400).json({ error: 'Docente no válido' });
+    const { teacher, error } = await resolveCourseTeacher(req.body.teacherId, school || course.school);
+    if (error) return res.status(400).json({ error });
     course.owner = teacher._id;
     // Si el nuevo titular ya figuraba como suplente, sacarlo de ahí: si no, queda listado
     // dos veces en la solapa Personas (como TITULAR y como SUPLENTE) y en el form de admin.
@@ -714,10 +857,8 @@ router.post('/courses/:id/co-teachers', async (req, res) => {
     if (school && course.school?.toString() !== school.toString()) {
       return res.status(403).json({ error: 'Sin acceso' });
     }
-    const { teacherId } = req.body;
-    if (!teacherId) return res.status(400).json({ error: 'Falta el docente' });
-    const teacher = await User.findOne({ _id: teacherId, school: school || course.school });
-    if (!teacher) return res.status(400).json({ error: 'Docente no válido' });
+    const { teacher, error } = await resolveCourseTeacher(req.body.teacherId, school || course.school);
+    if (error) return res.status(400).json({ error });
 
     if (course.owner.toString() === teacher._id.toString()) {
       return res.status(400).json({ error: 'Ya es el docente titular de esta materia' });

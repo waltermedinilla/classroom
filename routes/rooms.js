@@ -202,7 +202,11 @@ function serializarMensaje(m, userId) {
     // hubo un problema), pero NO se manda al cliente una vez borrado.
     texto:   borrado ? 'Mensaje eliminado' : m.text,
     borrado,
-    hora:    m.createdAt,
+    // Texto ya formateado ("14:05"), NO la fecha cruda. La hora la fija el servidor con la
+    // zona de la escuela: si la manda cruda, cada navegador la interpreta con la zona horaria
+    // que tenga configurada la máquina y el mismo mensaje aparece a una hora distinta en cada
+    // pantalla del aula. Ver el comentario de TZ en services/liveRoom.js.
+    hora:    live.hora(m.createdAt),
     reacciones: (m.reactions || []).map(r => ({
       emoji: r.emoji,
       n:     r.users.length,
@@ -481,6 +485,7 @@ router.get('/:id/sala/clases', async (req, res, next) => {
 
     res.render('rooms/clases', {
       course: req.course,
+      fmt:    live.fmt,
       total:  req.course.students.length,
       sesiones: sesiones.map(s => ({
         ...s,
@@ -524,6 +529,7 @@ router.get('/:id/sala/clases/:sid', cargarSesion, async (req, res, next) => {
 
     res.render('rooms/session', {
       course:  req.course,
+      fmt:     live.fmt,
       sesion:  req.session_,
       mensajes,
       asistencia,
