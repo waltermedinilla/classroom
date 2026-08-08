@@ -344,7 +344,7 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ## Historial de Cambios (Changelog)
 
-### 2026-08-08 — Fix: el deploy quedaba trabado para siempre si el árbol de producción se ensuciaba (v1.0.29)
+### 2026-08-08 — Fix: el deploy quedaba trabado para siempre si el árbol de producción se ensuciaba (v1.0.30)
 
 **Síntoma**: se pusheó la v1.0.28 y producción siguió mostrando la v1.0.26 en el footer. Ya había pasado con la v1.0.27, con el mismo desenlace: reload manual por SSH.
 
