@@ -86,13 +86,16 @@
     }
   </script>
 
-  <!-- Bandeja "Mis sugerencias" — historial propio + respuestas del equipo -->
+  <!-- Bandeja del sobre — dos cosas en la misma lista: las sugerencias propias (con las
+       respuestas del equipo) y los mensajes que manda el superadministrador. Se unifican acá
+       y no en dos sobres separados porque para el usuario es un solo lugar: "lo que tengo
+       para leer". Cada ítem lleva una píldora que dice de cuál de las dos se trata. -->
   <div id="inboxModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2000;align-items:center;justify-content:center" onclick="if(event.target===this)closeInboxModal()">
     <div style="background:var(--surface);border-radius:12px;width:100%;max-width:520px;margin:16px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.2)">
       <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
         <h3 style="margin:0;font-size:18px;display:flex;align-items:center;gap:8px">
           <span class="material-symbols-outlined" style="color:#1a73e8">mail</span>
-          Mis sugerencias
+          Mensajes
         </h3>
         <div style="display:flex;align-items:center;gap:8px">
           <button class="btn btn-primary" style="padding:6px 12px;font-size:13px;display:inline-flex;align-items:center;gap:4px" onclick="openSuggestFromInbox()" title="Enviar nueva sugerencia">
@@ -133,16 +136,41 @@
       await loadInbox();
     }
 
+    // Las dos fuentes se piden EN PARALELO y se fusionan acá, en el cliente.
+    //
+    // Se prefirió esto antes que un endpoint /inbox que devolviera todo junto: /suggestions/mine
+    // ya existe, está cubierto por los specs de humo y no hay motivo para tocarlo. Son dos
+    // fetch de una bandeja que se abre a pedido, no un camino caliente.
+    //
+    // Si una de las dos falla, la otra igual se muestra: una feature caída no se lleva puesta
+    // a la otra (mismo criterio que el contador del badge en server.js).
     async function loadInbox() {
       var body = document.getElementById('inboxBody');
       body.innerHTML = '<div style="padding:40px 16px;text-align:center;color:var(--text-secondary)">Cargando…</div>';
-      try {
-        var res  = await fetch('/suggestions/mine');
-        var data = await res.json();
-        renderInbox(data.suggestions || []);
-      } catch {
-        body.innerHTML = '<div style="padding:40px 16px;text-align:center;color:var(--danger)">Error al cargar tus sugerencias</div>';
-      }
+
+      var pedir = function (url, campo) {
+        return fetch(url)
+          .then(function (r) { return r.ok ? r.json() : { }; })
+          .then(function (d) { return d[campo] || []; })
+          .catch(function () { return []; });
+      };
+
+      var partes = await Promise.all([
+        pedir('/suggestions/mine', 'suggestions'),
+        pedir('/messages/mine',    'messages'),
+      ]);
+
+      var items = []
+        .concat(partes[0].map(function (s) {
+          return { tipo: 'sugerencia', at: s.updatedAt || s.createdAt, dato: s };
+        }))
+        .concat(partes[1].map(function (m) {
+          return { tipo: 'mensaje', at: m.actividad || m.sentAt, dato: m };
+        }));
+
+      // Por última actividad: un hilo con mensaje nuevo sube, sea del tipo que sea.
+      items.sort(function (a, b) { return new Date(b.at) - new Date(a.at); });
+      renderInbox(items);
     }
 
     function closeInboxModal() {
@@ -162,16 +190,124 @@
       answered: { label: 'Respondida', bg: '#e6f4ea', color: '#137333' },
     };
 
-    function renderInbox(suggestions) {
+    function pildora(texto, color, fondo) {
+      return '<span style="flex-shrink:0;font-size:10px;font-weight:600;padding:2px 8px;' +
+        'border-radius:10px;background:' + fondo + ';color:' + color + '">' + texto + '</span>';
+    }
+
+    function fechaCorta(v) {
+      return v ? new Date(v).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+    }
+
+    function fechaLarga(v) {
+      return v ? new Date(v).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    }
+
+    function renderInbox(items) {
       var body = document.getElementById('inboxBody');
-      if (!suggestions.length) {
+      if (!items.length) {
         body.innerHTML = '<div class="empty-state" style="padding:40px 16px">' +
           '<div class="empty-icon"><span class="material-symbols-outlined">mail</span></div>' +
-          '<p>Todavía no enviaste ninguna sugerencia.</p></div>';
+          '<p>No tenés mensajes ni sugerencias.</p></div>';
         return;
       }
 
-      body.innerHTML = suggestions.map(function (s) {
+      body.innerHTML = items.map(function (it) {
+        return it.tipo === 'mensaje' ? renderMensaje(it.dato) : renderSugerencia(it.dato);
+      }).join('');
+
+      // Marca como leído lo que corresponda, de las dos fuentes, y baja el badge ya mismo.
+      // Fire-and-forget: no esperamos la respuesta del server. Si falla, el peor caso es que
+      // el badge vuelva a aparecer en el próximo pageview (se recalcula server-side), nunca
+      // queda "colgado".
+      var pendientes = 0;
+
+      items.forEach(function (it) {
+        if (it.tipo === 'sugerencia') {
+          var s = it.dato;
+          if (s.status === 'answered' && !s.readByUser) {
+            pendientes++;
+            fetch('/suggestions/mine/' + s._id + '/read', { method: 'POST' }).catch(function () {});
+          }
+        } else {
+          var m = it.dato;
+          if (m.sinLeer) {
+            pendientes++;
+            fetch('/messages/mine/' + m.recipientId + '/read', { method: 'POST' }).catch(function () {});
+          }
+        }
+      });
+
+      if (pendientes) updateInboxBadge(0);
+    }
+
+    // ── Un mensaje del superadministrador ──────────────────────────────────
+    function renderMensaje(m) {
+      // hilo[0] ES el mensaje original, que ya se pinta arriba en grande: el resto es la
+      // conversación posterior. Mismo criterio que en las sugerencias.
+      var resto = (m.hilo || []).slice(1);
+
+      var conversacion = resto.map(function (x) {
+        var esEquipo = x.from === 'staff';
+        return '' +
+          '<div style="margin-top:8px;padding:11px 14px;background:var(--bg);border-radius:8px;border-left:3px solid ' + (esEquipo ? '#1a73e8' : '#137333') + '">' +
+            '<div style="font-size:11px;font-weight:600;color:' + (esEquipo ? '#1a73e8' : '#137333') + ';margin-bottom:4px;display:flex;align-items:center;gap:4px">' +
+              '<span class="material-symbols-outlined" style="font-size:14px">' + (esEquipo ? 'reply' : 'forum') + '</span>' +
+              (esEquipo ? 'Respuesta del equipo' : 'Tu respuesta') +
+              (x.at ? ' · ' + fechaLarga(x.at) : '') + (x.editedAt ? ' · editada' : '') +
+            '</div>' +
+            '<div style="font-size:13px;color:var(--text);white-space:pre-wrap">' + escapeHtml(x.text) + '</div>' +
+          '</div>';
+      }).join('');
+
+      var accion = '';
+      if (m.puedeResponder) {
+        accion = '' +
+          '<div style="margin-top:10px">' +
+            '<button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="toggleMsgReply(\'' + m.recipientId + '\')">' +
+              '<span class="material-symbols-outlined" style="font-size:15px">reply</span> Responder' +
+            '</button>' +
+            '<div id="msgReplyBox-' + m.recipientId + '" style="display:none;margin-top:8px">' +
+              '<textarea id="msgReplyText-' + m.recipientId + '" rows="3" maxlength="2000" placeholder="Escribí tu respuesta…" ' +
+                'style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;resize:vertical;font-family:inherit;background:var(--surface);color:var(--text);box-sizing:border-box;outline:none"></textarea>' +
+              '<div id="msgReplyError-' + m.recipientId + '" style="display:none;color:var(--danger);font-size:12px;margin-top:4px"></div>' +
+              '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">' +
+                '<button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="toggleMsgReply(\'' + m.recipientId + '\')">Cancelar</button>' +
+                '<button class="btn btn-primary" style="font-size:12px;padding:5px 12px" id="msgReplyBtn-' + m.recipientId + '" onclick="submitMsgReply(\'' + m.recipientId + '\')">Enviar</button>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+      } else if (!m.allowReplies) {
+        // Se dice explícitamente en vez de no mostrar nada: sin el cartel, la ausencia del
+        // botón parece un error de la página.
+        accion = '<div style="font-size:11px;color:var(--text-hint);margin-top:8px">Este mensaje no admite respuestas.</div>';
+      } else {
+        accion = '<div style="font-size:11px;color:var(--text-hint);margin-top:8px">' +
+          'Esta conversación llegó a su límite.</div>';
+      }
+
+      var deQuien = m.sender && m.sender.name ? m.sender.name : 'Equipo';
+
+      return '' +
+        '<div style="padding:14px 24px;border-bottom:1px solid var(--border);' + (m.sinLeer ? 'background:rgba(26,115,232,.05)' : '') + '">' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">' +
+            '<div style="flex:1">' +
+              (m.subject ? '<div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:3px">' + escapeHtml(m.subject) + '</div>' : '') +
+              '<div style="font-size:13px;color:var(--text);white-space:pre-wrap">' + escapeHtml(m.body) + '</div>' +
+            '</div>' +
+            pildora('Mensaje del equipo', '#1a73e8', '#e8f0fe') +
+          '</div>' +
+          '<div style="font-size:11px;color:var(--text-hint);margin-top:4px">' +
+            escapeHtml(deQuien) + ' · ' + fechaCorta(m.sentAt) +
+          '</div>' +
+          conversacion +
+          accion +
+        '</div>';
+    }
+
+    // ── Una sugerencia propia ──────────────────────────────────────────────
+    function renderSugerencia(s) {
+      return (function (s) {
         var st    = INBOX_STATUS[s.status] || INBOX_STATUS.pending;
         var date  = new Date(s.createdAt).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' });
         // El hilo viene armado del server (services/suggestionThread.js). El primer mensaje
@@ -226,24 +362,18 @@
           '<div style="padding:14px 24px;border-bottom:1px solid var(--border)">' +
             '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">' +
               '<div style="font-size:13px;color:var(--text);white-space:pre-wrap;flex:1">' + escapeHtml(s.text) + '</div>' +
-              '<span style="flex-shrink:0;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:' + st.bg + ';color:' + st.color + '">' + st.label + '</span>' +
+              // Dos píldoras: de qué se trata (para distinguirla de un mensaje del equipo,
+              // que comparte la lista) y en qué estado está.
+              '<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex-shrink:0">' +
+                pildora('Mi sugerencia', '#b06000', '#fef7e0') +
+                pildora(st.label, st.color, st.bg) +
+              '</div>' +
             '</div>' +
             '<div style="font-size:11px;color:var(--text-hint);margin-top:4px">' + date + '</div>' +
             conversacion +
             accion +
           '</div>';
-      }).join('');
-
-      // Marca como leídas las respondidas no leídas (fire-and-forget) y baja el badge ya mismo.
-      // No esperamos la respuesta del server: si falla, el peor caso es que el badge vuelva
-      // a aparecer en el próximo pageview (se recalcula server-side), nunca queda "colgado".
-      var unread = suggestions.filter(function (s) { return s.status === 'answered' && !s.readByUser; });
-      if (unread.length) {
-        unread.forEach(function (s) {
-          fetch('/suggestions/mine/' + s._id + '/read', { method: 'POST' }).catch(function () {});
-        });
-        updateInboxBadge(0);
-      }
+      })(s);
     }
 
     function toggleReply(id) {
@@ -252,6 +382,58 @@
       var abierto = box.style.display !== 'none';
       box.style.display = abierto ? 'none' : 'block';
       if (!abierto) document.getElementById('replyText-' + id).focus();
+    }
+
+    // ── Responder un mensaje del superadministrador ────────────────────────
+    // Gemelas de toggleReply/submitReply pero con sus propios ids de elemento: los dos tipos
+    // conviven en la misma lista y un id compartido haría que abrir la caja de una sugerencia
+    // abriera la de un mensaje.
+    function toggleMsgReply(id) {
+      var box = document.getElementById('msgReplyBox-' + id);
+      if (!box) return;
+      var abierto = box.style.display !== 'none';
+      box.style.display = abierto ? 'none' : 'block';
+      if (!abierto) document.getElementById('msgReplyText-' + id).focus();
+    }
+
+    async function submitMsgReply(id) {
+      var ta     = document.getElementById('msgReplyText-' + id);
+      var errBox = document.getElementById('msgReplyError-' + id);
+      var btn    = document.getElementById('msgReplyBtn-' + id);
+      var text   = ta.value.trim();
+      errBox.style.display = 'none';
+
+      if (!text) {
+        errBox.textContent = 'Escribí tu respuesta antes de enviar';
+        errBox.style.display = 'block';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Enviando…';
+      try {
+        var res  = await fetch('/messages/mine/' + id + '/reply', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ text: text }),
+        });
+        var data = await res.json();
+        if (res.ok) {
+          // Se recarga la bandeja entera en vez de insertar el mensaje a mano: así el estado
+          // que se ve es el que quedó en la base, no una reconstrucción del navegador.
+          await loadInbox();
+        } else {
+          errBox.textContent = data.error || 'No se pudo enviar tu respuesta';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'Enviar';
+        }
+      } catch {
+        errBox.textContent = 'Error de conexión. Intentá de nuevo.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Enviar';
+      }
     }
 
     async function submitReply(id) {

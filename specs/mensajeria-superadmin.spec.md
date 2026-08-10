@@ -1,9 +1,23 @@
 # Mensajería del superadministrador: enviar mensajes a la comunidad
 
-> **Estado: APROBADA por el usuario el 2026-08-10.** En implementación.
+> **Estado: APROBADA e IMPLEMENTADA el 2026-08-10.**
 > Se aprobó tal cual, sin tachar ninguna de las decisiones marcadas **[TACHABLE]**: quedan
 > el filtro por escuela, el asunto opcional, el cuerpo de 2000, el destinatario que no borra,
 > la confirmación arriba de 50 y el toggle editable después del envío.
+>
+> Tests: 35 unitarios nuevos (`tests/unit/messageAudience.test.js` y `messageThread.test.js`,
+> total del proyecto 119/119) + 22 specs de humo (suite completa 245/245) + `test:roles` sin
+> hallazgos. Verificado además el ciclo entero en el navegador contra la base real.
+>
+> **Quedó fuera de lo implementado**: los criterios 23 (429 al envío 21 en una hora) y 36-37
+> (killswitch apagado) no tienen spec de humo — el primero exige 21 envíos reales con sus
+> documentos, los segundos exigen levantar el server con otra env var. El código de los tres
+> está escrito y es el mismo patrón ya ejercitado por `roomMessageLimiter` y
+> `SUGGESTIONS_INBOX_ENABLED`.
+>
+> **Nota sobre RN-04**: la base tiene **una sola escuela**, así que el filtro por escuela no
+> se pinta (la vista lo oculta con `escuelas.length > 1`). Queda listo para el día que haya
+> más de una; hoy no estorba.
 >
 > Decisiones ya cerradas con el usuario — **no reabrirlas**:
 > se envía a **toda la comunidad, por roles, o a personas sueltas** (RN-03) · **el recorte

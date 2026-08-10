@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mensajes - Superadmin</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .compose { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 22px; margin-bottom: 28px; }
+    .campo { margin-bottom: 16px; }
+    .campo > label { display: block; font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+    .campo input[type="text"], .campo textarea, .campo select {
+      width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+      font-size: 14px; font-family: inherit; background: var(--surface); color: var(--text);
+      box-sizing: border-box; outline: none;
+    }
+    .campo textarea { resize: vertical; }
+
+    /* Los roles como chips que se prenden y apagan: es más rápido de leer de un vistazo que
+       una lista de checkboxes, y el estado prendido se ve desde lejos. */
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+      border: 1.5px solid var(--border); border-radius: 20px; padding: 6px 14px;
+      font-size: 13px; color: var(--text); background: var(--surface); user-select: none;
+    }
+    /* El checkbox se esconde a la vista pero NO del navegador: con `display:none` sale del
+       orden de tabulación y los roles dejan de poder elegirse con el teclado. Así sigue
+       siendo enfocable, y el foco se ve en el chip que lo envuelve. */
+    .chip input {
+      position: absolute; width: 1px; height: 1px;
+      opacity: 0; margin: 0; pointer-events: none;
+    }
+    .chip:focus-within { outline: 2px solid #1a73e8; outline-offset: 2px; }
+    .chip.on { border-color: #1a73e8; background: #e8f0fe; color: #1a73e8; font-weight: 600; }
+    .chip.todos.on { border-color: #9334e6; background: #f3e8fd; color: #9334e6; }
+
+    .persona-chip {
+      display: inline-flex; align-items: center; gap: 6px; background: #e6f4ea; color: #137333;
+      border-radius: 16px; padding: 4px 6px 4px 12px; font-size: 12px; font-weight: 600;
+    }
+    .persona-chip button { border: none; background: none; cursor: pointer; color: #137333; display: flex; padding: 0; }
+
+    #buscadorResultados {
+      border: 1px solid var(--border); border-radius: 8px; margin-top: 6px; max-height: 220px;
+      overflow-y: auto; background: var(--surface);
+    }
+    .resultado { padding: 9px 12px; cursor: pointer; display: flex; gap: 10px; align-items: center; font-size: 13px; border-bottom: 1px solid var(--border); }
+    .resultado:last-child { border-bottom: none; }
+    .resultado:hover { background: var(--bg); }
+    .resultado .dni { font-weight: 700; min-width: 84px; color: var(--text); }
+
+    .alcance {
+      border: 1px dashed var(--border); border-radius: 8px; padding: 12px 14px;
+      font-size: 13px; color: var(--text-secondary); background: var(--bg);
+    }
+    .alcance strong { color: var(--text); font-size: 15px; }
+
+    .envio { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; }
+    .envio-meta { font-size: 12px; color: var(--text-hint); display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 6px; }
+    .pill { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 11px; }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/superadmin-nav') %>
+
+    <div class="section-header" style="margin-bottom:24px">
+      <span class="material-symbols-outlined section-icon" style="color:#1a73e8">forum</span>
+      <h2 style="margin:0">Mensajes</h2>
+    </div>
+
+    <!-- ── Redacción ────────────────────────────────────────────────────── -->
+    <div class="compose">
+      <div class="campo">
+        <label for="asunto">Asunto <span style="font-weight:400;color:var(--text-hint)">(opcional)</span></label>
+        <input type="text" id="asunto" maxlength="<%= MAX_SUBJECT %>" placeholder="Carga de notas del segundo trimestre">
+      </div>
+
+      <div class="campo">
+        <label for="cuerpo">Mensaje</label>
+        <textarea id="cuerpo" rows="5" maxlength="<%= MAX_BODY %>" placeholder="Escribí el mensaje…" oninput="contarCuerpo()"></textarea>
+        <div style="text-align:right;font-size:11px;color:var(--text-hint);margin-top:4px">
+          <span id="contador">0</span> / <%= MAX_BODY %>
+        </div>
+      </div>
+
+      <div class="campo">
+        <label>¿A quién?</label>
+        <div class="chips" style="margin-bottom:10px">
+          <%# "Toda la comunidad" hay que elegirla a propósito: dejar todo sin tildar NO es
+              "todos", es audiencia vacía y el servidor la rechaza. Es la diferencia entre
+              mandarle a la escuela entera queriendo y sin querer. %>
+          <label class="chip todos" id="chipTodos">
+            <input type="checkbox" id="everyone" onchange="alTocarTodos()">
+            <span class="material-symbols-outlined" style="font-size:17px">public</span>
+            Toda la comunidad
+          </label>
+        </div>
+        <div class="chips" id="chipsRoles">
+          <% roles.forEach(r => { %>
+            <label class="chip" data-rol="<%= r %>">
+              <input type="checkbox" class="rol" value="<%= r %>" onchange="alCambiar(this)">
+              <%= roleNames[r] || r %>
+            </label>
+          <% }) %>
+        </div>
+      </div>
+
+      <% if (escuelas.length > 1) { %>
+      <div class="campo">
+        <label for="escuela">Escuela <span style="font-weight:400;color:var(--text-hint)">(opcional — acota los roles elegidos)</span></label>
+        <select id="escuela" onchange="pedirAlcance()">
+          <option value="">Todas las escuelas</option>
+          <% escuelas.forEach(e => { %>
+            <option value="<%= e._id %>"><%= e.name %></option>
+          <% }) %>
+        </select>
+      </div>
+      <% } %>
+
+      <div class="campo">
+        <label for="buscador">Personas sueltas <span style="font-weight:400;color:var(--text-hint)">(se suman a lo elegido arriba)</span></label>
+        <input type="text" id="buscador" placeholder="Buscar por DNI, nombre o correo…" oninput="buscarPersonas()" autocomplete="off">
+        <div id="buscadorResultados" style="display:none"></div>
+        <div class="chips" id="personasElegidas" style="margin-top:10px"></div>
+      </div>
+
+      <div class="campo">
+        <label class="chip" id="chipRespuestas" style="border-radius:8px">
+          <input type="checkbox" id="allowReplies" onchange="alTocarRespuestas()">
+          <span class="material-symbols-outlined" style="font-size:17px">reply</span>
+          Permitir que respondan
+        </label>
+        <div style="font-size:12px;color:var(--text-hint);margin-top:6px">
+          Si está apagado, el mensaje se ve pero no tiene caja de texto. Se puede cambiar después de enviarlo.
+        </div>
+      </div>
+
+      <div class="campo alcance" id="alcance">
+        Elegí destinatarios para ver a cuántas personas les llega.
+      </div>
+
+      <div id="errorEnvio" style="display:none;color:var(--danger);font-size:13px;margin-bottom:10px"></div>
+      <div id="okEnvio" style="display:none;color:#137333;font-size:13px;margin-bottom:10px"></div>
+
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        <button class="btn btn-primary" id="btnEnviar" onclick="enviar()">
+          <span class="material-symbols-outlined" style="font-size:18px">send</span>
+          Enviar
+        </button>
+      </div>
+    </div>
+
+    <!-- ── Envíos anteriores ────────────────────────────────────────────── -->
+    <div class="section-header" style="margin-bottom:16px">
+      <span class="material-symbols-outlined section-icon" style="color:#5f6368">history</span>
+      <h3 style="margin:0;font-size:17px">Enviados</h3>
+      <% if (total > 0) { %>
+        <span style="font-size:13px;color:var(--text-hint);margin-left:8px"><%= total %> en total</span>
+      <% } %>
+    </div>
+
+    <% if (!mensajes.length) { %>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">forum</span></div>
+        <p>Todavía no enviaste ningún mensaje.</p>
+      </div>
+    <% } else { %>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <% mensajes.forEach(m => { %>
+          <div class="envio">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
+              <div style="flex:1;min-width:0">
+                <a href="/superadmin/messages/<%= m._id %>" style="text-decoration:none;color:inherit">
+                  <div style="font-size:15px;font-weight:600;color:var(--text)">
+                    <%= m.subject || (m.body.length > 70 ? m.body.slice(0, 70) + '…' : m.body) %>
+                  </div>
+                </a>
+                <div class="envio-meta">
+                  <span><%= new Date(m.createdAt).toLocaleDateString('es-AR', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) %></span>
+                  <span>·</span>
+                  <span><%= m.audienciaTexto %></span>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0">
+                <span class="pill" style="background:#e8f0fe;color:#1a73e8">
+                  Leído por <%= m.leidos %> de <%= m.recipientCount %>
+                </span>
+                <% if (m.respuestas > 0) { %>
+                  <span class="pill" style="background:#fce8e6;color:#c5221f"><%= m.respuestas %> respuesta<%= m.respuestas !== 1 ? 's' : '' %> nueva<%= m.respuestas !== 1 ? 's' : '' %></span>
+                <% } %>
+                <span class="pill" style="background:<%= m.allowReplies ? '#e6f4ea' : '#e8eaed' %>;color:<%= m.allowReplies ? '#137333' : '#5f6368' %>">
+                  <%= m.allowReplies ? 'Admite respuestas' : 'Sin respuestas' %>
+                </span>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px">
+              <a href="/superadmin/messages/<%= m._id %>" class="btn btn-outline" style="font-size:12px;padding:5px 12px">
+                <span class="material-symbols-outlined" style="font-size:15px">visibility</span> Ver detalle
+              </a>
+              <button class="btn btn-outline" style="font-size:12px;padding:5px 12px;color:var(--danger);border-color:var(--danger)"
+                onclick="borrar('<%= m._id %>', <%= m.recipientCount %>)">
+                <span class="material-symbols-outlined" style="font-size:15px">delete</span> Eliminar
+              </button>
+            </div>
+          </div>
+        <% }) %>
+      </div>
+
+      <%- include('../partials/pagination', { page, totalPages, queryParams }) %>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+
+  <script>
+    // Las personas elegidas a mano viven acá: Map(id → nombre) para poder pintar los chips
+    // sin volver a preguntarle al servidor quién era cada uno.
+    var elegidas = new Map();
+    var timerBuscar = null;
+    var timerAlcance = null;
+
+    // Propia, con nombre propio: footer.ejs define su escapeHtml dentro del bloque del modal
+    // del sobre, y esta pantalla no tiene por qué depender de que ese bloque esté montado.
+    function esc(str) {
+      var d = document.createElement('div');
+      d.textContent = str == null ? '' : String(str);
+      return d.innerHTML;
+    }
+
+    function contarCuerpo() {
+      document.getElementById('contador').textContent = document.getElementById('cuerpo').value.length;
+    }
+
+    // Prender "Toda la comunidad" apaga y deshabilita los roles: no son combinables, y
+    // dejarlos prendidos sugeriría que acotan algo cuando el servidor los ignora.
+    function alTocarTodos() {
+      var on = document.getElementById('everyone').checked;
+      document.getElementById('chipTodos').classList.toggle('on', on);
+      document.querySelectorAll('#chipsRoles .rol').forEach(function (c) {
+        c.checked = false;
+        c.closest('.chip').classList.remove('on');
+        c.closest('.chip').style.opacity = on ? '.45' : '1';
+        c.closest('.chip').style.pointerEvents = on ? 'none' : 'auto';
+      });
+      pedirAlcance();
+    }
+
+    function alTocarRespuestas() {
+      var on = document.getElementById('allowReplies').checked;
+      document.getElementById('chipRespuestas').classList.toggle('on', on);
+    }
+
+    function alCambiar(input) {
+      input.closest('.chip').classList.toggle('on', input.checked);
+      pedirAlcance();
+    }
+
+    function filtrosActuales() {
+      var roles = [...document.querySelectorAll('#chipsRoles .rol:checked')].map(function (c) { return c.value; });
+      var escuelaEl = document.getElementById('escuela');
+      return {
+        everyone: document.getElementById('everyone').checked,
+        roles:    roles,
+        schools:  escuelaEl && escuelaEl.value ? [escuelaEl.value] : [],
+        userIds:  [...elegidas.keys()],
+      };
+    }
+
+    // ── Alcance en vivo ────────────────────────────────────────────────────
+    // Es la única protección real contra el "quise mandarle a los docentes y le mandé a la
+    // escuela": el número aparece ANTES de que exista ningún documento.
+    function pedirAlcance() {
+      clearTimeout(timerAlcance);
+      timerAlcance = setTimeout(pedirAlcanceYa, 250);
+    }
+
+    async function pedirAlcanceYa() {
+      var f = filtrosActuales();
+      var caja = document.getElementById('alcance');
+
+      if (!f.everyone && !f.roles.length && !f.userIds.length) {
+        caja.innerHTML = 'Elegí destinatarios para ver a cuántas personas les llega.';
+        return;
+      }
+
+      var p = new URLSearchParams();
+      if (f.everyone) p.set('everyone', 'true');
+      f.roles.forEach(function (r) { p.append('roles', r); });
+      f.schools.forEach(function (s) { p.append('schools', s); });
+      f.userIds.forEach(function (u) { p.append('userIds', u); });
+
+      try {
+        var res  = await fetch('/superadmin/messages/preview?' + p.toString());
+        var data = await res.json();
+        if (!data.total) {
+          caja.innerHTML = '<strong>0 personas.</strong> Con estos filtros no queda nadie.';
+          return;
+        }
+        // Plural cuando son varios, singular cuando es uno: "1 Docente" / "333 Docentes".
+        var desglose = Object.keys(data.porRol).map(function (r) {
+          var n = data.porRol[r];
+          return n + ' ' + (n === 1 ? (ROLES_ES[r] || r) : (ROLES_PLURAL[r] || ROLES_ES[r] || r));
+        }).join(', ');
+        var muestra = (data.muestra || []).map(function (u) { return esc(u.name); }).join(', ');
+        caja.innerHTML = '<strong>' + data.total + ' persona' + (data.total === 1 ? '' : 's') + '.</strong> ' +
+          esc(desglose) +
+          (muestra ? '<div style="margin-top:6px;font-size:12px">Por ejemplo: ' + muestra + (data.total > 10 ? '…' : '') + '</div>' : '');
+      } catch {
+        caja.innerHTML = 'No se pudo calcular el alcance.';
+      }
+    }
+
+    var ROLES_ES     = <%- JSON.stringify(roleNames) %>;
+    // Mismo mapa que usa el servidor para el texto del listado y de la auditoría
+    // (ROLES_PLURAL en routes/messages.js): un solo lugar, dos consumidores.
+    var ROLES_PLURAL = <%- JSON.stringify(rolesPlural) %>;
+
+    // ── Buscador de personas ───────────────────────────────────────────────
+    function buscarPersonas() {
+      clearTimeout(timerBuscar);
+      timerBuscar = setTimeout(buscarPersonasYa, 300);
+    }
+
+    async function buscarPersonasYa() {
+      var q = document.getElementById('buscador').value.trim();
+      var caja = document.getElementById('buscadorResultados');
+      if (q.length < 2) { caja.style.display = 'none'; return; }
+
+      try {
+        var res  = await fetch('/superadmin/messages/users?q=' + encodeURIComponent(q));
+        var data = await res.json();
+        var users = data.users || [];
+        if (!users.length) {
+          caja.innerHTML = '<div class="resultado" style="color:var(--text-hint)">Sin resultados</div>';
+        } else {
+          // DNI primero: es el identificador que usa la escuela para reconocer a alguien.
+          caja.innerHTML = users.map(function (u) {
+            return '<div class="resultado" onclick="elegir(\'' + u._id + '\', \'' + escapeAttr(u.name) + '\')">' +
+              '<span class="dni">' + esc(u.dni || '—') + '</span>' +
+              '<span style="flex:1">' + esc(u.name) + '</span>' +
+              '<span style="color:var(--text-hint);font-size:12px">' + esc(ROLES_ES[u.role] || u.role) + '</span>' +
+            '</div>';
+          }).join('');
+        }
+        caja.style.display = 'block';
+      } catch {
+        caja.style.display = 'none';
+      }
+    }
+
+    function elegir(id, nombre) {
+      elegidas.set(id, nombre);
+      document.getElementById('buscador').value = '';
+      document.getElementById('buscadorResultados').style.display = 'none';
+      pintarElegidas();
+      pedirAlcance();
+    }
+
+    function quitar(id) {
+      elegidas.delete(id);
+      pintarElegidas();
+      pedirAlcance();
+    }
+
+    function pintarElegidas() {
+      var caja = document.getElementById('personasElegidas');
+      caja.innerHTML = [...elegidas.entries()].map(function (e) {
+        return '<span class="persona-chip">' + esc(e[1]) +
+          '<button onclick="quitar(\'' + e[0] + '\')" title="Quitar">' +
+            '<span class="material-symbols-outlined" style="font-size:16px">close</span>' +
+          '</button></span>';
+      }).join('');
+    }
+
+    function escapeAttr(s) {
+      return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    }
+
+    // ── Enviar ─────────────────────────────────────────────────────────────
+    async function enviar() {
+      var btn    = document.getElementById('btnEnviar');
+      var errBox = document.getElementById('errorEnvio');
+      var okBox  = document.getElementById('okEnvio');
+      errBox.style.display = 'none';
+      okBox.style.display  = 'none';
+
+      var cuerpo = document.getElementById('cuerpo').value.trim();
+      if (!cuerpo) {
+        errBox.textContent = 'Escribí el mensaje antes de enviar';
+        errBox.style.display = 'block';
+        return;
+      }
+
+      var f = filtrosActuales();
+      if (!f.everyone && !f.roles.length && !f.userIds.length) {
+        errBox.textContent = 'Elegí al menos un destinatario';
+        errBox.style.display = 'block';
+        return;
+      }
+
+      // Confirmación con el número escrito arriba de 50 personas. Un envío masivo no se
+      // deshace solo: se borra a mano, y mientras tanto ya lo vio todo el mundo.
+      var alcance = document.getElementById('alcance').textContent;
+      var m = alcance.match(/^(\d+) persona/);
+      var cuantos = m ? parseInt(m[1], 10) : 0;
+      if (cuantos > 50 && !confirm('Este mensaje le va a llegar a ' + cuantos + ' personas. ¿Enviar?')) return;
+
+      btn.disabled = true;
+      btn.textContent = 'Enviando…';
+      try {
+        var res = await fetch('/superadmin/messages', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            subject:      document.getElementById('asunto').value.trim(),
+            body:         cuerpo,
+            allowReplies: document.getElementById('allowReplies').checked,
+            everyone:     f.everyone,
+            roles:        f.roles,
+            schools:      f.schools,
+            userIds:      f.userIds,
+          }),
+        });
+        var data = await res.json();
+        if (res.ok) {
+          okBox.textContent = 'Mensaje enviado a ' + data.destinatarios + ' persona' + (data.destinatarios === 1 ? '' : 's') + '.';
+          okBox.style.display = 'block';
+          setTimeout(function () { location.reload(); }, 1200);
+        } else {
+          errBox.textContent = data.error || 'No se pudo enviar el mensaje';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:18px">send</span> Enviar';
+        }
+      } catch {
+        errBox.textContent = 'Error de conexión. Intentá de nuevo.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:18px">send</span> Enviar';
+      }
+    }
+
+    async function borrar(id, cuantos) {
+      if (!confirm('Se va a eliminar el mensaje y desaparecer de las bandejas de ' + cuantos + ' persona' + (cuantos === 1 ? '' : 's') + '. ¿Seguro?')) return;
+      try {
+        var res = await fetch('/superadmin/messages/' + id, { method: 'DELETE' });
+        if (res.ok) location.reload();
+        else alert('No se pudo eliminar el mensaje');
+      } catch {
+        alert('Error de conexión');
+      }
+    }
+  </script>
+</body>
+</html>

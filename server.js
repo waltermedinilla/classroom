@@ -21,6 +21,7 @@ const {
 const { logAudit } = require('./middleware/audit');
 const School     = require('./models/School');
 const Suggestion = require('./models/Suggestion');
+const MessageRecipient   = require('./models/MessageRecipient');
 const TemplateAssignment = require('./models/TemplateAssignment');
 const APP_VERSION = require('./package.json').version;
 const { INTEREST_LABELS, INTEREST_ICONS } = require('./config/interests');
@@ -49,6 +50,8 @@ const jefaturaRoutes     = require('./routes/jefatura');
 const backupRoutes       = require('./routes/backup');
 const dbFixesRoutes      = require('./routes/dbFixes');
 const suggestionRoutes   = require('./routes/suggestions');
+const messageRoutes      = require('./routes/messages');
+const messagesInboxRoutes = require('./routes/messagesInbox');
 const auditRoutes        = require('./routes/audit');
 const tasksRoutes        = require('./routes/tasks');
 const rolesRoutes        = require('./routes/roles');
@@ -458,27 +461,54 @@ app.use((req, res, next) => {
   res.status(503).render('maintenance', { message: state.message, eta: state.eta });
 });
 
-// ── Bandeja de sugerencias: contador de respuestas sin leer ─────────────────
-// Inyecta res.locals.unreadSuggestionCount para el badge del sobre en el header.
-// Mismo patrón defensivo que el resto de los middlewares globales: try/catch que
-// nunca puede tumbar una request, y un killswitch por env var para apagarlo sin
-// redeploy si algún día hiciera falta (ej. sospecha de que esta query pesa en
-// producción bajo carga — no debería, el índice {user:1, status:1} la hace
-// sub-milisegundo, pero la opción de apagarla en caliente no cuesta nada tenerla).
+// ── Bandeja del sobre: contador de cosas sin leer ───────────────────────────
+// Inyecta los contadores del badge del sobre del header. Son DOS fuentes:
+//   unreadSuggestionCount → respuestas del equipo a sugerencias propias
+//   unreadMessageCount    → mensajes del superadmin sin abrir, o con respuesta nueva
+//   unreadInboxCount      → la suma, que es lo que pinta el header
+//
+// unreadSuggestionCount se conserva con su nombre y su significado de siempre: ya lo
+// consumen vistas y specs de humo, y renombrarlo no compraba nada.
+//
+// Mismo patrón defensivo que el resto de los middlewares globales: try/catch que nunca
+// puede tumbar una request, y un killswitch por env var para apagar cada fuente sin
+// redeploy si algún día hiciera falta (ej. sospecha de que la query pesa en producción
+// bajo carga — no debería, las dos van por índice, pero la opción de apagarlas en
+// caliente no cuesta nada tenerla).
+//
+// Las dos cuentas van en Promise.all y no en serie: este middleware corre en CADA request,
+// así que su costo es el de la más lenta, no la suma de las dos.
 const SUGGESTIONS_INBOX_ENABLED = process.env.SUGGESTIONS_INBOX_ENABLED !== 'false';
+const MESSAGES_ENABLED          = process.env.MESSAGES_ENABLED !== 'false';
 app.use(async (req, res, next) => {
   res.locals.unreadSuggestionCount = 0;
-  if (SUGGESTIONS_INBOX_ENABLED && res.locals.user) {
-    try {
-      res.locals.unreadSuggestionCount = await Suggestion.countDocuments({
-        user:       res.locals.user._id,
-        status:     'answered',
-        readByUser: false,
-      });
-    } catch {
-      // Se queda en 0: el sobre simplemente no muestra badge, nunca rompe la página.
-    }
+  res.locals.unreadMessageCount    = 0;
+
+  if (res.locals.user) {
+    const uid = res.locals.user._id;
+    const [sugerencias, mensajes] = await Promise.all([
+      SUGGESTIONS_INBOX_ENABLED
+        ? Suggestion.countDocuments({ user: uid, status: 'answered', readByUser: false })
+            .catch(() => 0)
+        : 0,
+      MESSAGES_ENABLED
+        // Sin abrir (readAt null) O con una respuesta nueva del superadmin sobre uno ya
+        // leído (unreadForUser). Sin la segunda condición, contestar un hilo ya leído no
+        // encendería el badge nunca.
+        ? MessageRecipient.countDocuments({
+            user: uid,
+            $or:  [{ readAt: null }, { unreadForUser: true }],
+          }).catch(() => 0)
+        : 0,
+    ]);
+    // Si una de las dos falló se queda en 0 y la otra sigue contando: el sobre nunca rompe
+    // la página, y una feature caída no se lleva puesta a la otra.
+    res.locals.unreadSuggestionCount = sugerencias;
+    res.locals.unreadMessageCount    = mensajes;
   }
+
+  res.locals.unreadInboxCount =
+    res.locals.unreadSuggestionCount + res.locals.unreadMessageCount;
   next();
 });
 
@@ -556,11 +586,19 @@ if (process.env.TASK_TEMPLATES_ENABLED !== 'false') {
 }
 // Mismo criterio de montaje que /backup y /otros: antes de /superadmin, que es catch-all.
 app.use('/superadmin/roles', rolesRoutes);
+// Idem. El killswitch se chequea además DENTRO del router, para que montarlo sin condición
+// nunca abra la feature por accidente.
+if (process.env.MESSAGES_ENABLED !== 'false') {
+  app.use('/superadmin/messages', messageRoutes);
+}
 app.use('/superadmin',  superadminRoutes);
 app.use('/directivo',   directivoRoutes);
 app.use('/preceptor',   preceptorRoutes);
 app.use('/jefatura',    jefaturaRoutes);
 app.use('/suggestions', suggestionRoutes);
+// Bandeja del destinatario de los mensajes del superadmin. El panel del que ENVÍA se monta
+// más arriba, junto al resto de los sub-routers de /superadmin.
+app.use('/messages',    messagesInboxRoutes);
 
 // ── Manejador de errores global ──────────────────────────────────────────────
 // Captura cualquier error no manejado en los middlewares/rutas.

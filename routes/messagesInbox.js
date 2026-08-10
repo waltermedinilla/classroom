@@ -45,6 +45,9 @@ router.get('/mine', async (req, res) => {
       .filter(r => r.message)
       .map(r => ({
         recipientId:  r._id,
+        // Fecha de última actividad del hilo. Es la que usa la bandeja para ordenar los
+        // mensajes JUNTO con las sugerencias, que se ordenan por su propio updatedAt.
+        actividad:    r.updatedAt,
         subject:      r.message.subject || '',
         body:         r.message.body,
         sender:       r.message.sender ? { name: r.message.sender.name } : null,

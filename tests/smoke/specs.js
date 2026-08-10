@@ -63,6 +63,24 @@ const RUN_ID = Date.now().toString(36);
 const DNI_BASE = Date.now() % 1000000;
 const dniSmoke = (n) => `${String(DNI_BASE).padStart(6, '0')}${String(n).padStart(2, '0')}`;
 
+// Lee el número del badge del sobre desde el HTML de cualquier página con header.
+// Devuelve 0 cuando el badge no está (que es como se pinta el "nada sin leer").
+//
+// El badge es UNIFICADO: cuenta las sugerencias sin leer MÁS los mensajes sin leer del
+// superadmin (ver server.js, res.locals.unreadInboxCount). Por eso los specs de mensajes no
+// pueden asumir que arranca en cero — a esa altura del suite el alumno ya tiene una
+// sugerencia sin leer de los specs de arriba. Se compara siempre contra una base tomada
+// ANTES de enviar, que además verifica la aritmética de las dos fuentes juntas.
+//
+// Ojo: arriba de 9 el header pinta "9+" y el número exacto se pierde. En este suite la base
+// es 1, así que nunca se llega ahí.
+function badgeDelSobre(html) {
+  const m = html.match(/id="inboxBadge"[^>]*>([^<]*)</);
+  if (!m) return 0;
+  const txt = m[1].trim();
+  return txt === '9+' ? 9 : (parseInt(txt, 10) || 0);
+}
+
 // Genera un JPEG que se comporta como una foto real frente al compresor (ruido de baja
 // frecuencia escalado = gradientes con detalle). Un color plano se comprimiría a nada y
 // los specs de "esto adelgazó mucho" pasarían por accidente.
@@ -1918,6 +1936,403 @@ const specs = [
         body: { text: 'No es mi conversación' },
         expectStatus: 404,
       });
+    },
+  },
+
+  // ══ Mensajes del superadministrador ═══════════════════════════════════════
+  // El camino inverso al de las sugerencias: el superadmin le escribe a la gente. Cubre los
+  // criterios 15-45 de specs/mensajeria-superadmin.spec.md.
+  //
+  // Queda FUERA de acá el criterio 23 (429 al envío 21 en una hora): probarlo exige 21 envíos
+  // reales, y cada uno crea documentos por destinatario. El limiter es el mismo patrón ya
+  // ejercitado por roomMessageLimiter, y el costo de verificarlo acá no se justifica.
+  // También quedan fuera los criterios 36-37 (killswitch apagado), que necesitan levantar el
+  // server con otra env var.
+  {
+    id: 'messages-panel-loads',
+    title: 'La pantalla de Mensajes carga con el formulario de redacción',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, env, assert }) {
+      // Login propio del actor 'superadmin', por el mismo motivo que en los specs de
+      // sugerencias y de roles: el spec genérico vive más abajo en el archivo.
+      await client.post('superadmin', '/login', {
+        body: { email: env.SMOKE_SUPERADMIN_EMAIL, password: env.SMOKE_SUPERADMIN_PASSWORD },
+        expectStatus: 200,
+      });
+
+      const res = await client.get('superadmin', '/superadmin/messages', { expectStatus: 200 });
+      assert(res.text.includes('id="cuerpo"'),       'debería estar el textarea del mensaje');
+      assert(res.text.includes('id="everyone"'),     'debería estar la opción "Toda la comunidad"');
+      assert(res.text.includes('id="allowReplies"'), 'debería estar el toggle de respuestas');
+      // El nav tiene que ofrecer la solapa nueva, o la pantalla existe pero no se llega.
+      assert(res.text.includes('/superadmin/messages'), 'la solapa Mensajes debería estar en el nav');
+    },
+  },
+  {
+    id: 'messages-preview-counts-without-sending',
+    title: 'La previsualización devuelve el alcance sin crear nada',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('superadmin', '/superadmin/messages/preview?roles=student', { expectStatus: 200 });
+      assert(res.json.total > 0, 'debería haber al menos un alumno en el alcance');
+      assert(res.json.porRol.student === res.json.total, 'filtrando por Alumno, todos deberían ser alumnos');
+      assert(Array.isArray(res.json.muestra) && res.json.muestra.length > 0, 'debería traer una muestra de nombres');
+      assert(res.json.muestra.length <= 10, 'la muestra no debería pasar de 10');
+    },
+  },
+  {
+    id: 'messages-preview-empty-without-filters',
+    title: 'Sin filtros y sin "toda la comunidad", el alcance es 0 (criterio 8)',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('superadmin', '/superadmin/messages/preview', { expectStatus: 200 });
+      assert(res.json.total === 0, `sin filtros el alcance debería ser 0, dio ${res.json.total}`);
+    },
+  },
+  {
+    id: 'messages-search-finds-by-dni',
+    title: 'El buscador de personas encuentra por DNI',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('superadmin',
+        `/superadmin/messages/users?q=${encodeURIComponent(state.scopedStudentEmail)}`, { expectStatus: 200 });
+      const encontrado = (res.json.users || []).find(u => u._id === state.scopedStudentId);
+      assert(encontrado, 'debería encontrar al alumno del suite por su correo');
+      assert('dni' in encontrado, 'el resultado debería traer el DNI (va primero en la lista)');
+    },
+  },
+  {
+    id: 'messages-send-rejects-empty-body',
+    title: 'Enviar sin cuerpo devuelve 400 (criterio 19)',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.post('superadmin', '/superadmin/messages', {
+        body: { body: '   ', userIds: [state.scopedStudentId] },
+        expectStatus: 400,
+      });
+    },
+  },
+  {
+    id: 'messages-send-rejects-long-body',
+    title: 'Un cuerpo de 2001 caracteres devuelve 400 (criterio 19)',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.post('superadmin', '/superadmin/messages', {
+        body: { body: 'x'.repeat(2001), userIds: [state.scopedStudentId] },
+        expectStatus: 400,
+      });
+    },
+  },
+  {
+    id: 'messages-send-rejects-empty-audience',
+    title: 'Sin destinatarios devuelve 400 y NO crea el mensaje (criterio 20)',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const antes = await client.get('superadmin', '/superadmin/messages', { expectStatus: 200 });
+      const marca = `Sin destinatarios — smoke ${RUN_ID}`;
+
+      const res = await client.post('superadmin', '/superadmin/messages', {
+        body: { body: marca },
+        expectStatus: 400,
+      });
+      assert(/destinatarios/i.test(res.json.error || ''),
+        `el error debería hablar de destinatarios — dijo: ${res.json.error}`);
+
+      // Lo importante no es el 400 sino que no haya quedado un Message huérfano.
+      const despues = await client.get('superadmin', '/superadmin/messages', { expectStatus: 200 });
+      assert(!despues.text.includes(marca), 'no debería haberse creado el mensaje');
+      assert(antes.status === 200 && despues.status === 200, 'el panel debería seguir cargando');
+    },
+  },
+  {
+    id: 'messages-non-superadmin-denied',
+    title: 'Un usuario que no es superadmin no entra al panel (criterio 21)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.get('scopedStudent', '/superadmin/messages', { expectStatus: [403, 302] });
+      await client.post('scopedStudent', '/superadmin/messages', {
+        body: { body: 'No debería entrar', userIds: [state.scopedStudentId] },
+        expectStatus: [403, 302],
+      });
+    },
+  },
+  {
+    id: 'messages-send-to-two-people',
+    title: 'El superadmin envía a dos personas elegidas a mano (criterios 15 y 16)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      state.msgSubject = `Aviso smoke ${RUN_ID}`;
+      state.msgBody    = `Cuerpo del aviso de prueba — smoke ${RUN_ID}`;
+
+      // Base del badge ANTES de enviar. A esta altura del suite el alumno ya tiene una
+      // sugerencia sin leer, así que el badge no arranca en cero: lo que se verifica de acá
+      // en adelante es que el mensaje SUME uno y lo devuelva al leerlo.
+      const antes = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
+      state.badgeBase = badgeDelSobre(antes.text);
+
+      const res = await client.post('superadmin', '/superadmin/messages', {
+        body: {
+          subject:      state.msgSubject,
+          body:         state.msgBody,
+          allowReplies: false,
+          userIds:      [state.scopedStudentId, state.scopedTeacherId],
+        },
+        expectStatus: 201,
+      });
+      assert(res.json.destinatarios === 2, `esperaba 2 destinatarios, dio ${res.json.destinatarios}`);
+      state.messageId = res.json.id;
+
+      // recipientCount es el denominador de "leído por X de Y": tiene que reflejar las filas
+      // realmente insertadas, y el panel lo muestra tal cual.
+      const panel = await client.get('superadmin', '/superadmin/messages', { expectStatus: 200 });
+      assert(panel.text.includes(state.msgSubject), 'el envío debería aparecer en el listado');
+      assert(panel.text.includes('Leído por 0 de 2'), 'debería decir que nadie lo leyó todavía');
+    },
+  },
+  {
+    id: 'messages-recipient-sees-it',
+    title: 'El destinatario lo ve en su bandeja, sin caja de texto (criterios 24-26)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res  = await client.get('scopedStudent', '/messages/mine', { expectStatus: 200 });
+      const mine = res.json.messages.find(m => m.subject === state.msgSubject);
+      assert(mine, 'el mensaje recién enviado debería aparecer en /messages/mine');
+      assert(mine.body === state.msgBody, 'el cuerpo debería coincidir');
+      assert(mine.readAt === null,           'recién enviado: no debería estar leído');
+      assert(mine.sinLeer === true,          'debería contar para el badge');
+      assert(mine.allowReplies === false,    'este envío no admite respuestas');
+      assert(mine.puedeResponder === false,  'sin respuestas habilitadas no debería poder responder');
+      assert(mine.hilo.length === 1,         `el hilo debería tener solo el mensaje, tiene ${mine.hilo.length}`);
+      assert(mine.hilo[0].from === 'staff',  'el primer mensaje del hilo es del equipo');
+      state.recipientId = mine.recipientId;
+
+      // El badge del sobre se renderiza server-side en cualquier página con header. Suma las
+      // dos fuentes, así que tiene que valer exactamente uno más que antes del envío.
+      const page = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
+      const badge = badgeDelSobre(page.text);
+      assert(badge === state.badgeBase + 1,
+        `el badge debería pasar de ${state.badgeBase} a ${state.badgeBase + 1}, quedó en ${badge}`);
+    },
+  },
+  {
+    id: 'messages-reply-blocked-when-disabled',
+    title: 'Responder un mensaje que no admite respuestas da 403 (criterio 29)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Se llama al endpoint directo, salteando la vista: la puerta tiene que estar en el
+      // servidor, no en que el botón no se pinte.
+      const res = await client.post('scopedStudent', `/messages/mine/${state.recipientId}/reply`, {
+        body: { text: 'No debería entrar' },
+        expectStatus: 403,
+      });
+      assert(/no admite respuestas/i.test(res.json.error || ''),
+        `el error debería decir que no admite respuestas — dijo: ${res.json.error}`);
+    },
+  },
+  {
+    id: 'messages-read-denies-other-users',
+    title: 'Nadie puede marcar como leído el mensaje de otro (criterio 28)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // 404 y no 403: no se confirma que la fila exista si no es de quien pregunta.
+      await client.post('scopedTeacher', `/messages/mine/${state.recipientId}/read`, { expectStatus: 404 });
+      await client.post('scopedTeacher', `/messages/mine/${state.recipientId}/reply`, {
+        body: { text: 'No es mi mensaje' },
+        expectStatus: 404,
+      });
+    },
+  },
+  {
+    id: 'messages-mark-read-clears-badge',
+    title: 'Marcar como leído baja el badge y suma al contador del panel (criterios 27, 34, 38)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.post('scopedStudent', `/messages/mine/${state.recipientId}/read`, { expectStatus: 200 });
+
+      const res  = await client.get('scopedStudent', '/messages/mine', { expectStatus: 200 });
+      const mine = res.json.messages.find(m => m.recipientId === state.recipientId);
+      assert(mine.readAt !== null, 'después de marcarlo, readAt no debería ser null');
+      assert(mine.sinLeer === false, 'ya leído: no debería contar para el badge');
+
+      // El badge vuelve a la base: baja el mensaje leído, pero NO se lleva puesto lo que el
+      // alumno tenga sin leer de sugerencias. Ese es el punto del contador unificado.
+      const page  = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
+      const badge = badgeDelSobre(page.text);
+      assert(badge === state.badgeBase,
+        `leído el mensaje, el badge debería volver a ${state.badgeBase}, quedó en ${badge}`);
+
+      const panel = await client.get('superadmin', '/superadmin/messages', { expectStatus: 200 });
+      assert(panel.text.includes('Leído por 1 de 2'), 'el panel debería contar la lectura');
+    },
+  },
+  {
+    id: 'messages-detail-shows-dni-and-spanish-roles',
+    title: 'El detalle lista destinatarios con DNI primero y roles en español (criterios 17, 39, 40)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('superadmin', `/superadmin/messages/${state.messageId}`, { expectStatus: 200 });
+
+      const cabecera = res.text.slice(res.text.indexOf('<thead>'), res.text.indexOf('</thead>'));
+      assert(cabecera.indexOf('DNI') < cabecera.indexOf('Nombre'),
+        'el DNI tiene que ser la primera columna de la tabla');
+
+      // roleAtSend congelado en el envío, traducido con roleNames.
+      assert(res.text.includes('>Alumno<'),  'el rol del alumno debería verse en español');
+      assert(res.text.includes('>Docente<'), 'el rol del docente debería verse en español');
+      assert(!res.text.includes('>student<'), 'no debería filtrarse el valor crudo del rol');
+
+      assert(res.text.includes('Leído</span>'),    'debería marcar al que leyó');
+      assert(res.text.includes('Sin leer</span>'), 'debería marcar al que no leyó');
+    },
+  },
+  {
+    id: 'messages-detail-filter-unread',
+    title: 'El filtro "no leídos" trae solo a los que no abrieron (criterio 41)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('superadmin',
+        `/superadmin/messages/${state.messageId}?filtro=no-leidos`, { expectStatus: 200 });
+      assert(res.text.includes('Sin leer</span>'), 'debería mostrar al que no leyó');
+      assert(!res.text.includes('Leído</span>'),   'no debería mostrar al que ya leyó');
+    },
+  },
+  {
+    id: 'messages-toggle-replies-on',
+    title: 'Prender las respuestas después de enviado habilita la caja de texto (criterio 43)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.patch('superadmin', `/superadmin/messages/${state.messageId}/replies`, {
+        body: { allowReplies: true },
+        expectStatus: 200,
+      });
+
+      const res  = await client.get('scopedStudent', '/messages/mine', { expectStatus: 200 });
+      const mine = res.json.messages.find(m => m.recipientId === state.recipientId);
+      assert(mine.allowReplies === true,   'el mensaje debería admitir respuestas ahora');
+      assert(mine.puedeResponder === true, 'el destinatario debería poder responder');
+    },
+  },
+  {
+    id: 'messages-recipient-replies',
+    title: 'El destinatario responde y el panel lo avisa (criterio 30)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      state.msgUserReply = `Respuesta del alumno — smoke ${RUN_ID}`;
+      await client.post('scopedStudent', `/messages/mine/${state.recipientId}/reply`, {
+        body: { text: state.msgUserReply },
+        expectStatus: 200,
+      });
+
+      const res  = await client.get('scopedStudent', '/messages/mine', { expectStatus: 200 });
+      const mine = res.json.messages.find(m => m.recipientId === state.recipientId);
+      assert(mine.hilo.length === 2, `el hilo debería tener 2 mensajes, tiene ${mine.hilo.length}`);
+      assert(mine.hilo[1].from === 'user' && mine.hilo[1].text === state.msgUserReply,
+        'el último mensaje debería ser el del alumno');
+      assert(mine.esperaAlDestinatario === false, 'ahora la pelota queda del lado del equipo');
+      // Su propia respuesta no puede dejarle el sobre encendido.
+      assert(mine.sinLeer === false, 'responder no debería dejarlo como sin leer');
+
+      const panel = await client.get('superadmin', '/superadmin/messages', { expectStatus: 200 });
+      assert(panel.text.includes('1 respuesta nueva'), 'el panel debería avisar la respuesta nueva');
+
+      const detalle = await client.get('superadmin', `/superadmin/messages/${state.messageId}`, { expectStatus: 200 });
+      assert(detalle.text.includes(state.msgUserReply), 'el detalle debería mostrar la respuesta');
+    },
+  },
+  {
+    id: 'messages-staff-replies-relights-badge',
+    title: 'La respuesta del superadmin vuelve a encender el badge (criterio 35)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      state.msgStaffReply = `Respuesta del equipo — smoke ${RUN_ID}`;
+      await client.post('superadmin', `/superadmin/messages/${state.messageId}/reply`, {
+        body: { recipientId: state.recipientId, text: state.msgStaffReply },
+        expectStatus: 200,
+      });
+
+      const res  = await client.get('scopedStudent', '/messages/mine', { expectStatus: 200 });
+      const mine = res.json.messages.find(m => m.recipientId === state.recipientId);
+      assert(mine.hilo.length === 3, `el hilo debería tener 3 mensajes, tiene ${mine.hilo.length}`);
+      assert(mine.hilo[2].text === state.msgStaffReply, 'el último debería ser la respuesta del equipo');
+      // ESTE es el caso que readAt solo no cubre: el mensaje ya estaba leído y aun así el
+      // badge tiene que volver a encenderse.
+      assert(mine.readAt !== null, 'el mensaje sigue estando leído');
+      assert(mine.sinLeer === true, 'una respuesta nueva sobre un mensaje leído debería encender el badge');
+
+      const page  = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
+      const badge = badgeDelSobre(page.text);
+      assert(badge === state.badgeBase + 1,
+        `el badge debería volver a subir a ${state.badgeBase + 1}, quedó en ${badge}`);
+    },
+  },
+  {
+    id: 'messages-toggle-replies-off-keeps-thread',
+    title: 'Apagar las respuestas cierra la caja pero conserva lo escrito (criterio 43)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.patch('superadmin', `/superadmin/messages/${state.messageId}/replies`, {
+        body: { allowReplies: false },
+        expectStatus: 200,
+      });
+
+      const res  = await client.get('scopedStudent', '/messages/mine', { expectStatus: 200 });
+      const mine = res.json.messages.find(m => m.recipientId === state.recipientId);
+      assert(mine.puedeResponder === false, 'con las respuestas apagadas no debería poder escribir');
+      assert(mine.hilo.length === 3, 'lo ya escrito tiene que seguir estando');
+      assert(mine.hilo.some(m => m.text === state.msgUserReply), 'su respuesta no puede haberse perdido');
+
+      await client.post('scopedStudent', `/messages/mine/${state.recipientId}/reply`, {
+        body: { text: 'Ya no debería poder' },
+        expectStatus: 403,
+      });
+    },
+  },
+  {
+    id: 'messages-audit-logged',
+    title: 'El envío queda registrado en la auditoría (criterio 22)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('superadmin', '/superadmin/audit?action=message.send', { expectStatus: 200 });
+      assert(res.text.includes('envió un mensaje'),
+        'el evento de envío debería aparecer en el panel de auditoría con su etiqueta en español');
+    },
+  },
+  {
+    id: 'messages-delete-cascades',
+    title: 'Borrar el envío lo saca de todas las bandejas (criterios 44 y 45)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.delete('superadmin', `/superadmin/messages/${state.messageId}`, { expectStatus: 200 });
+
+      const panel = await client.get('superadmin', '/superadmin/messages', { expectStatus: 200 });
+      assert(!panel.text.includes(state.msgSubject), 'el envío no debería seguir en el listado');
+
+      const res = await client.get('scopedStudent', '/messages/mine', { expectStatus: 200 });
+      assert(!res.json.messages.some(m => m.recipientId === state.recipientId),
+        'el mensaje debería desaparecer de la bandeja del destinatario');
+
+      // Y el badge no puede quedar contando algo que ya no existe: el mensaje estaba sin leer
+      // (el superadmin había vuelto a responder), así que borrarlo tiene que devolverlo a la base.
+      const page  = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
+      const badge = badgeDelSobre(page.text);
+      assert(badge === state.badgeBase,
+        `borrado el mensaje, el badge debería volver a ${state.badgeBase}, quedó en ${badge}`);
+
+      const audit = await client.get('superadmin', '/superadmin/audit?action=message.delete', { expectStatus: 200 });
+      assert(audit.text.includes('eliminó un mensaje enviado'), 'el borrado debería quedar auditado');
+    },
+  },
+  {
+    id: 'messages-suggestions-still-work',
+    title: 'Regresión: la bandeja de sugerencias sigue funcionando igual (criterios 46 y 47)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('scopedStudent', '/suggestions/mine', { expectStatus: 200 });
+      assert(Array.isArray(res.json.suggestions), '/suggestions/mine debería seguir devolviendo su lista');
+
+      // El sobre sigue en el header y sigue siendo el mismo botón, ahora con las dos fuentes.
+      const page = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
+      assert(page.text.includes('id="inboxBtn"'), 'el botón del sobre debería seguir en el header');
     },
   },
 

@@ -2246,6 +2246,61 @@ Para poder testearlo, `ARCHIVOS_BASE` y `ENTREGAS_BASE` pasaron a ser overrideab
 
 ---
 
+## Mensajería del superadministrador (2026-08-10)
+
+Spec: `specs/mensajeria-superadmin.spec.md` (aprobada el 2026-08-10).
+
+Hasta ahora la comunicación iba en un solo sentido: cualquiera le mandaba una sugerencia al superadmin y el superadmin contestaba. No existía el camino inverso — para avisar algo había que salir del sistema. Ahora el superadmin **elige destinatarios, escribe, y decide con un click si se le puede contestar**.
+
+**A quién**: toda la comunidad, por rol (uno o varios), o personas sueltas por buscador (DNI, nombre o correo). Los roles se intersectan con un filtro opcional de escuela; las personas sueltas se **suman** al grupo. El recorte por curso/división quedó explícitamente para más adelante — decisión del usuario.
+
+> "Toda la comunidad" hay que elegirla **a propósito**: dejar todo sin tildar no es "todos", es audiencia vacía y el servidor la rechaza con 400. Y arriba de 50 destinatarios el botón pide confirmación con el número escrito. Un envío masivo no se deshace solo.
+
+### Las dos decisiones de diseño que sostienen todo
+
+**1. Dos colecciones, no una.** `Message` es el envío (el texto, una sola vez); `MessageRecipient` es una fila por persona con su estado de lectura y su hilo privado. Con los destinatarios embebidos, cientos de alumnos respondiendo escribirían el **mismo** documento —contención pura— y el doc crecería sin techo contra el límite de 16 MB.
+
+**2. La audiencia se congela al enviar, no se evalúa al leer.** Un aviso del 3 de marzo dirigido a "todos los docentes" **no** es para la docente que entró en agosto: es correo, no un tablón. Además el badge del sobre corre en **cada request**: con snapshot es un `countDocuments` por índice; sin snapshot habría que re-resolver la audiencia en todas las páginas que abre todo el mundo. Y "leído por 87 de 143" no tendría denominador. `Message.audience` guarda los filtros como **memoria** de lo que se pidió —para mostrarlo, reenviar y auditar—, nunca como fuente de verdad de quién ve qué.
+
+`roleAtSend` y `schoolAtSend` también se congelan: el panel tiene que poder decir "se lo mandaste a Juan como Docente" aunque hoy Juan sea Preceptor. Sin eso, un cambio de rol reescribe la historia del envío.
+
+### El sobre del header ahora muestra dos cosas
+
+Las sugerencias propias y los mensajes recibidos conviven en el mismo modal y el mismo badge, ordenados por última actividad, cada uno con su píldora ("Mi sugerencia" / "Mensaje del equipo"). Para el usuario es un solo lugar: lo que tengo para leer.
+
+- `res.locals.unreadSuggestionCount` **se conserva** con su nombre y su significado de siempre (lo consumen vistas y specs); se suma `unreadMessageCount` y la suma va en `unreadInboxCount`, que es lo que pinta el header.
+- Las dos cuentas van en `Promise.all`, cada una con killswitch propio (`SUGGESTIONS_INBOX_ENABLED` / `MESSAGES_ENABLED`) y `.catch(() => 0)` por separado: **una feature caída no se lleva puesta a la otra**, y el sobre nunca rompe la página.
+- El modal pide las dos fuentes en paralelo desde el cliente. No se hizo un endpoint `/inbox` unificado a propósito: `/suggestions/mine` ya existe, está cubierto por los smoke tests y no había motivo para tocarlo.
+
+### Respuestas
+
+Toggle por mensaje. Si está apagado, el destinatario ve el mensaje sin caja de texto **y el POST devuelve 403** aunque se lo llame a mano. Si está prendido, el hilo es privado 1 a 1 con tope de 20 mensajes — mismo criterio que las sugerencias.
+
+El toggle **se puede cambiar después de enviado, en los dos sentidos**. Apagarlo cierra la caja pero **no borra nada**: lo que alguien ya escribió se conserva y se sigue viendo de los dos lados. Perder mensajes de gente no era una opción.
+
+> **Por qué modelo nuevo y no generalizar `suggestionThread`**: `Suggestion` guarda sus dos primeros mensajes en `text` y `response`, fuera de `messages[]`, porque cuando el hilo se agregó ya había sugerencias en producción. Eso es deuda heredada, no diseño. `services/messageThread.js` copia la **forma de la API** para que las vistas se lean igual, sin arrastrar el caso especial. Si algún día se migra `Suggestion`, ese es el momento de unificar los dos.
+
+### Qué se probó
+
+**Unitarios nuevos: 35** (`tests/unit/messageAudience.test.js` y `messageThread.test.js`, total del proyecto **119/119**) — cubren los criterios 1-14 de la spec: intersección rol ∩ escuela, la unión de las personas sueltas, que el remitente nunca se autoenvíe, que `everyone` ignore los roles, que ninguna cuenta deshabilitada entre ni siquiera eligiéndola a mano, y el tope del hilo.
+
+**Smoke nuevos: 22** (`tests/smoke/specs.js`, criterios 15-45, suite completa **245/245**): envío, rechazo de audiencia vacía sin dejar un `Message` huérfano, bandeja del destinatario, 403 al responder lo que no admite respuestas, 404 al tocar el mensaje de otro, el badge que se apaga al leer y **vuelve a encenderse** cuando el superadmin contesta sobre un mensaje ya leído, DNI primero y roles en español en el detalle, y el borrado en cascada. `npm run test:roles` sin hallazgos.
+
+> El badge unificado obligó a cambiar cómo se verifica: los specs **no pueden asumir que arranca en cero**, porque a esa altura del suite el alumno ya tiene una sugerencia sin leer. Se toma una base antes de enviar y se verifica la aritmética (`base` → `base+1` → `base`). Es un test más fuerte que el "no debería haber badge" que tenían las sugerencias: comprueba que las dos fuentes se suman y que ninguna se lleva puesta a la otra.
+
+Ciclo completo verificado en el navegador contra la base real (1428 usuarios): la previsualización dio **333 docentes** y **355 con preceptores**, los números exactos de la base. Enviado a una docente, leído, respondido desde el sobre, la respuesta apareció en el panel ("1 lo leyeron · 1 respondieron"), y el borrado la sacó de la bandeja sin dejar filas huérfanas.
+
+> 🔧 **Encontrado al verificar**: la pluralización de roles agregaba una "s" al singular, o sea "Administradors", "Preceptors" y "Jefe de Seccións". Ahora hay un mapa `ROLES_PLURAL` en `routes/messages.js` que se le pasa a la vista, así el texto del servidor y el de la previsualización en vivo salen del mismo lugar. Y los checkboxes de rol estaban en `display:none`, que los sacaba del orden de tabulación: los roles no se podían elegir con el teclado.
+
+### Cosas a tener en cuenta
+
+- **Producción**: no hay migración de datos (dos colecciones nuevas, vacías), pero la primera arrancada crea índices y el middleware global suma un `countDocuments` por request.
+- **Killswitch**: `MESSAGES_ENABLED=false` apaga la solapa, las rutas (404) y el contador, sin redeploy.
+- **Rate limit**: 20 envíos/hora y 10 respuestas/minuto, ambos **por usuario** — con clave por IP, la escuela entera sale por una sola IP NAT y uno solo dejaría sin escribir al resto.
+- Al sumar la solapa 13, el corte de dos filas del nav de superadmin (`.admin-nav-break`) se movió un ítem antes: quedan 8 arriba y 5 abajo.
+
+---
+
 ## Plan de Futuras Actualizaciones (Roadmap)
 
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`). Resumen de lo pendiente:

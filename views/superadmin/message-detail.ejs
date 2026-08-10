@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mensaje enviado - Superadmin</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .caja { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+    .stat { display: flex; flex-direction: column; gap: 2px; }
+    .stat b { font-size: 22px; color: var(--text); }
+    .stat span { font-size: 12px; color: var(--text-hint); }
+
+    .tabla { width: 100%; border-collapse: collapse; }
+    .tabla th {
+      text-align: left; font-size: 12px; color: var(--text-hint); font-weight: 600;
+      padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    .tabla td { padding: 10px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: top; }
+    .tabla tr:last-child td { border-bottom: none; }
+    .dni { font-weight: 700; white-space: nowrap; }
+
+    /* Mismo criterio visual que el hilo de sugerencias: de quién es cada mensaje se distingue
+       por el borde y el fondo, no por la alineación. Son textos largos. */
+    .thread-msg { padding: 10px 13px; border-radius: 8px; margin-top: 6px; background: var(--bg); }
+    .thread-msg.de-equipo  { border-left: 3px solid #1a73e8; }
+    .thread-msg.de-usuario { border-left: 3px solid #137333; }
+    .thread-meta { font-size: 11px; font-weight: 600; margin-bottom: 3px; }
+    .thread-msg.de-equipo  .thread-meta { color: #1a73e8; }
+    .thread-msg.de-usuario .thread-meta { color: #137333; }
+    .thread-text { font-size: 13px; color: var(--text); white-space: pre-wrap; }
+    .pill { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 11px; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/superadmin-nav') %>
+
+    <div style="margin-bottom:16px">
+      <a href="/superadmin/messages" class="btn btn-outline" style="font-size:13px;padding:6px 12px">
+        <span class="material-symbols-outlined" style="font-size:16px">arrow_back</span> Volver a Mensajes
+      </a>
+    </div>
+
+    <!-- ── El mensaje ───────────────────────────────────────────────────── -->
+    <div class="caja" style="margin-bottom:20px">
+      <% if (mensaje.subject) { %>
+        <h2 style="margin:0 0 8px;font-size:19px"><%= mensaje.subject %></h2>
+      <% } %>
+      <div style="font-size:14px;color:var(--text);white-space:pre-wrap"><%= mensaje.body %></div>
+      <div style="font-size:12px;color:var(--text-hint);margin-top:12px;display:flex;flex-wrap:wrap;gap:12px;align-items:center">
+        <span><%= new Date(mensaje.createdAt).toLocaleDateString('es-AR', { day:'numeric', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit' }) %></span>
+        <span>·</span>
+        <span><%= audienciaTexto %></span>
+      </div>
+
+      <div style="display:flex;gap:28px;margin-top:18px;flex-wrap:wrap;align-items:flex-end">
+        <div class="stat"><b><%= mensaje.recipientCount %></b><span>destinatarios</span></div>
+        <div class="stat"><b><%= leidos %></b><span>lo leyeron</span></div>
+        <div class="stat"><b><%= respondieron %></b><span>respondieron</span></div>
+
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <%# Apagar el toggle CIERRA la caja de texto, no borra nada: lo ya escrito se
+              conserva y se sigue viendo. Perder mensajes de gente no es una opción. %>
+          <label style="display:inline-flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+            <input type="checkbox" id="allowReplies" <%= mensaje.allowReplies ? 'checked' : '' %>
+              onchange="cambiarRespuestas('<%= mensaje._id %>', this.checked)">
+            Permitir respuestas
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Filtros ──────────────────────────────────────────────────────── -->
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      <% const filtros = [
+           ['todos',        'Todos'],
+           ['leidos',       'Leídos'],
+           ['no-leidos',    'No leídos'],
+           ['respondieron', 'Respondieron'],
+         ]; %>
+      <% filtros.forEach(([k, label]) => { %>
+        <a href="/superadmin/messages/<%= mensaje._id %>?filtro=<%= k %>"
+           class="btn <%= filtro === k ? 'btn-primary' : 'btn-outline' %>"><%= label %></a>
+      <% }) %>
+    </div>
+
+    <!-- ── Destinatarios ────────────────────────────────────────────────── -->
+    <% if (!destinatarios.length) { %>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">group_off</span></div>
+        <p>No hay destinatarios en esta categoría.</p>
+      </div>
+    <% } else { %>
+      <div class="caja" style="padding:0;overflow-x:auto">
+        <table class="tabla">
+          <thead>
+            <tr>
+              <%# El DNI va siempre primero: es el identificador con el que la escuela
+                  reconoce a una persona. %>
+              <th>DNI</th>
+              <th>Nombre</th>
+              <th>Rol</th>
+              <th>Escuela</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% destinatarios.forEach(d => { %>
+              <tr>
+                <td class="dni"><%= d.user?.dni || '—' %></td>
+                <td>
+                  <%= d.user?.name || 'Usuario eliminado' %>
+                  <% if (d.user && d.user.active === false) { %>
+                    <%# Se lo muestra igual, marcado: se le mandó cuando podía leer, y sacarlo
+                        de la lista haría que "leído por X de Y" no cerrara nunca. %>
+                    <div><span class="pill" style="background:#e8eaed;color:#5f6368">cuenta deshabilitada</span></div>
+                  <% } %>
+                </td>
+                <td>
+                  <%# El rol CONGELADO al enviar, no el actual: es el que explica por qué le
+                      llegó. Si cambió de rol, se muestra el de entonces. %>
+                  <span class="role-badge role-<%= d.roleAtSend || (d.user && d.user.role) || '' %>"><%= roleNames[d.roleAtSend] || roleNames[d.user?.role] || '—' %></span>
+                </td>
+                <td style="color:var(--text-hint)"><%= d.schoolAtSend?.name || '—' %></td>
+                <td>
+                  <% if (d.readAt) { %>
+                    <span class="pill" style="background:#e6f4ea;color:#137333">Leído</span>
+                    <div style="font-size:11px;color:var(--text-hint);margin-top:3px">
+                      <%= new Date(d.readAt).toLocaleDateString('es-AR', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) %>
+                    </div>
+                  <% } else { %>
+                    <span class="pill" style="background:#fff3e0;color:#ea8600">Sin leer</span>
+                  <% } %>
+
+                  <% if (d.hilo.length > 1) { %>
+                    <div style="margin-top:8px;max-width:520px">
+                      <% d.hilo.slice(1).forEach(m => { %>
+                        <div class="thread-msg <%= m.from === 'staff' ? 'de-equipo' : 'de-usuario' %>">
+                          <div class="thread-meta">
+                            <%= m.from === 'staff' ? 'Vos' : (d.user?.name || 'El destinatario') %>
+                            <%= m.at ? '· ' + new Date(m.at).toLocaleDateString('es-AR', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) : '' %>
+                            <%= m.editedAt ? '· editada' : '' %>
+                          </div>
+                          <div class="thread-text"><%= m.text %></div>
+                        </div>
+                      <% }) %>
+                    </div>
+                  <% } %>
+
+                  <% if (d.puedeSeguir) { %>
+                    <div style="margin-top:8px">
+                      <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="abrirRespuesta('<%= d._id %>')">
+                        <span class="material-symbols-outlined" style="font-size:15px">reply</span> Responder
+                      </button>
+                      <div id="respBox-<%= d._id %>" style="display:none;margin-top:6px;max-width:520px">
+                        <textarea id="respText-<%= d._id %>" rows="3" maxlength="<%= MAX_BODY %>" placeholder="Escribí tu respuesta…"
+                          style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;background:var(--surface);color:var(--text);box-sizing:border-box;resize:vertical;outline:none"></textarea>
+                        <div id="respError-<%= d._id %>" style="display:none;color:var(--danger);font-size:12px;margin-top:4px"></div>
+                        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+                          <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="abrirRespuesta('<%= d._id %>')">Cancelar</button>
+                          <button class="btn btn-primary" style="font-size:12px;padding:4px 10px" id="respBtn-<%= d._id %>"
+                            onclick="responder('<%= mensaje._id %>', '<%= d._id %>')">Enviar</button>
+                        </div>
+                      </div>
+                    </div>
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+
+      <%- include('../partials/pagination', { page, totalPages, queryParams }) %>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+
+  <script>
+    function abrirRespuesta(id) {
+      var box = document.getElementById('respBox-' + id);
+      if (!box) return;
+      var abierto = box.style.display !== 'none';
+      box.style.display = abierto ? 'none' : 'block';
+      if (!abierto) document.getElementById('respText-' + id).focus();
+    }
+
+    async function responder(messageId, recipientId) {
+      var ta     = document.getElementById('respText-' + recipientId);
+      var errBox = document.getElementById('respError-' + recipientId);
+      var btn    = document.getElementById('respBtn-' + recipientId);
+      var text   = ta.value.trim();
+      errBox.style.display = 'none';
+
+      if (!text) {
+        errBox.textContent = 'Escribí la respuesta antes de enviar';
+        errBox.style.display = 'block';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Enviando…';
+      try {
+        var res = await fetch('/superadmin/messages/' + messageId + '/reply', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ recipientId: recipientId, text: text }),
+        });
+        var data = await res.json();
+        if (res.ok) {
+          location.reload();
+        } else {
+          errBox.textContent = data.error || 'No se pudo enviar la respuesta';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'Enviar';
+        }
+      } catch {
+        errBox.textContent = 'Error de conexión. Intentá de nuevo.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Enviar';
+      }
+    }
+
+    async function cambiarRespuestas(id, allowReplies) {
+      try {
+        var res = await fetch('/superadmin/messages/' + id + '/replies', {
+          method:  'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ allowReplies: allowReplies }),
+        });
+        if (res.ok) location.reload();
+        else {
+          alert('No se pudo cambiar la configuración de respuestas');
+          document.getElementById('allowReplies').checked = !allowReplies;
+        }
+      } catch {
+        alert('Error de conexión');
+        document.getElementById('allowReplies').checked = !allowReplies;
+      }
+    }
+  </script>
+</body>
+</html>

@@ -35,15 +35,16 @@
     <span class="material-symbols-outlined">admin_panel_settings</span>
     Roles
   </a>
+  <%# El corte se volvió a mover un ítem antes al sumar "Mensajes": con 13 solapas, dejarlo
+      donde estaba daba 9 arriba y 4 abajo. Ahora quedan 8 y 5. Cuando "Tareas" está apagada
+      por su feature flag quedan 8 y 4, que sigue entrando bien. %>
+  <span class="admin-nav-break" aria-hidden="true"></span>
   <% if (typeof taskTemplatesEnabled === 'undefined' || taskTemplatesEnabled) { %>
   <a href="/superadmin/tasks" class="admin-nav-item <%= activePage === 'tasks' ? 'active' : '' %>">
     <span class="material-symbols-outlined">assignment</span>
     Tareas
   </a>
   <% } %>
-  <%# El corte se movió un ítem antes al sumar "Roles": con 12 solapas, dejarlo donde
-      estaba dejaba 9 arriba y 3 abajo. Ahora quedan 8 y 4. %>
-  <span class="admin-nav-break" aria-hidden="true"></span>
   <a href="/superadmin/monitor" class="admin-nav-item <%= activePage === 'monitor' ? 'active' : '' %>">
     <span class="material-symbols-outlined">monitor_heart</span>
     Monitor

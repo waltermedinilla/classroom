@@ -230,12 +230,21 @@ const _activeTheme = (function() {
       <button class="icon-btn" id="darkModeBtn" onclick="toggleDarkMode()" title="Cambiar tema">
         <span class="material-symbols-outlined">dark_mode</span>
       </button>
+      <%
+        // El sobre pasó a mostrar DOS cosas: las sugerencias propias y los mensajes que el
+        // superadministrador manda. El badge cuenta las dos (server.js lo resuelve en
+        // unreadInboxCount). El fallback a unreadSuggestionCount es por si alguna vista se
+        // renderiza sin pasar por ese middleware — antes ese era el único contador.
+        const _sinLeer = typeof unreadInboxCount !== 'undefined'
+          ? unreadInboxCount
+          : (typeof unreadSuggestionCount !== 'undefined' ? unreadSuggestionCount : 0);
+      %>
       <div class="inbox-btn-wrap">
-        <button class="icon-btn" id="inboxBtn" onclick="openInboxModal()" title="Mis sugerencias">
-          <span class="material-symbols-outlined"><%= unreadSuggestionCount > 0 ? 'mark_email_unread' : 'mail' %></span>
+        <button class="icon-btn" id="inboxBtn" onclick="openInboxModal()" title="Mensajes">
+          <span class="material-symbols-outlined"><%= _sinLeer > 0 ? 'mark_email_unread' : 'mail' %></span>
         </button>
-        <% if (unreadSuggestionCount > 0) { %>
-          <span class="inbox-badge" id="inboxBadge"><%= unreadSuggestionCount > 9 ? '9+' : unreadSuggestionCount %></span>
+        <% if (_sinLeer > 0) { %>
+          <span class="inbox-badge" id="inboxBadge"><%= _sinLeer > 9 ? '9+' : _sinLeer %></span>
         <% } %>
       </div>
       <span class="user-role role-badge role-<%= user.role %>"><%= roleNames[user.role] || user.role %></span>

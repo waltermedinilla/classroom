@@ -6,6 +6,13 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000
+    },
+    {
+      "//": "Server de verificación en otro puerto, para no pisar el que el usuario tiene en 3000. Arranca de cero, así recompila las vistas EJS (el .env local tiene NODE_ENV=production, que las cachea y hace que los cambios en .ejs no se vean sin reiniciar).",
+      "name": "classroom-verify",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["-e", "process.env.PORT='3001';require('./server.js')"],
+      "port": 3001
     }
   ]
 }

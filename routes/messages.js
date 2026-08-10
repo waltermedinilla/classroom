@@ -56,6 +56,24 @@ const leerFiltros = (src) => ({
   userIds:  asArray(src.userIds),
 });
 
+// Plural de cada rol, escrito a mano. Agregarle una "s" al singular de res.locals.roleNames
+// da "Administradors", "Preceptors" y "Jefe de Seccións": en castellano las terminadas en
+// consonante piden "-es" y las compuestas pluralizan el sustantivo, no el complemento.
+// SOE es una sigla y no pluraliza.
+//
+// Se define acá y se le pasa a la vista, para que el texto del servidor (listado, detalle,
+// auditoría) y el de la previsualización en vivo salgan del MISMO lugar y no se contradigan.
+const ROLES_PLURAL = {
+  superadmin: 'Superadministradores',
+  admin:      'Administradores',
+  directivo:  'Directivos',
+  teacher:    'Docentes',
+  preceptor:  'Preceptores',
+  jefe:       'Jefes de Sección',
+  soe:        'SOE',
+  student:    'Alumnos',
+};
+
 // Traduce los filtros a la frase que se muestra en el panel ("Docentes y Preceptores de
 // San José, más 3 personas"). Vive acá y no en la vista porque la usan el listado, el
 // detalle y el meta de auditoría.
@@ -66,7 +84,7 @@ function describirAudiencia(audience, roleNames, escuelasPorId = {}) {
   if (audience.everyone) {
     partes.push('Toda la comunidad');
   } else if (audience.roles?.length) {
-    partes.push(audience.roles.map(r => (roleNames[r] || r) + 's').join(', '));
+    partes.push(audience.roles.map(r => ROLES_PLURAL[r] || roleNames[r] || r).join(', '));
   }
 
   if (audience.schools?.length) {
@@ -128,9 +146,11 @@ router.get('/', async (req, res) => {
       })),
       escuelas,
       roles: ROLES_VALIDOS,
+      rolesPlural: ROLES_PLURAL, // lo usa la previsualización en vivo, para no re-inventarlo
       page,
       totalPages: Math.ceil(total / POR_PAGINA) || 1,
       total,
+      queryParams: req.query, // lo necesita partials/pagination.ejs para conservar los filtros
       MAX_BODY,
       MAX_SUBJECT,
     });
@@ -317,6 +337,7 @@ router.get('/:id', async (req, res) => {
       page,
       totalPages: Math.ceil(total / DESTINATARIOS_POR_PAGINA) || 1,
       total,
+      queryParams: req.query,
       audienciaTexto: describirAudiencia(mensaje.audience, res.locals.roleNames),
       MAX_BODY,
     });
