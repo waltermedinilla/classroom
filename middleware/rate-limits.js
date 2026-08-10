@@ -46,4 +46,36 @@ const roomMessageLimiter = rateLimit({
   message:         { error: 'Esperá un momento antes de escribir de nuevo.' },
 });
 
-module.exports = { uploadLimiter, roomMessageLimiter };
+// Envío de mensajes del superadmin: 20 por hora POR USUARIO.
+//
+// Un solo envío puede crear cientos de documentos (uno por destinatario), así que el límite
+// acá no protege contra el spam de texto sino contra la escritura en masa: un doble click
+// sostenido o un script suelto. 20/hora es holgadísimo para el uso real —nadie manda 20
+// comunicados en una hora— y deja el daño de un accidente en algo que se limpia.
+//
+// Por usuario y no por IP, mismo motivo que roomMessageLimiter: la escuela entera sale por
+// una sola IP pública NAT.
+const messageSendLimiter = rateLimit({
+  windowMs:        60 * 60 * 1000,
+  max:             20,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator:    (req) => req.userId || ipKeyGenerator(req.ip),
+  message:         { error: 'Llegaste al límite de envíos por hora. Probá de nuevo más tarde.' },
+});
+
+// Respuesta del destinatario a un mensaje: 10 por minuto POR USUARIO. Calcado de
+// roomMessageLimiter, y por lo mismo: con clave por IP, un alumno respondiendo dejaría sin
+// escribir al resto de la escuela.
+const messageReplyLimiter = rateLimit({
+  windowMs:        60 * 1000,
+  max:             10,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator:    (req) => req.userId || ipKeyGenerator(req.ip),
+  message:         { error: 'Esperá un momento antes de escribir de nuevo.' },
+});
+
+module.exports = {
+  uploadLimiter, roomMessageLimiter, messageSendLimiter, messageReplyLimiter,
+};

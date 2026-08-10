@@ -99,6 +99,8 @@ const SECTIONS = [
   { key: 'superadmin_users',       panel: 'superadmin', label: 'Usuarios',    icon: 'people',               path: '/superadmin/users',       roles: ['superadmin'], locked: true },
   { key: 'superadmin_import',      panel: 'superadmin', label: 'Importar',    icon: 'upload_file',          path: '/superadmin/import',      roles: ['superadmin'], locked: true },
   { key: 'superadmin_suggestions', panel: 'superadmin', label: 'Sugerencias', icon: 'lightbulb',            path: '/superadmin/suggestions', roles: ['superadmin'], locked: true },
+  // Vecina de Sugerencias a propósito: una es el correo que entra y la otra el que sale.
+  { key: 'superadmin_messages',    panel: 'superadmin', label: 'Mensajes',    icon: 'forum',                path: '/superadmin/messages',    roles: ['superadmin'], locked: true },
   { key: 'superadmin_themes',      panel: 'superadmin', label: 'Temas',       icon: 'palette',              path: '/superadmin/themes',      roles: ['superadmin'], locked: true },
   { key: 'superadmin_roles',       panel: 'superadmin', label: 'Roles',       icon: 'admin_panel_settings', path: '/superadmin/roles',       roles: ['superadmin'], locked: true },
   { key: 'superadmin_tasks',       panel: 'superadmin', label: 'Tareas',      icon: 'assignment',           path: '/superadmin/tasks',       roles: ['superadmin'], locked: true, flag: 'taskTemplatesEnabled' },

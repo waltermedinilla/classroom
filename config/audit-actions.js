@@ -110,6 +110,16 @@ const ACTIONS = {
   'suggestion.reply':         { label: 'siguió el hilo de',        icon: 'forum',            color: '#fbbc04', category: 'suggestion' },
   'suggestion.delete':        { label: 'eliminó una sugerencia',   icon: 'delete',           color: '#ea4335', category: 'suggestion' },
 
+  // ── Mensajes del superadministrador (models/Message.js) ──────────────────
+  // 'message.send' es el único que puede tocar cientos de documentos de una: su meta guarda
+  // la cantidad de destinatarios y la audiencia en español, que es lo que hace falta para
+  // reconstruir "¿a quién le llegó esto?" sin abrir el panel.
+  'message.send':           { label: 'envió un mensaje',                    icon: 'send',      color: '#1a73e8', category: 'message' },
+  'message.reply':          { label: 'respondió un mensaje',                icon: 'reply',     color: '#137333', category: 'message' },
+  'message.staff_reply':    { label: 'siguió el hilo de un mensaje',        icon: 'forum',     color: '#1a73e8', category: 'message' },
+  'message.toggle_replies': { label: 'cambió las respuestas de un mensaje', icon: 'lock_open', color: '#ea8600', category: 'message' },
+  'message.delete':         { label: 'eliminó un mensaje enviado',          icon: 'delete',    color: '#ea4335', category: 'message' },
+
   // ── Importación desde Excel ──────────────────────────────────────────────
   'import.execute':       { label: 'ejecutó una importación',   icon: 'upload_file',        color: '#9334e6', category: 'import' },
 
@@ -139,6 +149,7 @@ const CATEGORIES = {
   subject:      'Materias',
   school:       'Escuelas',
   suggestion:   'Sugerencias',
+  message:      'Mensajes',
   import:       'Importación',
   system:       'Sistema',
   auth:         'Sesiones',
