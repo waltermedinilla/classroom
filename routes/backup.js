@@ -70,6 +70,18 @@ const MAX_UPLOAD_MB = Number(process.env.BACKUP_MAX_UPLOAD_MB) || 4096; // 4 GB
 
 // Todas las colecciones que entran en el backup. Un solo array evita repetir la lista
 // en el dump, el restore y el cálculo de "diff" del preview.
+//
+// `optional: true` marca las colecciones que NACIERON DESPUÉS de que se congeló el formato
+// 1.0. Un backup viejo, perfectamente sano, no las trae — y eso no lo invalida: significa
+// "en esa fecha esto no existía", no "el archivo está roto". Sin esta marca el preview las
+// exigía a todas y rechazaba con 400 cualquier backup anterior, incluidos los pre-restore
+// que el propio /restore genera como red de seguridad.
+//
+// Las NO opcionales se siguen exigiendo, y ese es el punto: un backup truncado al que le
+// falte `users` tiene que seguir siendo rechazado, porque restaurarlo vaciaría la tabla de
+// usuarios en silencio. La marca distingue "todavía no existía" de "falta y no debería".
+//
+// Al agregar una colección nueva: va acá con optional: true, y se queda así.
 const COLLECTIONS = [
   { name: 'schools',       model: School },
   { name: 'users',         model: User },
@@ -85,10 +97,22 @@ const COLLECTIONS = [
   // clase es. Ojo: esta lista es el ÚNICO lugar que decide qué se respalda — el backup no es
   // un mongodump. Una colección que no esté acá no se guarda y nadie se entera hasta que
   // hace falta restaurarla.
-  { name: 'roomsessions',  model: RoomSession },
-  { name: 'roommessages',  model: RoomMessage },
-  { name: 'roompresences', model: RoomPresence },
+  { name: 'roomsessions',  model: RoomSession,  optional: true },
+  { name: 'roommessages',  model: RoomMessage,  optional: true },
+  { name: 'roompresences', model: RoomPresence, optional: true },
 ];
+
+// Colecciones que el backup NO trae, separadas por si se pueden tolerar o no. La usan el
+// preview (para avisar) y el restore (para loguear), así el aviso y lo que después pasa de
+// verdad salen del mismo cálculo y no se pueden desincronizar.
+function collectionsMissingFrom(manifest) {
+  const present = manifest?.collections || {};
+  const missing = COLLECTIONS.filter(c => !(c.name in present));
+  return {
+    required: missing.filter(c => !c.optional).map(c => c.name),
+    optional: missing.filter(c =>  c.optional).map(c => c.name),
+  };
+}
 
 // Doble capa de autorización: superadmin (rol) + el email específico (SYSTEM_OWNER_EMAIL,
 // compartido con el middleware de mantenimiento). Backup/restore/mantenimiento son las
@@ -511,10 +535,12 @@ router.post('/preview', (req, res, next) => {
       fs.unlink(tarPath, () => {});
       return res.status(400).json({ error: `Versión de backup incompatible (${manifest.version || 'desconocida'}, se esperaba ${BACKUP_FORMAT_VERSION})` });
     }
-    const missingCollections = COLLECTIONS.filter(c => !(c.name in (manifest.collections || {})));
-    if (missingCollections.length) {
+    // Solo las obligatorias frenan el restore. Las opcionales ausentes (colecciones que no
+    // existían cuando se generó ese backup) se toleran y se avisan más abajo — ver COLLECTIONS.
+    const missing = collectionsMissingFrom(manifest);
+    if (missing.required.length) {
       fs.unlink(tarPath, () => {});
-      return res.status(400).json({ error: `El backup no incluye: ${missingCollections.map(c => c.name).join(', ')}` });
+      return res.status(400).json({ error: `El backup está incompleto, le falta: ${missing.required.join(', ')}` });
     }
 
     // Guarda el manifest como sidecar en disco (no en memoria) — el POST /restore
@@ -527,12 +553,19 @@ router.post('/preview', (req, res, next) => {
       fs.unlink(path.join(UPLOADS_DIR, `${token}.manifest.json`), () => {});
     }, UPLOAD_TTL_MS);
 
+    // `missing: true` es lo que la vista usa para marcar la fila como "se va a vaciar" en vez
+    // de mostrar un 0 indistinguible de una colección que estaba vacía de verdad.
     const diff = {};
     for (const { name, model } of COLLECTIONS) {
-      diff[name] = { current: await model.countDocuments(), backup: manifest.collections[name] };
+      const inBackup = name in manifest.collections;
+      diff[name] = {
+        current: await model.countDocuments(),
+        backup:  inBackup ? manifest.collections[name] : 0,
+        ...(inBackup ? {} : { missing: true }),
+      };
     }
 
-    res.json({ previewToken: token, manifest, diff });
+    res.json({ previewToken: token, manifest, diff, willEmpty: missing.optional });
   } catch (err) {
     cleanupOnError();
     res.status(500).json({ error: err.message || 'Error al leer el backup' });
@@ -570,6 +603,21 @@ router.post('/restore', restoreLimiter, async (req, res) => {
     return res.status(400).json({ error: 'El preview expiró o no existe. Subí el archivo de nuevo.' });
   }
 
+  // El manifest ya pasó la validación del preview; acá se relee solo para poder distinguir
+  // en el log "esto se vació porque el backup no la traía" de "esto se restauró vacío".
+  //
+  // Va con try propio y ANTES de tocar nada: este handler es async y express 4 no atrapa el
+  // throw de una promesa rechazada, así que un sidecar a medio escribir (disco lleno durante
+  // el preview) dejaría la request colgada sin respuesta en vez de dar un error. Y colgada
+  // justo acá sería con el modo mantenimiento ya prendido.
+  let ausentesDelBackup;
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    ausentesDelBackup = new Set(collectionsMissingFrom(manifest).optional);
+  } catch {
+    return res.status(400).json({ error: 'No se pudo leer el preview de este backup. Subí el archivo de nuevo.' });
+  }
+
   // Activa mantenimiento automáticamente durante la restauración, salvo que YA esté
   // activo (ej. lo prendió manualmente el dueño antes) — en ese caso no lo tocamos,
   // ni al empezar ni al terminar, para no apagar algo que no prendimos nosotros.
@@ -605,12 +653,19 @@ router.post('/restore', restoreLimiter, async (req, res) => {
     log.push('Backup a restaurar descomprimido');
 
     // 3. Reemplaza cada colección: borra todo lo actual, inserta lo del backup.
+    //
+    // Una colección que el backup no trae se VACÍA, no se deja como está. Un restore es un
+    // viaje a una fecha, y en esa fecha esa colección no existía. Dejarla intacta sería un
+    // restore a medias: las sesiones de sala de hoy quedarían apuntando a cursos, divisiones
+    // y usuarios que este mismo restore acaba de borrar, y esas refs son `required`.
     for (const { name, model } of COLLECTIONS) {
       const filePath = path.join(extractDir, 'db', `${name}.json`);
       const docs = fs.existsSync(filePath) ? JSON.parse(fs.readFileSync(filePath, 'utf8')) : [];
       await model.deleteMany({});
       if (docs.length) await model.insertMany(docs, { ordered: false });
-      log.push(`Restaurado ${name}: ${docs.length} documento(s)`);
+      log.push(ausentesDelBackup.has(name)
+        ? `Vaciado ${name}: el backup es anterior a esta colección`
+        : `Restaurado ${name}: ${docs.length} documento(s)`);
     }
 
     // 4. Reemplaza los archivos físicos
@@ -623,10 +678,13 @@ router.post('/restore', restoreLimiter, async (req, res) => {
     log.push('Cache de usuarios/escuelas invalidado');
 
     logAudit(req, 'system.restore', [],
-      { safety_backup: path.basename(safetyDest) },
+      {
+        safety_backup: path.basename(safetyDest),
+        ...(ausentesDelBackup.size ? { vaciadas: [...ausentesDelBackup].join(', ') } : {}),
+      },
     );
 
-    res.json({ ok: true, log, safetyBackup: path.basename(safetyDest) });
+    res.json({ ok: true, log, safetyBackup: path.basename(safetyDest), vaciadas: [...ausentesDelBackup] });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Error durante la restauración', log });
   } finally {

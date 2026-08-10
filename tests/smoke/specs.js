@@ -15,6 +15,44 @@
 // MB en el repo para eso sería absurdo.
 const sharp = require('sharp');
 
+// Todas dependencias que ya usa la app (routes/backup.js). Sirven para FABRICAR backups de
+// prueba: los specs de preview necesitan un .tar.gz con un manifest controlado, y el que
+// genera /download siempre trae las colecciones completas — justo el caso que NO hay que probar.
+const tar  = require('tar');
+const fs   = require('fs');
+const os   = require('os');
+const path = require('path');
+
+// Las 9 colecciones que ya existían cuando se congeló el formato de backup 1.0. Un backup de
+// esa época las trae todas y no trae ninguna de las de sala en vivo (que nacieron después).
+const COLECCIONES_V1 = {
+  schools: 1, users: 10, courses: 2, activities: 3, submissions: 4,
+  announcements: 1, suggestions: 0, divisions: 1, subjects: 5,
+};
+
+// Arma un .tar.gz con pinta de backup real pero SOLO con el manifest adentro. Alcanza: el
+// preview a propósito no desempaqueta db/ ni files/ (serían cientos de MB), lee el manifest
+// y nada más. Así el fixture pesa unos bytes y no hay que commitear un binario en el repo.
+async function backupSintetico(collections) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-backup-'));
+  try {
+    const manifest = {
+      version:     '1.0',
+      createdAt:   new Date().toISOString(),
+      appVersion:  '0.0.0-smoke',
+      generatedBy: 'smoke@test',
+      collections,
+      files: { archivos: { count: 0, sizeBytes: 0 }, entregas: { count: 0, sizeBytes: 0 } },
+    };
+    fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest));
+    const tarPath = path.join(dir, 'backup.tar.gz');
+    await tar.c({ gzip: true, cwd: dir, file: tarPath }, ['manifest.json']);
+    return fs.readFileSync(tarPath);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 const RUN_ID = Date.now().toString(36);
 
 // DNI de prueba, único por corrida y por índice. El DNI pasó a ser OBLIGATORIO en toda
@@ -2415,6 +2453,52 @@ const specs = [
       const fd = new FormData();
       fd.append('file', new Blob(['esto no es un tar.gz'], { type: 'application/gzip' }), 'fake.tar.gz');
       await client.post('superadmin', '/superadmin/backup/preview', { form: fd, expectStatus: 400 });
+    },
+  },
+  {
+    id: 'backup-preview-accepts-backup-sin-colecciones-nuevas',
+    title: 'El preview ACEPTA un backup anterior a la sala en vivo y avisa qué se va a vaciar',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // Regresión de un bug real (2026-08-08): el preview exigía TODAS las colecciones de
+      // COLLECTIONS, y roomsessions/roommessages/roompresences se agregaron con la sala en vivo.
+      // Resultado: los 12 pre-restore-*.tar.gz acumulados en backups/ (2,8 GB, jul–ago 2026)
+      // daban 400 — es decir, las redes de seguridad que genera el propio /restore antes de
+      // pisar la base eran todas irrestaurables, y no había forma de enterarse hasta necesitarlas.
+      //
+      // Deja un .tar.gz de unos bytes en el UPLOADS_DIR del server, que se autolimpia a los
+      // 30 min (no hay endpoint para descartar un preview).
+      const fd = new FormData();
+      fd.append('file', new Blob([await backupSintetico(COLECCIONES_V1)], { type: 'application/gzip' }), 'viejo.tar.gz');
+      const res = await client.post('superadmin', '/superadmin/backup/preview', { form: fd, expectStatus: 200 });
+
+      assert(res.json.previewToken, 'un backup viejo válido debería habilitar el restore, no rechazarse');
+
+      const nuevas = ['roomsessions', 'roommessages', 'roompresences'];
+      nuevas.forEach(n => assert(res.json.willEmpty?.includes(n), `willEmpty debería avisar de ${n}`));
+      assert(res.json.willEmpty.length === nuevas.length,
+        `willEmpty debería tener exactamente las 3 de sala, trajo: ${res.json.willEmpty.join(', ')}`);
+
+      // El aviso tiene que llegar también fila por fila: sin esto la tabla muestra un 0 que se
+      // lee igual que "la colección venía vacía", que es una historia distinta.
+      nuevas.forEach(n => assert(res.json.diff[n]?.missing === true, `el diff debería marcar ${n} como ausente`));
+      assert(!res.json.diff.users.missing, 'users SÍ venía en el backup, no debería marcarse como ausente');
+    },
+  },
+  {
+    id: 'backup-preview-rejects-backup-sin-coleccion-obligatoria',
+    title: 'El preview RECHAZA un backup al que le falta una colección obligatoria (400)',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // La contracara del spec anterior, y la razón de que la tolerancia sea por colección y no
+      // general: un backup truncado sin `users` tiene que seguir rechazándose, porque restaurarlo
+      // vaciaría la tabla de usuarios en silencio.
+      const { users, ...sinUsers } = COLECCIONES_V1;
+      const fd = new FormData();
+      fd.append('file', new Blob([await backupSintetico(sinUsers)], { type: 'application/gzip' }), 'truncado.tar.gz');
+      const res = await client.post('superadmin', '/superadmin/backup/preview', { form: fd, expectStatus: 400 });
+      assert(/users/.test(res.json?.error || ''),
+        `el error debería nombrar la colección faltante, dijo: ${res.json?.error}`);
     },
   },
 

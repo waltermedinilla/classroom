@@ -360,6 +360,30 @@ Una `var()` sin definir ni fallback deja la declaración *inválida en tiempo de
 **Verificado en el navegador**, en tema claro y oscuro, midiendo colores computados y ratios de contraste en: las 4 tablas de directivo (encabezado y celda anclada coinciden en las 6 tablas), los 4 detalles de directivo, las 2 vistas de preceptor, jefatura, `/admin/secciones`, `/admin/secciones/create`, `/superadmin/otros`, `/superadmin/suggestions`, `/superadmin/backup`, `/superadmin/monitor`, `/courses/profile` y la textarea de entrega del alumno. El texto sobre `--bg` da 5,47 en claro y 9,21 en oscuro; el escalón de `--bg` sobre `--surface` da 1,11 / 1,14, que es el mismo que ya venían usando `.sp-table` y `audit-list`.
 
 **Quedó a la vista y NO se tocó** — otras cuatro variables que tampoco existen: `--text-primary` (47 usos más), `--surface-variant` (10), `--divider` (8), `--hover-bg`, `--success` y `--surface-2` (1 cada una). Las de `color:` sin fallback son casi inocuas (una `var()` inválida en una propiedad heredada hace que el elemento herede el color del padre, que suele ser `--text` igual). La que sí se ve es `--divider` en `border: 1px solid var(--divider)`: invalida el atajo entero y deja el borde en `none`. Comprobado en la textarea de entrega del alumno (`public/js/course.js:1946`), que hoy no tiene borde.
+### 2026-08-08 — Fix: los 12 backups de seguridad acumulados eran todos irrestaurables
+
+**Síntoma**: ninguno. Ese es el punto — el problema era invisible hasta el día en que hiciera falta restaurar.
+
+`POST /superadmin/backup/preview` rechazaba con 400 cualquier backup al que le faltara **alguna** colección del array `COLLECTIONS`. Cuando se implementó la sala en vivo se sumaron `roomsessions`, `roommessages` y `roompresences` a ese array, y con eso **todo backup generado antes de esa fecha pasó a ser irrestaurable de golpe**.
+
+Alcance real, verificado leyendo los 12 manifests de `backups/` (2,8 GB, del 22-jul al 3-ago de 2026): **los 12 daban 400**. Y no son backups cualquiera: son los `pre-restore-*.tar.gz` que genera el propio `POST /restore` antes de pisar la base. La red de seguridad estaba rota justo en el escenario para el que existe.
+
+Dos detalles que lo agravaban:
+
+- `BACKUP_FORMAT_VERSION` nunca se bumpeó al agregar las colecciones nuevas. Los backups viejos declaran `1.0` igual que los de hoy, así que el chequeo de versión no podía distinguirlos y el de colecciones terminaba haciendo de guadaña.
+- El loop del restore ya toleraba el archivo faltante, pero **vaciando** la colección (`deleteMany` + insertar cero). O sea que el 400 del preview era lo único que separaba al usuario de un comportamiento que ya estaba implementado.
+
+**Fix**: la tolerancia es **por colección, no general**. En `COLLECTIONS`, las que nacieron después de que se congelara el formato 1.0 van marcadas con `optional: true`; el preview solo rechaza si falta una **obligatoria**. Un backup truncado sin `users` se sigue rechazando, que es lo que hay que conservar: restaurarlo vaciaría la tabla de usuarios en silencio.
+
+**Qué pasa con las ausentes: se vacían, no se dejan como están.** Un restore es un viaje a una fecha, y en esa fecha esas colecciones no existían. Dejarlas intactas sería un restore a medias: las sesiones de sala de hoy quedarían apuntando a cursos, divisiones y usuarios que ese mismo restore acaba de borrar, y esas refs son `required` en los tres modelos.
+
+**El preview lo dice en tres lugares**, porque es una pérdida de datos que el usuario tiene que ver antes de confirmar: un recuadro de advertencia que las lista, la fila de la tabla marcada como "no venía" (un `0` se leería igual que "venía vacía", que es otra historia), y una cuarta casilla de confirmación obligatoria que las nombra. El log del restore distingue `Vaciado X: el backup es anterior a esta colección` de `Restaurado X: N documento(s)`, y la auditoría guarda el campo `vaciadas`.
+
+**Tests**: `backup-preview-accepts-backup-sin-colecciones-nuevas` (acepta y avisa) y `backup-preview-rejects-backup-sin-coleccion-obligatoria` (la contracara: sigue rechazando). Fabrican el `.tar.gz` al vuelo con un manifest controlado — el preview a propósito solo lee `manifest.json`, así que el fixture pesa unos bytes y no hay binarios commiteados.
+
+**Al agregar una colección nueva al backup**: va en `COLLECTIONS` con `optional: true`, y se queda así para siempre. Es lo que evita que esto vuelva a pasar.
+
+**No requiere ningún cambio en la base de producción.**
 
 ### 2026-08-08 — Fix: el deploy quedaba trabado para siempre si el árbol de producción se ensuciaba (v1.0.30)
 
@@ -461,6 +485,8 @@ sudo -u walter -H /usr/local/bin/pm2 restart classroom --update-env
 **Retención**: los mensajes de clases cerradas hace más de 3 meses se purgan con `npm run cleanup:rooms` (con `--dry-run` y confirmación explícita). Las sesiones y la presencia **no se purgan nunca**: la asistencia es lo que se consulta meses después. Una clase purgada muestra "La conversación ya no está disponible" y conserva su lista de presentes.
 
 **Backup**: las tres colecciones se agregaron al array `COLLECTIONS` de `routes/backup.js`. Sin esa línea no se respaldan y nadie se entera hasta que hace falta restaurar — el backup enumera colecciones a mano, no es un `mongodump`.
+
+> ⚠️ Este cambio tuvo un efecto secundario que no se vio en su momento: **invalidó de golpe todos los backups anteriores**, porque el preview exigía que estuvieran TODAS las colecciones del array. Se arregló el 2026-08-08 (ver ese changelog); las colecciones nuevas ahora van con `optional: true`.
 
 **Paneles**: `/directivo/en-vivo` (toda la escuela) y `/preceptor/en-vivo` (acotado a `assignedDivisions`, fail-closed). Un solo partial de tarjetas y un solo `getOpenSessions()` para los dos, con un único aggregate por refresco. `preceptor_envivo` es la primera solapa configurable de ese panel — se puede apagar desde `/superadmin/roles`.
 

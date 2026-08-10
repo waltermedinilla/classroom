@@ -45,6 +45,14 @@
     .diff-up   { color: #137333; font-weight: 600; }
     .diff-down { color: #c5221f; font-weight: 600; }
     .diff-same { color: var(--text-hint); }
+    .diff-table tr.diff-missing td { background: #fef7e0; }
+    .diff-missing-tag { font-size: 11px; color: #b06000; font-weight: 600; }
+    .warn-box {
+      background: #fef7e0; border: 1px solid #f9ab00; border-radius: var(--radius);
+      padding: 14px 16px; margin-top: 14px; font-size: 13px;
+    }
+    .warn-box ul { margin: 8px 0 0; padding-left: 20px; }
+    .warn-box li { margin-bottom: 2px; }
     .confirm-box {
       background: #fce8e6; border: 1px solid #ea4335; border-radius: var(--radius);
       padding: 18px; margin-top: 16px;
@@ -292,22 +300,41 @@
           return;
         }
         currentPreviewToken = data.previewToken;
-        renderPreview(data.manifest, data.diff);
+        renderPreview(data.manifest, data.diff, data.willEmpty || []);
       } catch (err) {
         area.innerHTML = `<div class="backup-result-err">✗ Error de conexión: ${err.message}</div>`;
       }
     }
 
-    function renderPreview(manifest, diff) {
+    function renderPreview(manifest, diff, willEmpty) {
       const area = document.getElementById('previewArea');
       const date = new Date(manifest.createdAt);
 
-      const rows = Object.entries(diff).map(([name, { current, backup }]) => {
+      const rows = Object.entries(diff).map(([name, { current, backup, missing }]) => {
         const delta = backup - current;
         const cls = delta > 0 ? 'diff-up' : delta < 0 ? 'diff-down' : 'diff-same';
         const sign = delta > 0 ? '+' : '';
-        return `<tr><td>${name}</td><td>${current}</td><td>${backup}</td><td class="${cls}">${sign}${delta}</td></tr>`;
+        // Una colección ausente del backup muestra "no venía" en vez de un 0 que se leería
+        // igual que "venía vacía" — el resultado es el mismo pero el motivo no.
+        const celdaBackup = missing ? '<span class="diff-missing-tag">no venía</span>' : backup;
+        return `<tr class="${missing ? 'diff-missing' : ''}">
+          <td>${name}</td><td>${current}</td><td>${celdaBackup}</td><td class="${cls}">${sign}${delta}</td>
+        </tr>`;
       }).join('');
+
+      // El párrafo traduce a lenguaje llano QUÉ se pierde, porque "roomsessions" no le dice nada
+      // a nadie a la hora de decidir. Hoy las tres opcionales de COLLECTIONS son las de la sala en
+      // vivo; si se marca otra colección como optional, hay que actualizar esa frase.
+      const avisoVaciado = willEmpty.length ? `
+        <div class="warn-box">
+          <strong>⚠️ Este backup es anterior a estas colecciones y NO las incluye:</strong>
+          <ul>${willEmpty.map(n => `<li><code>${n}</code></li>`).join('')}</ul>
+          <div style="margin-top:8px">
+            Al restaurar <strong>se van a vaciar</strong>. Es lo que corresponde a volver a esa
+            fecha —en ese momento no existían—, pero significa que perdés todo lo que haya hoy
+            en la sala en vivo: sesiones, transcripciones y asistencias.
+          </div>
+        </div>` : '';
 
       const totalFiles = manifest.files.archivos.count + manifest.files.entregas.count;
       const totalBytes = manifest.files.archivos.sizeBytes + manifest.files.entregas.sizeBytes;
@@ -340,6 +367,10 @@
           <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">
             Archivos incluidos: ${formatBytes(totalBytes)} en ${totalFiles} archivo(s)
           </div>
+          <!-- Los dos avisos son independientes y un backup puede disparar ambos: uno
+               comprimido y a la vez anterior a las colecciones de sala en vivo. El de
+               vaciado va primero porque es el único que implica perder datos. -->
+          ${avisoVaciado}
           ${avisoCompresion}
 
           <div class="confirm-box">
@@ -348,6 +379,7 @@
               <label><input type="checkbox" class="confirm-check"> Entiendo que esto reemplaza TODA la base de datos actual</label>
               <label><input type="checkbox" class="confirm-check"> Entiendo que se pierden los cambios posteriores a ${date.toLocaleString('es-AR')}</label>
               <label><input type="checkbox" class="confirm-check"> Entiendo que la app puede tardar unos segundos en volver a responder normalmente</label>
+              ${willEmpty.length ? `<label><input type="checkbox" class="confirm-check"> Entiendo que se van a vaciar: ${willEmpty.join(', ')}</label>` : ''}
             </div>
             <label style="font-size:13px;display:block;margin-top:8px">Escribí <strong>RESTAURAR</strong> para habilitar el botón:</label>
             <input type="text" id="confirmText" class="confirm-input" autocomplete="off">
