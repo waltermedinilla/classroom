@@ -1,6 +1,6 @@
 {
   "name": "classroom-escuela",
-  "version": "1.0.33",
+  "version": "1.0.34",
   "description": "Google Classroom clone with Node.js, Express, MongoDB and vanilla JS",
   "main": "server.js",
   "scripts": {
