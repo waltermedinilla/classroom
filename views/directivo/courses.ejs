@@ -16,20 +16,23 @@
       padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px;
       font-size: 14px; background: var(--surface); color: var(--text-primary);
     }
+    /* Colores de la columna anclada (ver `.nombre-fijo` en style.css): el encabezado y el
+       hover de esta tabla son var(--bg), no el default var(--surface). */
     .courses-table {
       width: 100%; border-collapse: collapse; background: var(--surface);
       border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+      --celda-fija-bg-head: var(--bg); --celda-fija-bg-hover: var(--bg);
     }
     .courses-table th, .courses-table td {
       padding: 12px 14px; text-align: left; font-size: 14px;
       border-bottom: 1px solid var(--border);
     }
     .courses-table th {
-      background: var(--background); font-weight: 600; font-size: 12px;
+      background: var(--bg); font-weight: 600; font-size: 12px;
       text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary);
     }
     .courses-table tr:last-child td { border-bottom: none; }
-    .courses-table tr:hover td { background: var(--background); }
+    .courses-table tr:hover td { background: var(--bg); }
     .rate-cell { min-width: 140px; }
     .rate-bar-track {
       background: var(--border); height: 6px; border-radius: 3px; overflow: hidden;

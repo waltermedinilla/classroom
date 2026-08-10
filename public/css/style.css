@@ -2270,12 +2270,11 @@ table { max-width: 100%; }
    Las celdas ancladas necesitan fondo propio: son transparentes y, al quedar flotando
    sobre las demás, se leerían encimadas. Los tres colores salen de variables con el
    default de la mayoría de las tablas del panel, y cada tabla puede pisarlos. */
-/* El default es el fondo de la tarjeta, que es lo que rinden hoy las tablas del panel de
-   directivo y preceptor: sus reglas usan `var(--background)`, una variable que no existe
-   (la real es `--bg`), así que su encabezado y su hover son transparentes. Las tablas que
-   sí tienen color propio pisan estas variables — ver `.users-table` acá abajo y `.sp-table`
-   en views/superadmin/school-profile.ejs — y por eso el selector se queda en una clase:
-   con `table.` de más, ningún override de una sola clase podría ganarle. */
+/* El default es el fondo de la tarjeta, que es el de la celda común de casi todas las
+   tablas. Las tablas cuyo encabezado o hover tienen color propio pisan estas variables —
+   ver `.users-table` acá abajo, `.sp-table` en views/superadmin/school-profile.ejs y las
+   tablas de directivo/preceptor, que van en `var(--bg)` — y por eso el selector se queda
+   en una clase: con `table.` de más, ningún override de una sola clase podría ganarle. */
 .acciones-fijas, .nombre-fijo {
   --celda-fija-bg:       var(--surface);
   --celda-fija-bg-head:  var(--surface);
@@ -2337,7 +2336,7 @@ table.acciones-fijas, table.nombre-fijo { overflow: clip; }
   font-size: 14px; font-weight: 600; color: var(--text);
   font-family: inherit; text-align: left;
 }
-.nav-toggle:hover { background: var(--background); }
+.nav-toggle:hover { background: var(--bg); }
 .nav-toggle .nav-toggle-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-toggle .material-symbols-outlined { font-size: 20px; color: var(--text-secondary); flex-shrink: 0; }
 .nav-toggle-chevron { transition: transform .18s ease; }

@@ -148,8 +148,9 @@ locals: items: [{ label: String, color: String }]
   Los del tema oscuro son los mismos tonos aclarados (contraste sobre `--surface: #1e2124`).
 
 - **RN-04 — Nunca usar `var(--background)`.** Esa variable **no existe**; la real es
-  `--bg`. Es un error preexistente en las tablas de directivo y preceptor, ya detectado y
-  anotado (`agente.md:445`). Los gráficos nuevos no lo replican.
+  `--bg`. Era un error preexistente en las tablas de directivo y preceptor, corregido el
+  2026-08-08 (ver el changelog de `agente.md`). La regla sigue en pie: la variable nunca
+  llegó a existir, así que cualquier reaparición del nombre vuelve a rendir transparente.
 
 - **RN-05 — Un valor 0 se dibuja, no se omite.** Barra de altura/ancho mínimo (2 px) para
   que un mes o una división en cero se lea como "cero" y no como "hueco/no cargado". Es el

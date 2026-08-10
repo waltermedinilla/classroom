@@ -24,20 +24,24 @@
       display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 600;
       margin: 24px 0 10px;
     }
+    /* Colores de las columnas ancladas (ver `.acciones-fijas` / `.nombre-fijo` en
+       style.css): el encabezado y el hover de esta tabla son var(--bg), no el default
+       var(--surface). */
     .simple-table {
       width: 100%; border-collapse: collapse; background: var(--surface);
       border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+      --celda-fija-bg-head: var(--bg); --celda-fija-bg-hover: var(--bg);
     }
     .simple-table th, .simple-table td {
       padding: 10px 14px; text-align: left; font-size: 13px;
       border-bottom: 1px solid var(--border);
     }
     .simple-table th {
-      background: var(--background); font-weight: 600; font-size: 11px;
+      background: var(--bg); font-weight: 600; font-size: 11px;
       text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary);
     }
     .simple-table tr:last-child td { border-bottom: none; }
-    .simple-table tr:hover td { background: var(--background); }
+    .simple-table tr:hover td { background: var(--bg); }
     a.name-link { color: var(--text-primary); text-decoration: none; font-weight: 500; }
     a.name-link:hover { color: var(--primary); text-decoration: underline; }
     .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; }

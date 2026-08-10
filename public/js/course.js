@@ -1943,7 +1943,7 @@ function renderSubmissionSection(actId, submission, isBlocked = false, allowResu
   if (canEdit) {
     html += `<div style="margin-bottom:14px">
       <textarea id="subText" rows="3" placeholder="Comentario (opcional)..."
-        style="width:100%;padding:10px 12px;border:1px solid var(--divider);border-radius:8px;font-size:14px;font-family:inherit;resize:vertical;background:var(--background);color:var(--text-primary);box-sizing:border-box">${submission?.text || ''}</textarea>
+        style="width:100%;padding:10px 12px;border:1px solid var(--divider);border-radius:8px;font-size:14px;font-family:inherit;resize:vertical;background:var(--bg);color:var(--text-primary);box-sizing:border-box">${submission?.text || ''}</textarea>
     </div>
     <div class="creator-card" style="margin-bottom:16px">
       <div class="creator-card-section-title">Adjuntar</div>

@@ -8,10 +8,16 @@
   <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="stylesheet" href="/css/style.css">
   <style>
+    /* El fondo va en var(--surface), no en var(--bg): esta tabla no está dentro de una
+       tarjeta, así que sus celdas son transparentes y el chip queda apoyado directamente
+       sobre el fondo de la página — que es justamente var(--bg). Con esa variable el chip
+       no se distinguiría de la página en ninguno de los dos temas. Con var(--border) sí se
+       distingue, pero el texto de 11,5 px queda en 4,41 de contraste, apenas abajo del
+       4,5 que pide WCAG AA para texto chico; sobre var(--surface) llega a 6,05. */
     .sec-chip {
       display: inline-flex; align-items: center; gap: 5px;
       font-size: 11.5px; padding: 3px 10px; border-radius: 12px;
-      background: var(--background); color: var(--text-secondary); margin: 2px 4px 2px 0;
+      background: var(--surface); color: var(--text-secondary); margin: 2px 4px 2px 0;
     }
     .sec-aviso {
       display: inline-flex; align-items: center; gap: 5px;

@@ -25,7 +25,7 @@
       gap: 10px; margin-bottom: 16px;
     }
     .stats-mini-card {
-      background: var(--background); border: 1px solid var(--border); border-radius: 8px;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
       padding: 12px 14px;
     }
     .stats-mini-value { font-size: 20px; font-weight: 700; line-height: 1; }
@@ -38,7 +38,7 @@
       text-align: center; color: var(--text-secondary); cursor: pointer;
       transition: border-color .15s ease, background .15s ease;
     }
-    .drop-zone:hover, .drop-zone.dragover { border-color: var(--primary); background: var(--background); }
+    .drop-zone:hover, .drop-zone.dragover { border-color: var(--primary); background: var(--bg); }
     .diff-table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13px; }
     .diff-table th, .diff-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
     .diff-table th { font-size: 11px; text-transform: uppercase; color: var(--text-secondary); }
@@ -328,7 +328,7 @@
         </div>` : '';
 
       area.innerHTML = `
-        <div style="margin-top:16px;padding:16px;background:var(--background);border-radius:var(--radius)">
+        <div style="margin-top:16px;padding:16px;background:var(--bg);border-radius:var(--radius)">
           <div style="font-size:13px;margin-bottom:10px">
             <strong>Fecha del backup:</strong> ${date.toLocaleString('es-AR')} ·
             <strong>Generado por:</strong> ${manifest.generatedBy || '—'}

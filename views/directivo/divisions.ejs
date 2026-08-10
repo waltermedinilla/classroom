@@ -8,20 +8,23 @@
   <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="stylesheet" href="/css/style.css">
   <style>
+    /* Colores de la columna anclada (ver `.nombre-fijo` en style.css): el encabezado y el
+       hover de esta tabla son var(--bg), no el default var(--surface). */
     .div-table {
       width: 100%; border-collapse: collapse; background: var(--surface);
       border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+      --celda-fija-bg-head: var(--bg); --celda-fija-bg-hover: var(--bg);
     }
     .div-table th, .div-table td {
       padding: 10px 14px; text-align: left; font-size: 13px;
       border-bottom: 1px solid var(--border);
     }
     .div-table th {
-      background: var(--background); font-weight: 600; font-size: 11px;
+      background: var(--bg); font-weight: 600; font-size: 11px;
       text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary);
     }
     .div-table tr:last-child td { border-bottom: none; }
-    .div-table tr:hover td { background: var(--background); }
+    .div-table tr:hover td { background: var(--bg); }
     .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; }
     .badge-warn { background: #fef4e5; color: #e67e00; }
     .badge-ok { background: #e6f4ea; color: #137333; }
