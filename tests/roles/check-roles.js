@@ -250,6 +250,7 @@ async function main() {
         { rol: 'directivo', key: 'directivo_courses', path: '/directivo/courses' },
         { rol: 'admin',     key: 'admin_audit',       path: '/admin/audit' },
         { rol: 'preceptor', key: 'preceptor_envivo',  path: '/preceptor/en-vivo' },
+        { rol: 'preceptor', key: 'preceptor_asistencia', path: '/preceptor/asistencia' },
       ];
       for (const caso of casos) {
         const a = actores[caso.rol].actor;

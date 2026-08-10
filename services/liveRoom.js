@@ -72,6 +72,23 @@ const F_CORTA  = opts({ day: '2-digit', month: '2-digit', year: 'numeric' });
 const F_FECHAH = opts({ day: '2-digit', month: '2-digit', year: 'numeric',
                         hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
 
+// Día escolar 'YYYY-MM-DD' en la zona de la escuela. A diferencia de los de arriba, este no
+// es un texto de pantalla: es la CLAVE con la que se archiva la asistencia
+// (models/AttendanceSession.js) y parte de su índice único. Vive acá, y no en
+// services/attendance.js, porque la zona horaria de la escuela tiene que tener un solo dueño
+// —un segundo Intl.DateTimeFormat en otro archivo es exactamente cómo vuelve el bug de las
+// tres horas de más—. Con toISOString(), que es UTC, una toma abierta a las 21:30 de Buenos
+// Aires quedaría fechada al día siguiente.
+//
+// Se arma con formatToParts y no con un locale que casualmente imprime ISO (en-CA): el
+// formato de un locale puede cambiar con la versión de ICU, y esto es una clave de base de
+// datos, no un texto.
+const F_ISO = opts({ year: 'numeric', month: '2-digit', day: '2-digit' });
+function diaEscolar(d = new Date()) {
+  const partes = Object.fromEntries(F_ISO.formatToParts(d).map(p => [p.type, p.value]));
+  return `${partes.year}-${partes.month}-${partes.day}`;
+}
+
 // Una fecha nula o basura devuelve '' en vez de "Invalid Date": estos textos van directo a la
 // pantalla y a los CSV.
 function formatear(f, d) {
@@ -472,7 +489,7 @@ module.exports = {
   POLL_MS, DIRECTIVO_POLL_MS, ONLINE_WINDOW_MS, AUTO_CLOSE_MS, PURGE_AFTER_MS,
   MSG_MAX, MSG_PER_MIN, EMOJIS, STAFF_ROLES, ROLE_LABELS, TZ,
   // hora (zona fija de la escuela)
-  fmt, hora, fechaDia, fechaLarga, fechaCorta, fechaHora,
+  fmt, hora, fechaDia, fechaLarga, fechaCorta, fechaHora, diaEscolar,
   // puras
   isOnline, presenceSummary, shouldAutoClose, sanitizeText, minutosPresente, initial,
   // con base
@@ -480,4 +497,8 @@ module.exports = {
   getOpenSessions, getTodayClosed,
   // export
   csvAsistencia, csvTranscripcion,
+  // El "dialecto" de CSV del proyecto (punto y coma + BOM, para el Excel en español). Se
+  // exporta para que services/attendance.js arme sus planillas con el MISMO, en vez de
+  // redefinir el separador y volver a discutir por qué un export abre en una sola columna.
+  csvCell, csvRows,
 };

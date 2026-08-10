@@ -18,6 +18,8 @@ const { SYSTEM_OWNER_EMAIL } = require('../config/maintenance');
 const { INTERESTS, MAX_INTERESTS } = require('../config/interests');
 // Constantes de la sala en vivo (la solapa "En vivo" del detalle de materia).
 const live = require('../services/liveRoom');
+// Asistencia de preceptoría: de acá sale el cartel "Dar asistencia" del inicio del alumno.
+const asistencia = require('../services/attendance');
 // Subida de imágenes: multer en memoria + redimensionado/compresión a WebP antes de
 // escribir en disco (ver middleware/image-upload.js y config/imagePresets.js).
 const {
@@ -79,6 +81,19 @@ router.get('/', requireAuth, async (req, res) => {
       if (pending.length > 0) pendingSummary = { total: pending.length, dueToday };
     }
 
+    // Tomas de asistencia abiertas hoy en las que este alumno puede marcarse.
+    // Las divisiones salen de `joined`, que ya viene con `division` populada: resolverlas con
+    // una query aparte sería trabajo de más en cada visita al inicio, que es la pantalla más
+    // pedida de la aplicación. Con el curso sin toma abierta esto son 0 documentos y una
+    // sola consulta indexada.
+    let tomasAsistencia = [];
+    if (res.locals.user?.role === 'student' && joined.length > 0) {
+      const divisionIds = [...new Set(
+        joined.map(c => c.division?._id).filter(Boolean).map(String)
+      )];
+      tomasAsistencia = await asistencia.tomasAbiertasDelAlumno(res.locals.user, divisionIds);
+    }
+
     // Aviso para completar el perfil personal (bio / intereses / proyecto).
     // Solo alumnos y docentes: admin, superadmin y directivo aterrizan en sus propios
     // paneles y para ellos el perfil no aporta nada institucional.
@@ -117,7 +132,7 @@ router.get('/', requireAuth, async (req, res) => {
       joined.length >= MAX_MATERIAS_ALUMNO;
 
     res.render('dashboard', { courses, pendingSummary, profilePrompt, autoMatricula,
-      joinByCode: JOIN_BY_CODE_ACTIVO, cupoMateriasLleno });
+      joinByCode: JOIN_BY_CODE_ACTIVO, cupoMateriasLleno, tomasAsistencia });
   } catch (err) {
     res.status(500).send('Error del servidor');
   }

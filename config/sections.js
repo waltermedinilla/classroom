@@ -77,6 +77,9 @@ const SECTIONS = [
   // nadie afuera del panel (la INVARIANTE del redirect de "/" sigue apuntando al dashboard,
   // que sigue locked). Muestra las salas en vivo de las divisiones a cargo del preceptor.
   { key: 'preceptor_envivo',    panel: 'preceptor', label: 'En vivo',    icon: 'sensors', path: '/preceptor/en-vivo', roles: ['preceptor', 'directivo', 'admin', 'superadmin'] },
+  // La toma de asistencia del día, por curso. También configurable: hay escuelas donde la
+  // asistencia la lleva otro sistema y ofrecerla al pedo confunde más de lo que ayuda.
+  { key: 'preceptor_asistencia', panel: 'preceptor', label: 'Asistencia', icon: 'fact_check', path: '/preceptor/asistencia', roles: ['preceptor', 'directivo', 'admin', 'superadmin'] },
 
   // ── Panel Jefatura de Sección (base: middleware/jefatura.js ROLES_CON_ACCESO) ──
   // 'Actividades' es la pantalla de entrada del panel, por eso va locked (ver la INVARIANTE

@@ -36,6 +36,8 @@ const Subject       = require('../models/Subject');
 const RoomSession   = require('../models/RoomSession');
 const RoomMessage   = require('../models/RoomMessage');
 const RoomPresence  = require('../models/RoomPresence');
+const AttendanceSession = require('../models/AttendanceSession');
+const AttendanceMark    = require('../models/AttendanceMark');
 
 const router = express.Router();
 
@@ -100,6 +102,11 @@ const COLLECTIONS = [
   { name: 'roomsessions',  model: RoomSession,  optional: true },
   { name: 'roommessages',  model: RoomMessage,  optional: true },
   { name: 'roompresences', model: RoomPresence, optional: true },
+  // Asistencia de preceptoría. También van juntas: una marca sin su toma no se puede fechar
+  // ni atribuir a un curso. Es de las colecciones que MÁS caro sale perder — la asistencia es
+  // justamente lo que se consulta meses después, y no se purga nunca.
+  { name: 'attendancesessions', model: AttendanceSession, optional: true },
+  { name: 'attendancemarks',    model: AttendanceMark,    optional: true },
 ];
 
 // Colecciones que el backup NO trae, separadas por si se pueden tolerar o no. La usan el

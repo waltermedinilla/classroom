@@ -2301,6 +2301,54 @@ Ciclo completo verificado en el navegador contra la base real (1428 usuarios): l
 
 ---
 
+## Asistencia de preceptoría (2026-08-10)
+
+Spec: `specs/asistencia-preceptoria.spec.md` (aprobada el 2026-08-10). **Fases A y B completas.**
+
+Hasta ahora la única "asistencia" del sistema era un efecto secundario de la sala en vivo: quién se había conectado a la clase de una materia. Útil, pero no es lo que hace un preceptor — él toma la asistencia **del curso** (3°2° entero) y **del día**, y eso no existía. Ahora existe, en `/preceptor/asistencia`.
+
+**Dos modos, el mismo modelo**. *Pase de lista*: abre, ve los 26 nombres, marca y cierra. *Ventana abierta*: la deja abierta y la va completando (en la Fase B los alumnos se marcan solos desde su pantalla). Cuatro estados: presente, tarde, ausente y justificado, este último con una observación de hasta 200 caracteres.
+
+**Modelos nuevos** (2, ninguna migración): `AttendanceSession` (una toma por curso, día y etiqueta — índice único, que es lo que hace idempotente el botón "Abrir" cuando dos preceptores lo tocan a la vez) y `AttendanceMark` (una marca por alumno; **es** el registro de asistencia).
+
+### Las cuatro decisiones que sostienen todo
+
+**El día es un string `YYYY-MM-DD` calculado en la zona de la escuela**, no un `Date`. Producción corre en UTC: con un `Date` local, una toma abierta a las 21:30 de Buenos Aires quedaría fechada al día siguiente **y el índice único dejaría abrir una segunda toma "del mismo día"**. `diaEscolar()` vive en `services/liveRoom.js`, junto al resto de los formateadores, porque la zona horaria del proyecto tiene un solo dueño — un segundo `Intl.DateTimeFormat` en otro archivo es exactamente cómo volvería el bug de las tres horas (ver el changelog del 2026-08-06). Cinco tests unitarios lo cuidan.
+
+**La nómina se congela al abrir.** Se crea una marca por alumno con su nombre y su DNI copiados. Un chico que se matricula a las 10 no aparece en la toma de las 7:30, y uno que se va de la escuela sigue figurando en las tomas de cuando estaba. Va a parecer un error y no lo es: la asistencia de un día es la de los que estaban ese día.
+
+**La sala en vivo sugiere, nunca marca.** Decisión explícita del usuario. El enganche automático son cuatro líneas en `touchPresence`, pero la marca la pone siempre una persona. Cuando el preceptor acepta la sugerencia, la marca queda con origen `preceptor`, porque la puso él. (La sugerencia en sí llega en la Fase B; la clave `enClase` ya viaja en el payload, vacía.)
+
+**Al cerrar, lo que quedó sin marcar pasa a ausente.** Una toma cerrada no tiene ningún `null`. Y una toma abierta de un día anterior se cierra sola en el primer request que la toque — de forma perezosa y no con un `setInterval`, porque PM2 corre dos workers y un timer se ejecutaría dos veces. Una ventana olvidada el viernes dejaría a todo el curso presente el lunes.
+
+### Dos cosas que cambiaron respecto de la spec
+
+**El cierre programado se pide en minutos, no en hora del reloj.** Un "08:15" tipeado en el navegador se interpreta con la zona de esa máquina, y las computadoras del aula tienen cualquier zona configurada. Un intervalo no depende de ninguna zona; la hora que se muestra la calcula después el servidor.
+
+**Se agregó "Reabrir para corregir"** (`POST /toma/:id/reabrir` + acción de auditoría `attendance.reopen`). La spec decía que una toma cerrada rechaza marcas y que para corregir "hay que reabrir", pero nunca definía cómo — el caso del que llega 8:40 quedaba sin resolver. Solo se reabre la toma **de hoy**: una de ayer se vuelve a cerrar sola en el request siguiente.
+
+### El bug que apareció verificando en el navegador
+
+La primera versión repintaba la lista entera después de cada marca. Con 26 alumnos en un celular eso no es un detalle estético: los botones se mueven bajo el dedo y **los clicks siguientes caen sobre nodos que ya fueron reemplazados y se pierden**. Medido: de 6 clicks rápidos entraba 1. Ahora se actualiza solo la fila tocada y el resumen se recalcula en el cliente; el poll de 15 s vuelve a sincronizar con la base, así que cualquier diferencia se corrige sola. De 6 clicks rápidos entran 6.
+
+**Auditoría**: se registran la apertura, el cierre, la reapertura y **solo las correcciones** — pisar una marca que ya tenía estado. El pase de lista normal son 30 marcas por curso y por día: auditarlas todas dejaría `/admin/audit` inservible, y quién marcó y cuándo ya vive en la marca misma.
+
+**Solapa** `preceptor_asistencia`, apagable por escuela desde `/superadmin/roles`. **Backup**: las dos colecciones entraron a `COLLECTIONS` (`routes/backup.js`) — ojo, esa lista es el único lugar que decide qué se respalda, y la asistencia no se purga nunca.
+
+### Fase B: el alumno, las sugerencias y los reportes
+
+**El botón "Dar asistencia"** aparece en el inicio del alumno (`views/partials/asistencia-banner.ejs`) cuando preceptoría dejó una ventana abierta. Se marca a sí mismo y siempre como presente: el cuerpo del POST **se ignora por completo**, así que mandar el id de un compañero o un estado inventado no hace nada. Es idempotente —doble toque, F5 o dos pestañas dan una sola marca y no pisan la hora original— y las divisiones salen de las materias que el dashboard **ya tenía cargadas**, así que el cartel no agrega una consulta a la pantalla más visitada de la aplicación.
+
+**Y no revierte al preceptor.** Si él ya decidió algo para ese chico, el toque deja constancia de que dice estar presente (la grilla muestra "la dio el alumno") pero no cambia el estado, y el cartel se lo dice. Sin esa regla, el botón sería una forma de discutirle desde el celular a quien controla la asistencia.
+
+**Las sugerencias de la sala** ya funcionan: el poll trae "estos N sin marcar están ahora en clase", con la materia, y un botón para marcarlos a todos. La marca queda con origen `preceptor`, no `sala`: la sugerencia la trajo el sistema, la decisión la tomó él. La query arranca por `{ school, closedAt }` porque **ese** es el índice que tiene `RoomSession` — filtrar por división sola recorrería decenas de miles de sesiones cada 15 segundos.
+
+**El historial** (`/preceptor/asistencia/:id/historial`) muestra los días tomados y el acumulado por alumno, con una columna por día. Las dos tablas scrollean **dentro de su caja**: en el celular la página nunca se va de costado. Y los dos CSV —el del día y el del período— salen con el mismo dialecto que los de la sala en vivo (`;` + BOM, para el Excel en español), reusando `csvRows` en vez de redefinirlo.
+
+**El porcentaje cuenta la llegada tarde como asistencia** y no calcula inasistencias reglamentarias: eso es un acto administrativo que esta feature no hace, y la pantalla lo dice.
+
+**Dos trampas que costaron una vuelta cada una**: el rango de fechas se valida antes de tocar la base (un rango invertido o malformado da 400, no una consulta sin límites contra la colección más grande del sistema); y el BOM del CSV **no se puede verificar desde el smoke**, porque el decoder de `fetch()` se lo come al llamar a `res.text()` — se testea a nivel string en los unitarios.
+
 ## Plan de Futuras Actualizaciones (Roadmap)
 
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`). Resumen de lo pendiente:

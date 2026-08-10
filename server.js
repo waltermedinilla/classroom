@@ -46,6 +46,7 @@ const adminRoutes        = require('./routes/admin');
 const superadminRoutes   = require('./routes/superadmin');
 const directivoRoutes    = require('./routes/directivo');
 const preceptorRoutes    = require('./routes/preceptor');
+const attendanceRoutes   = require('./routes/attendance');
 const jefaturaRoutes     = require('./routes/jefatura');
 const backupRoutes       = require('./routes/backup');
 const dbFixesRoutes      = require('./routes/dbFixes');
@@ -593,7 +594,16 @@ if (process.env.MESSAGES_ENABLED !== 'false') {
 }
 app.use('/superadmin',  superadminRoutes);
 app.use('/directivo',   directivoRoutes);
+// La asistencia va ANTES de /preceptor, con el mismo criterio que /superadmin/backup y
+// compañía: sin este orden el request atraviesa igual toda la cadena de preceptorRoutes
+// —incluido loadPreceptorScope, que consulta divisiones— antes de caer acá, y paga esa
+// query dos veces. No rompe nada, pero es trabajo al pedo en cada request.
+app.use('/preceptor/asistencia', attendanceRoutes.panelRouter);
 app.use('/preceptor',   preceptorRoutes);
+// Las dos rutas del ALUMNO para darse la asistencia. Van por separado del panel: no pasan
+// por requirePreceptor ni por el alcance por divisiones — validan por su cuenta que quien
+// llama sea alumno y esté en la nómina de esa toma.
+app.use('/asistencia',  attendanceRoutes.alumnoRouter);
 app.use('/jefatura',    jefaturaRoutes);
 app.use('/suggestions', suggestionRoutes);
 // Bandeja del destinatario de los mensajes del superadmin. El panel del que ENVÍA se monta

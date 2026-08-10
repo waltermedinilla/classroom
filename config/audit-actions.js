@@ -50,6 +50,16 @@ const ACTIONS = {
   'room.delete_message': { label: 'borró un mensaje de la sala',     icon: 'delete',      color: '#ea4335', category: 'course' },
   'room.mute':           { label: 'silenció a un alumno en la sala', icon: 'volume_off',  color: '#ea8600', category: 'course' },
 
+  // Asistencia de preceptoría. Categoría 'division' y no 'course' porque la asistencia es
+  // del CURSO (3°2°), no de una materia.
+  // 'attendance.change' se registra SOLO cuando se pisa una marca que ya tenía estado: el
+  // pase de lista normal son 30 marcas por curso y por día, y auditarlas todas dejaría la
+  // pantalla de auditoría inservible. Quién marcó y cuándo ya vive en la marca misma.
+  'attendance.open':   { label: 'abrió la toma de asistencia', icon: 'fact_check', color: '#137333', category: 'division' },
+  'attendance.close':  { label: 'cerró la toma de asistencia', icon: 'task_alt',   color: '#ea8600', category: 'division' },
+  'attendance.change': { label: 'corrigió una asistencia',     icon: 'edit_note',  color: '#9334e6', category: 'division' },
+  'attendance.reopen': { label: 'reabrió la toma de asistencia', icon: 'lock_open', color: '#ea8600', category: 'division' },
+
   // ── Divisiones (Division = "1°1°", "2°A", etc.) ───────────────────────────
   'division.create':      { label: 'creó una división',        icon: 'add_box',              color: '#1a73e8', category: 'division' },
   'division.edit':        { label: 'editó una división',       icon: 'edit',                 color: '#1a73e8', category: 'division' },

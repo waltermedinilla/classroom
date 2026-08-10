@@ -1,0 +1,348 @@
+<%# La planilla del día de un curso. Se pinta toda desde JS con el mismo payload que devuelve
+    el poll (estadoDeToma en routes/attendance.js), para que el render inicial y el refresco
+    no puedan divergir — mismo patrón que partials/live-cards.ejs.
+
+    Las horas vienen YA FORMATEADAS del servidor, con la zona de la escuela. Acá no se
+    formatea ninguna: ver el comentario de TZ en services/liveRoom.js. %>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Asistencia <%= division.name %> - Preceptoría - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/preceptor-nav', { activePage: 'asistencia' }) %>
+
+    <style>
+      .tm-cab { display:flex; justify-content:space-between; align-items:flex-start; gap:12px;
+                flex-wrap:wrap; margin-bottom:6px; }
+      .tm-estado { font-size:12px; padding:3px 9px; border-radius:12px; }
+      .tm-estado.abierta { background:#e6f4ea; color:#137333; }
+      .tm-estado.cerrada { background:#f1f3f4; color:#5f6368; }
+      .tm-chips { display:flex; gap:8px; flex-wrap:wrap; margin:14px 0; }
+      .tm-chip { font-size:13px; padding:6px 12px; border-radius:10px; background:#f8f9fa;
+                 border:1px solid #dadce0; color:#5f6368; }
+      .tm-chip b { color:#202124; }
+      .tm-chip.falta { background:#fef7e0; border-color:#feefc3; color:#b06000; }
+      .tm-barra { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
+      .tm-btn { font-size:13px; padding:8px 14px; border-radius:8px; border:1px solid #dadce0;
+                background:#fff; color:#1a73e8; cursor:pointer; font-family:inherit; }
+      .tm-btn:hover { background:#f8f9fa; }
+      .tm-btn.primario { background:#1a73e8; color:#fff; border-color:#1a73e8; }
+      .tm-btn:disabled { opacity:.6; cursor:default; }
+      .tm-lista { background:#fff; border:1px solid #dadce0; border-radius:12px; overflow:hidden; }
+      .tm-fila { display:flex; align-items:center; gap:12px; padding:10px 14px;
+                 border-bottom:1px solid #f1f3f4; flex-wrap:wrap; }
+      .tm-fila:last-child { border-bottom:none; }
+      .tm-nombre { flex:1 1 180px; font-size:14px; }
+      .tm-solo { display:block; font-size:11px; color:#5f6368; margin-top:2px; }
+      .tm-ops { display:flex; gap:6px; flex-wrap:wrap; }
+      .tm-op { font-size:12px; padding:6px 10px; border-radius:8px; border:1px solid #dadce0;
+               background:#fff; color:#5f6368; cursor:pointer; font-family:inherit;
+               white-space:nowrap; }
+      .tm-op:hover { background:#f8f9fa; }
+      .tm-op.on { color:#fff; border-color:transparent; }
+      .tm-op.on[data-estado="presente"]    { background:#137333; }
+      .tm-op.on[data-estado="tarde"]       { background:#b06000; }
+      .tm-op.on[data-estado="ausente"]     { background:#c5221f; }
+      .tm-op.on[data-estado="justificado"] { background:#7627bb; }
+      .tm-nota { flex:1 1 100%; font-size:13px; padding:7px 10px; border:1px solid #dadce0;
+                 border-radius:8px; font-family:inherit; }
+      .tm-error { font-size:13px; color:#d93025; min-height:18px; margin-bottom:8px; }
+      .tm-sala { background:#e8f0fe; border:1px solid #d2e3fc; border-radius:12px;
+                 padding:12px 14px; margin-bottom:14px; }
+      .tm-sala-tit { font-size:14px; color:#174ea6; margin-bottom:6px; }
+      .tm-sala-lista { font-size:13px; color:#5f6368; margin-bottom:10px; }
+      .tm-sala-lista span { display:inline-block; margin-right:10px; }
+      .tm-sala-lista em { font-style:normal; color:#80868b; }
+      <%# En el celular los cuatro botones se reparten el ancho y crecen a ~40 px de alto: es
+          la pantalla donde el preceptor toca 26 filas seguidas, y 30 px se erran seguido. %>
+      @media (max-width:520px) {
+        .tm-op { flex:1 1 auto; text-align:center; padding:11px 8px; }
+        .tm-fila { padding:12px 14px; }
+      }
+    </style>
+
+    <div class="tm-cab">
+      <div>
+        <a href="/preceptor/asistencia" style="font-size:13px;color:#1a73e8;text-decoration:none">← Asistencia</a>
+        <h2 style="margin:6px 0 2px"><%= division.name %></h2>
+        <p style="color:var(--text-secondary);font-size:14px" id="tmFecha"><%= fecha %></p>
+      </div>
+      <div style="text-align:right">
+        <span class="tm-estado <%= toma.estado %>" id="tmEstado"></span>
+        <p style="font-size:12px;color:#5f6368;margin-top:6px" id="tmSub"></p>
+      </div>
+    </div>
+
+    <div class="tm-chips" id="tmChips"></div>
+    <p class="tm-error" id="tmError"></p>
+    <div class="tm-barra" id="tmBarra"></div>
+    <div id="tmSala"></div>
+    <div class="tm-lista" id="tmLista"></div>
+
+    <p style="font-size:12px;color:#80868b;margin-top:14px">
+      Esta planilla es el registro de la plataforma. No reemplaza el libro de asistencia
+      oficial de la escuela ni calcula inasistencias reglamentarias.
+    </p>
+  </main>
+
+  <%- include('../partials/footer') %>
+
+  <script>
+  (function () {
+    const TOMA_ID = '<%= toma.tomaId %>';
+    const POLL    = <%= pollMs %>;
+    const ESTADOS = <%- JSON.stringify(estados) %>;
+    const LABELS  = <%- JSON.stringify(estadoLabels) %>;
+    let estado    = <%- JSON.stringify(toma).replace(/</g, '\\u003c') %>;
+
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+    const error = (msg) => { $('tmError').textContent = msg || ''; };
+
+    // El resumen se recalcula EN EL CLIENTE después de cada marca, en vez de pedirle el
+    // número al servidor. Es lo que permite que marcar 26 alumnos sean 26 requests de ida y
+    // ninguna de vuelta. El poll lo vuelve a sincronizar con la base cada pocos segundos, así
+    // que cualquier diferencia se corrige sola.
+    function recalcularResumen() {
+      const r = { presentes: 0, tarde: 0, ausentes: 0, justificados: 0, sinMarcar: 0,
+                  total: estado.marcas.length };
+      const CLAVE = { presente: 'presentes', tarde: 'tarde', ausente: 'ausentes',
+                      justificado: 'justificados' };
+      estado.marcas.forEach(m => { r[CLAVE[m.estado] || 'sinMarcar'] += 1; });
+      estado.resumen = r;
+    }
+
+    // El contenido de UNA fila. Extraído para que el repintado completo y la actualización de
+    // una sola fila usen el mismo renderer y no puedan divergir.
+    function filaHTML(m, abierta) {
+      const ops = ESTADOS.map(e =>
+        '<button class="tm-op' + (m.estado === e ? ' on' : '') + '" data-estado="' + e + '"' +
+        (abierta ? '' : ' disabled') + '>' + esc(LABELS[e]) + '</button>').join('');
+
+      const solo = m.seMarcoSolo
+        ? '<span class="tm-solo">la dio el alumno' + (m.origen === 'alumno' && m.hora ? ' · ' + esc(m.hora) : '') + '</span>'
+        : (m.hora ? '<span class="tm-solo">' + esc(m.hora) + '</span>' : '');
+
+      // El campo de observación aparece solo donde tiene sentido: en el justificado, o donde
+      // ya hay una nota escrita.
+      const nota = (m.estado === 'justificado' || m.nota)
+        ? '<input class="tm-nota" data-nota placeholder="Motivo (opcional)" value="' + esc(m.nota) + '"' +
+          (abierta ? '' : ' disabled') + '>'
+        : '';
+
+      return '<span class="tm-nombre">' + esc(m.nombre) + solo + '</span>' +
+             '<div class="tm-ops">' + ops + '</div>' + nota;
+    }
+
+    function pintar() {
+      const abierta = estado.estado === 'abierta';
+      const r = estado.resumen;
+
+      $('tmEstado').className = 'tm-estado ' + estado.estado;
+      $('tmEstado').textContent = abierta
+        ? (estado.modo === 'ventana' ? '● Ventana abierta' : '● Pase de lista')
+        : 'Cerrada';
+
+      const sub = [];
+      if (abierta) {
+        sub.push('Abierta ' + estado.abiertaDesde);
+        if (estado.cierraA) sub.push('cierra ' + estado.cierraA);
+        if (estado.autoasistencia) sub.push('los alumnos pueden darla');
+      } else {
+        sub.push('Cerrada ' + estado.cerradaA);
+        if (estado.autoCerrada) sub.push('se cerró sola al cambiar el día');
+      }
+      $('tmSub').textContent = sub.join(' · ');
+
+      $('tmChips').innerHTML = [
+        '<span class="tm-chip"><b>' + r.presentes + '</b> presentes</span>',
+        r.tarde        ? '<span class="tm-chip"><b>' + r.tarde + '</b> tarde</span>' : '',
+        '<span class="tm-chip"><b>' + r.ausentes + '</b> ausentes</span>',
+        r.justificados ? '<span class="tm-chip"><b>' + r.justificados + '</b> justificados</span>' : '',
+        r.sinMarcar    ? '<span class="tm-chip falta"><b>' + r.sinMarcar + '</b> sin marcar</span>' : '',
+        '<span class="tm-chip">' + r.total + ' en la nómina</span>',
+      ].join('');
+
+      // Sin alumnos en la nómina no se ofrece ninguna acción: no hay nada que marcar.
+      if (!r.total) {
+        $('tmBarra').innerHTML = '';
+        $('tmLista').innerHTML =
+          '<div class="tm-fila"><span class="tm-nombre">Este curso no tiene alumnos matriculados.</span></div>';
+        return;
+      }
+
+      $('tmBarra').innerHTML = abierta
+        ? (r.sinMarcar
+            ? '<button class="tm-btn" data-resto>Marcar presentes a los ' + r.sinMarcar + ' sin marcar</button>' : '') +
+          '<button class="tm-btn primario" data-cerrar>Cerrar la asistencia</button>'
+        : '<button class="tm-btn" data-reabrir>Reabrir para corregir</button>';
+
+      pintarSala();
+
+      $('tmLista').innerHTML = estado.marcas.map(m =>
+        '<div class="tm-fila" data-id="' + m.studentId + '">' + filaHTML(m, abierta) + '</div>'
+      ).join('');
+    }
+
+    // Sugerencia de la sala en vivo: los que todavía no están marcados pero están conectados
+    // AHORA a una clase de este curso. NO marca nada solo — la decisión sigue siendo del
+    // preceptor, que acá la toma de a uno (en su fila) o de todos juntos.
+    function pintarSala() {
+      const enClase = estado.enClase || [];
+      if (estado.estado !== 'abierta' || !enClase.length) { $('tmSala').innerHTML = ''; return; }
+
+      const nombres = enClase.map(a =>
+        '<span>' + esc(a.nombre) + ' <em>· ' + esc(a.materia) + '</em></span>').join('');
+
+      $('tmSala').innerHTML =
+        '<div class="tm-sala">' +
+          '<div class="tm-sala-tit">' +
+            (enClase.length === 1
+              ? '1 alumno sin marcar está ahora en clase'
+              : enClase.length + ' alumnos sin marcar están ahora en clase') +
+          '</div>' +
+          '<div class="tm-sala-lista">' + nombres + '</div>' +
+          '<button class="tm-btn" data-sala>Marcar presentes a ' +
+            (enClase.length === 1 ? 'este alumno' : 'estos ' + enClase.length) + '</button>' +
+        '</div>';
+    }
+
+    // Repinta SOLO los chips del encabezado. Se llama después de cada marca.
+    function pintarResumen() {
+      const r = estado.resumen;
+      const barra = $('tmBarra').querySelector('[data-resto]');
+      $('tmChips').innerHTML = [
+        '<span class="tm-chip"><b>' + r.presentes + '</b> presentes</span>',
+        r.tarde        ? '<span class="tm-chip"><b>' + r.tarde + '</b> tarde</span>' : '',
+        '<span class="tm-chip"><b>' + r.ausentes + '</b> ausentes</span>',
+        r.justificados ? '<span class="tm-chip"><b>' + r.justificados + '</b> justificados</span>' : '',
+        r.sinMarcar    ? '<span class="tm-chip falta"><b>' + r.sinMarcar + '</b> sin marcar</span>' : '',
+        '<span class="tm-chip">' + r.total + ' en la nómina</span>',
+      ].join('');
+      // El botón del lote lleva el número adentro, así que se actualiza o desaparece.
+      if (barra) {
+        if (r.sinMarcar) barra.textContent = 'Marcar presentes a los ' + r.sinMarcar + ' sin marcar';
+        else barra.remove();
+      }
+    }
+
+    async function pedir(url, body) {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(body || {}),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'No se pudo guardar');
+      return data;
+    }
+
+    async function refrescar() {
+      // Si hay alguien escribiendo una observación, el repintado le borraría lo que va
+      // tecleando. Se saltea este ciclo: el siguiente lo agarra.
+      if (document.activeElement?.closest?.('#tmLista')) return;
+
+      const r = await fetch('/preceptor/asistencia/toma/' + TOMA_ID + '/poll',
+        { headers: { Accept: 'application/json' } });
+      if (r.ok) { estado = await r.json(); pintar(); }
+    }
+
+    // Un solo listener en el contenedor: la lista se repinta entera en cada cambio y volver a
+    // enganchar 25 × 4 botones cada vez sería tirar trabajo a la basura.
+    document.querySelector('main').addEventListener('click', async (ev) => {
+      const op = ev.target.closest('.tm-op');
+      const resto   = ev.target.closest('[data-resto]');
+      const sala    = ev.target.closest('[data-sala]');
+      const cerrar  = ev.target.closest('[data-cerrar]');
+      const reabrir = ev.target.closest('[data-reabrir]');
+      if (!op && !resto && !sala && !cerrar && !reabrir) return;
+
+      error('');
+      try {
+        if (op) {
+          // Se actualiza SOLO esta fila, no la lista entera. Repintar las 26 después de cada
+          // click hace que los botones se muevan bajo el dedo mientras el preceptor pasa
+          // lista: los clicks siguientes caen sobre nodos que ya fueron reemplazados y se
+          // pierden. Con 26 alumnos en un celular eso no es un detalle, es la feature rota.
+          const fila  = op.closest('.tm-fila');
+          const marca = estado.marcas.find(m => m.studentId === fila.dataset.id);
+          const data  = await pedir('/preceptor/asistencia/toma/' + TOMA_ID + '/marcar', {
+            studentId: fila.dataset.id,
+            status:    op.dataset.estado,
+          });
+          if (marca) {
+            marca.estado = data.estado;
+            marca.origen = 'preceptor';
+            marca.hora   = data.hora || marca.hora;
+            fila.innerHTML = filaHTML(marca, true);
+          }
+          // Al que se acaba de marcar ya no hay que seguir sugiriéndolo.
+          estado.enClase = (estado.enClase || []).filter(a => a.studentId !== fila.dataset.id);
+          recalcularResumen();
+          pintarResumen();
+          pintarSala();
+          return;   // sin refrescar(): la fila y los números ya están al día
+        } else if (resto) {
+          const sinMarcar = estado.marcas.filter(m => !m.estado).map(m => m.studentId);
+          await pedir('/preceptor/asistencia/toma/' + TOMA_ID + '/marcar-lote', {
+            studentIds: sinMarcar, status: 'presente',
+          });
+        } else if (sala) {
+          // Las marcas quedan con origen 'preceptor', no 'sala': la sugerencia la trajo el
+          // sistema, pero la decisión de darla por buena la tomó él.
+          await pedir('/preceptor/asistencia/toma/' + TOMA_ID + '/marcar-lote', {
+            studentIds: (estado.enClase || []).map(a => a.studentId), status: 'presente',
+          });
+        } else if (cerrar) {
+          const r = estado.resumen;
+          const aviso = r.sinMarcar
+            ? 'Quedan ' + r.sinMarcar + ' sin marcar y van a figurar como AUSENTES. ¿Cerrar igual?'
+            : '¿Cerrar la asistencia de hoy?';
+          if (!confirm(aviso)) return;
+          await pedir('/preceptor/asistencia/toma/' + TOMA_ID + '/cerrar');
+        } else if (reabrir) {
+          await pedir('/preceptor/asistencia/toma/' + TOMA_ID + '/reabrir');
+        }
+        await refrescar();
+      } catch (e) { error(e.message); }
+    });
+
+    // La observación se guarda al salir del campo, no en cada tecla.
+    document.querySelector('main').addEventListener('change', async (ev) => {
+      const nota = ev.target.closest('[data-nota]');
+      if (!nota) return;
+      const fila = nota.closest('.tm-fila');
+      const marca = estado.marcas.find(m => m.studentId === fila.dataset.id);
+      if (!marca || !marca.estado) return;   // sin estado no hay nada a lo que colgarle la nota
+
+      error('');
+      try {
+        await pedir('/preceptor/asistencia/toma/' + TOMA_ID + '/marcar', {
+          studentId: fila.dataset.id, status: marca.estado, note: nota.value,
+        });
+        marca.nota = nota.value;
+      } catch (e) { error(e.message); }
+    });
+
+    pintar();
+    // Solo se pollea con la toma abierta: una planilla cerrada no cambia sola, y en la
+    // ventana abierta es lo que hace aparecer solos a los que se van marcando.
+    setInterval(() => {
+      if (document.hidden || estado.estado !== 'abierta') return;
+      refrescar().catch(() => { /* un refresco perdido no rompe nada */ });
+    }, POLL);
+  })();
+  </script>
+</body>
+</html>

@@ -2889,10 +2889,15 @@ const specs = [
 
       assert(res.json.previewToken, 'un backup viejo válido debería habilitar el restore, no rechazarse');
 
-      const nuevas = ['roomsessions', 'roommessages', 'roompresences'];
+      // Todas las colecciones que nacieron DESPUÉS de que se congelara el formato 1.0: las
+      // tres de la sala en vivo y las dos de la asistencia de preceptoría (2026-08-10). Cada
+      // vez que se sume una a COLLECTIONS hay que sumarla acá — es lo que mantiene honesto al
+      // aviso de "esto se va a vaciar".
+      const nuevas = ['roomsessions', 'roommessages', 'roompresences',
+                      'attendancesessions', 'attendancemarks'];
       nuevas.forEach(n => assert(res.json.willEmpty?.includes(n), `willEmpty debería avisar de ${n}`));
       assert(res.json.willEmpty.length === nuevas.length,
-        `willEmpty debería tener exactamente las 3 de sala, trajo: ${res.json.willEmpty.join(', ')}`);
+        `willEmpty debería tener exactamente esas ${nuevas.length}, trajo: ${res.json.willEmpty.join(', ')}`);
 
       // El aviso tiene que llegar también fila por fila: sin esto la tabla muestra un 0 que se
       // lee igual que "la colección venía vacía", que es una historia distinta.
@@ -3267,6 +3272,439 @@ const specs = [
         body: { name: `Materia trucha ${RUN_ID}`, divisionId: state.divisionId },
         expectStatus: 403,
       });
+    },
+  },
+  // ── Preceptoría: asistencia del día (specs/asistencia-preceptoria.spec.md) ──
+  // El orden importa: estos specs corren ANTES de los que dan de alta, deshabilitan y
+  // desmatriculan alumnos, para que la nómina del curso sea estable mientras se prueba.
+  {
+    id: 'preceptor-attendance-panel',
+    title: 'El panel de asistencia lista los cursos a cargo y hoy figura sin tomar',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('preceptor', '/preceptor/asistencia', { expectStatus: 200 });
+      assert(res.text.includes(`SMOKE-${RUN_ID}`), 'debería listar la división asignada');
+      assert(!res.text.includes(`SMOKE-B-${RUN_ID}`), 'NO debería listar la división ajena');
+      assert(res.text.includes('Sin tomar'), 'la asistencia de hoy todavía no se tomó');
+
+      // Se busca la basura como VALOR RENDERIZADO (entre tags, después de ":" o de "="), no
+      // como subcadena suelta: "undefined" es una palabra del propio JavaScript de los
+      // partials y "NaN" aparece de casualidad dentro de nombres propios. Mismo criterio que
+      // el spec envivo-tarjetas, que ya se comió ese falso positivo.
+      const basura = res.text.match(/(?:>|:\s*|=\s*"?)(NaN|Infinity)\b|>undefined</);
+      assert(!basura, `el panel no debería mostrar ${basura ? basura[0] : ''} — contexto: ` +
+        (basura ? JSON.stringify(res.text.slice(Math.max(0, basura.index - 80), basura.index + 40)) : ''));
+    },
+  },
+  {
+    id: 'preceptor-attendance-blocked-outside-scope',
+    title: 'Abrir o ver la asistencia de un curso ajeno devuelve 403',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // otherDivisionId existe pero NO está asignada al preceptor. Es la barrera que separa
+      // a un preceptor de la asistencia de los cursos que no tiene a cargo.
+      await client.get('preceptor', `/preceptor/asistencia/${state.otherDivisionId}`, { expectStatus: 403 });
+      await client.post('preceptor', `/preceptor/asistencia/${state.otherDivisionId}/abrir`, {
+        body: { mode: 'pase' },
+        expectStatus: 403,
+      });
+    },
+  },
+  {
+    id: 'preceptor-attendance-open',
+    title: 'El preceptor abre el pase de lista y la nómina queda congelada sin marcar',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('preceptor', `/preceptor/asistencia/${state.divisionId}/abrir`, {
+        body: { mode: 'pase' },
+        expectStatus: 200,
+      });
+      assert(res.json.creada === true, 'la toma debería crearse');
+      state.tomaId = res.json.tomaId;
+
+      const poll = await client.get('preceptor', `/preceptor/asistencia/toma/${state.tomaId}/poll`,
+        { expectStatus: 200 });
+      assert(poll.json.estado === 'abierta', 'la toma debería estar abierta');
+      assert(poll.json.modo === 'pase', `el modo debería ser 'pase', es '${poll.json.modo}'`);
+      assert(poll.json.autoasistencia === false, 'el pase de lista no habilita la autoasistencia');
+      assert(poll.json.resumen.total >= 1, 'la nómina debería tener al menos un alumno');
+      assert(poll.json.resumen.total === poll.json.resumen.sinMarcar,
+        'al abrir, toda la nómina tiene que estar sin marcar');
+      // Un alumno cursa varias materias del mismo curso: tiene que aparecer UNA sola vez.
+      const ids = poll.json.marcas.map(m => m.studentId);
+      assert(new Set(ids).size === ids.length, 'ningún alumno puede aparecer repetido en la nómina');
+    },
+  },
+  {
+    id: 'preceptor-attendance-open-is-idempotent',
+    title: 'Volver a abrir la toma del día devuelve la misma, sin duplicarla',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Dos preceptores del mismo curso tocando "Abrir" a la vez es un caso real.
+      const res = await client.post('preceptor', `/preceptor/asistencia/${state.divisionId}/abrir`, {
+        body: { mode: 'ventana' },
+        expectStatus: 200,
+      });
+      assert(res.json.creada === false, 'no debería crear una segunda toma');
+      assert(res.json.tomaId === state.tomaId, 'debería devolver la toma que ya existía');
+    },
+  },
+  {
+    id: 'preceptor-attendance-mark',
+    title: 'El preceptor marca a un alumno y rechaza los estados inventados',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      if (!state.scopedStudentId) return;
+
+      await client.post('preceptor', `/preceptor/asistencia/toma/${state.tomaId}/marcar`, {
+        body: { studentId: state.scopedStudentId, status: 'presente' },
+        expectStatus: 200,
+      });
+
+      const poll = await client.get('preceptor', `/preceptor/asistencia/toma/${state.tomaId}/poll`,
+        { expectStatus: 200 });
+      const marca = poll.json.marcas.find(m => m.studentId === state.scopedStudentId);
+      assert(marca && marca.estado === 'presente', 'el alumno debería quedar presente');
+      assert(marca.origen === 'preceptor', `el origen debería ser 'preceptor', es '${marca.origen}'`);
+      assert(marca.hora, 'la marca debería traer la hora ya formateada por el servidor');
+      assert(poll.json.resumen.presentes === 1, 'el resumen debería contar 1 presente');
+
+      // Lista blanca cerrada de estados: nunca se confía en el body.
+      await client.post('preceptor', `/preceptor/asistencia/toma/${state.tomaId}/marcar`, {
+        body: { studentId: state.scopedStudentId, status: 'PRESENTE' },
+        expectStatus: 400,
+      });
+      await client.post('preceptor', `/preceptor/asistencia/toma/${state.tomaId}/marcar`, {
+        body: { studentId: state.scopedStudentId, status: 'inventado' },
+        expectStatus: 400,
+      });
+      // Un alumno que no está en ESTA toma (nómina congelada) no se agrega marcándolo.
+      await client.post('preceptor', `/preceptor/asistencia/toma/${state.tomaId}/marcar`, {
+        body: { studentId: state.preceptorId, status: 'presente' },
+        expectStatus: 404,
+      });
+    },
+  },
+  {
+    id: 'preceptor-attendance-close',
+    title: 'Al cerrar, los que quedaron sin marcar pasan a ausentes y ya no se puede marcar',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('preceptor', `/preceptor/asistencia/toma/${state.tomaId}/cerrar`,
+        { expectStatus: 200 });
+      const r = res.json.resumen;
+      assert(r.sinMarcar === 0, `una toma cerrada no puede tener sin marcar, tiene ${r.sinMarcar}`);
+      assert(r.presentes + r.tarde + r.ausentes + r.justificados === r.total,
+        'la suma de los estados tiene que dar el total de la nómina');
+
+      // Con la toma cerrada no se marca: para corregir hay que reabrirla.
+      if (state.scopedStudentId) {
+        await client.post('preceptor', `/preceptor/asistencia/toma/${state.tomaId}/marcar`, {
+          body: { studentId: state.scopedStudentId, status: 'tarde' },
+          expectStatus: 409,
+        });
+      }
+      // Y no se puede abrir una segunda toma del día sin etiqueta.
+      await client.post('preceptor', `/preceptor/asistencia/${state.divisionId}/abrir`, {
+        body: { mode: 'pase' },
+        expectStatus: 409,
+      });
+    },
+  },
+  {
+    id: 'preceptor-attendance-reopen-and-correct',
+    title: 'Reabrir la toma de hoy permite corregir al que llegó tarde',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      if (!state.scopedStudentId) return;
+
+      await client.post('preceptor', `/preceptor/asistencia/toma/${state.tomaId}/reabrir`,
+        { expectStatus: 200 });
+
+      const res = await client.post('preceptor', `/preceptor/asistencia/toma/${state.tomaId}/marcar`, {
+        body: { studentId: state.scopedStudentId, status: 'tarde' },
+        expectStatus: 200,
+      });
+      assert(res.json.corregida === true, 'pisar una marca que ya tenía estado es una corrección');
+
+      const poll = await client.get('preceptor', `/preceptor/asistencia/toma/${state.tomaId}/poll`,
+        { expectStatus: 200 });
+      assert(poll.json.resumen.tarde === 1, 'debería quedar 1 llegada tarde');
+      assert(poll.json.resumen.presentes === 0, 'ya no debería figurar como presente');
+
+      // Se deja cerrada, que es como tiene que quedar una jornada.
+      await client.post('preceptor', `/preceptor/asistencia/toma/${state.tomaId}/cerrar`,
+        { expectStatus: 200 });
+    },
+  },
+  {
+    id: 'preceptor-attendance-audit',
+    title: 'La apertura, el cierre y la corrección quedan en la auditoría',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const cuenta = async (accion) => {
+        const res = await client.get('admin', `/admin/audit?action=${accion}`, { expectStatus: 200 });
+        const m = res.text.match(/([\d.]+) evento/);
+        return m ? parseInt(m[1].replace(/\./g, ''), 10) : 0;
+      };
+      for (const accion of ['attendance.open', 'attendance.close', 'attendance.change', 'attendance.reopen']) {
+        assert(await cuenta(accion) > 0, `debería haber al menos un evento ${accion}`);
+      }
+    },
+  },
+  {
+    id: 'preceptor-attendance-teacher-blocked',
+    title: 'El docente y el alumno no entran a la asistencia de preceptoría',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.get('scopedTeacher', '/preceptor/asistencia', { expectStatus: 403 });
+      await client.post('scopedTeacher', `/preceptor/asistencia/${state.divisionId}/abrir`, {
+        body: { mode: 'pase' },
+        expectStatus: 403,
+      });
+    },
+  },
+  // ── Fase B: autoasistencia del alumno ───────────────────────────────────────
+  // Se abre una SEGUNDA toma del día, con etiqueta, porque la del pase de lista ya se cerró
+  // más arriba. Es además el caso de uso del contraturno.
+  {
+    id: 'attendance-window-open',
+    title: 'El preceptor abre una ventana con autoasistencia',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('preceptor', `/preceptor/asistencia/${state.divisionId}/abrir`, {
+        body: { mode: 'ventana', label: 'Contraturno', closesInMin: 60 },
+        expectStatus: 200,
+      });
+      assert(res.json.creada === true, 'la toma con etiqueta debería crearse aunque ya hubo una hoy');
+      state.ventanaId = res.json.tomaId;
+
+      const poll = await client.get('preceptor', `/preceptor/asistencia/toma/${state.ventanaId}/poll`,
+        { expectStatus: 200 });
+      assert(poll.json.autoasistencia === true, 'el modo ventana habilita la autoasistencia');
+      assert(poll.json.cierraA, 'debería traer la hora de cierre ya formateada');
+    },
+  },
+  {
+    id: 'attendance-relogin-actores',
+    title: 'El alumno y la docente vuelven a iniciar sesión antes del bloque de autoasistencia',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // El jar de cookies de `scopedStudent` viene VACÍO desde 'cache-invalidation-on-disable':
+      // ese spec lo deshabilita, checkUser responde con clearCookie('token') y el cliente de
+      // test guarda la cookie vacía. Re-habilitarlo NO le devuelve la sesión al cliente.
+      // Es la misma trampa que documenta 'sala-setup-sesiones' más abajo; acá aparece antes
+      // porque este bloque es el primero que vuelve a usar al alumno.
+      await client.post('scopedStudent', '/login', {
+        body: { email: state.scopedStudentEmail, password: student.password },
+        expectStatus: 200,
+      });
+      await client.post('scopedTeacher', '/login', {
+        body: { email: state.scopedTeacherEmail, password: teacher.password },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'student-attendance-banner',
+    title: 'El alumno ve la asistencia abierta en su inicio',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('scopedStudent', '/asistencia/abierta', { expectStatus: 200 });
+      const toma = (res.json.tomas || []).find(t => t.id === state.ventanaId);
+      assert(toma, 'la toma abierta debería figurarle al alumno');
+      assert(toma.yaDi === false, 'todavía no la dio');
+      assert(toma.abiertaDesde, 'debería traer la hora ya formateada por el servidor');
+
+      const inicio = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
+      assert(inicio.text.includes('Dar asistencia'), 'el cartel debería aparecer en el inicio');
+    },
+  },
+  {
+    id: 'student-attendance-checkin',
+    title: 'El alumno se da la asistencia y queda con origen "alumno"',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('scopedStudent', `/asistencia/${state.ventanaId}/presente`,
+        { expectStatus: 200 });
+      assert(res.json.yaDi === false, 'es la primera vez que la da');
+      assert(res.json.estado === 'presente', `debería quedar presente, quedó ${res.json.estado}`);
+      assert(res.json.respetada === true, 'nadie había decidido antes, su marca vale');
+
+      const poll = await client.get('preceptor', `/preceptor/asistencia/toma/${state.ventanaId}/poll`,
+        { expectStatus: 200 });
+      const marca = poll.json.marcas.find(m => m.studentId === state.scopedStudentId);
+      assert(marca.estado === 'presente' && marca.origen === 'alumno',
+        `la marca debería ser presente/alumno, es ${marca.estado}/${marca.origen}`);
+      assert(marca.seMarcoSolo === true, 'el preceptor tiene que ver que la dio el alumno');
+      state.horaAutoasistencia = marca.hora;
+    },
+  },
+  {
+    id: 'student-attendance-idempotent',
+    title: 'Tocar el botón dos veces no duplica la marca ni pisa la hora original',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('scopedStudent', `/asistencia/${state.ventanaId}/presente`,
+        { expectStatus: 200 });
+      assert(res.json.yaDi === true, 'la segunda vez tiene que avisar que ya la había dado, no dar error');
+
+      const poll = await client.get('preceptor', `/preceptor/asistencia/toma/${state.ventanaId}/poll`,
+        { expectStatus: 200 });
+      const suyas = poll.json.marcas.filter(m => m.studentId === state.scopedStudentId);
+      assert(suyas.length === 1, `debería haber UNA marca suya, hay ${suyas.length}`);
+      assert(poll.json.resumen.presentes === 1, 'y un solo presente en el resumen');
+    },
+  },
+  {
+    id: 'student-attendance-ignores-body',
+    title: 'El alumno no puede marcar a un compañero ni elegir el estado',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // El cuerpo se ignora POR COMPLETO. Es la puerta que hay que dejar cerrada: sin esto,
+      // conocer el id de un compañero alcanzaría para ponerlo presente o justificado.
+      //
+      // El compañero se elige de la propia nómina de la toma y no de otro bloque del smoke:
+      // así el spec no depende de en qué división terminó un alumno que crea otro escenario.
+      const antes = await client.get('preceptor', `/preceptor/asistencia/toma/${state.ventanaId}/poll`,
+        { expectStatus: 200 });
+      const companeroAntes = antes.json.marcas.find(m => m.studentId !== state.scopedStudentId);
+      if (!companeroAntes) return;   // curso de un solo alumno: no hay a quién intentar marcarle
+
+      await client.post('scopedStudent', `/asistencia/${state.ventanaId}/presente`, {
+        body: { studentId: companeroAntes.studentId, status: 'justificado', note: 'inventado' },
+        expectStatus: 200,
+      });
+
+      const post = await client.get('preceptor', `/preceptor/asistencia/toma/${state.ventanaId}/poll`,
+        { expectStatus: 200 });
+      const companero = post.json.marcas.find(m => m.studentId === companeroAntes.studentId);
+      assert(companero.estado === companeroAntes.estado,
+        `el compañero NO puede haber cambiado de estado (era ${companeroAntes.estado}, quedó ${companero.estado})`);
+      const propia = post.json.marcas.find(m => m.studentId === state.scopedStudentId);
+      assert(propia.estado === 'presente', 'y el que tocó el botón sigue simplemente presente');
+      assert(!propia.nota, 'la nota del body tampoco se toma');
+    },
+  },
+  {
+    id: 'student-attendance-preceptor-corrects',
+    title: 'El preceptor corrige la autoasistencia y se conserva que el alumno la dio',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.post('preceptor', `/preceptor/asistencia/toma/${state.ventanaId}/marcar`, {
+        body: { studentId: state.scopedStudentId, status: 'tarde' },
+        expectStatus: 200,
+      });
+
+      const poll = await client.get('preceptor', `/preceptor/asistencia/toma/${state.ventanaId}/poll`,
+        { expectStatus: 200 });
+      const marca = poll.json.marcas.find(m => m.studentId === state.scopedStudentId);
+      assert(marca.estado === 'tarde' && marca.origen === 'preceptor',
+        'la corrección del preceptor manda');
+      assert(marca.seMarcoSolo === true,
+        'pero tiene que seguir constando que el alumno dio el presente — es lo que se discute en un reclamo');
+
+      // Y si el chico vuelve a tocar el botón, no revierte la decisión del preceptor.
+      const otra = await client.post('scopedStudent', `/asistencia/${state.ventanaId}/presente`,
+        { expectStatus: 200 });
+      assert(otra.json.respetada === false, 'debería avisar que preceptoría ya había decidido');
+      const post = await client.get('preceptor', `/preceptor/asistencia/toma/${state.ventanaId}/poll`,
+        { expectStatus: 200 });
+      assert(post.json.marcas.find(m => m.studentId === state.scopedStudentId).estado === 'tarde',
+        'el alumno no puede revertir al preceptor desde el celular');
+    },
+  },
+  {
+    id: 'student-attendance-outside-roster',
+    title: 'Un alumno que no cursa en ese curso no puede darse la asistencia (403)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // thirdDivisionId está en el alcance del preceptor pero NO tiene alumnos: la toma se
+      // abre con la nómina vacía, así que scopedStudent no figura en ella.
+      const res = await client.post('preceptor', `/preceptor/asistencia/${state.thirdDivisionId}/abrir`, {
+        body: { mode: 'ventana' },
+        expectStatus: 200,
+      });
+      state.tomaAjenaId = res.json.tomaId;
+
+      await client.post('scopedStudent', `/asistencia/${state.tomaAjenaId}/presente`, { expectStatus: 403 });
+      // Y el docente tampoco, por más que sea de la escuela: esta ruta es solo de alumnos.
+      await client.post('scopedTeacher', `/asistencia/${state.ventanaId}/presente`, { expectStatus: 403 });
+    },
+  },
+  {
+    id: 'student-attendance-closed-window',
+    title: 'Con la ventana cerrada el alumno ya no puede darse la asistencia (409)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.post('preceptor', `/preceptor/asistencia/toma/${state.ventanaId}/cerrar`,
+        { expectStatus: 200 });
+      await client.post('preceptor', `/preceptor/asistencia/toma/${state.tomaAjenaId}/cerrar`,
+        { expectStatus: 200 });
+
+      await client.post('scopedStudent', `/asistencia/${state.ventanaId}/presente`, { expectStatus: 409 });
+
+      // Y el cartel del inicio desaparece.
+      const res = await client.get('scopedStudent', '/asistencia/abierta', { expectStatus: 200 });
+      assert((res.json.tomas || []).length === 0,
+        `sin ventana abierta no debería haber ninguna toma, hay ${res.json.tomas.length}`);
+    },
+  },
+
+  // ── Fase B: historial y exportación ─────────────────────────────────────────
+  {
+    id: 'attendance-historial',
+    title: 'El historial del curso lista los días tomados y el acumulado por alumno',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('preceptor', `/preceptor/asistencia/${state.divisionId}/historial`,
+        { expectStatus: 200 });
+      assert(res.text.includes('Historial'), 'debería renderizar la pantalla de historial');
+      assert(res.text.includes('Contraturno'), 'la toma con etiqueta debería figurar');
+      assert(res.text.includes('Por alumno'), 'debería traer el acumulado por alumno');
+
+      const basura = res.text.match(/(?:>|:\s*|=\s*"?)(NaN|Infinity)\b|>undefined</);
+      assert(!basura, `el historial no debería mostrar ${basura ? basura[0] : ''}`);
+    },
+  },
+  {
+    id: 'attendance-historial-rango-invalido',
+    title: 'Un rango de fechas malformado o invertido devuelve 400',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const base = `/preceptor/asistencia/${state.divisionId}`;
+      await client.get('preceptor', `${base}/historial?desde=2026-08-31&hasta=2026-08-01`, { expectStatus: 400 });
+      await client.get('preceptor', `${base}/historial?desde=31/08/2026&hasta=2026-08-01`, { expectStatus: 400 });
+      await client.get('preceptor', `${base}/export?tipo=mes&desde=2026-13-99&hasta=2026-08-01`, { expectStatus: 400 });
+      await client.get('preceptor', `${base}/export?tipo=dia&fecha=ayer`, { expectStatus: 400 });
+    },
+  },
+  {
+    id: 'attendance-export',
+    title: 'Los dos CSV salen con BOM, punto y coma y los datos del curso',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const base = `/preceptor/asistencia/${state.divisionId}`;
+      const hoy  = new Date().toISOString().slice(0, 10);
+
+      // El BOM NO se puede verificar desde acá: el decoder UTF-8 de fetch() lo saca al
+      // llamar a res.text(). Se testea a nivel string en tests/unit/attendance.test.js.
+      // Lo que sí se comprueba acá es el separador y que el contenido sea el del curso.
+      const dia = await client.get('preceptor', `${base}/export?tipo=dia&fecha=${hoy}`, { expectStatus: 200 });
+      assert(dia.text.includes('Alumno;DNI;Estado;'), `encabezado inesperado: ${dia.text.slice(0, 80)}`);
+
+      const mes = await client.get('preceptor', `${base}/export?tipo=mes`, { expectStatus: 200 });
+      assert(mes.text.includes('% de días que asistió'), 'debería traer la columna de porcentaje');
+      assert(mes.text.includes('P = presente'), 'debería traer la referencia al pie');
+    },
+  },
+  {
+    id: 'attendance-export-outside-scope',
+    title: 'El historial y el export de un curso ajeno devuelven 403',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.get('preceptor', `/preceptor/asistencia/${state.otherDivisionId}/historial`, { expectStatus: 403 });
+      await client.get('preceptor', `/preceptor/asistencia/${state.otherDivisionId}/export?tipo=mes`, { expectStatus: 403 });
     },
   },
   {
@@ -4309,6 +4747,50 @@ const specs = [
     },
   },
   {
+    // Vive acá y no con el resto de la asistencia porque necesita las dos cosas a la vez:
+    // una sala en vivo con alguien adentro Y una toma abierta. Es el único punto del smoke
+    // donde eso pasa.
+    id: 'attendance-sugerencia-desde-la-sala',
+    title: 'La sala en vivo SUGIERE quiénes están en clase, sin marcar a nadie',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      if (!state.divisionId || !state.scopedStudentId) return;
+
+      const abrir = await client.post('salaPreceptor', `/preceptor/asistencia/${state.divisionId}/abrir`, {
+        body: { mode: 'pase', label: 'Con sala' },
+        expectStatus: 200,
+      });
+      state.tomaSalaId = abrir.json.tomaId;
+
+      const poll = await client.get('salaPreceptor', `/preceptor/asistencia/toma/${state.tomaSalaId}/poll`,
+        { expectStatus: 200 });
+
+      const sugerido = (poll.json.enClase || []).find(a => a.studentId === state.scopedStudentId);
+      assert(sugerido, 'el alumno conectado a la sala debería aparecer como sugerencia');
+      assert(sugerido.materia, 'la sugerencia tiene que decir en qué materia está');
+
+      // Lo importante: sugerir NO marca. La planilla sigue entera sin tocar.
+      assert(poll.json.resumen.sinMarcar === poll.json.resumen.total,
+        'la sugerencia no puede haber marcado a nadie');
+
+      // Y cuando el preceptor la acepta, la marca queda a nombre de ÉL, no de la sala.
+      await client.post('salaPreceptor', `/preceptor/asistencia/toma/${state.tomaSalaId}/marcar-lote`, {
+        body: { studentIds: poll.json.enClase.map(a => a.studentId), status: 'presente' },
+        expectStatus: 200,
+      });
+      const post = await client.get('salaPreceptor', `/preceptor/asistencia/toma/${state.tomaSalaId}/poll`,
+        { expectStatus: 200 });
+      const marca = post.json.marcas.find(m => m.studentId === state.scopedStudentId);
+      assert(marca.estado === 'presente' && marca.origen === 'preceptor',
+        `la decisión la tomó el preceptor: esperaba presente/preceptor, hay ${marca.estado}/${marca.origen}`);
+      assert(!(post.json.enClase || []).some(a => a.studentId === state.scopedStudentId),
+        'ya marcado, no se lo sigue sugiriendo');
+
+      await client.post('salaPreceptor', `/preceptor/asistencia/toma/${state.tomaSalaId}/cerrar`,
+        { expectStatus: 200 });
+    },
+  },
+  {
     id: 'sala-mensajes-cursor',
     title: 'El cursor por seq no pierde mensajes ni reenvía los ya vistos',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
@@ -4769,6 +5251,28 @@ const specs = [
         await mongo.db().collection('roommessages').deleteMany({ course: cid });
         await mongo.db().collection('roompresences').deleteMany({ course: cid });
         await mongo.db().collection('roomsessions').deleteMany({ course: cid });
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    // La asistencia NO se borra en cascada al borrar la división (y está bien que no: es un
+    // registro que se conserva). Pero la que crea el smoke es basura, y sin esto cada corrida
+    // deja una toma huérfana con sus 20 marcas apuntando a un curso que ya no existe.
+    id: 'cleanup-asistencia-db',
+    title: 'Limpieza: borra las tomas de asistencia de prueba',
+    requiresEnv: ['MONGODB_URI'],
+    async run({ env, state }) {
+      const divisiones = [state.divisionId, state.thirdDivisionId].filter(Boolean);
+      if (!divisiones.length) return;
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const ids = { $in: divisiones.map(d => new ObjectId(d)) };
+        await mongo.db().collection('attendancemarks').deleteMany({ division: ids });
+        await mongo.db().collection('attendancesessions').deleteMany({ division: ids });
       } finally {
         await mongo.close();
       }

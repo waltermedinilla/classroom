@@ -53,6 +53,10 @@
       </div>
     </div>
 
+    <%# Asistencia del día: va ARRIBA de los pendientes porque tiene ventana — la tarea se
+        puede entregar más tarde, la asistencia no. %>
+    <%- include('partials/asistencia-banner') %>
+
     <% if (typeof pendingSummary !== 'undefined' && pendingSummary) { %>
     <div class="pending-band">
       <span class="material-symbols-outlined">assignment_late</span>

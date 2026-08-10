@@ -1,0 +1,90 @@
+<%#
+  Cartel del inicio del alumno: "Dar asistencia".
+  Ver specs/asistencia-preceptoria.spec.md.
+
+  Espera en locals: tomasAsistencia = [{ id, curso, abiertaDesde, cierraA, yaDi, estado }].
+  Llega vacío para todos los roles que no son alumno, y para el alumno sin ninguna toma
+  abierta hoy — en los dos casos este partial no pinta nada.
+
+  Es un ARRAY y no una toma suelta a propósito: un alumno puede cursar en más de una división
+  (repitentes con materias de dos años). En la práctica trae una sola.
+%>
+<% if (Array.isArray(locals.tomasAsistencia) && tomasAsistencia.length) { %>
+<style>
+  .as-band { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+             background:#e6f4ea; border:1px solid #ceead6; border-radius:12px;
+             padding:14px 16px; margin-bottom:16px; }
+  .as-band + .as-band { margin-top:-6px; }
+  .as-band .material-symbols-outlined { color:#137333; }
+  .as-band-txt { flex:1 1 220px; font-size:14px; color:#0d652d; }
+  .as-band-txt small { display:block; color:#5f6368; font-size:12px; margin-top:2px; }
+  .as-band-btn { font-size:14px; font-weight:500; padding:10px 20px; border-radius:8px;
+                 border:none; background:#137333; color:#fff; cursor:pointer;
+                 font-family:inherit; }
+  .as-band-btn:hover  { background:#0d652d; }
+  .as-band-btn:disabled { background:#ceead6; color:#0d652d; cursor:default; }
+  .as-band.dada { background:#f1f3f4; border-color:#dadce0; }
+  .as-band.dada .material-symbols-outlined,
+  .as-band.dada .as-band-txt { color:#5f6368; }
+</style>
+
+<% tomasAsistencia.forEach(t => { %>
+  <div class="as-band <%= t.yaDi ? 'dada' : '' %>" data-toma="<%= t.id %>">
+    <span class="material-symbols-outlined"><%= t.yaDi ? 'task_alt' : 'fact_check' %></span>
+    <div class="as-band-txt">
+      <% if (t.yaDi) { %>
+        Ya diste tu asistencia de hoy en <strong><%= t.curso %></strong>.
+        <small>Si te la tomaron distinto, hablalo con preceptoría.</small>
+      <% } else { %>
+        Preceptoría abrió la asistencia de <strong><%= t.curso %></strong>.
+        <small>
+          Abierta desde las <%= t.abiertaDesde %><% if (t.cierraA) { %> · cierra <%= t.cierraA %><% } %>
+        </small>
+      <% } %>
+    </div>
+    <button class="as-band-btn" <%= t.yaDi ? 'disabled' : '' %>>
+      <%= t.yaDi ? 'Asistencia dada' : 'Dar asistencia' %>
+    </button>
+  </div>
+<% }) %>
+
+<script>
+(function () {
+  document.querySelectorAll('.as-band').forEach(band => {
+    const btn = band.querySelector('.as-band-btn');
+    if (btn.disabled) return;
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'Enviando…';
+      try {
+        const r = await fetch('/asistencia/' + band.dataset.toma + '/presente', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          // Sin cuerpo a propósito: el servidor no lee nada de acá. El alumno se marca a sí
+          // mismo y siempre como presente — mandar un studentId o un estado no haría nada.
+          body: '{}',
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || 'No se pudo dar la asistencia');
+
+        band.classList.add('dada');
+        band.querySelector('.material-symbols-outlined').textContent = 'task_alt';
+        btn.textContent = 'Asistencia dada';
+        band.querySelector('.as-band-txt').innerHTML = data.respetada === false
+          // El preceptor ya había decidido otra cosa: se le dice, en vez de mostrarle un
+          // "listo" que no se corresponde con lo que va a figurar en la planilla.
+          ? 'Preceptoría ya te había tomado la asistencia. Quedó registrado que diste el presente.' +
+            '<small>Si no coincide con lo que pasó, hablalo con preceptoría.</small>'
+          : 'Listo, quedó tu asistencia de hoy.<small>La puede corregir preceptoría.</small>';
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'Dar asistencia';
+        band.querySelector('.as-band-txt').insertAdjacentHTML('beforeend',
+          '<small style="color:#d93025">' + e.message + '</small>');
+      }
+    });
+  });
+})();
+</script>
+<% } %>

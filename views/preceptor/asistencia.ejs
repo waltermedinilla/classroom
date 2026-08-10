@@ -1,0 +1,173 @@
+<%# Panel de asistencia: una tarjeta por curso a cargo con el estado de HOY.
+    Ver specs/asistencia-preceptoria.spec.md. %>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Asistencia - Preceptoría - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/preceptor-nav', { activePage: 'asistencia' }) %>
+
+    <style>
+      .as-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:12px; }
+      .as-card { background:#fff; border:1px solid #dadce0; border-radius:12px; padding:16px;
+                 display:flex; flex-direction:column; gap:12px; }
+      .as-curso { font-size:17px; font-weight:500; }
+      .as-estado { font-size:12px; padding:3px 9px; border-radius:12px; display:inline-block; }
+      .as-estado.abierta { background:#e6f4ea; color:#137333; }
+      .as-estado.cerrada { background:#f1f3f4; color:#5f6368; }
+      .as-estado.sintomar { background:#fef7e0; color:#b06000; }
+      .as-nums { display:flex; gap:14px; flex-wrap:wrap; font-size:13px; color:#5f6368; }
+      .as-nums b { color:#202124; font-weight:500; }
+      .as-acciones { display:flex; gap:8px; flex-wrap:wrap; margin-top:auto; }
+      .as-btn { font-size:13px; padding:8px 14px; border-radius:8px; border:1px solid #dadce0;
+                background:#fff; color:#1a73e8; cursor:pointer; text-decoration:none;
+                display:inline-block; font-family:inherit; }
+      .as-btn:hover { background:#f8f9fa; }
+      .as-btn.primario { background:#1a73e8; color:#fff; border-color:#1a73e8; }
+      .as-btn.primario:hover { background:#1765cc; }
+      .as-btn:disabled { opacity:.6; cursor:default; }
+      .as-ventana { display:none; gap:8px; align-items:center; flex-wrap:wrap;
+                    border-top:1px solid #f1f3f4; padding-top:10px; }
+      .as-ventana.abierto { display:flex; }
+      .as-ventana select { font-size:13px; padding:7px 10px; border:1px solid #dadce0;
+                           border-radius:8px; font-family:inherit; }
+      .as-error { font-size:13px; color:#d93025; display:none; }
+    </style>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Asistencia</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          <%= fecha %>
+          <% if (scopeAll) { %>
+            <span class="badge" style="background:#e8f0fe;color:#1a73e8;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;margin-left:6px">TODOS LOS CURSOS</span>
+          <% } %>
+        </p>
+      </div>
+    </div>
+
+    <% if (!cursos.length) { %>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">fact_check</span></div>
+        <p>No tenés cursos a cargo.</p>
+      </div>
+    <% } else { %>
+      <div class="as-grid">
+        <% cursos.forEach(c => { %>
+          <div class="as-card" data-division="<%= c._id %>">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+              <span class="as-curso"><%= c.name %></span>
+              <% if (!c.toma) { %>
+                <span class="as-estado sintomar">Sin tomar</span>
+              <% } else if (c.toma.estado === 'abierta') { %>
+                <span class="as-estado abierta">● Abierta · <%= c.toma.hora %></span>
+              <% } else { %>
+                <span class="as-estado cerrada">Cerrada · <%= c.toma.hora %></span>
+              <% } %>
+            </div>
+
+            <% if (c.toma) { %>
+              <div class="as-nums">
+                <span><b><%= c.toma.resumen.presentes %></b> presentes</span>
+                <% if (c.toma.resumen.tarde) { %><span><b><%= c.toma.resumen.tarde %></b> tarde</span><% } %>
+                <span><b><%= c.toma.resumen.ausentes %></b> ausentes</span>
+                <% if (c.toma.resumen.justificados) { %><span><b><%= c.toma.resumen.justificados %></b> justificados</span><% } %>
+                <% if (c.toma.resumen.sinMarcar) { %><span style="color:#b06000"><b><%= c.toma.resumen.sinMarcar %></b> sin marcar</span><% } %>
+              </div>
+            <% } else { %>
+              <div class="as-nums"><span>Todavía no se tomó la asistencia de hoy.</span></div>
+            <% } %>
+
+            <p class="as-error"></p>
+
+            <% if (c.toma) { %>
+              <div class="as-acciones">
+                <a class="as-btn primario" href="/preceptor/asistencia/<%= c._id %>">
+                  <%= c.toma.estado === 'abierta' ? 'Continuar' : 'Ver la planilla' %>
+                </a>
+                <a class="as-btn" href="/preceptor/asistencia/<%= c._id %>/historial">Historial</a>
+              </div>
+            <% } else { %>
+              <div class="as-acciones">
+                <button class="as-btn primario" data-abrir="pase">Pasar lista</button>
+                <button class="as-btn" data-ventana>Abrir ventana</button>
+                <a class="as-btn" href="/preceptor/asistencia/<%= c._id %>/historial">Historial</a>
+              </div>
+              <div class="as-ventana">
+                <%# La duración va en MINUTOS y no como una hora del reloj: el navegador del
+                    aula puede tener cualquier zona horaria configurada y "08:15" significaría
+                    una hora distinta en cada máquina. Ver services/attendance.js. %>
+                <span style="font-size:13px;color:#5f6368">Cerrar sola en</span>
+                <select data-minutos>
+                  <option value="">no cerrarla sola</option>
+                  <option value="30">30 minutos</option>
+                  <option value="45" selected>45 minutos</option>
+                  <option value="60">1 hora</option>
+                  <option value="120">2 horas</option>
+                </select>
+                <button class="as-btn primario" data-abrir="ventana">Abrir</button>
+              </div>
+            <% } %>
+          </div>
+        <% }) %>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+
+  <script>
+  (function () {
+    document.querySelectorAll('.as-card').forEach(card => {
+      const division = card.dataset.division;
+      const error    = card.querySelector('.as-error');
+      const ventana  = card.querySelector('.as-ventana');
+
+      const mostrarError = (msg) => {
+        error.textContent = msg;
+        error.style.display = msg ? 'block' : 'none';
+      };
+
+      const toggle = card.querySelector('[data-ventana]');
+      if (toggle) toggle.addEventListener('click', () => ventana.classList.toggle('abierto'));
+
+      card.querySelectorAll('[data-abrir]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const mode   = btn.dataset.abrir;
+          const select = card.querySelector('[data-minutos]');
+          mostrarError('');
+          card.querySelectorAll('button').forEach(b => { b.disabled = true; });
+
+          try {
+            const r = await fetch('/preceptor/asistencia/' + division + '/abrir', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify({
+                mode,
+                closesInMin: mode === 'ventana' && select ? select.value : '',
+              }),
+            });
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(data.error || 'No se pudo abrir la toma de asistencia');
+            // Entrar directo a la planilla: abrir y quedarse en el panel no le sirve a nadie.
+            location.href = '/preceptor/asistencia/' + division;
+          } catch (e) {
+            mostrarError(e.message);
+            card.querySelectorAll('button').forEach(b => { b.disabled = false; });
+          }
+        });
+      });
+    });
+  })();
+  </script>
+</body>
+</html>

@@ -76,6 +76,26 @@ const messageReplyLimiter = rateLimit({
   message:         { error: 'Esperá un momento antes de escribir de nuevo.' },
 });
 
+// Alumno dándose la asistencia: 10 cada 5 minutos POR USUARIO.
+//
+// El uso legítimo es UNA vez por día, pero llega concentrado: 400 chicos tocando el botón
+// entre 7:25 y 7:35. Por eso el límite no busca frenar el volumen normal —para eso está el
+// generalLimiter— sino el doble click, el F5 nervioso y las dos pestañas abiertas. Con 10 en
+// 5 minutos, nadie que use el botón como se debe lo ve nunca.
+//
+// Por usuario y no por IP, mismo motivo que roomMessageLimiter: la escuela entera sale por
+// una sola IP pública NAT, y con clave por IP el primer curso que entre dejaría al resto sin
+// poder darse la asistencia.
+const attendanceCheckinLimiter = rateLimit({
+  windowMs:        5 * 60 * 1000,
+  max:             10,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator:    (req) => req.userId || ipKeyGenerator(req.ip),
+  message:         { error: 'Esperá un momento antes de volver a intentar.' },
+});
+
 module.exports = {
   uploadLimiter, roomMessageLimiter, messageSendLimiter, messageReplyLimiter,
+  attendanceCheckinLimiter,
 };

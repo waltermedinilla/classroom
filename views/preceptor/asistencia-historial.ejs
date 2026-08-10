@@ -1,0 +1,175 @@
+<%# Historial de asistencia de un curso: los días tomados en el rango y el acumulado por
+    alumno, con los dos export. Ver specs/asistencia-preceptoria.spec.md.
+
+    Todo se renderiza del lado del servidor: esta pantalla no cambia sola, no tiene poll y no
+    necesita JavaScript salvo para el selector de rango. %>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Historial de asistencia <%= division.name %> - Preceptoría - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/preceptor-nav', { activePage: 'asistencia' }) %>
+
+    <style>
+      .hi-barra { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:18px; }
+      .hi-campo { display:flex; flex-direction:column; gap:4px; }
+      .hi-campo label { font-size:12px; color:#5f6368; }
+      .hi-campo input { font-size:13px; padding:7px 10px; border:1px solid #dadce0;
+                        border-radius:8px; font-family:inherit; }
+      .hi-btn { font-size:13px; padding:8px 14px; border-radius:8px; border:1px solid #dadce0;
+                background:#fff; color:#1a73e8; cursor:pointer; text-decoration:none;
+                display:inline-block; font-family:inherit; }
+      .hi-btn:hover { background:#f8f9fa; }
+      .hi-btn.primario { background:#1a73e8; color:#fff; border-color:#1a73e8; }
+      .hi-sec { font-size:15px; font-weight:500; margin:22px 0 10px; }
+      <%# Las dos tablas pueden ser anchas (una columna por día). Scrollean DENTRO de su caja:
+          el body de la página nunca scrollea de costado. %>
+      .hi-caja { background:#fff; border:1px solid #dadce0; border-radius:12px;
+                 overflow-x:auto; }
+      .hi-tabla { width:100%; border-collapse:collapse; font-size:13px; }
+      .hi-tabla th, .hi-tabla td { padding:9px 12px; text-align:left; white-space:nowrap;
+                                   border-bottom:1px solid #f1f3f4; }
+      .hi-tabla th { font-weight:500; color:#5f6368; background:#f8f9fa; position:sticky; top:0; }
+      .hi-tabla tr:last-child td { border-bottom:none; }
+      .hi-tabla td.num { text-align:center; }
+      .hi-nombre { white-space:normal; min-width:180px; }
+      .hi-est { display:inline-block; width:22px; height:22px; line-height:22px;
+                border-radius:6px; text-align:center; font-size:11px; color:#fff; }
+      .hi-est.presente    { background:#137333; }
+      .hi-est.tarde       { background:#b06000; }
+      .hi-est.ausente     { background:#c5221f; }
+      .hi-est.justificado { background:#7627bb; }
+      .hi-est.vacio       { background:#f1f3f4; color:#80868b; }
+      .hi-pct { font-weight:500; }
+      .hi-pct.bajo { color:#c5221f; }
+    </style>
+
+    <div>
+      <a href="/preceptor/asistencia" style="font-size:13px;color:#1a73e8;text-decoration:none">← Asistencia</a>
+      <h2 style="margin:6px 0 2px">Historial · <%= division.name %></h2>
+      <p style="color:var(--text-secondary);font-size:14px;margin-bottom:16px">
+        Del <%= historial.desde %> al <%= historial.hasta %> ·
+        <%= historial.dias.length %> día<%= historial.dias.length !== 1 ? 's' : '' %> con asistencia tomada
+      </p>
+    </div>
+
+    <form class="hi-barra" method="get">
+      <div class="hi-campo">
+        <label for="desde">Desde</label>
+        <input type="date" id="desde" name="desde" value="<%= historial.desde %>" max="<%= hoy %>">
+      </div>
+      <div class="hi-campo">
+        <label for="hasta">Hasta</label>
+        <input type="date" id="hasta" name="hasta" value="<%= historial.hasta %>" max="<%= hoy %>">
+      </div>
+      <button type="submit" class="hi-btn primario">Ver</button>
+      <% if (historial.dias.length) { %>
+        <a class="hi-btn" href="/preceptor/asistencia/<%= division._id %>/export?tipo=mes&desde=<%= historial.desde %>&hasta=<%= historial.hasta %>">
+          <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px">download</span>
+          Planilla del período
+        </a>
+      <% } %>
+    </form>
+
+    <% if (!historial.dias.length) { %>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">event_busy</span></div>
+        <p>No se tomó asistencia en este curso entre esas fechas.</p>
+      </div>
+    <% } else { %>
+
+      <div class="hi-sec">Por día</div>
+      <div class="hi-caja">
+        <table class="hi-tabla">
+          <thead>
+            <tr>
+              <th>Fecha</th><th>Horario</th><th>Modo</th>
+              <th class="num">Presentes</th><th class="num">Tarde</th>
+              <th class="num">Ausentes</th><th class="num">Justificados</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <% historial.dias.forEach(d => { %>
+              <tr>
+                <td>
+                  <%= d.fecha %>
+                  <% if (d.etiqueta) { %><small style="color:#5f6368"> · <%= d.etiqueta %></small><% } %>
+                  <% if (d.abierta) { %>
+                    <span style="font-size:11px;background:#e6f4ea;color:#137333;padding:2px 7px;border-radius:10px">abierta</span>
+                  <% } %>
+                </td>
+                <td>
+                  <%= d.desdeHora %><% if (d.hastaHora) { %>–<%= d.hastaHora %><% } %>
+                  <% if (d.autoCerrada) { %><small style="color:#80868b"> (se cerró sola)</small><% } %>
+                </td>
+                <td><%= d.modo === 'ventana' ? 'Ventana' : 'Pase de lista' %></td>
+                <td class="num"><%= d.resumen.presentes %></td>
+                <td class="num"><%= d.resumen.tarde %></td>
+                <td class="num"><%= d.resumen.ausentes %></td>
+                <td class="num"><%= d.resumen.justificados %></td>
+                <td>
+                  <a class="hi-btn" href="/preceptor/asistencia/<%= division._id %>/export?tipo=dia&fecha=<%= d.fecha %>&tomaId=<%= d.id %>">Bajar</a>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="hi-sec">Por alumno</div>
+      <div class="hi-caja">
+        <table class="hi-tabla">
+          <thead>
+            <tr>
+              <th class="hi-nombre">Alumno</th>
+              <% historial.fechas.forEach(f => { %>
+                <%# Solo día y mes en el encabezado: el año ya está en el título del período. %>
+                <th class="num"><%= f.slice(8) %>/<%= f.slice(5, 7) %></th>
+              <% }) %>
+              <th class="num">P</th><th class="num">T</th>
+              <th class="num">A</th><th class="num">J</th>
+              <th class="num">Asistió</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% historial.alumnos.forEach(a => { %>
+              <tr>
+                <td class="hi-nombre"><%= a.nombre %></td>
+                <% historial.fechas.forEach(f => {
+                     const e = a.porDia[f];
+                     const letra = { presente:'P', tarde:'T', ausente:'A', justificado:'J' }[e] || '·'; %>
+                  <td class="num"><span class="hi-est <%= e || 'vacio' %>" title="<%= e || 'sin toma' %>"><%= letra %></span></td>
+                <% }) %>
+                <td class="num"><%= a.presentes %></td>
+                <td class="num"><%= a.tarde %></td>
+                <td class="num"><%= a.ausentes %></td>
+                <td class="num"><%= a.justificados %></td>
+                <td class="num hi-pct <%= a.porcentaje < 75 ? 'bajo' : '' %>"><%= a.porcentaje %>%</td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+
+      <p style="font-size:12px;color:#80868b;margin-top:14px">
+        P = presente · T = tarde · A = ausente · J = justificado · · = no hubo toma ese día.
+        El porcentaje cuenta la llegada tarde como asistencia y <strong>no</strong> calcula
+        inasistencias reglamentarias: esta planilla es el registro de la plataforma, no el
+        libro de asistencia oficial de la escuela.
+      </p>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

@@ -14,4 +14,10 @@
     En vivo
   </a>
   <% } %>
+  <% if (puede('preceptor_asistencia')) { %>
+  <a href="/preceptor/asistencia" class="admin-nav-item <%= activePage === 'asistencia' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">fact_check</span>
+    Asistencia
+  </a>
+  <% } %>
 </nav>
