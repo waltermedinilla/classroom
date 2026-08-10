@@ -1,0 +1,326 @@
+<%
+/*
+  Modal "Desglose de lo guardado": qué archivos hay, cuánto pesan y cuáles se pueden
+  comprimir antes de descargar el backup.
+
+  Se incluye en DOS pantallas (superadmin/monitor y superadmin/backup), que ya tienen sus
+  propias funciones formatBytes/formatSize/esc con firmas distintas entre sí y sus propias
+  clases CSS. Por eso todo acá adentro va prefijado con `bkc` y el <style> es local: el
+  partial tiene que poder caer en cualquiera de las dos sin pisarle nada a la página.
+
+  Para abrirlo desde la página que lo incluye: bkcAbrir().
+*/
+%>
+<style>
+  .bkc-modal { max-width: 620px; }
+  .bkc-fila { margin-bottom: 14px; }
+  .bkc-fila-top {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 10px; font-size: 13.5px; margin-bottom: 4px;
+  }
+  .bkc-track {
+    height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;
+  }
+  .bkc-bar { height: 100%; border-radius: 3px; transition: width .5s ease; }
+  .bkc-sub { font-size: 11.5px; color: var(--text-hint); margin-top: 3px; }
+  .bkc-check {
+    display: flex; align-items: flex-start; gap: 10px;
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 10px; cursor: pointer;
+  }
+  .bkc-check:hover { background: var(--bg); }
+  .bkc-check.bkc-off { opacity: .55; cursor: not-allowed; }
+  .bkc-check.bkc-off:hover { background: transparent; }
+  .bkc-check input { margin-top: 2px; flex-shrink: 0; }
+  .bkc-check-title { font-size: 14px; font-weight: 600; }
+  .bkc-check-sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  .bkc-ahorro { color: #137333; font-weight: 700; }
+  .bkc-nota {
+    display: flex; gap: 8px; align-items: flex-start;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px;
+    font-size: 12.5px; color: var(--text-secondary); margin: 16px 0;
+  }
+  .bkc-tabla { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+  .bkc-tabla td { padding: 4px 6px; border-bottom: 1px solid var(--border); }
+  .bkc-tabla td:last-child { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .bkc-spin {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid rgba(0,0,0,.15); border-top-color: var(--primary);
+    border-radius: 50%; animation: spin .7s linear infinite;
+    vertical-align: -2px; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+
+<div class="modal-overlay" id="bkcOverlay">
+  <div class="modal bkc-modal">
+    <div class="modal-header">
+      <div class="modal-header-left">
+        <span class="material-symbols-outlined modal-header-icon" style="color:#ea8600">inventory_2</span>
+        <h3>Desglose de lo guardado</h3>
+      </div>
+      <button class="btn btn-text" onclick="bkcCerrar()" aria-label="Cerrar">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+    </div>
+
+    <div class="modal-body">
+      <div id="bkcLoading" style="font-size:13px;color:var(--text-hint)">
+        <span class="bkc-spin"></span>Recorriendo los archivos...
+      </div>
+
+      <div id="bkcContenido" style="display:none">
+        <div id="bkcDesglose"></div>
+
+        <div style="font-size:12px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin:22px 0 10px">
+          Comprimir antes de descargar
+        </div>
+        <div id="bkcOpciones"></div>
+
+        <div class="bkc-nota">
+          <span class="material-symbols-outlined" style="font-size:18px;color:#1a73e8">info</span>
+          <div>
+            Los archivos del servidor <strong>no se modifican</strong>. La compresión se aplica
+            solo a la copia que se descarga, y el backup resultante se puede restaurar igual
+            que cualquier otro.
+          </div>
+        </div>
+
+        <details id="bkcPesados" style="margin-bottom:16px"></details>
+
+        <button class="btn btn-primary" id="bkcBtn" onclick="bkcDescargar()">
+          <span class="material-symbols-outlined">download</span>
+          Generar y descargar backup
+        </button>
+        <div id="bkcEstado" style="margin-top:10px;font-size:13px;display:none"></div>
+      </div>
+
+      <div id="bkcError" style="display:none;font-size:13px;color:#c5221f"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var datos = null;
+    var descargando = false;
+
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    // Bytes crudos → unidad legible. Va con nombre propio porque monitor.ejs y backup.ejs
+    // ya definen formatBytes/formatSize con firmas incompatibles entre sí (una espera MB).
+    function bkcSize(bytes) {
+      if (bytes == null) return '—';
+      var gb = bytes / 1024 / 1024 / 1024;
+      if (gb >= 1) return gb.toFixed(2) + ' GB';
+      var mb = bytes / 1024 / 1024;
+      if (mb >= 1) return mb.toFixed(1) + ' MB';
+      if (bytes >= 1024) return Math.round(bytes / 1024) + ' KB';
+      return bytes + ' B';
+    }
+
+    var COLORES = {
+      imagenes: '#1a73e8', pdf: '#ea4335', webp: '#34a853',
+      documentos: '#9334e6', otros: '#5f6368',
+    };
+
+    function render() {
+      var tipos = Object.keys(datos.porTipo).filter(function (id) { return datos.porTipo[id].count > 0; });
+      var mayor = Math.max.apply(null, tipos.map(function (id) { return datos.porTipo[id].bytes; }).concat([1]));
+
+      document.getElementById('bkcDesglose').innerHTML =
+        '<div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">' +
+          '<strong>' + datos.total.count.toLocaleString('es-AR') + '</strong> archivos · ' +
+          '<strong>' + bkcSize(datos.total.bytes) + '</strong> en total' +
+        '</div>' +
+        tipos.map(function (id) {
+          var t = datos.porTipo[id];
+          return '<div class="bkc-fila">' +
+            '<div class="bkc-fila-top">' +
+              '<span>' + esc(t.label) + ' <span style="color:var(--text-hint)">· ' + t.count + '</span></span>' +
+              '<strong>' + bkcSize(t.bytes) + '</strong>' +
+            '</div>' +
+            '<div class="bkc-track"><div class="bkc-bar" style="width:' +
+              Math.round((t.bytes / mayor) * 100) + '%;background:' + (COLORES[id] || '#5f6368') + '"></div></div>' +
+            '<div class="bkc-sub">' + esc(t.detalle) + '</div>' +
+          '</div>';
+        }).join('');
+
+      // Un tipo comprimible puede no estar disponible en ESTE servidor: sharp y Ghostscript
+      // son binarios del sistema. Cuando falta, el check va deshabilitado con el motivo a la
+      // vista en vez de desaparecer, así se entiende que hay ahorro pendiente y por qué.
+      var MOTIVO_FALTA = {
+        imagenes: 'sharp no está instalado en el servidor (npm install)',
+        pdf:      'Ghostscript no está instalado en el servidor (sudo apt install ghostscript)',
+      };
+
+      document.getElementById('bkcOpciones').innerHTML = tipos.filter(function (id) {
+        return datos.porTipo[id].comprimible;
+      }).map(function (id) {
+        var t   = datos.porTipo[id];
+        var hay = datos.herramientas[id];
+        var queda = t.bytes - t.ahorroEstimado;
+        return '<label class="bkc-check' + (hay ? '' : ' bkc-off') + '">' +
+          '<input type="checkbox" value="' + id + '" class="bkc-op"' + (hay ? ' checked' : ' disabled') + '>' +
+          '<div>' +
+            '<div class="bkc-check-title">' + esc(t.label) + '</div>' +
+            '<div class="bkc-check-sub">' +
+              (hay
+                ? t.count + ' archivos · ' + bkcSize(t.bytes) + ' → ~' + bkcSize(queda) +
+                  ' <span class="bkc-ahorro">(−' + Math.round((t.ahorroEstimado / (t.bytes || 1)) * 100) + '%)</span>'
+                : esc(MOTIVO_FALTA[id] || 'No disponible en este servidor')) +
+            '</div>' +
+          '</div>' +
+        '</label>';
+      }).join('') || '<div style="font-size:13px;color:var(--text-hint)">No hay archivos comprimibles.</div>';
+
+      document.getElementById('bkcPesados').innerHTML =
+        '<summary style="cursor:pointer;font-size:12.5px;color:var(--text-secondary)">Los ' +
+          datos.topPesados.length + ' archivos más pesados</summary>' +
+        '<table class="bkc-tabla">' +
+          datos.topPesados.map(function (p) {
+            return '<tr><td>' + esc(p.zona) + '</td><td style="color:var(--text-hint)">' +
+              esc(p.archivo.slice(-14)) + '</td><td>' + bkcSize(p.bytes) + '</td></tr>';
+          }).join('') +
+        '</table>';
+
+      actualizarBoton();
+      document.querySelectorAll('.bkc-op').forEach(function (el) {
+        el.addEventListener('change', actualizarBoton);
+      });
+    }
+
+    function elegidos() {
+      return Array.prototype.slice.call(document.querySelectorAll('.bkc-op:checked'))
+        .map(function (el) { return el.value; });
+    }
+
+    function actualizarBoton() {
+      var sel = elegidos();
+      var ahorro = sel.reduce(function (a, id) { return a + datos.porTipo[id].ahorroEstimado; }, 0);
+      document.getElementById('bkcBtn').innerHTML =
+        '<span class="material-symbols-outlined">download</span>' +
+        (sel.length
+          ? 'Comprimir y descargar (ahorra ~' + bkcSize(ahorro) + ')'
+          : 'Generar y descargar backup sin comprimir');
+    }
+
+    async function cargar() {
+      document.getElementById('bkcLoading').style.display = 'block';
+      document.getElementById('bkcContenido').style.display = 'none';
+      document.getElementById('bkcError').style.display = 'none';
+      try {
+        var res = await fetch('/superadmin/backup/file-stats');
+        if (!res.ok) throw new Error('No se pudo leer el desglose');
+        datos = await res.json();
+        render();
+        document.getElementById('bkcLoading').style.display = 'none';
+        document.getElementById('bkcContenido').style.display = 'block';
+      } catch (err) {
+        document.getElementById('bkcLoading').style.display = 'none';
+        document.getElementById('bkcError').textContent = err.message;
+        document.getElementById('bkcError').style.display = 'block';
+      }
+    }
+
+    window.bkcAbrir = function () {
+      document.getElementById('bkcOverlay').classList.add('show');
+      // Aviso a la página anfitriona. El monitor lo usa para pausar su refresco de 5s:
+      // durante la descarga de cientos de MB no tiene sentido que siga pidiendo métricas.
+      document.dispatchEvent(new CustomEvent('bkc:open'));
+      cargar();
+    };
+
+    window.bkcCerrar = function () {
+      // Cerrar a mitad de una descarga cancelaría el fetch sin avisar y el usuario se
+      // quedaría sin el backup después de esperar varios minutos.
+      if (descargando) return;
+      document.getElementById('bkcOverlay').classList.remove('show');
+      document.dispatchEvent(new CustomEvent('bkc:close'));
+    };
+
+    window.bkcDescargar = async function () {
+      var btn    = document.getElementById('bkcBtn');
+      var estado = document.getElementById('bkcEstado');
+      var sel    = elegidos();
+
+      descargando = true;
+      btn.disabled = true;
+      estado.style.display = 'block';
+
+      var arranque = Date.now();
+      var reloj = setInterval(function () {
+        var seg = Math.round((Date.now() - arranque) / 1000);
+        estado.innerHTML = '<span class="bkc-spin"></span>' +
+          (sel.length ? 'Comprimiendo y empaquetando' : 'Empaquetando') +
+          '... ' + (seg < 60 ? seg + 's' : Math.floor(seg / 60) + 'm ' + (seg % 60) + 's') +
+          '<div style="color:var(--text-hint);font-size:12px;margin-top:4px">' +
+          'Puede tardar varios minutos. No cierres esta ventana.</div>';
+      }, 1000);
+
+      try {
+        var url = '/superadmin/backup/download' + (sel.length ? '?comprimir=' + sel.join(',') : '');
+        var res = await fetch(url);
+        if (!res.ok) {
+          var data = await res.json().catch(function () { return {}; });
+          throw new Error(data.error || 'Error al generar el backup');
+        }
+        var blob = await res.blob();
+        var disposition = res.headers.get('content-disposition') || '';
+        var m = disposition.match(/filename="?([^"]+)"?/);
+        var filename = m ? m[1] : 'classroom-backup.tar.gz';
+
+        var objUrl = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = objUrl; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(objUrl);
+
+        clearInterval(reloj);
+        var detalle = '';
+        // El manifest viaja en un header para no tener que abrir el .tar.gz solo para
+        // contar lo que se ahorró de verdad (esto son bytes reales, no la estimación).
+        try {
+          var man = JSON.parse(decodeURIComponent(res.headers.get('X-Backup-Manifest') || ''));
+          if (man && man.compresion) {
+            var antes   = man.compresion.imagenes.antes   + man.compresion.pdf.antes;
+            var despues = man.compresion.imagenes.despues + man.compresion.pdf.despues;
+            var fallidos = man.compresion.imagenes.fallidos + man.compresion.pdf.fallidos;
+            detalle = '<div style="color:var(--text-secondary);font-size:12px;margin-top:4px">' +
+              bkcSize(antes) + ' de archivos quedaron en ' + bkcSize(despues) +
+              (fallidos ? ' · ' + fallidos + ' archivo(s) no se pudieron comprimir y van intactos' : '') +
+              '</div>';
+          }
+        } catch (e) { /* header ausente o mal formado: el backup igual se descargó */ }
+
+        estado.innerHTML = '<span style="color:#137333">✔ ' + esc(filename) + ' (' + bkcSize(blob.size) + ')</span>' + detalle;
+
+        // El desglose de la página anfitriona no cambió (no tocamos el servidor), pero el
+        // caché de 60s del servicio sí puede haber quedado viejo respecto de una subida
+        // reciente. Se refresca para que el modal muestre lo mismo si se vuelve a abrir.
+        datos = null;
+      } catch (err) {
+        clearInterval(reloj);
+        estado.innerHTML = '<span style="color:#c5221f">✗ ' + esc(err.message) + '</span>';
+      } finally {
+        descargando = false;
+        btn.disabled = false;
+      }
+    };
+
+    // Cerrar con Escape o clickeando afuera, como el resto de los modales del proyecto.
+    document.getElementById('bkcOverlay').addEventListener('click', function (e) {
+      if (e.target === this) window.bkcCerrar();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && document.getElementById('bkcOverlay').classList.contains('show')) {
+        window.bkcCerrar();
+      }
+    });
+  })();
+</script>

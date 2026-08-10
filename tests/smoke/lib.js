@@ -54,7 +54,7 @@ class SmokeClient {
     });
     this._storeCookies(actor, res);
 
-    let json = null, text = null, byteLength = null;
+    let json = null, text = null, byteLength = null, firstBytes = null;
     const ct = res.headers.get('content-type') || '';
     if (ct.includes('application/json')) {
       try { json = await res.json(); } catch {}
@@ -73,6 +73,23 @@ class SmokeClient {
         byteLength = declarado;
         // El cuerpo igual hay que drenarlo o cancelarlo, si no la conexión queda abierta.
         try { await res.body?.cancel(); } catch {}
+      } else if (res.body) {
+        // Sin Content-Length: la respuesta viene chunked. Es el caso del backup desde que
+        // /download streamea el .tar.gz mientras lo arma — el tamaño final no se conoce
+        // hasta terminar de comprimir, así que no hay header que declarar.
+        //
+        // Se cuentan los bytes AL PASAR, sin juntarlos: arrayBuffer() sobre ~850 MB es
+        // exactamente lo que evita el camino de arriba, y volver a caer ahí haría fallar
+        // el test por falta de RAM en vez de por un problema real.
+        byteLength = 0;
+        try {
+          for await (const chunk of res.body) {
+            // Los primeros bytes alcanzan para distinguir un archivo real de una página de
+            // error servida con status 200, que de otro modo pasaría como "descarga OK".
+            if (firstBytes === null) firstBytes = Buffer.from(chunk.slice(0, 4));
+            byteLength += chunk.length;
+          }
+        } catch {}
       } else {
         try { byteLength = (await res.arrayBuffer()).byteLength; } catch {}
       }
@@ -85,7 +102,7 @@ class SmokeClient {
         throw new Error(`${method} ${path} → esperaba ${expectStatus}, recibió ${res.status}${detail ? ' — ' + detail : ''}`);
       }
     }
-    return { status: res.status, json, text, byteLength, headers: res.headers };
+    return { status: res.status, json, text, byteLength, firstBytes, headers: res.headers };
   }
 
   get(actor, path, opts)    { return this.request(actor, 'GET', path, opts); }

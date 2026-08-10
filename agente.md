@@ -2097,14 +2097,123 @@ Detalles que el código documenta:
 
 ---
 
+## Backup comprimido: elegir qué achicar antes de descargar (2026-08-08)
+
+Pedido del usuario: *"en la card de desglose de lo guardado, al hacerle click, mostrarme un filtro de los archivos, el peso de los mismos, y que me permita comprimirlos"*, acotado después a *"comprimir archivos antes de descargar el backup, pero si quiero restaurarlo, que me permita hacerlo"*.
+
+**Primero hubo que corregir la premisa**: el pedido original decía "para achicar la base de datos", pero **los archivos no están en Mongo**. No hay GridFS ni base64 — Mongo guarda solo rutas (strings) en `Activity.url`, `Submission.storagePath`, `User.avatar`, `Course.header.image` y `Announcement.image`. Comprimir achica **el disco y el backup**, no la base.
+
+Medido el 2026-08-08 sobre el mirror local: 908,8 MB en 700 archivos = **581 MB en 346 imágenes jpg/png sin optimizar** (fotos de celular guardadas byte por byte; 8 de más de 4,4 MB), 315 MB en 247 PDFs, 9,7 MB en documentos y 2,6 MB en WebP. El optimizador que ya existía (`services/imageOptimizer.js`) nunca tocó los adjuntos ni las entregas: solo corre en avatares, portadas y novedades.
+
+### La invariante que gobierna todo el diseño
+
+**El nombre y la extensión de cada archivo no cambian nunca.** jpg→jpg, png→png, pdf→pdf.
+
+Es lo que permite que un backup comprimido se restaure con el flujo de siempre **sin tocar un solo documento de Mongo**. Convertir a WebP comprimiría ~4 puntos más, pero cambiaría el nombre del archivo y obligaría a reescribir las rutas dentro de los JSON de `db/` del tarball; cualquier ruta que se escapara dejaría esa imagen en 404 después de restaurar. Por eso `services/backupCompressor.js` **no reusa** `imageOptimizer.js`, que convierte a WebP a propósito.
+
+Dos decisiones más, del mismo tenor:
+- **La compresión se aplica solo al staging temporal**, nunca a `public/archivos` ni `archivos/entregas`. Eso ya es "guardar el original", sin carpeta de respaldo ni botón de revertir.
+- **`BACKUP_FORMAT_VERSION` sigue en `1.0`.** El campo `manifest.compresion` es opcional. Subir la versión habría hecho que `POST /preview` rechazara todos los backups ya generados.
+
+### Qué se agregó
+
+| Pieza | Qué hace |
+|---|---|
+| `services/backupCompressor.js` | catálogo de tipos, análisis con caché de 60 s, compresión con pool (4 imágenes / 2 PDFs) |
+| `views/partials/backup-compress-modal.ejs` | el modal, incluido por `monitor.ejs` **y** `backup.ejs` |
+| `GET /superadmin/backup/file-stats` | desglose por tipo + qué herramientas hay en este servidor |
+| `GET /superadmin/backup/download?comprimir=imagenes,pdf` | la query se filtra contra lista blanca, nunca se usa cruda |
+
+La card "Desglose de lo guardado" de `/superadmin/monitor` es ahora clickeable (con `role="button"` y teclado) y el refresco de 5 s **se pausa** mientras el modal está abierto, para no competirle ancho de banda a una descarga de cientos de MB.
+
+Detalles que el código documenta:
+- **El encoder se elige por el formato REAL, no por la extensión.** En esta base hay tres avatares que son JPEG (y uno WebP) con nombre `.png`; elegir por extensión los mandaba al encoder PNG, el resultado salía más grande y la regla de "gana el original" los dejaba sin comprimir. El nombre sigue sin tocarse: se preserva el formato que el archivo ya tenía.
+- **PNG sin paleta**: cuantizar a 256 colores ahorraba apenas 2 puntos más (71% vs 69% medido) a cambio de banding en las fotos guardadas como PNG.
+- **Si el resultado pesa más, gana el original**; **si un archivo falla, se cuenta y se sigue**. Un escaneo dañado no puede hacer fracasar el backup entero — que es justo lo que uno quiere tener cuando algo anda mal.
+- **`sharp.cache(false)` durante el batch y restaurado al terminar**: en cientos de archivos distintos el caché de libvips no acierta nunca y solo acumula presión de memoria (el mismo `vips_tracked: out of memory` que apareció al correr los tests en paralelo).
+- **`req/res.setTimeout(0)`** en `/download`: comprimir suma minutos a la request más larga del sistema.
+- **Ghostscript es opcional**, detectado una vez y cacheado (`gs` en Linux, `gswin64c` en Windows). Sin él, el check de PDFs aparece deshabilitado **con el motivo a la vista** en vez de desaparecer, así se entiende que hay ahorro pendiente y por qué.
+- La pantalla de restore **avisa si el backup viene comprimido** antes de dejar confirmar.
+
+### Qué se probó
+
+**Unitarios nuevos: 17** (`tests/unit/backupCompressor.test.js`, total del proyecto 79/79). **Smoke: 221/221**, con `backup-file-stats` nuevo. Y el ciclo completo contra el server local, con los 700 archivos reales:
+
+| | |
+|---|---|
+| Descarga con `?comprimir=imagenes` | 33 s, **795 MB → 383 MB** |
+| Imágenes | 581,2 MB → 98,4 MB (**−83%**), 321 comprimidas, 25 omitidas, 0 fallidas |
+| Archivos vivos del servidor | 700 intactos, mismo byte count |
+| Nombres dentro del backup | 700/700 coinciden exactamente con el servidor |
+| Rutas de Mongo | 275 URLs + 158 `storagePath` resuelven dentro del backup |
+| Preview del restore | acepta el comprimido, lee `manifest.compresion`, diff limpio en las 12 colecciones |
+
+**No hay cambio de base**: ni schema, ni migración, ni backfill.
+
+> ⚠️ **Producción necesita `sudo apt install ghostscript`** para habilitar la compresión de PDFs (los otros 315 MB). Sin eso degrada sola, igual que sharp. El webhook de deploy no corre `apt` ni `npm install`.
+
+> 🐛 **Encontrado de paso (pre-existente, sin arreglar)**: los 12 `pre-restore-*.tar.gz` de `backups/` (2,8 GB) **no se pueden restaurar**. Ninguno incluye `roomsessions`/`roommessages`/`roompresences`, agregadas después a `COLLECTIONS`, y el chequeo de `missingCollections` los rechaza con 400. Son justamente las redes de seguridad que genera el propio `/restore`. Ver el roadmap.
+
+> 🔧 **Arreglado de paso**: la grilla de `/superadmin/backup` decía "qué se va a incluir" pero omitía las tres colecciones de sala en vivo, que sí se respaldaban. El smoke `backup-stats` tenía el mismo desfase y ahora chequea las 12.
+
+---
+
+## El backup dejó de poder descargarse en producción (2026-08-10)
+
+Síntoma del usuario: apretar "Generar y descargar backup" en producción devolvía el cartel rojo **"Error al generar el backup"**, sin más detalle. Se atribuyó al salto de versión 1.0.27 → 1.0.30, pero el `git diff` entre esos dos commits **no toca ni la ruta `/download` ni `downloadBackup()`**. No era el código nuevo: era el volumen de datos, que venía creciendo hasta pasar el punto donde el diseño original dejaba de dar.
+
+### Lo que costaba un backup, medido sobre la base real
+
+| | Antes | Ahora |
+|---|---|---|
+| Disco temporal en `os.tmpdir()` | **1757 MB** | **1,7 MB** |
+| Tiempo hasta el primer byte al navegador | **22,6 s** | **0,2 s** |
+| Memoria de la pestaña del navegador | ~850 MB (blob entero) | 0 |
+| Tamaño final del `.tar.gz` | 848,5 MB | 849,9 MB |
+
+Tres defectos independientes, cada uno suficiente para romper la descarga:
+
+1. **Se copiaban 909 MB a `os.tmpdir()`** para empaquetarlos y borrarlos. Sumado al `.tar.gz` resultante, el pico era de 1,76 GB de temporal. En producción `os.tmpdir()` es `/tmp`, que en Ubuntu moderno es **tmpfs — o sea RAM**, y la máquina la comparte con otro stack de Docker.
+2. **El navegador quedaba 22,6 s sin recibir un byte** mientras se armaba el paquete, con la conexión abierta y muda a través del Funnel de Tailscale.
+3. **`views/superadmin/backup.ejs` hacía `fetch()` + `res.blob()`**: la pestaña juntaba los 850 MB **enteros en memoria** antes de poder guardarlos. Este es el sospechoso principal del error concreto que veía el usuario — y el `catch` genérico de esa función mostraba el mismo texto tanto para un fallo del servidor como para uno del navegador, que es lo que hacía el síntoma indescifrable.
+
+### El cambio
+
+**El paquete ya no se copia ni se materializa: se enlaza y se streamea.**
+
+- `buildBackupStaging()` (nuevo, extraído de `createBackupTarball`) arma el staging con los JSON de la BD y **enlaza** `files/archivos` y `files/entregas` a los originales en vez de copiarlos. `tar.c({ follow: true })` sigue los enlaces y empaqueta el contenido real, así que **el `.tar.gz` sale con el mismo layout de siempre y los backups viejos y nuevos son intercambiables**.
+- `GET /download` streamea el tar mientras lo arma (`tar.c()` sin `file:`, `.pipe(res)`). Sin `Content-Length`, la respuesta sale chunked: eso hace que una descarga interrumpida **se vea interrumpida** en vez de dejar un `.tar.gz` truncado con pinta de completo. En un backup esa diferencia vale más que la barra de progreso que se pierde.
+- La pantalla dispara la descarga con un **iframe** en vez de `fetch` + blob: la escribe el navegador, directo a Descargas.
+- **`gzip` bajado a nivel 1**: el contenido son JPEG y PDF ya comprimidos, así que el nivel 6 conseguía 6,6% a cambio de 20 s de CPU por backup. Nivel 1 da prácticamente el mismo tamaño (849,9 vs 848,5 MB).
+- `createBackupTarball()` sigue existiendo y produciendo un archivo en disco: lo usa el backup de seguridad pre-restore, que **sí** necesita un archivo porque termina guardado en `backups/`.
+
+> ⚠️ **La propiedad de la que depende todo esto**: `fs.rmSync(staging, { recursive: true })` borra el **enlace**, no el destino. Se verificó explícitamente antes de escribir el código y hay un test que lo fija. Si alguna vez se cambia la limpieza del staging por otra cosa, **hay que volver a verificarlo**: seguir el enlace ahí significaría borrar `public/archivos` y `archivos/entregas` del servidor de producción.
+
+### Qué se probó
+
+**Unitarios nuevos: 5** (`tests/unit/backupTarball.test.js`, total 84/84). Fijan el layout del tarball, que no queden enlaces sin resolver, que no sobrevivan directorios de staging, que una carpeta de origen inexistente entre igual como vacía, y —el importante— que generar un backup no se lleve puestos los originales.
+
+Ciclo completo contra los 909 MB reales: 710 archivos empaquetados (413 adjuntos + 297 entregas), las 12 colecciones presentes, 0 enlaces sin resolver, originales intactos, y validación equivalente a la de `POST /preview` en verde.
+
+Para poder testearlo, `ARCHIVOS_BASE` y `ENTREGAS_BASE` pasaron a ser overrideables por env var (`BACKUP_ARCHIVOS_BASE` / `BACKUP_ENTREGAS_BASE`), con el mismo criterio que `MAINTENANCE_FILE` en `config/maintenance.js`: correr los tests contra un fixture de unos KB en vez de los 909 MB del proyecto. En producción no se setean nunca.
+
+> 🔧 **Arreglado de paso**: el cliente de smoke tests (`tests/smoke/lib.js`) prefería `Content-Length` antes que bufferear la respuesta, y sin ese header caía a `arrayBuffer()` — volviendo a cargar los 850 MB en memoria, justo lo que ese bloque existía para evitar. Ahora cuenta los bytes al pasar. De paso guarda los primeros 4, y el spec `backup-download-produces-valid-tarball` verifica **la firma gzip (`1f 8b`)**: como el status 200 sale antes que el contenido, era el único chequeo que faltaba para distinguir un backup de verdad de una respuesta rota servida con 200.
+
+> 🔧 **Arreglado de paso (2)**: `pull-from-prod.js` (el espejo prod → local) escribía en `classroom-clone`, una base que la app **ya no usa** — el `.env` apunta a `classroom-escuela`. Sincronizaba sin fallar y la app seguía mostrando los datos viejos. Ahora saca el destino del `.env`. Además tenía la lista de colecciones hardcodeada y vieja (le faltaban las 3 de sala en vivo, `sections`, `activityviews`, `activitytemplates`, `templateassignments` y `auditlogs`): ahora enumera lo que existe en producción, avisa si local tiene colecciones que prod no, y aborta si origen y destino coinciden.
+
+---
+
 ## Plan de Futuras Actualizaciones (Roadmap)
 
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`). Resumen de lo pendiente:
 
 ### Correcciones / deuda técnica pendiente
+- 🔴 **Los 12 backups de seguridad de `backups/` (2,8 GB) no se pueden restaurar** (detectado 2026-08-08). `POST /preview` los rechaza con 400 porque no incluyen `roomsessions`/`roommessages`/`roompresences`, agregadas a `COLLECTIONS` después de que se generaran. Afecta a **todos** los `pre-restore-*.tar.gz`, del 2026-07-22 al 2026-08-03 — es decir, a las redes de seguridad que el propio `/restore` genera antes de pisar la base. Decisión de diseño pendiente: ¿el restore debería tolerar colecciones faltantes (restaurando las presentes, con aviso explícito en el preview) o mantenerse estricto? Hay argumento fuerte para tolerar: una colección ausente significa "no existía entonces", no "está corrupto".
+- **`backups/` no tiene retención ni UI**: crece sin límite (2,8 GB hoy) y no se ve desde ningún panel. Cada `/restore` le suma un tarball del tamaño del backup completo.
+- **Instalar `ghostscript` en el servidor de producción** para habilitar la compresión de PDFs del backup (315 MB de ahorro potencial). Sin él la feature degrada sola. Ver el changelog del 2026-08-08.
 - **Correr el backfill de imágenes en producción** (`optimize-existing-images.js`). El optimizador ya está activo para las subidas nuevas, pero los ~198 MB históricos siguen en disco. Requiere backup + modo mantenimiento porque actualiza URLs en la base. Ver el changelog de v1.0.7.
 - **`npm install` en el servidor antes de desplegar v1.0.7**: `sharp` pasó de `devDependencies` a `dependencies` y el webhook de deploy no corre `npm install`. Sin eso la app arranca igual (degradación prevista) pero no optimiza nada.
-- Extender el optimizador a las **fotos en entregas de alumnos** (hoy 0 MB, pero va a crecer). Preset más conservador (2000 px, calidad 85) porque puede ser una foto de una hoja escrita que el docente necesita leer. El spec `entrega-pdf-no-se-toca` ya fija que los PDFs no se toquen.
+- Extender el optimizador a las **fotos en entregas de alumnos y a los adjuntos de actividades**. ⚠️ La estimación vieja de "hoy 0 MB, pero va a crecer" quedó obsoleta: medido el 2026-08-08 son **511 MB en entregas + 400 MB en adjuntos**, con 581 MB de imágenes sin optimizar entre las dos. Preset más conservador (2000 px, calidad 85) porque puede ser la foto de una hoja escrita que el docente necesita leer. El spec `entrega-pdf-no-se-toca` ya fija que los PDFs no se toquen. Ojo: esto es distinto de la compresión del backup (2026-08-08), que **no toca los archivos del servidor** — acá se trata de achicar el disco de verdad, y por eso necesita ventana de mantenimiento.
 - El spec `suggestions-student-sees-answer-and-badge` depende de `suggestions-superadmin-can-respond` pero no declara su mismo `requiresEnv`: si se corre el smoke sin credenciales de superadmin, falla en cascada en vez de saltearse.
 - **`POST /courses/create` no valida el rol del llamante**: cualquier usuario autenticado con escuela (incluido un alumno) puede crear una materia por POST directo y queda como `owner`, lo que por `isTeacher()` le habilita calificar y gestionar alumnos de esa materia. El botón está oculto en la vista para alumnos y docentes, pero esconder el botón no cierra el endpoint — mismo criterio que se aplicó al apagar "unirse por código". Ya se bloqueó explícitamente para `preceptor` y `jefe` (este último lo detectó el smoke al crear el rol, 2026-08-06); **falta el resto**. Convertirlo en lista blanca exige decidir antes si `directivo` y `soe` conservan la posibilidad: hoy la UI se las ofrece en `views/dashboard.ejs:37`.
 - ✅ **RESUELTO (2026-07-30)** — los 9 specs que fallaban por `JOIN_BY_CODE_ENABLED` quedaron arreglados al eliminar la matriculación por código. Baseline actual: **126/126**.

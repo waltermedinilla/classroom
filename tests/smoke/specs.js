@@ -2331,6 +2331,7 @@ const specs = [
       // huérfano (no existe DELETE /superadmin/users/:id).
       await client.get('admin', '/superadmin/backup', { expectStatus: [403, 302] });
       await client.get('admin', '/superadmin/backup/download', { expectStatus: [403, 302] });
+      await client.get('admin', '/superadmin/backup/file-stats', { expectStatus: [403, 302] });
     },
   },
   {
@@ -2339,9 +2340,54 @@ const specs = [
     requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
     async run({ client, assert }) {
       const res = await client.get('superadmin', '/superadmin/backup/stats', { expectStatus: 200 });
-      const expected = ['schools', 'users', 'courses', 'activities', 'submissions', 'announcements', 'suggestions', 'divisions', 'subjects'];
+      // La lista tiene que ser la misma que COLLECTIONS en routes/backup.js. Una colección
+      // que se respalda pero no aparece acá es exactamente el agujero contra el que avisa
+      // el comentario de ese array: nadie se entera hasta que hace falta restaurarla.
+      const expected = [
+        'schools', 'users', 'courses', 'activities', 'submissions', 'announcements',
+        'suggestions', 'divisions', 'subjects', 'roomsessions', 'roommessages', 'roompresences',
+      ];
       expected.forEach(name => assert(typeof res.json.collections[name] === 'number', `falta el contador de ${name}`));
       assert(typeof res.json.files.archivos.sizeBytes === 'number', 'falta el tamaño de archivos/');
+    },
+  },
+  {
+    id: 'backup-file-stats',
+    title: 'El desglose por tipo de archivo alimenta el modal de compresión',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('superadmin', '/superadmin/backup/file-stats', { expectStatus: 200 });
+      const d = res.json;
+
+      // Los tipos son fijos (services/backupCompressor.js): la vista arma un check por cada
+      // comprimible, y uno que desaparezca sería ahorro perdido en silencio.
+      ['imagenes', 'pdf', 'webp', 'documentos', 'otros'].forEach(id => {
+        const t = d.porTipo[id];
+        assert(t, `falta el tipo ${id}`);
+        assert(typeof t.count === 'number' && t.count >= 0, `${id}: count inválido`);
+        assert(typeof t.bytes === 'number' && t.bytes >= 0, `${id}: bytes inválido`);
+        assert(typeof t.comprimible === 'boolean', `${id}: falta el flag comprimible`);
+        assert(t.ahorroEstimado >= 0 && t.ahorroEstimado <= t.bytes,
+          `${id}: el ahorro estimado (${t.ahorroEstimado}) no puede superar el peso (${t.bytes})`);
+        if (!t.comprimible) assert(t.ahorroEstimado === 0, `${id} no es comprimible pero estima ahorro`);
+      });
+
+      const suma = Object.values(d.porTipo).reduce((a, t) => a + t.bytes, 0);
+      assert(suma === d.total.bytes, `los tipos suman ${suma} pero el total dice ${d.total.bytes}`);
+
+      assert(Array.isArray(d.topPesados) && d.topPesados.length <= 10, 'topPesados debería ser un array de hasta 10');
+      d.topPesados.forEach(p => {
+        assert(typeof p.bytes === 'number', 'falta el peso de un archivo del top');
+        assert(typeof p.zona === 'string' && p.zona, 'falta la zona del archivo');
+      });
+      for (let i = 1; i < d.topPesados.length; i++) {
+        assert(d.topPesados[i - 1].bytes >= d.topPesados[i].bytes, 'topPesados debería venir ordenado de mayor a menor');
+      }
+
+      // La vista deshabilita los checks según esto; si falta, quedarían todos habilitados
+      // y el usuario pediría una compresión que el servidor no puede hacer.
+      assert(typeof d.herramientas.imagenes === 'boolean', 'falta herramientas.imagenes');
+      assert(typeof d.herramientas.pdf === 'boolean', 'falta herramientas.pdf');
     },
   },
   {
@@ -2353,6 +2399,12 @@ const specs = [
       const disposition = res.headers.get('content-disposition') || '';
       assert(/classroom-backup-.*\.tar\.gz/.test(disposition), `Content-Disposition inesperado: ${disposition}`);
       assert(res.byteLength > 1000, `el archivo descargado parece demasiado chico (${res.byteLength} bytes)`);
+
+      // El .tar.gz se streamea mientras se arma, así que un fallo a mitad de camino no puede
+      // cambiar el status (ya salió 200). Verificar la firma gzip es lo que distingue un
+      // backup de verdad de una respuesta rota que igual llegó con 200 y con el header puesto.
+      assert(res.firstBytes && res.firstBytes[0] === 0x1f && res.firstBytes[1] === 0x8b,
+        `el cuerpo no arranca con la firma gzip (1f 8b): ${res.firstBytes ? [...res.firstBytes].map(b => b.toString(16)).join(' ') : 'sin cuerpo'}`);
     },
   },
   {

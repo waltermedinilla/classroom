@@ -99,10 +99,16 @@
 
       <div id="lastBackupNote" class="last-backup-note" style="display:none"></div>
 
-      <button class="btn btn-primary" id="downloadBtn" onclick="downloadBackup()">
-        <span class="material-symbols-outlined">download</span>
-        Generar y descargar backup
-      </button>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-primary" id="downloadBtn" onclick="downloadBackup()">
+          <span class="material-symbols-outlined">download</span>
+          Generar y descargar backup
+        </button>
+        <button class="btn btn-outline" onclick="bkcAbrir()">
+          <span class="material-symbols-outlined">compress</span>
+          Comprimir y descargar…
+        </button>
+      </div>
       <div id="downloadStatus" style="margin-top:10px;font-size:13px;display:none"></div>
     </div>
 
@@ -130,6 +136,7 @@
 
   </main>
   <%- include('../partials/footer') %>
+  <%- include('../partials/backup-compress-modal') %>
 
   <script>
     const LAST_BACKUP_KEY = 'classroom_last_backup';
@@ -148,7 +155,10 @@
       try {
         const info = JSON.parse(raw);
         const date = new Date(info.date);
-        el.textContent = `Último backup generado desde este navegador: ${date.toLocaleString('es-AR')} (${formatBytes(info.size)})`;
+        // El tamaño solo lo saben los backups viejos: desde que la descarga la maneja el
+        // navegador (y no un blob en memoria) la página nunca ve cuántos bytes bajaron.
+        el.textContent = `Último backup generado desde este navegador: ${date.toLocaleString('es-AR')}`
+          + (info.size ? ` (${formatBytes(info.size)})` : '');
         el.style.display = 'block';
       } catch {}
     }
@@ -169,6 +179,11 @@
           ['announcements', 'Novedades'],
           ['suggestions',   'Sugerencias'],
           ['subjects',      'Catálogo materias'],
+          // Sala en vivo. Estaban en COLLECTIONS (routes/backup.js) y sí se respaldaban,
+          // pero faltaban acá: la pantalla decía "qué se va a incluir" y se las comía.
+          ['roomsessions',  'Sesiones de sala'],
+          ['roommessages',  'Mensajes de sala'],
+          ['roompresences', 'Asistencias de sala'],
         ];
         let html = cards.map(([key, label]) => `
           <div class="stats-mini-card">
@@ -192,39 +207,60 @@
       }
     }
 
-    async function downloadBackup() {
+    // La descarga la maneja el NAVEGADOR, no esta página.
+    //
+    // Antes acá había un fetch() + res.blob(): eso obliga a la pestaña a juntar el backup
+    // entero en memoria antes de poder guardarlo. Con la base real son ~850 MB dentro de la
+    // pestaña, y ese es el punto donde la descarga se caía sin decir por qué (el catch de
+    // abajo mostraba el cartel genérico "Error al generar el backup", que no distingue un
+    // fallo del servidor de uno del navegador).
+    //
+    // Un iframe apuntado a la ruta deja que el navegador escriba directo a Descargas, sin
+    // pasar por la memoria de la página. Se pierde la barra de progreso propia; la del
+    // navegador ya la muestra, y a cambio la descarga aguanta cualquier tamaño.
+    function downloadBackup() {
       const btn    = document.getElementById('downloadBtn');
       const status = document.getElementById('downloadStatus');
-      btn.disabled = true;
       status.style.display = 'block';
-      status.innerHTML = '<span class="spinner-inline"></span>Generando backup, puede tardar varios segundos...';
+      status.innerHTML = '<span class="spinner-inline"></span>Preparando el backup...';
+      btn.disabled = true;
 
-      try {
-        const res = await fetch('/superadmin/backup/download');
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || 'Error al generar el backup');
-        }
-        const blob = await res.blob();
-        const disposition = res.headers.get('content-disposition') || '';
-        const nameMatch = disposition.match(/filename="?([^"]+)"?/);
-        const filename  = nameMatch ? nameMatch[1] : 'classroom-backup.tar.gz';
-
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = filename;
-        document.body.appendChild(a); a.click(); a.remove();
-        URL.revokeObjectURL(url);
-
-        localStorage.setItem(LAST_BACKUP_KEY, JSON.stringify({ date: new Date().toISOString(), size: blob.size }));
-        renderLastBackupNote();
-
-        status.innerHTML = `<span style="color:#137333">✔ Backup descargado: ${filename} (${formatBytes(blob.size)})</span>`;
-      } catch (err) {
-        status.innerHTML = `<span style="color:#c5221f">✗ ${err.message}</span>`;
-      } finally {
-        btn.disabled = false;
+      // Se reusa un único iframe: cada descarga puede durar minutos y no hace falta ir
+      // acumulando nodos en el DOM a cada clic.
+      let marco = document.getElementById('backupFrame');
+      if (!marco) {
+        marco = document.createElement('iframe');
+        marco.id = 'backupFrame';
+        marco.style.display = 'none';
+        document.body.appendChild(marco);
       }
+
+      let resuelto = false;
+
+      // Si la respuesta trae Content-Disposition: attachment, el navegador se la lleva a
+      // Descargas y el iframe NUNCA navega: 'load' no dispara. Que dispare significa que el
+      // servidor mandó algo renderizable — o sea, un error. Es lo que evita que un fallo
+      // termine mostrando un cartel de éxito.
+      marco.onload = () => {
+        if (resuelto) return;
+        resuelto = true;
+        btn.disabled = false;
+        status.innerHTML = '<span style="color:#c5221f">✗ El servidor no devolvió el backup. Revisá logs/error.log en el servidor.</span>';
+      };
+
+      marco.src = '/superadmin/backup/download?t=' + Date.now();
+
+      // Pasados unos segundos sin 'load', la descarga arrancó de verdad. El servidor manda el
+      // primer byte casi de inmediato (el tar sale en streaming), así que este margen es
+      // holgado. De acá en más la maneja el navegador y esta página no se entera de nada más.
+      setTimeout(() => {
+        if (resuelto) return;
+        resuelto = true;
+        btn.disabled = false;
+        localStorage.setItem(LAST_BACKUP_KEY, JSON.stringify({ date: new Date().toISOString() }));
+        renderLastBackupNote();
+        status.innerHTML = '<span style="color:#137333">✔ Descarga en curso: buscá <b>classroom-backup-….tar.gz</b> en la barra de descargas del navegador. Con la base actual son unos 850 MB, puede tardar varios minutos.</span>';
+      }, 5000);
     }
 
     // ─── Restore ───
@@ -276,6 +312,21 @@
       const totalFiles = manifest.files.archivos.count + manifest.files.entregas.count;
       const totalBytes = manifest.files.archivos.sizeBytes + manifest.files.entregas.sizeBytes;
 
+      // Los backups comprimidos traen este campo; los generados antes de la feature, no.
+      // Hay que decirlo ANTES de restaurar: las fotos y los PDFs del servidor van a quedar
+      // reemplazados por las versiones más livianas, y de ahí no se vuelve (salvo por el
+      // backup de seguridad que el propio restore genera).
+      const avisoCompresion = manifest.compresion ? `
+        <div class="backup-warning" style="margin-bottom:12px">
+          <span class="material-symbols-outlined" style="color:#ea8600">compress</span>
+          <div>
+            Este backup tiene los archivos <strong>comprimidos</strong>
+            (${manifest.compresion.imagenes.count} imagen(es), ${manifest.compresion.pdf.count} PDF(s)).
+            Al restaurarlo, los archivos del servidor quedan reemplazados por esas versiones más livianas.
+            Las rutas no cambian, así que nada deja de verse.
+          </div>
+        </div>` : '';
+
       area.innerHTML = `
         <div style="margin-top:16px;padding:16px;background:var(--background);border-radius:var(--radius)">
           <div style="font-size:13px;margin-bottom:10px">
@@ -286,9 +337,10 @@
             <thead><tr><th>Colección</th><th>Actual</th><th>Backup</th><th>Cambio</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
-          <div style="font-size:13px;color:var(--text-secondary)">
+          <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">
             Archivos incluidos: ${formatBytes(totalBytes)} en ${totalFiles} archivo(s)
           </div>
+          ${avisoCompresion}
 
           <div class="confirm-box">
             <strong style="color:#c5221f">🔴 Confirmación requerida</strong>

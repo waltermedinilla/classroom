@@ -5,7 +5,9 @@ const fs          = require('fs');
 const path        = require('path');
 const os          = require('os');
 const crypto      = require('crypto');
+const { pipeline } = require('stream');
 const rateLimit   = require('express-rate-limit');
+const logger      = require('../config/logger');
 const { requireAuth }       = require('../middleware/auth');
 const { requireSuperAdmin } = require('../middleware/superadmin');
 const { invalidateAll }     = require('../middleware/cache');
@@ -18,6 +20,9 @@ const {
   normalizeIdleMinutes, normalizeMaxWait, countActiveUsers, listActiveUsers,
   minutesAgo, deadlineOf, ACTIVITY_LIST_MAX, IDLE_DEFAULT_MIN,
 } = require('../services/maintenanceWindow');
+const {
+  analizarCarpetas, comprimirArbol, gsDisponible, sharpDisponible, TIPOS_COMPRIMIBLES,
+} = require('../services/backupCompressor');
 
 const School       = require('../models/School');
 const User         = require('../models/User');
@@ -36,8 +41,13 @@ const router = express.Router();
 
 // Mismas rutas base que routes/activities.js / routes/admin.js / routes/announcements.js
 // (no hay un config compartido para esto en el proyecto; se repite el patrón existente).
-const ARCHIVOS_BASE = path.join(__dirname, '../public/archivos');
-const ENTREGAS_BASE = path.join(__dirname, '../archivos/entregas');
+//
+// Overrideables por env var con el mismo criterio que MAINTENANCE_FILE en
+// config/maintenance.js: es lo único que permite testear el armado del backup contra un
+// árbol de fixtures de unos KB en vez de los ~900 MB reales del servidor. En producción
+// no se setean nunca.
+const ARCHIVOS_BASE = process.env.BACKUP_ARCHIVOS_BASE || path.join(__dirname, '../public/archivos');
+const ENTREGAS_BASE = process.env.BACKUP_ENTREGAS_BASE || path.join(__dirname, '../archivos/entregas');
 
 // Backups de seguridad pre-restore: persisten en disco (no en /tmp) para no perderse
 // ante un reinicio del servidor. Nunca se commitean (ver .gitignore).
@@ -122,6 +132,29 @@ function copyDir(src, dest) {
   return getDirStats(dest);
 }
 
+// Deja `dest` apuntando al contenido de `src` con un enlace, en vez de copiarlo. El tar se
+// arma con `follow: true`, así que empaqueta el contenido real y el .tar.gz sale idéntico
+// al que producía copyDir — mismas rutas `files/archivos/...`, backups intercambiables.
+//
+// Existe porque copiar los archivos al staging es la parte más cara del backup con
+// diferencia: medido sobre la base real, 909 MB copiados a os.tmpdir() para después
+// empaquetarlos y borrarlos. En producción os.tmpdir() es /tmp, que en Ubuntu moderno es
+// tmpfs — o sea RAM. Con el enlace el staging pesa lo que pesan los JSON de la BD.
+//
+// Verificado antes de usarlo: fs.rmSync(staging, { recursive: true }) borra el ENLACE, no
+// el destino (lstat lo ve como symlink y lo desenlaza). Si algún día se cambia la limpieza
+// del staging por otra cosa, hay que volver a verificar eso — seguir el enlace acá
+// significaría borrar public/archivos y archivos/entregas del servidor.
+function linkDir(src, dest) {
+  // Origen inexistente (ej. entregas/ vacío en una escuela nueva): carpeta real vacía, para
+  // que el tar igual tenga la entrada y el restore no encuentre un hueco donde esperaba algo.
+  if (!fs.existsSync(src)) {
+    fs.mkdirSync(dest, { recursive: true });
+    return;
+  }
+  fs.symlinkSync(path.resolve(src), dest, process.platform === 'win32' ? 'junction' : 'dir');
+}
+
 // Mueve un archivo entre dos ubicaciones que pueden estar en filesystems distintos
 // (ej. os.tmpdir() vs BACKUPS_DIR dentro del repo — en producción suelen ser mounts
 // distintos, ahí fs.renameSync tira EXDEV: "cross-device link not permitted"). rename()
@@ -151,9 +184,23 @@ function replaceDir(extractedSubdir, targetDir) {
 // Generación del backup (compartida entre /download y el pre-restore de seguridad)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Vuelca todas las colecciones + archivos a un .tar.gz. Devuelve la ruta al archivo
-// generado (en os.tmpdir(), el caller decide si lo persiste o lo borra) y el manifest.
-async function createBackupTarball(generatedByEmail) {
+// Nivel de gzip deliberadamente bajo. Medido sobre la base real: el contenido son JPEG,
+// PNG y PDF, que ya vienen comprimidos, así que el gzip por defecto (nivel 6) baja 909 MB
+// a 848 MB — un 6,6% — a cambio de 20 s de CPU en cada backup. El nivel 1 consigue
+// prácticamente el mismo tamaño por una fracción del costo, y con el tar saliendo en
+// streaming la CPU es justamente lo que marca el ritmo de la descarga.
+const GZIP_LEVEL = { level: 1 };
+
+// Contenido del backup listo para empaquetar: los JSON de cada colección + el manifest +
+// los dos árboles de archivos bajo `files/`. Devuelve el directorio de staging; el caller
+// decide si lo empaqueta a un archivo (createBackupTarball) o lo streamea (GET /download),
+// y es SIEMPRE responsable de borrarlo después.
+//
+// `comprimir` ({ imagenes, pdf }) reencodea los archivos YA COPIADOS al staging, nunca los
+// originales del servidor. Por defecto no comprime nada, y eso es deliberado: el backup de
+// seguridad pre-restore usa esta misma función y tiene que guardar los archivos tal cual
+// están — es la red de seguridad, no el lugar para ahorrar espacio.
+async function buildBackupStaging(generatedByEmail, { comprimir = null } = {}) {
   const createdAt  = new Date();
   const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'classroom-backup-staging-'));
 
@@ -168,10 +215,36 @@ async function createBackupTarball(generatedByEmail) {
       collectionsMeta[name] = docs.length;
     }
 
-    const filesDir     = path.join(stagingDir, 'files');
+    const filesDir = path.join(stagingDir, 'files');
     fs.mkdirSync(filesDir);
-    const archivosMeta = copyDir(ARCHIVOS_BASE, path.join(filesDir, 'archivos'));
-    const entregasMeta = copyDir(ENTREGAS_BASE, path.join(filesDir, 'entregas'));
+
+    let compresion = null;
+    let archivosMeta, entregasMeta;
+
+    if (comprimir && (comprimir.imagenes || comprimir.pdf)) {
+      // Comprimir REESCRIBE los archivos, así que este camino sí necesita una copia propia:
+      // tocar los originales del servidor sería destruir la calidad de lo que está en línea.
+      copyDir(ARCHIVOS_BASE, path.join(filesDir, 'archivos'));
+      copyDir(ENTREGAS_BASE, path.join(filesDir, 'entregas'));
+
+      // Comprimir DESPUÉS de copiar y ANTES de empaquetar. Los nombres y extensiones no
+      // cambian (ver services/backupCompressor.js), así que el restore no necesita saber
+      // que esto pasó: las rutas guardadas en Mongo siguen apuntando a donde tienen que ir.
+      compresion = await comprimirArbol(filesDir, comprimir);
+
+      // Las stats se recalculan recién ahora, para que el manifest declare el peso REAL de
+      // lo que quedó adentro y no el de antes de comprimir.
+      archivosMeta = getDirStats(path.join(filesDir, 'archivos'));
+      entregasMeta = getDirStats(path.join(filesDir, 'entregas'));
+    } else {
+      // Camino normal, el de todos los días: no se copia un solo byte. El staging apunta a
+      // los originales y el tar los sigue. Las stats se miden sobre el origen porque es
+      // literalmente lo mismo que va a entrar al paquete.
+      linkDir(ARCHIVOS_BASE, path.join(filesDir, 'archivos'));
+      linkDir(ENTREGAS_BASE, path.join(filesDir, 'entregas'));
+      archivosMeta = getDirStats(ARCHIVOS_BASE);
+      entregasMeta = getDirStats(ENTREGAS_BASE);
+    }
 
     const manifest = {
       version:     BACKUP_FORMAT_VERSION,
@@ -180,13 +253,34 @@ async function createBackupTarball(generatedByEmail) {
       generatedBy: generatedByEmail,
       collections: collectionsMeta,
       files: { archivos: archivosMeta, entregas: entregasMeta },
+      // Campo OPCIONAL. La versión del formato sigue siendo 1.0 a propósito: subirla haría
+      // que POST /preview rechace todos los backups ya generados (los pre-restore de
+      // backups/ y los que el dueño tenga descargados). Un backup viejo simplemente no
+      // trae esta clave, y la pantalla de restore la muestra solo si está.
+      compresion,
     };
     fs.writeFileSync(path.join(stagingDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
-    const stamp   = createdAt.toISOString().replace(/[:.]/g, '-');
-    const tarPath = path.join(os.tmpdir(), `classroom-backup-${stamp}.tar.gz`);
-    await tar.c({ gzip: true, cwd: stagingDir, file: tarPath }, ['manifest.json', 'db', 'files']);
+    const stamp = createdAt.toISOString().replace(/[:.]/g, '-');
+    return { stagingDir, manifest, stamp };
+  } catch (err) {
+    // El caller no llegó a recibir el path, así que no puede limpiarlo él.
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+    throw err;
+  }
+}
 
+// Empaqueta el backup a un .tar.gz en disco y devuelve su ruta. Lo usa el backup de
+// seguridad que /restore genera antes de pisar nada: ese SÍ necesita un archivo, porque
+// termina guardado en backups/. La descarga del dueño no pasa por acá — streamea.
+async function createBackupTarball(generatedByEmail, opts = {}) {
+  const { stagingDir, manifest, stamp } = await buildBackupStaging(generatedByEmail, opts);
+  try {
+    const tarPath = path.join(os.tmpdir(), `classroom-backup-${stamp}.tar.gz`);
+    await tar.c(
+      { gzip: GZIP_LEVEL, cwd: stagingDir, file: tarPath, follow: true },
+      ['manifest.json', 'db', 'files'],
+    );
     return { tarPath, manifest, stamp };
   } finally {
     fs.rmSync(stagingDir, { recursive: true, force: true });
@@ -220,38 +314,137 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+// GET /superadmin/backup/file-stats — desglose por tipo de archivo, para el modal que
+// decide qué comprimir. Separado de /stats porque ese devuelve contadores de colecciones
+// y este recorre el disco (cacheado 60s dentro del servicio).
+router.get('/file-stats', async (req, res) => {
+  try {
+    const desglose = await analizarCarpetas([
+      { dir: ARCHIVOS_BASE, label: 'Adjuntos y avatares' },
+      { dir: ENTREGAS_BASE, label: 'Entregas de alumnos' },
+    ]);
+    res.json({
+      ...desglose,
+      // La pantalla necesita saber por qué un tipo no se puede comprimir en ESTE servidor:
+      // sharp y Ghostscript son binarios del sistema y pueden no estar instalados.
+      herramientas: {
+        imagenes: sharpDisponible(),
+        pdf:      await gsDisponible(),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Descarga de backup
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.get('/download', async (req, res) => {
-  let tarPath;
-  try {
-    const result = await createBackupTarball(res.locals.user.email);
-    tarPath = result.tarPath;
-    const filename = `classroom-backup-${result.stamp}.tar.gz`;
-    res.setHeader('X-Backup-Manifest', encodeURIComponent(JSON.stringify(result.manifest)));
+// Traduce ?comprimir=imagenes,pdf a { imagenes: true, pdf: true }. Filtra contra la lista
+// blanca del servicio: lo que venga en la query nunca se usa como clave directa.
+function parseComprimir(query) {
+  const pedidos = String(query || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!pedidos.length) return null;
+  const opciones = {};
+  for (const id of TIPOS_COMPRIMIBLES) {
+    if (pedidos.includes(id)) opciones[id] = true;
+  }
+  return Object.keys(opciones).length ? opciones : null;
+}
 
-    // Log ANTES de streamear al cliente: si el download callback falla, el backup igual
-    // se generó exitosamente (existe el tar). No queremos ausencia de log por un fallo de red.
+// El .tar.gz se STREAMEA a medida que se arma; no se materializa en disco primero.
+//
+// Antes esta ruta escribía el paquete completo en os.tmpdir() y recién ahí lo mandaba con
+// res.download(). Con la base real eso pedía 1,76 GB de espacio temporal (909 MB copiados
+// + 848 MB de paquete) y dejaba al navegador 23 s sin recibir un solo byte. En producción
+// os.tmpdir() es /tmp sobre tmpfs, o sea RAM del servidor, compartida además con el otro
+// stack que vive en esa máquina.
+//
+// Streameando, el pico de disco temporal es el de los JSON de la BD (unos pocos MB) y los
+// primeros bytes salen casi de inmediato, así que ningún proxy intermedio ve la conexión
+// callada el tiempo suficiente como para cortarla.
+router.get('/download', async (req, res) => {
+  const comprimir = parseComprimir(req.query.comprimir);
+
+  // Sin esto, comprimir 346 imágenes + 247 PDFs (varios minutos de CPU) choca contra el
+  // timeout por defecto del socket y el navegador recibe una descarga cortada a la mitad.
+  // El backup ya era la request más larga del sistema; con compresión lo es bastante más.
+  req.setTimeout(0);
+  res.setTimeout(0);
+
+  let stagingDir = null;
+  const limpiarStaging = () => {
+    if (!stagingDir) return;
+    const dir = stagingDir;
+    stagingDir = null; // idempotente: 'close' y 'error' pueden dispararse los dos
+    fs.rm(dir, { recursive: true, force: true }, () => {});
+  };
+
+  try {
+    const built = await buildBackupStaging(res.locals.user.email, { comprimir });
+    stagingDir  = built.stagingDir;
+
+    // Nombre distinto cuando se comprimió: al restaurarlo, este backup reemplaza los
+    // archivos del servidor por las versiones más livianas. Conviene poder distinguirlo
+    // de un backup íntegro de un vistazo, sin abrirlo.
+    const filename = comprimir
+      ? `classroom-backup-comprimido-${built.stamp}.tar.gz`
+      : `classroom-backup-${built.stamp}.tar.gz`;
+
+    // Log ANTES de streamear al cliente: si la transferencia se corta, el backup igual se
+    // generó. No queremos ausencia de log por un fallo de red.
     logAudit(req, 'system.backup_create', [],
       {
         archivo:  filename,
-        version:  result.manifest?.version || '',
-        ...(result.manifest?.collections ? {
-          usuarios: result.manifest.collections.users || 0,
-          cursos:   result.manifest.collections.courses || 0,
+        version:  built.manifest?.version || '',
+        ...(built.manifest?.collections ? {
+          usuarios: built.manifest.collections.users || 0,
+          cursos:   built.manifest.collections.courses || 0,
+        } : {}),
+        ...(built.manifest?.compresion ? {
+          comprimido: Object.keys(comprimir).join(', '),
+          ahorroBytes:
+            (built.manifest.compresion.imagenes.antes + built.manifest.compresion.pdf.antes) -
+            (built.manifest.compresion.imagenes.despues + built.manifest.compresion.pdf.despues),
         } : {}),
       },
     );
 
-    res.download(tarPath, filename, (err) => {
-      fs.unlink(tarPath, () => {});
-      if (err && !res.headersSent) res.status(500).json({ error: 'Error al generar el backup' });
+    // El manifest completo viaja en un header porque ya se conoce ANTES del primer byte del
+    // paquete: el modal de compresión lo lee para mostrar cuánto se ahorró de verdad.
+    res.setHeader('X-Backup-Manifest', encodeURIComponent(JSON.stringify(built.manifest)));
+    res.setHeader('Content-Type', 'application/gzip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    // Sin Content-Length (el tamaño final no se sabe hasta terminar de comprimir): la
+    // respuesta sale chunked. Eso es lo que hace que una descarga interrumpida se vea como
+    // interrumpida, en vez de como un .tar.gz truncado que parece completo. En un backup,
+    // esa diferencia importa más que la barra de progreso que se pierde.
+
+    const paquete = tar.c(
+      { gzip: GZIP_LEVEL, cwd: built.stagingDir, follow: true },
+      ['manifest.json', 'db', 'files'],
+    );
+
+    // pipeline y no .pipe(): se encarga de destruir las dos puntas ante cualquier final.
+    // Con .pipe() pelado, un cliente que abandona la descarga a los 5 s deja al tar leyendo
+    // y comprimiendo los 900 MB restantes contra un socket muerto, y ante un error del tar
+    // el navegador recibiría una descarga cortada que igual parece terminada.
+    pipeline(paquete, res, (err) => {
+      limpiarStaging();
+      if (!err) return;
+      // ECONNRESET / ERR_STREAM_PREMATURE_CLOSE = el cliente cortó. Es normal (cerró la
+      // pestaña, canceló la descarga) y no tiene por qué ensuciar el log de errores.
+      if (['ECONNRESET', 'EPIPE', 'ERR_STREAM_PREMATURE_CLOSE'].includes(err.code)) return;
+      logger.error('backup: fallo al empaquetar', { error: err.message, code: err.code });
     });
   } catch (err) {
-    if (tarPath) fs.unlink(tarPath, () => {});
-    res.status(500).json({ error: err.message || 'Error al generar el backup' });
+    limpiarStaging();
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message || 'Error al generar el backup' });
+    } else {
+      res.destroy(err);
+    }
   }
 });
 
@@ -596,3 +789,11 @@ router.post('/maintenance/off', (req, res) => {
 });
 
 module.exports = router;
+
+// Expuestas para tests/unit/backupTarball.test.js. El armado del backup es la pieza más
+// difícil de probar por la puerta de entrada normal (la ruta exige sesión de superadmin
+// con el email del dueño), y a la vez es la que no se puede permitir romper en silencio:
+// un backup mal armado se descubre el día que hace falta restaurarlo.
+module.exports.createBackupTarball = createBackupTarball;
+module.exports.buildBackupStaging  = buildBackupStaging;
+module.exports.COLLECTIONS         = COLLECTIONS;

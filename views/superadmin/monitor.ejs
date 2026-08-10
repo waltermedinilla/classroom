@@ -110,6 +110,9 @@
       letter-spacing: .6px;
       margin: 24px 0 10px;
     }
+    .metric-card-click { cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+    .metric-card-click:hover,
+    .metric-card-click:focus-visible { border-color: var(--primary); box-shadow: var(--shadow-md, var(--shadow-sm)); }
     @media (max-width: 600px) {
       .monitor-grid { grid-template-columns: 1fr 1fr; }
       .metric-value { font-size: 26px; }
@@ -257,9 +260,19 @@
         <div class="metric-value" style="font-size:24px" id="m-app-total">—</div>
         <div class="metric-sub" id="m-app-fresh">—</div>
       </div>
-      <div class="metric-card" style="grid-column: span 2">
-        <span class="material-symbols-outlined metric-icon" style="color:#ea8600">inventory_2</span>
-        <div class="metric-label">Desglose de lo guardado</div>
+      <div class="metric-card metric-card-click" style="grid-column: span 2"
+           role="button" tabindex="0"
+           onclick="bkcAbrir()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();bkcAbrir()}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <span class="material-symbols-outlined metric-icon" style="color:#ea8600">inventory_2</span>
+            <div class="metric-label">Desglose de lo guardado</div>
+          </div>
+          <span style="font-size:11.5px;color:var(--primary);display:flex;align-items:center;gap:2px">
+            Ver detalle y comprimir
+            <span class="material-symbols-outlined" style="font-size:15px">chevron_right</span>
+          </span>
+        </div>
         <div id="m-disk-breakdown" style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
           <div class="metric-sub">—</div>
         </div>
@@ -316,6 +329,7 @@
 
   </main>
   <%- include('../partials/footer') %>
+  <%- include('../partials/backup-compress-modal') %>
 
   <script>
     const REFRESH_SECONDS = 5; // más frecuente que el resto del panel: bajo costo y da sensación de "tiempo real"
@@ -524,6 +538,19 @@
       setText('countdown', `Próxima actualización en ${countdown}s`);
       if (countdown <= 0) fetchStats();
     }
+
+    // Mientras el modal de compresión está abierto, el refresco se detiene: la descarga
+    // del backup puede durar minutos y son cientos de MB: no tiene sentido competirle por
+    // el ancho de banda con una métrica que nadie está mirando.
+    document.addEventListener('bkc:open', () => {
+      clearInterval(timer);
+      setText('countdown', 'Pausado');
+    });
+    document.addEventListener('bkc:close', () => {
+      countdown = REFRESH_SECONDS;
+      timer = setInterval(tick, 1000);
+      fetchStats();
+    });
 
     fetchStats();
     timer = setInterval(tick, 1000);
