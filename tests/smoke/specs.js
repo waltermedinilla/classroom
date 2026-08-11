@@ -3398,6 +3398,43 @@ const specs = [
     },
   },
   {
+    // El caso que reportó el usuario: la lista se abre con "Pasar lista", los chicos no ven
+    // nada —en ese modo no participan— y desde la planilla no había forma de notarlo. Ahora
+    // se corrige sin cerrar ni perder lo marcado.
+    id: 'attendance-autoasistencia-toggle',
+    title: 'Con el pase de lista el alumno no ve nada, y se abre para él sin cerrar la planilla',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Se apaga la autoasistencia sobre la planilla ya abierta.
+      const off = await client.post('preceptor', `/preceptor/asistencia/toma/${state.tomaId}/autoasistencia`, {
+        body: { on: false },
+        expectStatus: 200,
+      });
+      assert(off.json.autoasistencia === false, 'debería quedar apagada');
+      assert(off.json.cierraA === null, 'sin ventana no tiene sentido conservar la hora de cierre');
+
+      const sinNada = await client.get('scopedStudent', '/asistencia/abierta', { expectStatus: 200 });
+      assert(!(sinNada.json.tomas || []).some(t => t.id === state.tomaId),
+        'con el pase de lista el alumno NO tiene que ver la toma');
+      const inicioSin = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
+      assert(!inicioSin.text.includes('Dar asistencia'), 'ni el cartel en su inicio');
+      await client.post('scopedStudent', `/asistencia/${state.tomaId}/presente`, { expectStatus: 409 });
+
+      // Y se vuelve a abrir para ellos, con la planilla SIEMPRE abierta.
+      const on = await client.post('preceptor', `/preceptor/asistencia/toma/${state.tomaId}/autoasistencia`, {
+        body: { on: true, closesInMin: 120 },
+        expectStatus: 200,
+      });
+      assert(on.json.autoasistencia === true, 'debería quedar abierta para los alumnos');
+      assert(on.json.cierraA, 'y con su hora de cierre ya formateada');
+
+      const poll = await client.get('preceptor', `/preceptor/asistencia/toma/${state.tomaId}/poll`,
+        { expectStatus: 200 });
+      assert(poll.json.estado === 'abierta', 'la planilla nunca se cerró');
+      assert(poll.json.pasadas === 1, 'y esto no cuenta como una pasada nueva');
+    },
+  },
+  {
     id: 'student-attendance-banner',
     title: 'El alumno ve la asistencia abierta en su inicio',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],

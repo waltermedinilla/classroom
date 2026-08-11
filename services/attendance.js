@@ -324,6 +324,22 @@ async function nuevaPasada(session, user, opciones = {}) {
   return session;
 }
 
+// Abre (o cierra) la asistencia para los alumnos SIN cerrar la planilla.
+//
+// Existe por un problema real: el preceptor abre con "Pasar lista", los chicos no ven nada
+// —porque en ese modo no participan— y no hay forma de darse cuenta desde la planilla salvo
+// sabiendo cómo funciona por dentro. Con esto, el aviso que aparece en la grilla se corrige
+// con un click, sin cerrar ni perder lo ya marcado.
+async function setAutoasistencia(session, { on, closesInMin } = {}) {
+  session.settings.selfCheckin = on === true || on === 'true';
+  session.mode = session.settings.selfCheckin ? 'ventana' : 'pase';
+  // Apagarla borra la hora de cierre: esa hora es de la ventana, y sin ventana no significa
+  // nada. Prenderla la recalcula con lo que se haya pedido.
+  session.closesAt = session.settings.selfCheckin ? calcularCierre(closesInMin) : null;
+  await session.save();
+  return session;
+}
+
 // Cierra las tomas de días anteriores que quedaron abiertas en este alcance. Se llama al
 // entrar al panel: cada visita ya es todo el disparador que hace falta (ver shouldAutoClose).
 async function autocerrarVencidas(divisionIds, hoy = diaEscolar()) {
@@ -645,7 +661,7 @@ module.exports = {
   diaEscolar, normalizarEstado, resumen, shouldAutoClose, puedeAutoMarcarse, esCorreccion,
   rangoValido, rangoDelMes, porcentajeAsistencia, calcularCierre,
   // con base
-  rosterDeDivision, abrirToma, nuevaPasada, cerrarToma, autocerrarVencidas,
+  rosterDeDivision, abrirToma, nuevaPasada, cerrarToma, autocerrarVencidas, setAutoasistencia,
   marcar, marcarLote, marcasDeToma, estadoDeHoy,
   autoMarcarse, tomasAbiertasDelAlumno, presentesEnSalasDeDivision, historialDeDivision,
   // export

@@ -323,6 +323,28 @@ router.post('/toma/:id/cerrar', cargarToma, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Abre o cierra la asistencia para los alumnos, con la planilla ABIERTA y sin perder nada.
+//
+// Es la salida del problema que reportó el usuario: se abre con "Pasar lista", los chicos no
+// ven nada —en ese modo no participan— y desde la planilla no había forma de notarlo. Ahora
+// la grilla lo avisa y esto es lo que ejecuta el botón del aviso.
+router.post('/toma/:id/autoasistencia', cargarToma, async (req, res, next) => {
+  try {
+    if (req.toma.closedAt) return fallar(req, res, 409, 'La toma de asistencia está cerrada');
+
+    await asistencia.setAutoasistencia(req.toma, {
+      on:          req.body.on,
+      closesInMin: req.body.closesInMin,
+    });
+
+    res.json({
+      ok: true,
+      autoasistencia: req.toma.settings.selfCheckin === true,
+      cierraA: req.toma.closesAt ? live.hora(req.toma.closesAt) : null,
+    });
+  } catch (err) { next(err); }
+});
+
 // Reabre la toma de HOY para corregir algo (el que llegó 8:40 con la planilla ya cerrada).
 //
 // Solo la de hoy, y no es una limitación arbitraria: una toma de ayer se vuelve a cerrar sola

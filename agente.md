@@ -2405,6 +2405,14 @@ Eso además arregló un problema latente: con dos tomas el mismo día, la planil
 
 **La sugerencia de la sala también cambió**: ahora incluye a los que **figuran ausentes**, no solo a los sin marcar. "Marcaste ausente a Juan y está en Matemática en este momento" es el aviso más útil de la feature, y es el que el preceptor no puede conseguir de ninguna otra forma. Con el filtro anterior, después del primer cierre la sugerencia no volvía a mostrar a nadie nunca.
 
+### "Los alumnos no ven el botón del presente"
+
+Lo reportó el usuario y la causa **no era el celular**. Medido en 360×560, el cartel del alumno y su botón entran enteros en la primera pantalla, sin scrollear. Lo que pasaba es que la planilla se había abierto con **"Pasar lista"** —el botón principal, el obvio—, que es el modo donde marca el preceptor y el alumno no participa: `autoasistencia: false`, cero tomas para él, sin cartel. Correcto por diseño, imposible de deducir desde la pantalla.
+
+Dos arreglos. **El nombre**: "Abrir ventana" pasó a **"Que la den los alumnos"**, y el panel ahora dice qué va a pasar del otro lado ("A los alumnos les aparece *Dar asistencia* al entrar"). **Y el aviso**: la planilla abierta muestra arriba de todo, antes que los números, si los chicos la están viendo o no —en ámbar *"Los alumnos NO ven nada: esta lista la estás pasando vos"*, en verde *"Los alumnos ven Dar asistencia hasta las 18:10"*— con el botón para cambiarlo ahí mismo. Va arriba a propósito: en un celular, más abajo queda fuera de la primera pantalla y es justo el dato que se estaba escapando.
+
+`POST /toma/:id/autoasistencia` cambia el modo **sin cerrar la planilla ni perder lo marcado**, y no cuenta como pasada nueva.
+
 ### Fase B: el alumno, las sugerencias y los reportes
 
 **El botón "Dar asistencia"** aparece en el inicio del alumno (`views/partials/asistencia-banner.ejs`) cuando preceptoría dejó una ventana abierta. Se marca a sí mismo y siempre como presente: el cuerpo del POST **se ignora por completo**, así que mandar el id de un compañero o un estado inventado no hace nada. Es idempotente —doble toque, F5 o dos pestañas dan una sola marca y no pisan la hora original— y las divisiones salen de las materias que el dashboard **ya tenía cargadas**, así que el cartel no agrega una consulta a la pantalla más visitada de la aplicación.
