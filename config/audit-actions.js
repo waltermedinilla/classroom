@@ -47,6 +47,10 @@ const ACTIONS = {
   'room.close':          { label: 'cerró la sala en vivo',           icon: 'sensors_off', color: '#ea8600', category: 'course' },
   'room.observe':        { label: 'observó una sala en vivo',        icon: 'visibility',  color: '#9334e6', category: 'course' },
   'room.join_staff':     { label: 'ingresó a una sala en vivo',      icon: 'login',       color: '#0d7377', category: 'course' },
+  // Compartir un archivo se audita aunque solo lo pueda hacer quien da la clase: es la única
+  // forma de contenido que la plataforma reparte a un curso entero y que no es texto, y el
+  // registro (qué archivo, en qué clase) es lo que permite responder una consulta después.
+  'room.share_file':     { label: 'compartió un archivo en la sala', icon: 'attach_file', color: '#1a73e8', category: 'course' },
   'room.delete_message': { label: 'borró un mensaje de la sala',     icon: 'delete',      color: '#ea4335', category: 'course' },
   'room.mute':           { label: 'silenció a un alumno en la sala', icon: 'volume_off',  color: '#ea8600', category: 'course' },
 

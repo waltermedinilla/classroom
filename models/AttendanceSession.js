@@ -29,12 +29,15 @@ const attendanceSessionSchema = new mongoose.Schema({
   //   3. Las comparaciones de rango del reporte mensual son exactas y ordenan solas.
   date: { type: String, required: true },
 
-  // '' para la toma del día (el caso normal). 'Tarde', '2ª hora'... para una segunda toma
-  // el mismo día. Es parte del índice único, así que se guarda con trim.
-  label: { type: String, trim: true, default: '', maxlength: 30 },
-
   openedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   openedAt: { type: Date, default: Date.now },
+
+  // Cuántas veces se pasó lista sobre esta misma planilla. El preceptor puede pasar lista
+  // varias veces en el día —a primera hora, después del recreo, a la tarde— y cada pasada
+  // AJUSTA la lista del día en vez de crear otra: al final del día queda UNA sola
+  // (decisión del usuario, 2026-08-10). Este contador es solo informativo, para que la
+  // pantalla pueda decir "3ª pasada" y se entienda que la planilla se fue completando.
+  pasadas: { type: Number, default: 1 },
   // null = la toma está abierta. Es el único criterio en todo el sistema.
   closedAt: { type: Date, default: null },
   closedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
@@ -62,10 +65,14 @@ const attendanceSessionSchema = new mongoose.Schema({
   rosterSize: { type: Number, default: 0 },
 }, { timestamps: true });
 
-// No puede haber dos tomas del mismo curso, el mismo día, con la misma etiqueta. Es lo que
-// hace IDEMPOTENTE a abrirToma(): dos preceptores del mismo curso tocando "Abrir" a la vez
-// es un caso real, no teórico (mismo criterio que openSession en services/liveRoom.js).
-attendanceSessionSchema.index({ division: 1, date: 1, label: 1 }, { unique: true });
+// UNA sola toma por curso y por día. El índice lo garantiza a nivel base, que es lo único
+// que aguanta los dos workers de PM2: dos preceptores del mismo curso tocando "Pasar lista"
+// a la vez es un caso real, no teórico (mismo criterio que openSession en liveRoom.js).
+//
+// Es también lo que hace que la planilla mensual tenga sentido: una columna por día, un
+// estado por alumno. Con dos tomas el mismo día, cuál de las dos aparecía en esa columna
+// dependía del orden en que Mongo devolviera los documentos.
+attendanceSessionSchema.index({ division: 1, date: 1 }, { unique: true });
 
 // "¿Hay alguna toma abierta en esta escuela?" — la query del cartel del alumno.
 attendanceSessionSchema.index({ school: 1, closedAt: 1 });

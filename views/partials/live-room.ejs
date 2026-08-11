@@ -41,15 +41,72 @@
                      padding:2px 8px; cursor:pointer; }
   .lr-react button.mia { background:#e8f0fe; border-color:#1a73e8; }
   .lr-composer { display:flex; align-items:center; gap:8px; border:1px solid #dadce0; border-radius:8px; padding:6px 10px; }
-  .lr-composer input { flex:1; border:none; outline:none; font-size:14px; font-family:inherit; background:transparent; }
+  <%# min-width:0 es obligatorio, no cosmético: un <input> trae un ancho intrínseco de ~20
+      caracteres y `flex:1` NO lo achica por debajo de eso. Con los dos botones de adjuntar
+      al lado, en un celular de 360 px el cuadro de escribir empujaba al botón de enviar
+      fuera de la tarjeta. %>
+  .lr-composer input { flex:1; min-width:0; border:none; outline:none; font-size:14px; font-family:inherit; background:transparent; }
   .lr-emojis { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
   .lr-emojis button { font-size:18px; background:none; border:none; cursor:pointer; line-height:1; padding:2px; }
   .lr-vacio { text-align:center; color:#5f6368; padding:28px 12px; }
   .lr-borrar { background:none; border:none; cursor:pointer; color:#80868b; font-size:11px; padding:0; }
+
+  /* ── Adjuntos ──────────────────────────────────────────────────────────────
+     La card es un bloque propio y NO una burbuja: un archivo compartido por la docente
+     tiene que distinguirse de un mensaje a simple vista, desde el fondo del aula. */
+  .lr-card-adj { border:1px solid #dadce0; border-radius:12px; overflow:hidden; background:#fff;
+                 max-width:340px; }
+  .lr-card-adj.cargando { opacity:.6; }
+
+  /* Imagen: el preview manda, el pie es secundario.
+     El <a> va en display:block porque un ancla inline con un <img> block adentro deja un
+     hueco de línea base entre la foto y el pie de la card. */
+  .lr-img-link { display:block; line-height:0; }
+  .lr-img { display:block; width:100%; max-height:260px; object-fit:cover; cursor:zoom-in;
+            background:#f1f3f4; border:none; padding:0; }
+  .lr-pie { display:flex; align-items:center; gap:6px; padding:7px 10px; font-size:12px;
+            color:#5f6368; border-top:1px solid #f1f3f4; }
+  .lr-pie .nom { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lr-pie .peso { flex:none; color:#80868b; }
+
+  /* Archivo: sin preview, la extensión ES la información. */
+  .lr-file { display:flex; align-items:center; gap:10px; padding:10px 12px; text-decoration:none;
+             color:inherit; }
+  .lr-file:hover { background:#f8f9fa; }
+  .lr-ext { flex:none; width:40px; height:40px; border-radius:8px; background:#1a73e8; color:#fff;
+            display:flex; align-items:center; justify-content:center; font-size:10px;
+            font-weight:600; letter-spacing:.3px; }
+  .lr-file-txt { min-width:0; }
+  .lr-file-nom { font-size:13px; color:#202124; overflow:hidden; text-overflow:ellipsis;
+                 white-space:nowrap; }
+  .lr-file-meta { font-size:11px; color:#5f6368; margin-top:1px; }
+
+  /* Adjunto ya eliminado por la docente: queda el hueco, no el contenido. */
+  .lr-adj-borrado { border:1px dashed #dadce0; border-radius:12px; padding:10px 12px;
+                    font-size:13px; font-style:italic; color:#80868b; max-width:340px; }
+
+  /* Lightbox de la imagen. Sin librería: es un div y una tecla Escape. */
+  .lr-lupa { position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:9999;
+             display:none; align-items:center; justify-content:center; padding:20px; }
+  .lr-lupa.abierta { display:flex; }
+  .lr-lupa img { max-width:100%; max-height:100%; object-fit:contain; }
+  .lr-lupa-x { position:absolute; top:14px; right:18px; background:none; border:none; color:#fff;
+               font-size:34px; line-height:1; cursor:pointer; }
+  .lr-lupa-abrir { position:absolute; bottom:18px; left:50%; transform:translateX(-50%);
+                   color:#fff; font-size:13px; text-decoration:underline; }
+
+  /* Botones de subida, al lado del cuadro de escribir. Solo los ve quien gestiona. */
+  .lr-adj-btn { background:none; border:none; cursor:pointer; color:#5f6368; padding:0;
+                display:flex; align-items:center; }
+  .lr-adj-btn:disabled { opacity:.4; cursor:default; }
+
   @media (max-width: 600px) {
     .lr-chat { height:300px; }
     .lr-persona { width:50px; }
     .lr-bola { width:36px; height:36px; font-size:14px; }
+    /* En 360 px la card ocupa lo que haya: con el ancho fijo de 340 quedaba pegada a los bordes. */
+    .lr-card-adj, .lr-adj-borrado { max-width:100%; }
+    .lr-img { max-height:200px; }
   }
 </style>
 
@@ -101,6 +158,19 @@
 
     <div id="lrComposerBox" style="display:none;margin-top:12px">
       <div class="lr-composer">
+        <%# Compartir archivos es SOLO de quien gestiona la materia: los inputs ni siquiera se
+            renderizan para el resto. El servidor lo vuelve a chequear igual (routes/rooms.js),
+            porque esconder un botón no es un permiso. %>
+        <% if (esGestor) { %>
+          <button type="button" class="lr-adj-btn" id="lrBtnImagen" title="Compartir una imagen" aria-label="Compartir una imagen">
+            <span class="material-symbols-outlined">image</span>
+          </button>
+          <button type="button" class="lr-adj-btn" id="lrBtnArchivo" title="Compartir un archivo" aria-label="Compartir un archivo">
+            <span class="material-symbols-outlined">attach_file</span>
+          </button>
+          <input type="file" id="lrFileImagen" accept="image/*" style="display:none">
+          <input type="file" id="lrFileArchivo" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.csv,.txt,.zip" style="display:none">
+        <% } %>
         <input type="text" id="lrTexto" maxlength="500" placeholder="Escribí un mensaje…" autocomplete="off">
         <button class="lr-borrar" id="lrEnviar" aria-label="Enviar">
           <span class="material-symbols-outlined" style="color:#1a73e8">send</span>
@@ -113,6 +183,14 @@
       </div>
     </div>
     <div id="lrMudo" style="display:none;color:#5f6368;font-size:13px;text-align:center;margin-top:10px"></div>
+  </div>
+
+  <%# Lightbox de imágenes. Vive fuera del chat (que tiene overflow) para poder ocupar la
+      pantalla entera. Arranca vacío: el src se carga recién al abrirlo. %>
+  <div class="lr-lupa" id="lrLupa" role="dialog" aria-modal="true" aria-label="Imagen ampliada">
+    <button class="lr-lupa-x" id="lrLupaX" aria-label="Cerrar">&times;</button>
+    <img id="lrLupaImg" src="" alt="">
+    <a class="lr-lupa-abrir" id="lrLupaAbrir" href="#" target="_blank" rel="noopener">Abrir en una pestaña nueva</a>
   </div>
 </div>
 
@@ -156,6 +234,17 @@
   let estado    = SALA.estado;
   let timer     = null;
   const vistos  = new Set();
+
+  // Pedido de repintado completo para el próximo poll.
+  //
+  // Borrar un mensaje o reaccionar cambia algo que YA está pintado, así que hay que volver a
+  // dibujar la conversación entera. Antes se hacía con `vistos.clear(); seq = 0;`, y eso era
+  // un bug: `vistos` vacío significa "ninguno está pintado", pero el DOM seguía teniéndolos,
+  // y el poll siguiente los agregaba de nuevo abajo — la conversación aparecía DUPLICADA cada
+  // vez que alguien tocaba un emoji. Vaciar la lista de vistos y vaciar el chat tienen que ser
+  // la misma operación, y esa operación es `pintarMensajes(..., true)`.
+  let forzarRepintado = false;
+  function repintarTodo() { forzarRepintado = true; seq = 0; pollear(); }
 
   const $ = (id) => document.getElementById(id);
 
@@ -214,7 +303,7 @@
                 ? ' · <button class="lr-borrar" data-borrar="' + m.id + '">borrar</button>'
                 : '') +
             '</div>' +
-            '<div class="lr-burbuja' + (m.borrado ? ' borrado' : '') + '">' + esc(m.texto) + '</div>' +
+            cuerpo(m) +
             '<div class="lr-react" data-react="' + m.id + '">' + reacciones(m) + '</div>' +
           '</div>';
       }
@@ -225,6 +314,67 @@
       chat.innerHTML = '<div class="lr-vacio">Todavía no hay mensajes.</div>';
     }
     if (pegadoAbajo) chat.scrollTop = chat.scrollHeight;
+  }
+
+  // ── Cuerpo del mensaje: burbuja de texto o card de adjunto ─────────────────
+
+  // Un adjunto NO se pinta como burbuja: es una card aparte, para que un archivo compartido
+  // por la docente se distinga de un mensaje de un vistazo.
+  function cuerpo(m) {
+    if (m.kind !== 'image' && m.kind !== 'file') {
+      return '<div class="lr-burbuja' + (m.borrado ? ' borrado' : '') + '">' + esc(m.texto) + '</div>';
+    }
+    // Borrado: el servidor ya no manda ni la URL ni el nombre del archivo (ver
+    // serializarAdjunto en routes/rooms.js). Queda el hueco, que es lo que tiene que leerse.
+    if (m.borrado || !m.adjunto) {
+      return '<div class="lr-adj-borrado">' + esc(m.texto) + '</div>';
+    }
+    return m.kind === 'image' ? cardImagen(m.adjunto) : cardArchivo(m.adjunto);
+  }
+
+  // Preview para todos. Los atributos width/height llevan las dimensiones REALES: con ellos
+  // el navegador reserva el alto antes de que la imagen baje, y el chat no pega un salto que
+  // te saca de donde estabas leyendo justo cuando alguien comparte una foto.
+  //
+  // SIN loading="lazy", y no por olvido: el chat es un contenedor con scroll propio, y el
+  // mensaje nuevo se inserta al fondo, fuera del área visible del contenedor. Con `lazy` la
+  // imagen no se pedía NUNCA —card en blanco, sin error en consola, hasta que el usuario
+  // scrolleaba a mano— que es exactamente el peor modo de fallar: parece que la docente
+  // compartió algo roto. Verificado en el navegador: la misma card con `eager` carga al
+  // instante. El ahorro que se pierde es mínimo (WebP de ~10-100 KB, y el poll pinta como
+  // mucho los últimos 100 mensajes).
+  //
+  // La imagen va envuelta en un <a> al archivo, y no suelta con un click encima. Tres cosas
+  // que se ganan y ninguna es teórica: se llega con el teclado (un <img> con listener no está
+  // en el orden de tabulación, así que sin mouse la foto era inalcanzable), anda el "abrir en
+  // pestaña nueva" del botón derecho, y si el JS falla el link sigue llevando a la imagen. El
+  // handler hace preventDefault y abre la lupa, que es el comportamiento normal.
+  function cardImagen(a) {
+    const dims = (a.ancho && a.alto) ? ' width="' + a.ancho + '" height="' + a.alto + '"' : '';
+    return '<div class="lr-card-adj">' +
+        '<a class="lr-img-link" href="' + esc(a.url) + '" target="_blank" rel="noopener"' +
+           ' data-lupa="' + esc(a.url) + '" title="Ver la imagen en grande">' +
+          '<img class="lr-img" src="' + esc(a.url) + '" alt="' + esc(a.nombre) + '"' + dims + '>' +
+        '</a>' +
+        '<div class="lr-pie">' +
+          '<span class="nom">' + esc(a.nombre) + '</span>' +
+          '<span class="peso">· ' + esc(a.peso) + '</span>' +
+        '</div>' +
+      '</div>';
+  }
+
+  // Sin preview: la extensión es toda la información que hay que dar. Se abre en una pestaña
+  // nueva para no sacar a nadie de la clase que está pasando.
+  function cardArchivo(a) {
+    return '<div class="lr-card-adj">' +
+        '<a class="lr-file" href="' + esc(a.url) + '" target="_blank" rel="noopener">' +
+          '<span class="lr-ext">' + esc(a.ext) + '</span>' +
+          '<div class="lr-file-txt">' +
+            '<div class="lr-file-nom">' + esc(a.nombre) + '</div>' +
+            '<div class="lr-file-meta">' + esc(a.ext) + ' · ' + esc(a.peso) + '</div>' +
+          '</div>' +
+        '</a>' +
+      '</div>';
   }
 
   function reacciones(m) {
@@ -289,8 +439,9 @@
 
       // Si la sala se cerró y se volvió a abrir, el seq del servidor arranca de cero otra vez:
       // hay que repintar todo en vez de quedarse esperando mensajes que nunca van a llegar.
-      const reinicio = s.sessionId !== SALA.sessionId || s.seq < seq;
-      if (reinicio) { SALA.sessionId = s.sessionId; seq = 0; }
+      // `forzarRepintado` es el mismo camino pedido a mano tras borrar o reaccionar.
+      const reinicio = forzarRepintado || s.sessionId !== SALA.sessionId || s.seq < seq;
+      if (reinicio) { SALA.sessionId = s.sessionId; seq = 0; forzarRepintado = false; }
 
       pintarEstado(s);
       pintarPresencia(s.presencia);
@@ -346,24 +497,132 @@
     });
   });
 
+  // ── Adjuntos: subir ────────────────────────────────────────────────────────
+
+  // Card provisoria mientras el archivo viaja. Es lo que responde "¿se está subiendo o se
+  // colgó?" cuando la conexión del aula anda lenta y una foto de celular tarda diez segundos.
+  function cardSubiendo(nombre) {
+    const chat = $('lrChat');
+    const vacio = chat.querySelector('.lr-vacio');
+    if (vacio) vacio.remove();
+    const div = document.createElement('div');
+    div.className = 'lr-msg';
+    div.innerHTML =
+      '<div class="lr-msg-bola" style="background:#9aa0a6">…</div>' +
+      '<div style="min-width:0"><div class="lr-card-adj cargando"><div class="lr-file">' +
+        '<span class="lr-ext" style="background:#9aa0a6">···</span>' +
+        '<div class="lr-file-txt">' +
+          '<div class="lr-file-nom">' + esc(nombre) + '</div>' +
+          '<div class="lr-file-meta">Subiendo…</div>' +
+        '</div>' +
+      '</div></div></div>';
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+    return div;
+  }
+
+  // `tipo` es 'imagen' o 'archivo': son dos endpoints distintos porque las imágenes se
+  // recomprimen en memoria y los archivos van derecho a disco (ver routes/rooms.js).
+  async function subirAdjunto(tipo, input) {
+    const file = input.files && input.files[0];
+    // Se limpia el input SIEMPRE: sin esto, elegir el mismo archivo dos veces seguidas no
+    // dispara 'change' la segunda vez y parece que el botón dejó de andar.
+    input.value = '';
+    if (!file) return;
+
+    const provisoria = cardSubiendo(file.name);
+    botonesAdjunto(false);
+
+    const fd = new FormData();
+    fd.append(tipo === 'imagen' ? 'imagen' : 'archivo', file);
+
+    try {
+      const r = await fetch(BASE + '/adjuntos/' + tipo, {
+        method: 'POST', body: fd, headers: { Accept: 'application/json' },
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        alert(e.error || 'No se pudo compartir el archivo.');
+        return;
+      }
+      // Se ESPERA el poll antes de sacar la card provisoria: si no, hay un parpadeo en el que
+      // la card ya no está y la real todavía no llegó.
+      await pollear();
+    } catch (e) {
+      alert('No se pudo compartir el archivo. Revisá la conexión.');
+    } finally {
+      provisoria.remove();
+      botonesAdjunto(true);
+    }
+  }
+
+  function botonesAdjunto(habilitados) {
+    ['lrBtnImagen', 'lrBtnArchivo'].forEach(id => {
+      const b = $(id);
+      if (b) b.disabled = !habilitados;
+    });
+  }
+
+  // Solo existen para quien gestiona la materia: para el resto, el EJS ni los renderizó.
+  if ($('lrBtnImagen')) {
+    $('lrBtnImagen').addEventListener('click', () => $('lrFileImagen').click());
+    $('lrBtnArchivo').addEventListener('click', () => $('lrFileArchivo').click());
+    $('lrFileImagen').addEventListener('change',  (e) => subirAdjunto('imagen',  e.target));
+    $('lrFileArchivo').addEventListener('change', (e) => subirAdjunto('archivo', e.target));
+  }
+
+  // ── Adjuntos: ver la imagen en grande ──────────────────────────────────────
+  const lupa = $('lrLupa');
+
+  function abrirLupa(url, nombre) {
+    $('lrLupaImg').src = url;
+    $('lrLupaImg').alt = nombre || '';
+    $('lrLupaAbrir').href = url;
+    lupa.classList.add('abierta');
+  }
+  function cerrarLupa() {
+    lupa.classList.remove('abierta');
+    // Se suelta el src al cerrar: si no, la imagen grande queda en memoria de cada máquina
+    // del aula por el resto de la clase.
+    $('lrLupaImg').src = '';
+  }
+
+  lupa.addEventListener('click', (e) => {
+    // Cerrar tocando el fondo, no la propia imagen ni el link de abajo.
+    if (e.target === lupa || e.target.id === 'lrLupaX') cerrarLupa();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && lupa.classList.contains('abierta')) cerrarLupa();
+  });
+
   // Delegación: los mensajes se crean dinámicamente, no se les puede colgar el listener al pintar.
   $('lrChat').addEventListener('click', async (e) => {
+    const lente = e.target.closest('[data-lupa]');
+    if (lente) {
+      // El <a> es el fallback (teclado, botón derecho, sin JS): con JS andando, la lupa gana.
+      // Ctrl/Cmd/click del medio se dejan pasar, para no romper "abrir en pestaña nueva".
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+      e.preventDefault();
+      abrirLupa(lente.dataset.lupa, lente.querySelector('img')?.alt || '');
+      return;
+    }
+
     const borrar = e.target.closest('[data-borrar]');
     if (borrar) {
-      if (!confirm('¿Borrar este mensaje? Queda registrado que lo borraste.')) return;
+      if (!confirm('¿Borrar este mensaje? Queda registrado que lo borraste. Si es un archivo, se elimina del servidor.')) return;
       await fetch(BASE + '/mensajes/' + borrar.dataset.borrar, { method: 'DELETE', headers: { Accept: 'application/json' } });
-      vistos.clear(); seq = 0; pollear();
+      repintarTodo();
       return;
     }
     const reac = e.target.closest('[data-reac]');
     if (reac) {
       await post(BASE + '/mensajes/' + reac.dataset.reac + '/reaccion', { emoji: reac.dataset.emoji });
-      vistos.clear(); seq = 0; pollear();
+      repintarTodo();
     }
   });
 
   if (GESTOR) {
-    $('lrAbrir').addEventListener('click',  async () => { await post(BASE + '/abrir');  seq = 0; vistos.clear(); pollear(); });
+    $('lrAbrir').addEventListener('click',  async () => { await post(BASE + '/abrir'); repintarTodo(); });
     $('lrCerrar').addEventListener('click', async () => {
       if (!confirm('¿Cerrar la sala? Los alumnos ya no van a poder escribir.')) return;
       await post(BASE + '/cerrar'); pollear();

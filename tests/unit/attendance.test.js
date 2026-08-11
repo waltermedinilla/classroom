@@ -17,7 +17,7 @@ const assert = require('node:assert');
 const {
   diaEscolar, normalizarEstado, resumen, shouldAutoClose, puedeAutoMarcarse, esCorreccion,
   rangoValido, rangoDelMes, porcentajeAsistencia, csvAsistenciaDia, csvAsistenciaMes,
-  ESTADOS,
+  calcularCierre, ESTADOS, CIERRE_MAX_MIN,
 } = require('../../services/attendance');
 
 // ── CA-01: el día escolar se calcula en la zona de la escuela ────────────────
@@ -175,6 +175,45 @@ test('esCorreccion: una marca sin estado no es corrección', () => {
 test('esCorreccion: pisar cualquiera de los cuatro estados sí lo es', () => {
   for (const e of ESTADOS) {
     assert.strictEqual(esCorreccion({ status: e }), true, `${e} debería contar como corrección`);
+  }
+});
+
+test('esCorreccion: el ausente que dejó el cierre NO es una corrección', () => {
+  // Nadie lo decidió: es el valor por defecto de quien no fue marcado. Si contara, pasar
+  // lista otra vez a la tarde generaría 30 eventos de auditoría por curso.
+  assert.strictEqual(esCorreccion({ status: 'ausente', source: 'cierre' }), false);
+  assert.strictEqual(esCorreccion({ status: 'ausente', source: 'preceptor' }), true);
+  assert.strictEqual(esCorreccion({ status: 'presente', source: 'alumno' }), true);
+});
+
+// ── La hora de cierre de la ventana ──────────────────────────────────────────
+//
+// Se pide en MINUTOS, no como hora del reloj: un "08:15" tipeado en el navegador se
+// interpreta con la zona de esa máquina, y las del aula tienen cualquiera configurada.
+
+const T0 = new Date('2026-08-10T10:30:00Z').getTime();   // 07:30 en la escuela
+const enMinutos = (d) => Math.round((d.getTime() - T0) / 60000);
+
+test('calcularCierre: los minutos pedidos se suman a la hora actual', () => {
+  assert.strictEqual(enMinutos(calcularCierre('45', T0)), 45);
+  assert.strictEqual(enMinutos(calcularCierre(120, T0)), 120);
+});
+
+test('calcularCierre: el tope son 6 horas', () => {
+  assert.strictEqual(CIERRE_MAX_MIN, 360);
+  assert.strictEqual(enMinutos(calcularCierre('360', T0)), 360);
+});
+
+test('calcularCierre: pedir más del tope RECORTA, no deja la ventana sin cierre', () => {
+  // Es la diferencia que importa: ignorar el valor dejaría la ventana abierta hasta el
+  // cambio de día, o sea lo contrario de lo que quiso quien pidió 10 horas.
+  assert.strictEqual(enMinutos(calcularCierre('600', T0)), 360);
+  assert.strictEqual(enMinutos(calcularCierre(99999, T0)), 360);
+});
+
+test('calcularCierre: vacío o basura = "no cerrarla sola"', () => {
+  for (const v of ['', null, undefined, 'ninguna', 0, -30, {}, []]) {
+    assert.strictEqual(calcularCierre(v, T0), null, `debería no cerrar sola con ${JSON.stringify(v)}`);
   }
 });
 

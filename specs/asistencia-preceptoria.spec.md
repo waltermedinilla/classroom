@@ -23,6 +23,19 @@
 >    cartel se lo diga con todas las letras. La alternativa era que el alumno revirtiera desde
 >    el celular a quien controla la asistencia.
 >
+> **Revisión del 2026-08-10 (posterior a la implementación), decidida por el usuario:**
+>
+> - **Una sola planilla por día** (RN-01 reescrita). El preceptor pasa lista varias veces y
+>   todas las pasadas ajustan la misma; se eliminó la etiqueta y la "segunda toma del día".
+> - **El ausente del cierre se distingue** con `source: 'cierre'` (RN-01b). Salió de un
+>   problema que apareció al implementar lo anterior: si el cierre de la mañana marcaba a todos
+>   como decisión del preceptor, ninguna ventana posterior le servía al alumno.
+> - **La ventana llega hasta 6 horas** (RN-07), una opción más entre las duraciones. "No
+>   cerrarla sola" sigue existiendo; en ese caso la cierra el cambio de día.
+> - **La sugerencia de la sala incluye a los que figuran ausentes** (RN-09), no solo a los sin
+>   marcar: "marcaste ausente a Juan y está en Matemática ahora" es el aviso más útil, y
+>   filtrando solo por "sin marcar" la sugerencia no volvía a aparecer después del primer cierre.
+>
 > Flujo SDD: arquitecto → **spec aprobada** → tester → implementador → revisor.
 >
 > Decisiones ya cerradas con el usuario el **2026-08-10** — no reabrirlas sin él:
@@ -345,10 +358,22 @@ materias de dos años). En la práctica trae una sola.
 
 ## Reglas de negocio
 
-- **RN-01 — La asistencia es del CURSO y del DÍA.** Una toma por `{division, date, label}`,
-  con índice único. La toma normal lleva `label: ''`; una segunda toma el mismo día (turno
-  tarde, contraturno) necesita etiqueta. Decisión del usuario: la toma diaria es el caso
-  normal y la segunda es la excepción, no al revés.
+- **RN-01 — La asistencia es del CURSO y del DÍA. UNA sola planilla por día.** Índice único
+  `{division, date}`. El preceptor **puede pasar lista varias veces** —a primera hora, después
+  del recreo, a la tarde— pero todas esas pasadas ajustan la MISMA planilla: al final del día
+  queda una sola (decisión del usuario, 2026-08-10, que reemplaza la versión anterior de esta
+  regla, donde una segunda toma se distinguía con una etiqueta). El contador `pasadas` deja
+  ver cuántas veces se pasó.
+
+  Es también lo que hace que la planilla mensual tenga sentido: una columna por día, un estado
+  por alumno. Con dos tomas el mismo día, cuál de las dos aparecía en esa columna dependía del
+  orden en que Mongo devolviera los documentos.
+
+- **RN-01b — El ausente que pone el CIERRE no es una decisión de nadie.** Se guarda con
+  `source: 'cierre'`, distinto de `'preceptor'`. La diferencia sostiene dos cosas: el alumno
+  todavía puede darse la asistencia en una pasada posterior (RN-06), y esas marcas no cuentan
+  como corrección para la auditoría (RN-13). Sin esa distinción, cerrar a la mañana dejaría a
+  todo el curso "decidido" y la ventana de la tarde no le serviría a nadie.
 
 - **RN-02 — La nómina se congela al abrir.** `abrirToma()` crea una `AttendanceMark` con
   `status: null` por cada alumno del curso **en ese momento**, con nombre y DNI copiados. Un

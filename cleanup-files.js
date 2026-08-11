@@ -5,7 +5,8 @@
 // Cruza todos los archivos en disco contra los referenciados en la BD.
 // Elimina los que ningún documento menciona y borra carpetas vacías resultantes.
 // Cubre: avatars, portadas de cursos, adjuntos de novedades,
-//        adjuntos de actividades (docente) y entregas de alumnos.
+//        adjuntos de actividades (docente), entregas de alumnos y
+//        adjuntos del chat de la sala en vivo.
 
 require('dotenv').config();
 const mongoose     = require('mongoose');
@@ -17,10 +18,15 @@ const Course       = require('./models/Course');
 const Announcement = require('./models/Announcement');
 const Activity     = require('./models/Activity');
 const Submission   = require('./models/Submission');
+const RoomMessage  = require('./models/RoomMessage');
 
 const DRY_RUN        = process.argv.includes('--dry-run');
 const PUBLIC_BASE    = path.join(__dirname, 'public', 'archivos');
 const ENTREGAS_BASE  = path.join(__dirname, 'archivos', 'entregas');
+// La constante sale del servicio, no se redefine acá: si el directorio de las salas cambia,
+// este script tiene que seguirlo o empezaría a ver TODOS los adjuntos como huérfanos y los
+// borraría en el primer `node cleanup-files.js`.
+const { SALAS_BASE } = require('./services/liveRoom');
 
 // ── Utilidades ────────────────────────────────────────────────────────────────
 
@@ -122,16 +128,33 @@ async function main() {
   }
   console.log(`Entregas de alumnos referenciadas: ${refEntregas.size}`);
 
-  console.log(`\nTotal archivos referenciados en BD: ${refPublic.size + refEntregas.size}\n`);
+  // Adjuntos del chat de la sala: msg.attachment.path = '{school}/{courseId}/{sessionId}/{file}'
+  //
+  // Solo los mensajes NO borrados, y es deliberado: al borrar un adjunto, routes/rooms.js ya
+  // elimina el archivo del disco, así que un archivo cuyo mensaje figura borrado es
+  // exactamente un huérfano —o un unlink que falló en su momento—. Contarlo como referenciado
+  // dejaría en disco para siempre justo el material que alguien decidió sacar de la vista.
+  const refSalas = new Set();
+  const adjuntos = await RoomMessage.find({
+    kind: { $in: ['image', 'file'] },
+    'attachment.path': { $nin: [null, ''] },
+    deletedAt: null,
+  }).select('attachment.path').lean();
+  for (const m of adjuntos) refSalas.add(path.join(SALAS_BASE, m.attachment.path));
+  console.log(`Adjuntos de salas en vivo referenciados: ${refSalas.size}`);
+
+  console.log(`\nTotal archivos referenciados en BD: ${refPublic.size + refEntregas.size + refSalas.size}\n`);
 
   // ── 2. Escanear disco ───────────────────────────────────────────────────────
 
   const diskPublic   = walkDir(PUBLIC_BASE);
   const diskEntregas = walkDir(ENTREGAS_BASE);
+  const diskSalas    = walkDir(SALAS_BASE);
 
   console.log(`Archivos en disco (public/archivos):    ${diskPublic.length}`);
   console.log(`Archivos en disco (archivos/entregas):  ${diskEntregas.length}`);
-  console.log(`Total en disco: ${diskPublic.length + diskEntregas.length}\n`);
+  console.log(`Archivos en disco (archivos/salas):     ${diskSalas.length}`);
+  console.log(`Total en disco: ${diskPublic.length + diskEntregas.length + diskSalas.length}\n`);
 
   // ── 3. Eliminar huérfanos ───────────────────────────────────────────────────
 
@@ -152,6 +175,7 @@ async function main() {
 
   processFiles(diskPublic,   refPublic,   'public');
   processFiles(diskEntregas, refEntregas, 'entregas');
+  processFiles(diskSalas,    refSalas,    'salas');
 
   if (deletedCount === 0) {
     console.log('No se encontraron archivos huérfanos. Todo en orden.');
@@ -159,6 +183,7 @@ async function main() {
     console.log(`\n── Carpetas vacías ──`);
     removeEmptyDirs(PUBLIC_BASE);
     removeEmptyDirs(ENTREGAS_BASE);
+    removeEmptyDirs(SALAS_BASE);
   }
 
   // ── 4. Resumen ──────────────────────────────────────────────────────────────

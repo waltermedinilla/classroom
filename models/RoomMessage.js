@@ -25,9 +25,41 @@ const roomMessageSchema = new mongoose.Schema({
   // 'system' = avisos automáticos de la propia sala (se abrió, se cerró, entró preceptoría).
   // Se guardan como mensajes y no como eventos aparte para que la transcripción se lea en
   // orden, con un solo cursor.
-  kind: { type: String, enum: ['text', 'system'], default: 'text' },
+  //
+  // 'image' y 'file' son los adjuntos que comparte la docente. Son un MENSAJE MÁS y no una
+  // colección aparte a propósito: así heredan el `seq` (el cursor del poll), el soft delete,
+  // la moderación y la transcripción sin duplicar nada de eso. Un adjunto que viviera fuera
+  // de la secuencia habría que ordenarlo por fecha contra los mensajes — que es justamente
+  // el problema que `seq` existe para no tener.
+  kind: { type: String, enum: ['text', 'system', 'image', 'file'], default: 'text' },
 
-  text: { type: String, trim: true, required: true, maxlength: 500 },
+  // Obligatorio solo para los mensajes que SON texto. Un adjunto no lleva texto: su contenido
+  // es el archivo, y el nombre visible vive en `attachment.name`. Con `required: true` a secas,
+  // guardar una imagen exigía inventarle un texto de relleno que después ensuciaba la burbuja,
+  // el CSV y la búsqueda.
+  text: {
+    type: String, trim: true, maxlength: 500,
+    required: function () { return this.kind === 'text' || this.kind === 'system'; },
+    default: '',
+  },
+
+  // Metadatos del archivo adjunto. Solo cuando kind es 'image' o 'file'.
+  //
+  // `path` es la ruta RELATIVA a archivos/salas (ver SALAS_BASE en routes/rooms.js) y NUNCA
+  // se manda al cliente: los archivos viven FUERA de /public y se sirven por una ruta
+  // autenticada que revalida el permiso de la sala en cada pedido. Es lo que hace que
+  // "eliminar" signifique eliminar de verdad — con una URL estática, cualquiera que se hubiera
+  // guardado el link seguiría viendo la imagen después de que la docente la borró, sin estar
+  // siquiera logueado. Es un chat de menores: ese agujero no se deja abierto.
+  attachment: {
+    name:   { type: String, default: '' },   // nombre original, el que ve la clase
+    ext:    { type: String, default: '' },   // '.pdf' — la etiqueta de la card
+    mime:   { type: String, default: '' },
+    bytes:  { type: Number, default: 0 },
+    path:   { type: String, default: '' },   // relativa a archivos/salas — nunca sale al cliente
+    width:  { type: Number, default: null }, // solo imágenes: reserva el alto del preview
+    height: { type: Number, default: null }, //   y evita que el chat pegue un salto al cargar
+  },
 
   // Posición dentro de la sesión (1..N). Es el cursor del polling: el cliente manda el
   // último `seq` que tiene y recibe solo lo posterior. Se asigna con un $inc atómico sobre
@@ -42,6 +74,12 @@ const roomMessageSchema = new mongoose.Schema({
   // hubo un problema de convivencia, que es exactamente cuando un mensaje se borra. La vista
   // muestra "Mensaje eliminado" y conserva el `seq` — si el mensaje desapareciera de la
   // secuencia, los clientes que ya lo tienen quedarían desincronizados.
+  //
+  // Con los ADJUNTOS el criterio se parte en dos, a propósito: el documento se marca igual
+  // (queda el registro de que se compartió tal archivo y quién lo borró), pero el archivo
+  // en disco se BORRA de verdad. Un texto de 500 caracteres guardado por si hace falta
+  // reconstruir un episodio es una cosa; conservar indefinidamente una foto que la docente
+  // decidió sacar de la vista de un curso de menores es otra. Y el disco no crecería nunca.
   deletedAt: { type: Date, default: null },
   deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true });

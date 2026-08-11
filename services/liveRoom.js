@@ -40,6 +40,42 @@ const PURGE_AFTER_MS = 90 * 24 * 60 * 60 * 1000;
 const MSG_MAX     = 500;   // caracteres por mensaje
 const MSG_PER_MIN = 10;    // mensajes por usuario por minuto
 
+// ── Adjuntos ─────────────────────────────────────────────────────────────────
+// Solo los sube quien gestiona la materia (el mismo canManage que abre y modera la sala).
+// Ni los alumnos ni preceptoría: la sala es de menores y el material de clase lo pone quien
+// da la clase. Eso también es lo que mantiene el volumen de disco previsible.
+
+// Extensiones de ARCHIVO (las imágenes van por su propio camino, con EXT_IMAGENES de
+// config/imagePresets.js). La lista arranca de la de adjuntos de actividad
+// (routes/activities.js) y le suma las de presentación, que en una clase son lo más pedido.
+//
+// Lo que NO está es tan deliberado como lo que está: nada ejecutable (.exe, .bat, .js) y
+// nada que el navegador pueda interpretar como HTML con scripts adentro (.html, .svg). El
+// servidor sirve estos archivos con `nosniff`, pero la lista cerrada es la primera defensa
+// y no depende de que un header viaje bien.
+const EXT_ARCHIVOS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.csv', '.txt', '.zip'];
+
+// 20 MB por archivo, el mismo techo que las entregas de alumnos (routes/activities.js). Las
+// imágenes tienen el suyo, más bajo (MAX_INPUT_BYTES, 8 MB), porque se recomprimen: lo que
+// entra pesado sale de ~100 KB.
+const MAX_ARCHIVO_BYTES = 20 * 1024 * 1024;
+
+// Dónde viven los adjuntos: FUERA de /public, para que no haya forma de llegar a ellos sin
+// pasar por la ruta autenticada que revalida el permiso de la sala. Ver el comentario largo
+// en routes/rooms.js.
+//
+// Vive acá y no en el router porque tiene DOS dueños: la ruta que los escribe y los sirve, y
+// cleanup-rooms.js que los purga. Con la constante duplicada, el día que cambie el directorio
+// la purga seguiría borrando en el lugar viejo y nadie se enteraría hasta que el disco se
+// llene. Estructura: {SALAS_BASE}/{schoolId}/{courseId}/{sessionId}/{archivo}
+const SALAS_BASE = require('path').join(__dirname, '../archivos/salas');
+
+// Subidas por usuario cada 10 minutos. Igual que MSG_PER_MIN, la clave es POR USUARIO y no
+// por IP: la escuela entera sale por una sola IP pública NAT, y un límite por IP haría que
+// la docente de 2°3° dejara sin subir material a la de 5°1°. Es la lección del 2026-07-28
+// (ver la cabecera de middleware/rate-limits.js), que acá se aplica de entrada.
+const UPLOADS_PER_10MIN = 20;
+
 // Paleta cerrada de emojis del selector. Cerrada a propósito: valida la entrada del POST de
 // reacciones sin tener que razonar sobre unicode arbitrario, y mantiene el selector de un
 // tamaño usable en un celular.
@@ -216,6 +252,33 @@ function minutosPresente(presence) {
   return Math.max(1, Math.round(ms / 60000));
 }
 
+// Peso de un adjunto, listo para imprimir: "840 KB", "1,4 MB".
+// Con coma decimal, que es como se escribe en español. Un archivo de 0 bytes no debería
+// existir (multer y las rutas lo rechazan), pero si llega igual muestra "0 KB" y no "NaN".
+function pesoLegible(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return '0 KB';
+  if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1).replace('.', ',')} MB`;
+}
+
+// Extensión en mayúsculas para la card de archivo: '.docx' → 'DOCX'. Es lo que el alumno lee
+// para saber con qué se abre antes de tocarlo.
+function etiquetaExt(ext) {
+  return String(ext || '').replace(/^\./, '').toUpperCase() || 'ARCHIVO';
+}
+
+// Cómo se nombra un adjunto en un contexto de SOLO TEXTO: la transcripción de la clase y el
+// CSV. Sin esto, una clase donde la docente compartió cinco imágenes exporta cinco filas
+// vacías y el registro miente por omisión — no dice que hubo material compartido.
+function textoAdjunto(m) {
+  if (!m || (m.kind !== 'image' && m.kind !== 'file')) return '';
+  const a = m.attachment || {};
+  const etiqueta = m.kind === 'image' ? 'Imagen' : 'Archivo';
+  const nombre   = a.name || 'sin nombre';
+  return a.bytes ? `[${etiqueta}] ${nombre} (${pesoLegible(a.bytes)})` : `[${etiqueta}] ${nombre}`;
+}
+
 // ── Funciones con base de datos ──────────────────────────────────────────────
 
 const oid = (id) => new mongoose.Types.ObjectId(id.toString());
@@ -284,6 +347,35 @@ async function postMessage(session, user, text) {
     kind:       'text',
     text:       limpio,
     seq,
+  });
+}
+
+// Publica un adjunto ya guardado en disco como un mensaje más de la conversación.
+//
+// El archivo se escribe ANTES de llamar acá (la ruta lo hace: optimiza la imagen o recibe el
+// archivo, y recién con el disco resuelto crea el documento). El orden importa: si se creara
+// el mensaje primero y la escritura fallara, la clase vería una card rota — y un poll ya la
+// habría repartido a los 30 dispositivos. Al revés, un archivo escrito cuyo documento no se
+// creó es basura silenciosa que barre cleanup-files.js.
+//
+// `kind` es 'image' o 'file'. Es el mismo camino que postMessage —mismo $inc atómico sobre
+// lastSeq— para que un adjunto y un mensaje enviados a la vez no se peleen el número.
+async function postAttachment(session, user, kind, attachment) {
+  if (kind !== 'image' && kind !== 'file') return null;
+
+  const seq = await nextSeq(session._id);
+  if (seq === null) return null;
+
+  return RoomMessage.create({
+    session:    session._id,
+    course:     session.course,
+    author:     user._id,
+    authorName: user.name,
+    authorRole: user.role,
+    kind,
+    text:       '',
+    seq,
+    attachment,
   });
 }
 
@@ -360,7 +452,12 @@ async function getOpenSessions(schoolId, { divisionIds = undefined, now = new Da
         from: 'roommessages',
         let:  { s: '$_id' },
         pipeline: [
-          { $match: { $expr: { $eq: ['$session', '$$s'] }, kind: 'text' } },
+          // Cuenta lo que ESCRIBIÓ o COMPARTIÓ la clase, no los avisos automáticos de la sala
+          // ('system': se abrió, entró preceptoría). Los adjuntos suman: una clase donde la
+          // docente compartió el material y nadie escribió está muy viva, y con solo 'text'
+          // la tarjeta decía "0 mensajes · sin actividad" — o sea, parecía una sala muerta
+          // justo cuando había algo para mirar.
+          { $match: { $expr: { $eq: ['$session', '$$s'] }, kind: { $in: ['text', 'image', 'file'] } } },
           { $group: { _id: null, n: { $sum: 1 }, ultimo: { $max: '$createdAt' } } },
         ],
         as: 'msgs',
@@ -469,15 +566,20 @@ function csvAsistencia(roster, presences) {
 
 // CSV de transcripción. Los eliminados se incluyen marcados como tales: una transcripción
 // con huecos silenciosos no sirve para lo único para lo que se pide.
+//
+// Los adjuntos van como "[Imagen] pizarron.webp (240 KB)" en la columna del mensaje: el CSV
+// no puede llevar el archivo, pero sí tiene que dejar constancia de que se compartió, cuál y
+// cuándo. Una transcripción que los omitiera diría que la docente estuvo callada.
 function csvTranscripcion(messages) {
   const rows = [['#', 'Hora', 'Autor', 'Rol', 'Mensaje', 'Estado']];
   for (const m of messages) {
+    const esAdjunto = m.kind === 'image' || m.kind === 'file';
     rows.push([
       m.seq,
       fecha(m.createdAt),
       m.kind === 'system' ? '(sistema)' : (m.authorName || '—'),
       m.kind === 'system' ? '' : (m.authorRole || ''),
-      m.text,
+      esAdjunto ? textoAdjunto(m) : m.text,
       m.deletedAt ? 'Eliminado' : '',
     ]);
   }
@@ -488,12 +590,14 @@ module.exports = {
   // constantes
   POLL_MS, DIRECTIVO_POLL_MS, ONLINE_WINDOW_MS, AUTO_CLOSE_MS, PURGE_AFTER_MS,
   MSG_MAX, MSG_PER_MIN, EMOJIS, STAFF_ROLES, ROLE_LABELS, TZ,
+  EXT_ARCHIVOS, MAX_ARCHIVO_BYTES, UPLOADS_PER_10MIN, SALAS_BASE,
   // hora (zona fija de la escuela)
   fmt, hora, fechaDia, fechaLarga, fechaCorta, fechaHora, diaEscolar,
   // puras
   isOnline, presenceSummary, shouldAutoClose, sanitizeText, minutosPresente, initial,
+  pesoLegible, etiquetaExt, textoAdjunto,
   // con base
-  openSession, closeSession, postMessage, systemMessage, touchPresence,
+  openSession, closeSession, postMessage, postAttachment, systemMessage, touchPresence,
   getOpenSessions, getTodayClosed,
   // export
   csvAsistencia, csvTranscripcion,

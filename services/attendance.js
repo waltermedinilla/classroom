@@ -49,6 +49,7 @@ const NOTE_MAX = 200;
 const ORIGEN_LABELS = {
   preceptor: 'Preceptoría',
   alumno:    'El propio alumno',
+  cierre:    'Ausente por cierre',
   sala:      'Sala en vivo',
 };
 
@@ -110,10 +111,15 @@ function puedeAutoMarcarse(session, now = new Date()) {
 }
 
 // ¿Marcar esto pisa una decisión que ya estaba tomada?
+//
 // Decide qué se audita: poner la primera marca de un alumno es el trabajo normal (30 por
 // curso y por día); pisar una que ya tenía estado es lo que después se revisa.
+//
+// El ausente que puso el CIERRE no cuenta: nadie lo decidió, es el valor por defecto de
+// quien no fue marcado. Si contara, pasar lista otra vez a la tarde generaría 30 eventos de
+// "corrigió una asistencia" y la auditoría quedaría inservible — justo lo que evita RN-13.
 function esCorreccion(mark) {
-  return !!(mark && mark.status);
+  return !!(mark && mark.status && mark.source !== 'cierre');
 }
 
 // ¿Es un día escolar bien escrito?
@@ -131,6 +137,27 @@ function rangoValido(desde, hasta) {
 // Rango por defecto: del 1° del mes al día de hoy. Es lo que se mira a fin de mes.
 function rangoDelMes(hoy = diaEscolar()) {
   return { desde: hoy.slice(0, 8) + '01', hasta: hoy };
+}
+
+// Tope de la ventana abierta: 6 horas (decisión del usuario, 2026-08-10). Es una jornada
+// escolar completa; más que eso ya no es "dejarla abierta un rato".
+const CIERRE_MAX_MIN = 6 * 60;
+
+// Convierte los minutos que pide la pantalla en la hora de cierre.
+//
+// Se pide en MINUTOS y no como hora del reloj a propósito: un "08:15" escrito en el navegador
+// se interpreta con la zona horaria de esa máquina, y las computadoras del aula tienen
+// cualquier zona configurada — la ventana se cerraría a destiempo según desde dónde se abrió.
+// Un intervalo no depende de ninguna zona. La hora que después muestra la pantalla la calcula
+// el servidor con la zona de la escuela.
+//
+// Vacío = "no cerrarla sola" (la cierra una persona, o el cambio de día). Un número más
+// grande que el tope se RECORTA en vez de ignorarse: pedir 10 horas y que quede sin cierre
+// automático sería lo contrario de lo que quiso quien lo pidió.
+function calcularCierre(closesInMin, ahora = Date.now()) {
+  const minutos = Number.parseInt(closesInMin, 10);
+  if (!Number.isFinite(minutos) || minutos <= 0) return null;
+  return new Date(ahora + Math.min(minutos, CIERRE_MAX_MIN) * 60000);
 }
 
 // Porcentaje de días que el alumno asistió. La llegada tarde CUENTA como asistió: el chico
@@ -167,16 +194,21 @@ async function rosterDeDivision(divisionId) {
   return alumnos.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'es', { sensitivity: 'base' }));
 }
 
-// Abre la toma del día de un curso. IDEMPOTENTE: si ya existe la del día con esa etiqueta
-// devuelve esa misma con `creada: false`, y quien llama decide qué hacer según esté abierta
-// (seguir trabajando) o cerrada (409, ya se tomó).
+// Abre la planilla del día de un curso. IDEMPOTENTE: si ya existe la de hoy devuelve esa
+// misma con `creada: false`, y quien llama decide qué hacer según esté abierta (seguir
+// trabajando en ella) o cerrada (nuevaPasada).
+//
+// UNA planilla por curso y por día. El preceptor puede pasar lista varias veces —a primera
+// hora, después del recreo, a la tarde— pero todas esas pasadas ajustan la MISMA, y al final
+// del día queda una sola (decisión del usuario, 2026-08-10).
 //
 // Al abrir se CONGELA la nómina: una marca por alumno, con su nombre y su DNI copiados.
 async function abrirToma(division, user, opciones = {}) {
-  const hoy   = diaEscolar();
-  const label = String(opciones.label || '').trim().slice(0, 30);
+  const hoy = diaEscolar();
 
-  const existente = await AttendanceSession.findOne({ division: division._id, date: hoy, label });
+  // Ya se tomó lista hoy en este curso: NO se crea otra planilla. Quien llama decide si
+  // esto es una pasada nueva (nuevaPasada) o simplemente seguir donde estaba.
+  const existente = await AttendanceSession.findOne({ division: division._id, date: hoy });
   if (existente) return { session: existente, creada: false };
 
   const mode = opciones.mode === 'ventana' ? 'ventana' : 'pase';
@@ -194,13 +226,10 @@ async function abrirToma(division, user, opciones = {}) {
   // ninguna zona. La HORA de cierre que ve la pantalla se calcula después en el servidor,
   // con la zona de la escuela (live.hora).
   //
-  // Tope de 12 horas: más que eso ya es una ventana que cruza el día y la cierra el
-  // autocierre igual (shouldAutoClose).
-  let closesAt = null;
-  const minutos = Number.parseInt(opciones.closesInMin, 10);
-  if (Number.isFinite(minutos) && minutos > 0 && minutos <= 12 * 60) {
-    closesAt = new Date(Date.now() + minutos * 60000);
-  }
+  // Tope de 6 horas (decisión del usuario, 2026-08-10): es una jornada escolar completa.
+  // Más que eso no es "dejarla abierta un rato", es olvidársela — y para eso ya está el
+  // autocierre por cambio de día, que es la última red.
+  const closesAt = calcularCierre(opciones.closesInMin);
 
   const roster = await rosterDeDivision(division._id);
 
@@ -210,7 +239,6 @@ async function abrirToma(division, user, opciones = {}) {
       division: division._id,
       school:   division.school?._id || division.school,
       date:     hoy,
-      label,
       openedBy: user._id,
       mode,
       closesAt,
@@ -218,10 +246,10 @@ async function abrirToma(division, user, opciones = {}) {
       rosterSize: roster.length,
     });
   } catch (err) {
-    // Dos preceptores del mismo curso tocando "Abrir" a la vez: el índice único deja pasar a
-    // uno solo y el otro se queda con la toma que ganó, sin ver un error.
+    // Dos preceptores del mismo curso tocando "Pasar lista" a la vez: el índice único deja
+    // pasar a uno solo y el otro se queda con la planilla que ganó, sin ver un error.
     if (err.code === 11000) {
-      const otra = await AttendanceSession.findOne({ division: division._id, date: hoy, label });
+      const otra = await AttendanceSession.findOne({ division: division._id, date: hoy });
       if (otra) return { session: otra, creada: false };
     }
     throw err;
@@ -247,15 +275,51 @@ async function abrirToma(division, user, opciones = {}) {
 async function cerrarToma(session, user = null, { auto = false } = {}) {
   if (session.closedAt) return session;
 
+  // Los que quedaron sin marcar pasan a ausente con origen 'cierre', NO 'preceptor': nadie
+  // los miró uno por uno. La diferencia no es cosmética — es lo que permite que, si más tarde
+  // se vuelve a pasar lista con una ventana, el alumno todavía pueda darse la asistencia
+  // (autoMarcarse respeta lo que decidió una persona, no un valor por defecto).
   const ahora = new Date();
   await AttendanceMark.updateMany(
     { session: session._id, status: null },
-    { $set: { status: 'ausente', source: 'preceptor', markedAt: ahora, markedBy: user?._id || null } }
+    { $set: { status: 'ausente', source: 'cierre', markedAt: ahora, markedBy: user?._id || null } }
   );
 
   session.closedAt   = ahora;
   session.closedBy   = user?._id || null;
   session.autoClosed = !!auto;
+  await session.save();
+  return session;
+}
+
+// Otra pasada sobre la MISMA planilla del día.
+//
+// El preceptor pasa lista a primera hora, y más tarde vuelve: llegó el que faltaba, se retiró
+// otro. Eso NO crea una segunda planilla — al final del día queda una sola (decisión del
+// usuario, 2026-08-10). Las marcas que ya estaban se conservan; el preceptor ajusta lo que
+// cambió, incluidos los ausentes que puso el cierre anterior.
+//
+// La pasada nueva puede además cambiar el modo: la de la mañana fue pase de lista y la de la
+// tarde se deja como ventana para que la den los chicos.
+async function nuevaPasada(session, user, opciones = {}) {
+  session.closedAt   = null;
+  session.closedBy   = null;
+  session.autoClosed = false;
+  session.pasadas    = (session.pasadas || 1) + 1;
+
+  if (opciones.mode) {
+    session.mode = opciones.mode === 'ventana' ? 'ventana' : 'pase';
+    // El modo arrastra su valor por defecto de autoasistencia, salvo que se pida otra cosa.
+    session.settings.selfCheckin = opciones.selfCheckin === undefined
+      ? session.mode === 'ventana'
+      : opciones.selfCheckin === true || opciones.selfCheckin === 'true';
+  } else if (opciones.selfCheckin !== undefined) {
+    session.settings.selfCheckin = opciones.selfCheckin === true || opciones.selfCheckin === 'true';
+  }
+
+  // Cada pasada define su propia ventana: la hora de cierre de la anterior ya no aplica.
+  session.closesAt = calcularCierre(opciones.closesInMin);
+
   await session.save();
   return session;
 }
@@ -320,6 +384,7 @@ async function marcasDeToma(sessionId) {
 async function estadoDeHoy(divisionIds, hoy = diaEscolar()) {
   if (!divisionIds?.length) return new Map();
 
+  // Una sola por curso y por día: lo garantiza el índice único de AttendanceSession.
   const sesiones = await AttendanceSession.find({
     division: { $in: divisionIds.map(oid) }, date: hoy,
   }).lean();
@@ -368,6 +433,9 @@ async function estadoDeHoy(divisionIds, hoy = diaEscolar()) {
 //      pero no cambia el estado. La alternativa —que el alumno revierta la decisión de quien
 //      controla la asistencia— convierte el botón en una forma de discutirle al preceptor
 //      desde el celular.
+//      OJO con el detalle: "decidió" es `source === 'preceptor'`, y NO el ausente que dejó el
+//      cierre ('cierre'). Si contara, la ventana de la tarde no le serviría a nadie: todos
+//      llegarían ya marcados ausentes desde el cierre de la mañana.
 async function autoMarcarse(session, user) {
   const mark = await AttendanceMark.findOne({ session: session._id, student: user._id });
   if (!mark) return null;   // no está en la nómina congelada de esta toma
@@ -481,7 +549,7 @@ async function historialDeDivision(divisionId, desde, hasta) {
   const dias = sesiones.map(s => ({
     id:       String(s._id),
     fecha:    s.date,
-    etiqueta: s.label,
+    pasadas:  s.pasadas || 1,
     modo:     s.mode,
     abierta:  !s.closedAt,
     autoCerrada: !!s.autoClosed,
@@ -572,12 +640,12 @@ function csvAsistenciaMes(historial) {
 
 module.exports = {
   // constantes
-  ESTADOS, ESTADO_LABELS, ORIGEN_LABELS, POLL_MS, NOTE_MAX,
+  ESTADOS, ESTADO_LABELS, ORIGEN_LABELS, POLL_MS, NOTE_MAX, CIERRE_MAX_MIN,
   // puras
   diaEscolar, normalizarEstado, resumen, shouldAutoClose, puedeAutoMarcarse, esCorreccion,
-  rangoValido, rangoDelMes, porcentajeAsistencia,
+  rangoValido, rangoDelMes, porcentajeAsistencia, calcularCierre,
   // con base
-  rosterDeDivision, abrirToma, cerrarToma, autocerrarVencidas,
+  rosterDeDivision, abrirToma, nuevaPasada, cerrarToma, autocerrarVencidas,
   marcar, marcarLote, marcasDeToma, estadoDeHoy,
   autoMarcarse, tomasAbiertasDelAlumno, presentesEnSalasDeDivision, historialDeDivision,
   // export

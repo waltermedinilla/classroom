@@ -4,7 +4,13 @@
 // Sin preguntar (para automatizar): node cleanup-rooms.js --si
 //
 // QUÉ BORRA: los MENSAJES de las sesiones cerradas hace más de 3 meses (PURGE_AFTER_MS en
-// services/liveRoom.js).
+// services/liveRoom.js), y los ARCHIVOS ADJUNTOS que esos mensajes tenían.
+//
+// Los adjuntos se borran del disco además de la base, y no es un detalle: son lo único de
+// esta feature que ocupa espacio de verdad. Si se purgaran solo los documentos, las fotos
+// quedarían en archivos/salas/ para siempre, sin ningún mensaje que las nombre — invisibles
+// para la app y creciendo sin techo. Cada sesión tiene su propio directorio justamente para
+// que esto sea un borrado de carpeta y no un recorrido documento por documento.
 // QUÉ NO BORRA, NUNCA: las sesiones ni la presencia. Ese es el registro de asistencia —quién
 // estuvo en cada clase—, ocupa muy poco y es lo que se consulta meses después. Después de la
 // purga, la clase sigue existiendo y su lista de presentes sigue completa: lo único que
@@ -21,11 +27,13 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
 const readline = require('readline');
+const path     = require('path');
+const fsp      = require('fs/promises');
 
 const RoomSession = require('./models/RoomSession');
 const RoomMessage = require('./models/RoomMessage');
 const Course      = require('./models/Course');
-const { PURGE_AFTER_MS, fechaCorta: fecha } = require('./services/liveRoom');
+const { PURGE_AFTER_MS, SALAS_BASE, pesoLegible, fechaCorta: fecha } = require('./services/liveRoom');
 
 const DRY_RUN  = process.argv.includes('--dry-run');
 const SIN_PREGUNTAR = process.argv.includes('--si');
@@ -59,6 +67,23 @@ async function main() {
   const ids      = sesiones.map(s => s._id);
   const aBorrar  = await RoomMessage.countDocuments({ session: { $in: ids } });
 
+  // Adjuntos de esas clases: cuántos son, cuánto pesan y en qué directorios están. Se calcula
+  // ANTES de borrar los documentos, porque después ya no hay de dónde sacar las rutas.
+  const adjuntos = await RoomMessage.find({
+    session: { $in: ids },
+    kind:    { $in: ['image', 'file'] },
+    'attachment.path': { $ne: '' },
+  }).select('attachment.path attachment.bytes deletedAt').lean();
+
+  // El peso lo suman solo los que TODAVÍA están en disco: los que la docente ya borró en su
+  // momento se llevaron el archivo con ellos (ver el DELETE de routes/rooms.js), así que
+  // contarlos haría que el script prometa liberar un espacio que ya estaba libre.
+  const enDisco = adjuntos.filter(m => !m.deletedAt);
+  const bytesAdjuntos = enDisco.reduce((t, m) => t + (m.attachment?.bytes || 0), 0);
+  // Un directorio por sesión: se borra la carpeta entera y de paso se lleva cualquier archivo
+  // huérfano que hubiera quedado ahí (una subida cuyo documento nunca se creó, por ejemplo).
+  const dirsAdjuntos = [...new Set(adjuntos.map(m => path.dirname(m.attachment.path)))];
+
   if (aBorrar === 0) {
     console.log(`Hay ${sesiones.length} clases viejas, pero ya no tienen mensajes. No se borra nada.\n`);
     return mongoose.disconnect();
@@ -84,6 +109,9 @@ async function main() {
     console.log(`  ${nombre.get(cursoId) || '(materia eliminada)'} — ${e.n} clases, del ${fecha(e.desde)} al ${fecha(e.hasta)}`);
   }
   console.log(`\n  TOTAL: ${aBorrar} mensajes de ${sesiones.length} clases.`);
+  if (enDisco.length) {
+    console.log(`  Incluye ${enDisco.length} archivos compartidos (${pesoLegible(bytesAdjuntos)}), que se borran del disco.`);
+  }
   console.log('  Las clases y su asistencia NO se borran: solo desaparece la conversación.\n');
 
   if (DRY_RUN) {
@@ -100,7 +128,32 @@ async function main() {
   }
 
   const res = await RoomMessage.deleteMany({ session: { $in: ids } });
-  console.log(`\nListo: ${res.deletedCount} mensajes borrados. ${sesiones.length} clases conservan su asistencia.\n`);
+
+  // Los archivos van DESPUÉS de los documentos: si el proceso se corta en el medio, lo que
+  // queda son archivos sin mensaje (basura silenciosa, recuperable a mano) y no mensajes que
+  // muestran una card apuntando a un archivo que ya no existe.
+  let dirsBorrados = 0;
+  for (const rel of dirsAdjuntos) {
+    // Chequeo de contención, igual que al servirlos: la ruta la escribimos nosotros, pero un
+    // `rm -rf` calculado a partir de un campo de la base se verifica siempre.
+    const abs = path.resolve(SALAS_BASE, rel);
+    if (!abs.startsWith(path.resolve(SALAS_BASE) + path.sep)) {
+      console.warn(`  ! Se omitió una ruta fuera de ${SALAS_BASE}: ${rel}`);
+      continue;
+    }
+    try {
+      await fsp.rm(abs, { recursive: true, force: true });
+      dirsBorrados += 1;
+    } catch (err) {
+      console.warn(`  ! No se pudo borrar ${rel}: ${err.message}`);
+    }
+  }
+
+  console.log(`\nListo: ${res.deletedCount} mensajes borrados. ${sesiones.length} clases conservan su asistencia.`);
+  if (dirsAdjuntos.length) {
+    console.log(`Archivos: ${dirsBorrados} de ${dirsAdjuntos.length} carpetas de clase eliminadas (${pesoLegible(bytesAdjuntos)} liberados).`);
+  }
+  console.log('');
   await mongoose.disconnect();
 }
 

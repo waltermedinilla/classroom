@@ -4,6 +4,7 @@ node_modules/
 logs/
 public/archivos/
 archivos/entregas/
+archivos/salas/
 sin-commitear/
 backups/
 maintenance.json

@@ -34,12 +34,21 @@ const attendanceMarkSchema = new mongoose.Schema({
     default: null,
   },
 
-  // Quién puso el valor ACTUAL. 'sala' queda reservado y hoy no lo escribe nadie: la sala
-  // en vivo sugiere, nunca marca (decisión del usuario, RN-09 de la spec). Cuando el
-  // preceptor acepta una sugerencia, la marca queda como 'preceptor', porque la puso él.
+  // Quién puso el valor ACTUAL.
+  //
+  //   'preceptor' — lo decidió una persona. Es el único que manda sobre todo lo demás.
+  //   'alumno'    — se marcó solo desde su pantalla.
+  //   'cierre'    — el ausente que puso el cierre de la planilla, NO una decisión de nadie:
+  //                 es el valor por defecto de quien no fue marcado. Se distingue porque el
+  //                 preceptor puede pasar lista otra vez el mismo día, y si esos ausentes
+  //                 contaran como decisión suya, la ventana de la tarde no le serviría a
+  //                 ningún alumno: todos llegarían ya "decididos" desde la mañana.
+  //   'sala'      — reservado. Hoy no lo escribe nadie: la sala en vivo sugiere, nunca marca
+  //                 (decisión del usuario). Cuando el preceptor acepta una sugerencia, la
+  //                 marca queda como 'preceptor', porque la puso él.
   source: {
     type: String,
-    enum: ['preceptor', 'alumno', 'sala', null],
+    enum: ['preceptor', 'alumno', 'cierre', 'sala', null],
     default: null,
   },
   markedAt: { type: Date, default: null },

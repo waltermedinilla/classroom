@@ -46,6 +46,27 @@ const roomMessageLimiter = rateLimit({
   message:         { error: 'Esperá un momento antes de escribir de nuevo.' },
 });
 
+// Adjuntos de la sala en vivo: 20 subidas cada 10 minutos POR USUARIO.
+//
+// No se reutiliza el uploadLimiter de arriba, y el motivo es el mismo por el que existe
+// roomMessageLimiter: aquel cuenta por IP, y la escuela entera sale por una sola IP pública
+// NAT. Un docente compartiendo el material de su clase no puede consumir cupo de los otros
+// veinte que están dando clase al mismo tiempo.
+//
+// El número es holgado para el uso real (una docente comparte dos o tres cosas por clase) y
+// acota el daño de lo único que puede pasar de verdad: un script suelto o el dedo trabado en
+// un selector de archivos con 200 fotos seleccionadas. Subir es la operación más cara de la
+// sala —escribe disco y lo escrito no se recupera solo—, así que la ventana es más larga que
+// la del chat.
+const roomUploadLimiter = rateLimit({
+  windowMs:        10 * 60 * 1000,
+  max:             20,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator:    (req) => req.userId || ipKeyGenerator(req.ip),
+  message:         { error: 'Esperá unos minutos antes de subir más archivos.' },
+});
+
 // Envío de mensajes del superadmin: 20 por hora POR USUARIO.
 //
 // Un solo envío puede crear cientos de documentos (uno por destinatario), así que el límite
@@ -96,6 +117,6 @@ const attendanceCheckinLimiter = rateLimit({
 });
 
 module.exports = {
-  uploadLimiter, roomMessageLimiter, messageSendLimiter, messageReplyLimiter,
-  attendanceCheckinLimiter,
+  uploadLimiter, roomMessageLimiter, roomUploadLimiter, messageSendLimiter,
+  messageReplyLimiter, attendanceCheckinLimiter,
 };

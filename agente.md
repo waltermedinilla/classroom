@@ -345,6 +345,39 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-10 — La sala en vivo acepta imágenes y archivos (adjuntos privados)
+
+La docente puede compartir en el chat de la sala **una imagen** (se ve como card con preview, y al tocarla se abre en grande) o **un archivo** (card con la extensión, el nombre y el peso; se abre en una pestaña nueva). Puede eliminarlos, y eliminar significa eliminar.
+
+**Sube solo quien gestiona la materia** (`canManage`: titular, co-docentes, admin de escuela). Alumnos, preceptoría y dirección ven y descargan, no suben. Es lo que mantiene previsible el volumen de disco y deja la responsabilidad del material en quien da la clase.
+
+**La decisión que ordena todo lo demás: los archivos NO viven en `/public`.** Van a `archivos/salas/{schoolId}/{courseId}/{sessionId}/` —fuera del estático, como las entregas de alumnos— y se sirven por `GET /courses/:id/sala/archivos/:mid`, que pasa por el mismo `cargarSala` que el chat y revalida el permiso en **cada** pedido. Servirlos como estáticos habría significado que cualquiera con la URL los ve sin loguearse y **para siempre**: o sea que "la docente lo eliminó" sería mentira. En un chat de menores, el borrado tiene que ser real.
+
+- **Modelo**: `RoomMessage.kind` suma `'image'` y `'file'`, más un subdocumento `attachment`. Un adjunto es **un mensaje más**, no una colección aparte: así hereda el cursor `seq`, el soft delete, la moderación y la transcripción sin duplicar nada de eso. `attachment.path` **nunca** sale al cliente.
+- **Borrar**: el documento se marca como cualquier mensaje (queda quién, cuándo y qué archivo era) pero **el archivo se borra del disco**. Conservar un texto de 500 caracteres por si hay que reconstruir un episodio es una cosa; conservar indefinidamente una foto que la docente sacó de la vista del curso es otra.
+- **Imágenes**: preset `sala` (1600 px, WebP, calidad 76) por el pipeline que ya existía. Medido: un PNG de 417 KB queda en 9 KB — importa más acá que en otros presets, porque 30 chicos bajan la misma foto a la vez, muchos desde datos móviles.
+- **Extensiones**: `.pdf .doc .docx .xls .xlsx .ppt .pptx .odt .csv .txt .zip`. Nada ejecutable ni interpretable como HTML (`.html`, `.svg`), y la respuesta va con `nosniff`. Hay un test que falla si alguien agrega una de esas de buena fe.
+- **Límites**: 20 MB por archivo (igual que las entregas), 8 MB por imagen (se recomprime). `roomUploadLimiter`: 20 subidas cada 10 min **por usuario** — no por IP, misma razón de siempre (toda la escuela sale por una sola IP NAT; ver el 2026-07-28).
+- **Purga**: `cleanup-rooms.js` ahora borra también los archivos de disco de las clases que purga, por carpeta de sesión. Sin eso, las fotos quedaban en disco para siempre sin ningún mensaje que las nombrara. El resumen previo dice cuántos archivos y cuánto espacio.
+- **Transcripción y CSV**: los adjuntos aparecen en el historial de la clase y en el CSV como `[Imagen] pizarrón.webp (240 KB)`. Una transcripción que los omitiera diría que la docente estuvo callada.
+- **Auditoría**: `room.share_file` nueva; `room.delete_message` ahora anota el tipo y el nombre del archivo.
+- **Disco**: `services/diskStats.js` suma `archivos/salas` como renglón propio en el monitor — es el único directorio que se purga solo, así que verlo crecer y bajar aparte dice si la retención de 3 meses alcanza.
+- **Huérfanos**: `cleanup-files.js` ahora también barre `archivos/salas`. Referencia los adjuntos de mensajes **no borrados**: un archivo cuyo mensaje figura borrado es, por definición, un `unlink` que falló en su momento, y contarlo como vivo dejaría en disco para siempre justo el material que alguien decidió sacar. Sin esto, un archivo cuyo documento nunca se llegó a crear no lo barría nadie.
+- **Tarjetas de supervisión**: el conteo de `getOpenSessions` pasó de `kind: 'text'` a incluir los adjuntos. Una clase donde la docente compartió el material y nadie escribió está muy viva, y la tarjeta decía "0 mensajes · sin actividad" — parecía una sala muerta justo cuando había algo para mirar.
+- **La imagen va envuelta en un `<a>`** al archivo, no es un `<img>` con un click encima: se llega con el teclado (antes la foto era inalcanzable sin mouse), anda "abrir en pestaña nueva" del botón derecho, y si el JS falla el link sigue llevando a la imagen. Con JS andando, el handler hace `preventDefault` y abre la lupa; ctrl/cmd/shift+click se dejan pasar.
+- **`min-width: 0` en el cuadro de escribir**: un `<input>` trae un ancho intrínseco de ~20 caracteres y `flex: 1` no lo achica por debajo de eso. Con los dos botones nuevos al lado, en un celular de 360 px el botón de enviar quedaba fuera de la barra. Verificado hasta 320 px: sin scroll horizontal, todo adentro.
+
+**Dos bugs previos que aparecieron en el camino, ajenos a los adjuntos:**
+
+1. **El chat duplicaba la conversación entera al reaccionar o borrar.** `vistos.clear(); seq = 0` marcaba "ningún mensaje está pintado" mientras el DOM seguía teniéndolos, así que el poll siguiente los volvía a agregar abajo. Vaciar la lista de vistos y vaciar el chat tienen que ser la misma operación: ahora lo son (`repintarTodo()`).
+2. **`loading="lazy"` dejaba las imágenes del chat sin cargar.** El chat es un contenedor con scroll propio y el mensaje nuevo se inserta al fondo, fuera del área visible: la imagen no se pedía nunca, sin error en consola, hasta que alguien scrolleaba a mano. Card en blanco — el peor modo de fallar, porque parece que la docente compartió algo roto. Sacado del chat en vivo (en la transcripción, que scrollea normal, se conserva).
+
+**Sin cambios en la base de datos**: `kind` suma dos valores al enum y `attachment` es opcional. Los mensajes que ya existen siguen siendo válidos y no hay migración.
+
+**Verificado en el navegador** (subida real desde la UI, card, lightbox, borrado, disco, auditoría, transcripción y CSV) y con `sala-adjuntos` en el smoke (267/267) más 10 tests unitarios nuevos.
+
+**Pendiente**: esto se implementó sin spec previa, a pedido. Falta escribir `specs/sala-adjuntos.spec.md` y modularizar (`routes/rooms.js` quedó en ~700 líneas).
+
 ### 2026-08-08 — `var(--background)` no existía: 36 fondos que nunca se vieron
 
 **Síntoma**: ninguno visible. Ese era el problema. `var(--background)` se usaba 36 veces en 18 vistas EJS, en `public/css/style.css` y en `public/js/course.js`, pero **esa variable nunca se definió**. Las reales son `--bg` (`#f0f4f8` claro / `#111418` oscuro), declaradas en `style.css:13` y `style.css:29`.
@@ -2334,6 +2367,20 @@ La primera versión repintaba la lista entera después de cada marca. Con 26 alu
 **Auditoría**: se registran la apertura, el cierre, la reapertura y **solo las correcciones** — pisar una marca que ya tenía estado. El pase de lista normal son 30 marcas por curso y por día: auditarlas todas dejaría `/admin/audit` inservible, y quién marcó y cuándo ya vive en la marca misma.
 
 **Solapa** `preceptor_asistencia`, apagable por escuela desde `/superadmin/roles`. **Backup**: las dos colecciones entraron a `COLLECTIONS` (`routes/backup.js`) — ojo, esa lista es el único lugar que decide qué se respalda, y la asistencia no se purga nunca.
+
+### Revisión del mismo día: una sola planilla por día
+
+Al probarlo, el usuario pidió dos cambios que reescriben una regla central.
+
+**Una sola planilla por curso y por día.** El preceptor puede pasar lista varias veces —a primera hora, después del recreo, a la tarde— pero todas esas pasadas **ajustan la misma**: al final del día queda una. Desapareció la "segunda toma con etiqueta". El índice único pasó de `{división, día, etiqueta}` a `{división, día}`, y "Pasar lista otra vez" reabre la planilla en vez de crear otra, contando `pasadas`.
+
+Eso además arregló un problema latente: con dos tomas el mismo día, la planilla mensual tiene **una sola columna** para esa fecha, y cuál de las dos aparecía dependía del orden en que Mongo devolviera los documentos.
+
+**Y destapó otro, más serio.** Si el cierre de la mañana marca a todos los que faltan como ausentes "por el preceptor", entonces la ventana de la tarde **no le sirve a ningún alumno**: todos llegan ya decididos y la autoasistencia los rechaza. La solución es distinguir el origen: el cierre escribe `source: 'cierre'`, que **no es una decisión de nadie**, sino el valor por defecto de quien no fue marcado. Con eso, el alumno todavía puede darse la asistencia en una pasada posterior, esas marcas no ensucian la auditoría como "correcciones", y el CSV las muestra como "Ausente por cierre" en vez de atribuírselas a una persona.
+
+**La ventana llega hasta 6 horas**, una opción más entre las duraciones (30 min a 6 h). "No cerrarla sola" sigue existiendo: en ese caso la cierra el cambio de día. Un valor por encima del tope se **recorta** en vez de ignorarse — pedir 10 horas y quedarse sin cierre automático sería lo contrario de lo que quiso quien lo pidió.
+
+**La sugerencia de la sala también cambió**: ahora incluye a los que **figuran ausentes**, no solo a los sin marcar. "Marcaste ausente a Juan y está en Matemática en este momento" es el aviso más útil de la feature, y es el que el preceptor no puede conseguir de ninguna otra forma. Con el filtro anterior, después del primer cierre la sugerencia no volvía a mostrar a nadie nunca.
 
 ### Fase B: el alumno, las sugerencias y los reportes
 

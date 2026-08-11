@@ -103,7 +103,7 @@
               <tr>
                 <td>
                   <%= d.fecha %>
-                  <% if (d.etiqueta) { %><small style="color:#5f6368"> · <%= d.etiqueta %></small><% } %>
+                  <% if (d.pasadas > 1) { %><small style="color:#5f6368"> · <%= d.pasadas %> pasadas</small><% } %>
                   <% if (d.abierta) { %>
                     <span style="font-size:11px;background:#e6f4ea;color:#137333;padding:2px 7px;border-radius:10px">abierta</span>
                   <% } %>
@@ -118,7 +118,7 @@
                 <td class="num"><%= d.resumen.ausentes %></td>
                 <td class="num"><%= d.resumen.justificados %></td>
                 <td>
-                  <a class="hi-btn" href="/preceptor/asistencia/<%= division._id %>/export?tipo=dia&fecha=<%= d.fecha %>&tomaId=<%= d.id %>">Bajar</a>
+                  <a class="hi-btn" href="/preceptor/asistencia/<%= division._id %>/export?tipo=dia&fecha=<%= d.fecha %>">Bajar</a>
                 </td>
               </tr>
             <% }) %>

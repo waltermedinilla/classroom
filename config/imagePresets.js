@@ -48,6 +48,22 @@ const PRESETS = {
     quality: 80,
     label:   'imagen de novedad',
   },
+
+  // Imagen compartida en el chat de la sala en vivo (models/RoomMessage.js, kind 'image').
+  // En la card se ve a ~340 px de ancho, pero al tocarla se abre en grande: 1600 cubre eso
+  // en una pantalla del aula sin obligar a guardar el original de 4000 px.
+  //
+  // La compresión acá importa MÁS que en los otros presets: una clase de 30 chicos mirando
+  // la misma foto la descarga 30 veces, muchos desde datos móviles. Calidad 76 —dos puntos
+  // por debajo del avatar— es indistinguible en una foto de pizarrón y ahorra ancho de banda
+  // en el momento en que 30 dispositivos piden lo mismo a la vez.
+  sala: {
+    width:   1600,
+    height:  1600,
+    fit:     'inside',
+    quality: 76,
+    label:   'imagen de la sala',
+  },
 };
 
 // Extensiones que aceptamos como entrada. La validación REAL de que el archivo es una

@@ -73,6 +73,9 @@
               <% } else { %>
                 <span class="as-estado cerrada">Cerrada · <%= c.toma.hora %></span>
               <% } %>
+              <% if (c.toma && c.toma.pasadas > 1) { %>
+                <span class="as-estado" style="background:#e8f0fe;color:#174ea6"><%= c.toma.pasadas %>ª pasada</span>
+              <% } %>
             </div>
 
             <% if (c.toma) { %>
@@ -94,25 +97,34 @@
                 <a class="as-btn primario" href="/preceptor/asistencia/<%= c._id %>">
                   <%= c.toma.estado === 'abierta' ? 'Continuar' : 'Ver la planilla' %>
                 </a>
+                <%# Con la planilla CERRADA se puede volver a pasar lista el mismo día: llegó
+                    el que faltaba, se retiró otro, o es el turno de otro preceptor. NO crea
+                    una segunda planilla — ajusta la del día, que es la que queda. %>
+                <% if (c.toma.estado === 'cerrada') { %>
+                  <button class="as-btn" data-desplegar>Pasar lista otra vez</button>
+                <% } %>
                 <a class="as-btn" href="/preceptor/asistencia/<%= c._id %>/historial">Historial</a>
               </div>
+              <% if (c.toma.estado === 'cerrada') { %>
+                <div class="as-ventana">
+                  <button class="as-btn primario" data-abrir="pase">Pasar lista</button>
+                  <span style="font-size:13px;color:#5f6368">o dejarla abierta</span>
+                  <select data-minutos>
+                    <%- include('_duraciones') %>
+                  </select>
+                  <button class="as-btn" data-abrir="ventana">Abrir</button>
+                </div>
+              <% } %>
             <% } else { %>
               <div class="as-acciones">
                 <button class="as-btn primario" data-abrir="pase">Pasar lista</button>
-                <button class="as-btn" data-ventana>Abrir ventana</button>
+                <button class="as-btn" data-desplegar>Abrir ventana</button>
                 <a class="as-btn" href="/preceptor/asistencia/<%= c._id %>/historial">Historial</a>
               </div>
               <div class="as-ventana">
-                <%# La duración va en MINUTOS y no como una hora del reloj: el navegador del
-                    aula puede tener cualquier zona horaria configurada y "08:15" significaría
-                    una hora distinta en cada máquina. Ver services/attendance.js. %>
                 <span style="font-size:13px;color:#5f6368">Cerrar sola en</span>
                 <select data-minutos>
-                  <option value="">no cerrarla sola</option>
-                  <option value="30">30 minutos</option>
-                  <option value="45" selected>45 minutos</option>
-                  <option value="60">1 hora</option>
-                  <option value="120">2 horas</option>
+                  <%- include('_duraciones') %>
                 </select>
                 <button class="as-btn primario" data-abrir="ventana">Abrir</button>
               </div>
@@ -137,8 +149,8 @@
         error.style.display = msg ? 'block' : 'none';
       };
 
-      const toggle = card.querySelector('[data-ventana]');
-      if (toggle) toggle.addEventListener('click', () => ventana.classList.toggle('abierto'));
+      const desplegar = card.querySelector('[data-desplegar]');
+      if (desplegar) desplegar.addEventListener('click', () => ventana.classList.toggle('abierto'));
 
       card.querySelectorAll('[data-abrir]').forEach(btn => {
         btn.addEventListener('click', async () => {

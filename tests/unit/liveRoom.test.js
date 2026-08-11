@@ -14,6 +14,8 @@ const {
   isOnline, presenceSummary, shouldAutoClose, sanitizeText, minutosPresente,
   hora, fechaDia, fechaLarga, fechaCorta, fechaHora, TZ,
   ONLINE_WINDOW_MS, AUTO_CLOSE_MS, MSG_MAX, POLL_MS,
+  pesoLegible, etiquetaExt, textoAdjunto, csvTranscripcion,
+  EXT_ARCHIVOS, MAX_ARCHIVO_BYTES,
 } = require('../../services/liveRoom');
 
 const AHORA = new Date('2026-08-06T14:30:00Z');
@@ -231,4 +233,92 @@ test('fechas: una fecha nula o basura devuelve vacío, no "Invalid Date"', () =>
     assert.strictEqual(f(undefined), '');
     assert.strictEqual(f('no es una fecha'), '');
   }
+});
+
+// ── Adjuntos de la sala ─────────────────────────────────────────────────────
+//
+// Los adjuntos se agregaron después de la spec original (que los excluía a propósito). Lo
+// que se testea acá es lo que se imprime: el peso y la extensión salen a la card que ve la
+// clase y al CSV que se lleva la docente, así que un formato roto se ve enseguida pero un
+// "NaN" o un "Invalid" tarda en aparecer, porque solo pasa con datos de borde.
+
+test('pesoLegible: KB abajo del mega, MB con coma decimal arriba', () => {
+  assert.strictEqual(pesoLegible(1024 * 840), '840 KB');
+  assert.strictEqual(pesoLegible(1.4 * 1024 * 1024), '1,4 MB');
+  assert.strictEqual(pesoLegible(20 * 1024 * 1024), '20,0 MB');
+});
+
+test('pesoLegible: un archivo chiquito no dice "0 KB" ni redondea a cero', () => {
+  assert.strictEqual(pesoLegible(1), '1 KB');
+  assert.strictEqual(pesoLegible(900), '1 KB');
+});
+
+test('pesoLegible: sin dato devuelve "0 KB", nunca NaN', () => {
+  for (const v of [null, undefined, 0, -5, 'muchos', NaN, Infinity]) {
+    const r = pesoLegible(v);
+    assert.ok(!/NaN|Infinity|undefined/.test(r), `pesoLegible(${String(v)}) devolvió "${r}"`);
+  }
+  assert.strictEqual(pesoLegible(null), '0 KB');
+});
+
+test('etiquetaExt: la extensión sube a mayúsculas y pierde el punto', () => {
+  assert.strictEqual(etiquetaExt('.docx'), 'DOCX');
+  assert.strictEqual(etiquetaExt('.pdf'),  'PDF');
+});
+
+test('etiquetaExt: sin extensión dice ARCHIVO, no queda vacía', () => {
+  // La card tiene un recuadro fijo para esto: vacío se vería como un error de la pantalla.
+  assert.strictEqual(etiquetaExt(''), 'ARCHIVO');
+  assert.strictEqual(etiquetaExt(null), 'ARCHIVO');
+});
+
+test('textoAdjunto: la transcripción nombra el archivo, con tipo y peso', () => {
+  assert.strictEqual(
+    textoAdjunto({ kind: 'image', attachment: { name: 'pizarron.webp', bytes: 245760 } }),
+    '[Imagen] pizarron.webp (240 KB)');
+  assert.strictEqual(
+    textoAdjunto({ kind: 'file', attachment: { name: 'guía tp3.pdf', bytes: 1024 * 1024 } }),
+    '[Archivo] guía tp3.pdf (1,0 MB)');
+});
+
+test('textoAdjunto: un mensaje de texto no es un adjunto y devuelve vacío', () => {
+  assert.strictEqual(textoAdjunto({ kind: 'text', text: 'hola' }), '');
+  assert.strictEqual(textoAdjunto({ kind: 'system', text: 'abrió la sala' }), '');
+  assert.strictEqual(textoAdjunto(null), '');
+});
+
+test('csvTranscripcion: un adjunto deja constancia en el CSV, no una fila vacía', () => {
+  // Sin esto, una clase donde la docente compartió el material se exporta como si hubiera
+  // estado callada: el registro mentiría por omisión.
+  const csv = csvTranscripcion([
+    { seq: 1, kind: 'text',  authorName: 'DOCENTE, Ana', authorRole: 'teacher',
+      text: 'buen día', createdAt: new Date('2026-08-06T17:05:00Z') },
+    { seq: 2, kind: 'image', authorName: 'DOCENTE, Ana', authorRole: 'teacher',
+      text: '', attachment: { name: 'pizarron.webp', bytes: 245760 },
+      createdAt: new Date('2026-08-06T17:06:00Z') },
+    { seq: 3, kind: 'file',  authorName: 'DOCENTE, Ana', authorRole: 'teacher',
+      text: '', attachment: { name: 'tp3.pdf', bytes: 1024 * 1024 },
+      createdAt: new Date('2026-08-06T17:07:00Z'), deletedAt: new Date() },
+  ]);
+
+  assert.ok(csv.includes('[Imagen] pizarron.webp (240 KB)'));
+  assert.ok(csv.includes('[Archivo] tp3.pdf (1,0 MB)'));
+  // El eliminado se incluye MARCADO, igual que un mensaje de texto borrado (RN-12).
+  assert.ok(csv.includes('Eliminado'));
+  assert.ok(!/NaN|undefined/.test(csv), 'el CSV no puede tener NaN ni undefined');
+});
+
+test('extensiones aceptadas: nada ejecutable ni interpretable como HTML', () => {
+  // La lista cerrada es la primera defensa de la ruta que sirve los archivos. Que esto sea
+  // un test y no un comentario es lo que impide que alguien agregue '.html' de buena fe.
+  for (const prohibida of ['.exe', '.bat', '.cmd', '.sh', '.js', '.html', '.htm', '.svg', '.php']) {
+    assert.ok(!EXT_ARCHIVOS.includes(prohibida), `${prohibida} no puede estar permitida`);
+  }
+  assert.ok(EXT_ARCHIVOS.includes('.pdf'));
+  assert.ok(EXT_ARCHIVOS.every(e => e.startsWith('.') && e === e.toLowerCase()),
+    'las extensiones se comparan en minúscula y con punto');
+});
+
+test('el techo de los archivos es 20 MB, el mismo que las entregas', () => {
+  assert.strictEqual(MAX_ARCHIVO_BYTES, 20 * 1024 * 1024);
 });

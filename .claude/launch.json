@@ -8,10 +8,10 @@
       "port": 3000
     },
     {
-      "//": "Server de verificación en otro puerto, para no pisar el que el usuario tiene en 3000. Arranca de cero, así recompila las vistas EJS (el .env local tiene NODE_ENV=production, que las cachea y hace que los cambios en .ejs no se vean sin reiniciar).",
+      "//": "Server de verificación en otro puerto, para no pisar el que el usuario tiene en 3000. Arranca de cero, así recompila las vistas EJS (el .env local tiene NODE_ENV=production, que las cachea y hace que los cambios en .ejs no se vean sin reiniciar). NODE_ENV=development además saca el `secure: true` de la cookie de sesión (routes/auth.js:41): con production, el navegador no la guarda sobre http://localhost y el login no anda.",
       "name": "classroom-verify",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["-e", "process.env.PORT='3001';require('./server.js')"],
+      "runtimeArgs": ["-e", "process.env.PORT='3001';process.env.NODE_ENV='development';require('./server.js')"],
       "port": 3001
     }
   ]

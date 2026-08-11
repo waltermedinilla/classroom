@@ -19,6 +19,10 @@ const path = require('path');
 const RUTAS = [
   { id: 'entregas',  label: 'Entregas de alumnos', dir: path.join(__dirname, '../archivos/entregas') },
   { id: 'materiales', label: 'Adjuntos y avatares', dir: path.join(__dirname, '../public/archivos') },
+  // Adjuntos del chat de la sala en vivo (routes/rooms.js). Van aparte de 'materiales' porque
+  // son los únicos que se purgan solos —a los 3 meses, con cleanup-rooms.js—, así que verlos
+  // crecer y bajar por separado dice si la retención está alcanzando.
+  { id: 'salas',     label: 'Archivos de salas en vivo', dir: path.join(__dirname, '../archivos/salas') },
 ];
 
 const TTL_MS = 60 * 1000;

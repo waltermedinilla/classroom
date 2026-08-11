@@ -1,0 +1,20 @@
+<%#
+  Opciones de "cerrar sola en" de la ventana de asistencia. Están en un partial porque las
+  usan los dos caminos de la tarjeta (la primera vez del día y "pasar lista otra vez"), y dos
+  listas mantenidas por separado se desincronizan sola la primera vez que se toca una.
+
+  La duración va en MINUTOS y no como hora del reloj: el navegador del aula puede tener
+  cualquier zona horaria configurada y "08:15" significaría una hora distinta en cada máquina.
+  Ver services/attendance.js.
+
+  El tope es de 6 horas (CIERRE_MAX_MIN): una jornada escolar completa. "No cerrarla sola"
+  sigue existiendo — en ese caso la cierra el preceptor, o el cambio de día.
+%>
+<option value="">no cerrarla sola</option>
+<option value="30">30 minutos</option>
+<option value="45" selected>45 minutos</option>
+<option value="60">1 hora</option>
+<option value="120">2 horas</option>
+<option value="180">3 horas</option>
+<option value="240">4 horas</option>
+<option value="360">6 horas</option>

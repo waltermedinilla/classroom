@@ -155,6 +155,7 @@
         : 'Cerrada';
 
       const sub = [];
+      if (estado.pasadas > 1) sub.push(estado.pasadas + 'ª pasada de hoy');
       if (abierta) {
         sub.push('Abierta ' + estado.abiertaDesde);
         if (estado.cierraA) sub.push('cierra ' + estado.cierraA);
@@ -209,8 +210,8 @@
         '<div class="tm-sala">' +
           '<div class="tm-sala-tit">' +
             (enClase.length === 1
-              ? '1 alumno sin marcar está ahora en clase'
-              : enClase.length + ' alumnos sin marcar están ahora en clase') +
+              ? '1 alumno está en clase ahora y no figura presente'
+              : enClase.length + ' alumnos están en clase ahora y no figuran presentes') +
           '</div>' +
           '<div class="tm-sala-lista">' + nombres + '</div>' +
           '<button class="tm-btn" data-sala>Marcar presentes a ' +

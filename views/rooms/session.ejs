@@ -62,17 +62,58 @@
                   <%= m.text %> · <%= fmt.hora(m.createdAt) %>
                 </div>
               <% } else { %>
+                <% const esAdjunto = m.kind === 'image' || m.kind === 'file'; %>
                 <div style="margin-bottom:12px">
                   <div style="font-size:12px;color:#5f6368">
                     <%= m.authorName || '—' %> ·
                     <%= fmt.hora(m.createdAt) %>
                   </div>
-                  <div style="background:<%= m.deletedAt ? '#f8f9fa' : '#f1f3f4' %>;padding:8px 12px;
-                              border-radius:12px;border-top-left-radius:2px;font-size:14px;
-                              white-space:pre-wrap;word-break:break-word;
-                              <%= m.deletedAt ? 'font-style:italic;color:#80868b' : '' %>">
-                    <%= m.deletedAt ? 'Mensaje eliminado' : m.text %>
-                  </div>
+
+                  <%# Los adjuntos se siguen viendo desde la transcripción: media razón para
+                      compartir el material de la clase es poder volver a buscarlo después.
+                      La URL es la misma ruta autenticada que usa el chat en vivo, así que el
+                      permiso se revalida igual — y si la clase ya se purgó (3 meses), devuelve
+                      404 con su motivo en vez de una imagen rota. %>
+                  <% if (esAdjunto && !m.deletedAt) { %>
+                    <% const url = `/courses/${course._id}/sala/archivos/${m._id}`; %>
+                    <% if (m.kind === 'image') { %>
+                      <a href="<%= url %>" target="_blank" rel="noopener"
+                         style="display:block;max-width:300px;border:1px solid #dadce0;border-radius:12px;overflow:hidden">
+                        <img src="<%= url %>" alt="<%= m.attachment?.name || '' %>" loading="lazy"
+                             style="display:block;width:100%;max-height:220px;object-fit:cover;background:#f1f3f4">
+                        <span style="display:flex;gap:6px;padding:7px 10px;font-size:12px;color:#5f6368;
+                                     border-top:1px solid #f1f3f4">
+                          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                            <%= m.attachment?.name || 'imagen' %></span>
+                          <span style="flex:none;color:#80868b">· <%= pesoLegible(m.attachment?.bytes) %></span>
+                        </span>
+                      </a>
+                    <% } else { %>
+                      <a href="<%= url %>" target="_blank" rel="noopener"
+                         style="display:flex;align-items:center;gap:10px;max-width:300px;padding:10px 12px;
+                                border:1px solid #dadce0;border-radius:12px;text-decoration:none;color:inherit">
+                        <span style="flex:none;width:40px;height:40px;border-radius:8px;background:#1a73e8;
+                                     color:#fff;display:flex;align-items:center;justify-content:center;
+                                     font-size:10px;font-weight:600"><%= etiquetaExt(m.attachment?.ext) %></span>
+                        <span style="min-width:0">
+                          <span style="display:block;font-size:13px;color:#202124;overflow:hidden;
+                                       text-overflow:ellipsis;white-space:nowrap"><%= m.attachment?.name || 'archivo' %></span>
+                          <span style="display:block;font-size:11px;color:#5f6368">
+                            <%= etiquetaExt(m.attachment?.ext) %> · <%= pesoLegible(m.attachment?.bytes) %></span>
+                        </span>
+                      </a>
+                    <% } %>
+                  <% } else { %>
+                    <div style="background:<%= m.deletedAt ? '#f8f9fa' : '#f1f3f4' %>;padding:8px 12px;
+                                border-radius:12px;border-top-left-radius:2px;font-size:14px;
+                                white-space:pre-wrap;word-break:break-word;
+                                <%= m.deletedAt ? 'font-style:italic;color:#80868b' : '' %>">
+                      <% if (m.deletedAt) { %>
+                        <%= m.kind === 'image' ? 'Imagen eliminada'
+                            : (m.kind === 'file' ? 'Archivo eliminado' : 'Mensaje eliminado') %>
+                      <% } else { %><%= m.text %><% } %>
+                    </div>
+                  <% } %>
                 </div>
               <% } %>
             <% }); %>

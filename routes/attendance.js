@@ -105,8 +105,14 @@ async function estadoDeToma(session, division) {
   if (!session.closedAt) {
     const enSala = await asistencia.presentesEnSalasDeDivision(division);
     if (enSala.size) {
+      // Se sugiere a todo el que NO figura asistiendo (ni presente ni tarde) y está en una
+      // clase en vivo ahora mismo. Incluye a los que el preceptor marcó ausente: ese es el
+      // caso más útil de todos —"marcaste ausente a Juan y está en Matemática en este
+      // momento"—, no ruido. Filtrando solo por "sin marcar", después del primer cierre la
+      // sugerencia no volvía a mostrar a nadie nunca.
+      const YA_ASISTE = ['presente', 'tarde'];
       enClase = marcas
-        .filter(m => !m.status && enSala.has(String(m.student)))
+        .filter(m => !YA_ASISTE.includes(m.status) && enSala.has(String(m.student)))
         .map(m => ({
           studentId: String(m.student),
           nombre:    m.studentName || '—',
@@ -119,6 +125,7 @@ async function estadoDeToma(session, division) {
     tomaId: String(session._id),
     estado: session.closedAt ? 'cerrada' : 'abierta',
     modo:   session.mode,
+    pasadas: session.pasadas || 1,
     autoasistencia: session.settings?.selfCheckin === true,
     // Ya formateadas por el servidor, con la zona de la escuela: la vista las imprime tal
     // cual. Ver el comentario de TZ en services/liveRoom.js.
@@ -170,6 +177,8 @@ router.get('/', async (req, res, next) => {
           modo:    hoy.session.mode,
           resumen: hoy.resumen,
           hora:    live.hora(hoy.session.closedAt || hoy.session.openedAt),
+          // Cuántas veces se pasó lista sobre esta misma planilla.
+          pasadas: hoy.session.pasadas || 1,
         } : null,
       };
     });
@@ -187,18 +196,22 @@ router.get('/', async (req, res, next) => {
 
 router.post('/:divisionId/abrir', cargarDivision, async (req, res, next) => {
   try {
-    const { session, creada } = await asistencia.abrirToma(req.division, res.locals.user, {
+    const opciones = {
       mode:        req.body.mode,
       selfCheckin: req.body.selfCheckin,
-      label:       req.body.label,
       // Minutos, no una hora absoluta: ver el comentario en services/attendance.js.
       closesInMin: req.body.closesInMin,
-    });
+    };
+    const { session, creada } = await asistencia.abrirToma(req.division, res.locals.user, opciones);
 
-    // Ya se tomó la asistencia de hoy para este curso. No se reabre desde acá: para corregir
-    // algo se entra a la toma, que es donde está el contexto de lo que se va a cambiar.
+    // Ya se tomó lista hoy en este curso. NO se crea una segunda planilla: el preceptor pasa
+    // lista varias veces en el día y al final queda UNA sola (decisión del usuario). Si la
+    // había cerrado, esto es una pasada nueva; si sigue abierta, simplemente se sigue en ella
+    // —que es lo que pasa cuando entran dos preceptores del mismo curso—.
+    let pasadaNueva = false;
     if (!creada && session.closedAt) {
-      return fallar(req, res, 409, 'Ya hay una toma de asistencia de hoy para este curso');
+      await asistencia.nuevaPasada(session, res.locals.user, opciones);
+      pasadaNueva = true;
     }
 
     if (creada) {
@@ -207,9 +220,14 @@ router.post('/:divisionId/abrir', cargarDivision, async (req, res, next) => {
         { tomaId: String(session._id), modo: session.mode,
           autoasistencia: session.settings?.selfCheckin === true,
           alumnos: session.rosterSize });
+    } else if (pasadaNueva) {
+      logAudit(req, 'attendance.reopen',
+        [{ type: 'division', id: req.division._id, name: req.division.name }],
+        { tomaId: String(session._id), pasada: session.pasadas, modo: session.mode });
     }
 
-    res.json({ ok: true, tomaId: String(session._id), creada });
+    res.json({ ok: true, tomaId: String(session._id), creada, pasadaNueva,
+               pasadas: session.pasadas || 1 });
   } catch (err) { next(err); }
 });
 
@@ -223,7 +241,7 @@ router.get('/:divisionId', cargarDivision, async (req, res, next) => {
 
     const session = await AttendanceSession.findOne({
       division: req.division._id, date: asistencia.diaEscolar(),
-    }).sort({ openedAt: -1 });
+    });
 
     if (!session) return res.redirect('/preceptor/asistencia');
 
@@ -320,14 +338,14 @@ router.post('/toma/:id/reabrir', cargarToma, async (req, res, next) => {
       return fallar(req, res, 409, 'Solo se puede reabrir la toma de asistencia de hoy');
     }
 
-    req.toma.closedAt   = null;
-    req.toma.closedBy   = null;
-    req.toma.autoClosed = false;
-    await req.toma.save();
+    // Reabrir desde la grilla es otra pasada sobre la misma planilla, igual que "Pasar lista
+    // otra vez" desde el panel: mismo servicio, para que no puedan divergir. Sin opciones, así
+    // conserva el modo que ya tenía.
+    await asistencia.nuevaPasada(req.toma, res.locals.user);
 
     logAudit(req, 'attendance.reopen',
       [{ type: 'division', id: req.division._id, name: req.division.name }],
-      { tomaId: String(req.toma._id) });
+      { tomaId: String(req.toma._id), pasada: req.toma.pasadas });
 
     res.json({ ok: true });
   } catch (err) { next(err); }
@@ -383,18 +401,12 @@ router.get('/:divisionId/export', cargarDivision, async (req, res, next) => {
       const fecha = asistencia.rangoValido(req.query.fecha, req.query.fecha);
       if (!fecha) return fallar(req, res, 400, 'El rango de fechas no es válido');
 
-      // Puede haber más de una toma en el día (turno tarde, contraturno). Se exporta UNA:
-      // la pedida por ?tomaId, o la última del día. Sin esto, dos tomas meterían a cada
-      // alumno dos veces en la misma planilla.
-      const delDia = await AttendanceSession.find({
+      // Una sola planilla por curso y por día (índice único de AttendanceSession), así que
+      // no hay que elegir entre varias.
+      const toma = await AttendanceSession.findOne({
         division: req.division._id, date: fecha.desde,
-      }).sort({ openedAt: -1 }).select('_id').lean();
-      if (!delDia.length) return fallar(req, res, 404, 'Toma de asistencia no encontrada');
-
-      const pedida = req.query.tomaId && mongoose.isValidObjectId(req.query.tomaId)
-        ? delDia.find(s => String(s._id) === String(req.query.tomaId))
-        : null;
-      const toma = pedida || delDia[0];
+      }).select('_id').lean();
+      if (!toma) return fallar(req, res, 404, 'Toma de asistencia no encontrada');
 
       csv    = asistencia.csvAsistenciaDia(await asistencia.marcasDeToma(toma._id));
       nombre = `asistencia-${slug}-${fecha.desde}.csv`;

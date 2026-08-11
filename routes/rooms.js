@@ -12,6 +12,11 @@
 
 const express  = require('express');
 const mongoose = require('mongoose');
+const multer   = require('multer');
+const path     = require('path');
+const fs       = require('fs');
+const fsp      = require('fs/promises');
+const crypto   = require('crypto');
 
 const Course       = require('../models/Course');
 const RoomSession  = require('../models/RoomSession');
@@ -20,11 +25,38 @@ const RoomPresence = require('../models/RoomPresence');
 
 const { requireAuth }        = require('../middleware/auth');
 const { logAudit }           = require('../middleware/audit');
-const { roomMessageLimiter } = require('../middleware/rate-limits');
+const { roomMessageLimiter, roomUploadLimiter } = require('../middleware/rate-limits');
 const { loadPreceptorScope } = require('../middleware/preceptor');
+const { subirImagen, guardarImagenOptimizada, ImagenInvalidaError } = require('../middleware/image-upload');
 const live = require('../services/liveRoom');
 
 const router = express.Router();
+
+// ── Almacenamiento de los adjuntos ───────────────────────────────────────────
+//
+// FUERA de /public, igual que las entregas de alumnos (routes/activities.js:28) y al revés
+// que las imágenes de novedades. Es la decisión que sostiene todo lo demás de esta feature:
+// un archivo servido como estático es público para cualquiera que tenga la URL, sin login y
+// para siempre — o sea que "la docente lo eliminó" sería mentira, y la moderación de un chat
+// de menores dejaría de significar algo. Acá cada pedido pasa por cargarSala y se revalida.
+//
+// Estructura: archivos/salas/{schoolId}/{courseId}/{sessionId}/{archivo}
+// El directorio por SESIÓN no es cosmético: es lo que permite que la purga a los 3 meses
+// borre de disco una clase entera con un solo rmdir, sin recorrer mensaje por mensaje.
+// La constante vive en el servicio porque cleanup-rooms.js también la necesita.
+const SALAS_BASE = live.SALAS_BASE;
+
+// Nombre en disco: sin relación con el que subió el usuario. El nombre visible viaja en
+// attachment.name, y separarlos evita de raíz los dos problemas del nombre original —
+// colisiones ("foto.jpg" de dos clases) y path traversal en el propio nombre.
+const nombreEnDisco = (ext) =>
+  Date.now().toString(36) + crypto.randomBytes(4).toString('hex') + ext;
+
+// Busboy (multer) decodifica los headers multipart como latin1, pero los navegadores mandan
+// el nombre en UTF-8: sin esto, "Guía de estudio.pdf" llega como "GuÃ­a de estudio.pdf".
+// Mismo arreglo que routes/activities.js:45 — está duplicado a propósito y no compartido,
+// para no crear una dependencia entre dos routers por cuatro líneas.
+const arreglarNombre = (s) => Buffer.from(String(s || ''), 'latin1').toString('utf8');
 
 // Roles que entran a mirar SIN aparecer en la sala. Solo el equipo directivo, y solo si no
 // son además docentes de esa materia (en ese caso entran como docentes, visibles).
@@ -185,12 +217,31 @@ async function estadoDeSala(req, session, since = 0) {
     puedoEscribir: puedeEscribir(session, req),
     settings:  session.settings,
     presencia,
-    mensajes:  mensajes.map(m => serializarMensaje(m, req.userId)),
+    mensajes:  mensajes.map(m => serializarMensaje(m, req.userId, course._id)),
   };
 }
 
-function serializarMensaje(m, userId) {
-  const borrado = !!m.deletedAt;
+// Datos del adjunto que SÍ salen al cliente. `attachment.path` no está en la lista y no puede
+// estarlo: es la ruta en disco, y lo único que el navegador necesita es la URL de la ruta
+// autenticada. Un adjunto borrado no devuelve nada — ni el nombre del archivo, que en un
+// contexto de moderación puede ser justamente el problema.
+function serializarAdjunto(m, courseId) {
+  if (m.kind !== 'image' && m.kind !== 'file') return null;
+  if (m.deletedAt) return null;
+  const a = m.attachment || {};
+  return {
+    nombre: a.name || 'archivo',
+    ext:    live.etiquetaExt(a.ext),
+    peso:   live.pesoLegible(a.bytes),
+    ancho:  a.width  || null,
+    alto:   a.height || null,
+    url:    `/courses/${courseId}/sala/archivos/${m._id}`,
+  };
+}
+
+function serializarMensaje(m, userId, courseId) {
+  const borrado   = !!m.deletedAt;
+  const esAdjunto = m.kind === 'image' || m.kind === 'file';
   return {
     id:    String(m._id),
     seq:   m.seq,
@@ -199,9 +250,13 @@ function serializarMensaje(m, userId) {
     rol:   m.authorRole || '',
     esMio: String(m.author) === String(userId),
     // El texto original se conserva en la base (es lo que permite reconstruir qué pasó si
-    // hubo un problema), pero NO se manda al cliente una vez borrado.
-    texto:   borrado ? 'Mensaje eliminado' : m.text,
+    // hubo un problema), pero NO se manda al cliente una vez borrado. Un adjunto borrado dice
+    // qué era —imagen o archivo— y nada más: el hueco en la conversación tiene que leerse.
+    texto:   borrado
+      ? (esAdjunto ? (m.kind === 'image' ? 'Imagen eliminada' : 'Archivo eliminado') : 'Mensaje eliminado')
+      : m.text,
     borrado,
+    adjunto: serializarAdjunto(m, courseId),
     // Texto ya formateado ("14:05"), NO la fecha cruda. La hora la fija el servidor con la
     // zona de la escuela: si la manda cruda, cada navegador la interpreta con la zona horaria
     // que tenga configurada la máquina y el mismo mensaje aparece a una hora distinta en cada
@@ -337,7 +392,7 @@ router.post('/:id/sala/mensajes', roomMessageLimiter, async (req, res, next) => 
     const msg = await live.postMessage(session, usuario(req), req.body.text);
     if (!msg) return fallar(req, res, 400, 'El mensaje está vacío');
 
-    res.json({ ok: true, mensaje: serializarMensaje(msg, req.userId) });
+    res.json({ ok: true, mensaje: serializarMensaje(msg, req.userId, req.course._id) });
   } catch (err) { next(err); }
 });
 
@@ -356,9 +411,21 @@ router.delete('/:id/sala/mensajes/:mid', async (req, res, next) => {
     );
     if (!msg) return fallar(req, res, 404, 'Mensaje no encontrado');
 
+    // Con un adjunto, el archivo se borra de disco DE VERDAD, y el documento queda marcado
+    // como cualquier otro mensaje (quién lo borró, cuándo, y qué archivo era). Ver el
+    // comentario de deletedAt en models/RoomMessage.js: conservar el texto por si hay que
+    // reconstruir un episodio es una cosa; conservar la foto que la docente sacó de la vista
+    // de un curso de menores es otra.
+    const esAdjunto = msg.kind === 'image' || msg.kind === 'file';
+    if (esAdjunto) await borrarArchivoDeAdjunto(msg);
+
     logAudit(req, 'room.delete_message',
       [{ type: 'course', id: req.course._id, name: req.course.name }],
-      { sessionId: String(msg.session), autor: msg.authorName, seq: msg.seq });
+      {
+        sessionId: String(msg.session), autor: msg.authorName, seq: msg.seq,
+        ...(esAdjunto ? { tipo: msg.kind === 'image' ? 'imagen' : 'archivo',
+                          archivo: msg.attachment?.name || '' } : {}),
+      });
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -391,7 +458,229 @@ router.post('/:id/sala/mensajes/:mid/reaccion', async (req, res, next) => {
     }
     await msg.save();
 
-    res.json({ ok: true, mensaje: serializarMensaje(msg, req.userId) });
+    res.json({ ok: true, mensaje: serializarMensaje(msg, req.userId, req.course._id) });
+  } catch (err) { next(err); }
+});
+
+// ── Adjuntos ─────────────────────────────────────────────────────────────────
+
+// Resuelve la ruta en disco de un adjunto y verifica que caiga DENTRO de SALAS_BASE.
+// `attachment.path` lo escribimos nosotros y nunca viene del cliente, pero el chequeo se hace
+// igual: es una línea, y es la diferencia entre un bug de ese campo y servir /etc/passwd.
+// Mismo criterio que el borrado de imágenes de routes/announcements.js:199-204.
+function rutaDeAdjunto(relativa) {
+  if (!relativa) return null;
+  const abs = path.resolve(SALAS_BASE, relativa);
+  return abs.startsWith(path.resolve(SALAS_BASE) + path.sep) ? abs : null;
+}
+
+// Borra el archivo de un adjunto. Se traga los errores a propósito: si el archivo ya no
+// estaba, el borrado igual tiene que completarse — lo que no puede quedar es el mensaje sin
+// marcar. Un archivo que sobreviva a esto lo levanta cleanup-files.js (que barre los de
+// mensajes ya borrados); un adjunto visible que la docente creyó haber borrado, no lo
+// levanta nadie.
+async function borrarArchivoDeAdjunto(msg) {
+  const abs = rutaDeAdjunto(msg?.attachment?.path);
+  if (!abs) return;
+  await fsp.unlink(abs).catch(() => {});
+}
+
+// Solo quien gestiona la materia, y solo con la sala abierta.
+//
+// Va ANTES de multer en la cadena, y ese orden ES la mitigación: multer corre antes que el
+// handler, así que con el chequeo adentro del handler el archivo de alguien sin permiso ya
+// estaría escrito en disco para cuando respondemos 403. Es el mismo bug que documenta
+// middleware/image-upload.js:6-11, mirado desde el otro lado.
+async function exigirGestorEnSalaAbierta(req, res, next) {
+  try {
+    if (!req.esGestor) return fallar(req, res, 403, 'Solo la o el docente puede hacer esto');
+    const session = await sesionAbierta(req.course._id);
+    if (!session) return fallar(req, res, 409, 'La sala está cerrada');
+    req.sala = session;
+    next();
+  } catch (err) { next(err); }
+}
+
+// Directorio de esta sesión, relativo a SALAS_BASE. Un directorio por clase: la purga de los
+// 3 meses borra la carpeta entera en vez de recorrer mensaje por mensaje.
+// 'general' cubre al usuario sin escuela, mismo fallback que usan el resto de los uploads
+// (routes/activities.js:81, routes/announcements.js:97).
+const dirDeSesion = (req) => path.join(
+  usuario(req).school?.toString() || 'general',
+  String(req.course._id),
+  String(req.sala._id),
+);
+
+// Los ARCHIVOS van directo a disco (pueden pesar 20 MB y no hay nada que procesar en
+// memoria). Las IMÁGENES no pasan por acá: usan subirImagen de middleware/image-upload.js,
+// que las recibe en memoria porque sharp necesita el buffer para recomprimirlas.
+const subirArchivo = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const dir = path.join(SALAS_BASE, dirDeSesion(req));
+      fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => cb(null, nombreEnDisco(path.extname(file.originalname).toLowerCase())),
+  }),
+  limits:  { fileSize: live.MAX_ARCHIVO_BYTES },
+  fileFilter: (req, file, cb) => {
+    cb(null, live.EXT_ARCHIVOS.includes(path.extname(file.originalname).toLowerCase()));
+  },
+});
+
+// Envuelve a multer para contestar en español y con el código correcto, igual que hace
+// subirImagen. Sin esto, pasarse de tamaño devuelve el "File too large" de multer.
+function conArchivo(campo) {
+  return (req, res, next) => {
+    subirArchivo.single(campo)(req, res, (err) => {
+      if (!err) return next();
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        const mb = Math.round(live.MAX_ARCHIVO_BYTES / (1024 * 1024));
+        return res.status(413).json({ error: `El archivo es demasiado grande (máximo ${mb} MB)` });
+      }
+      return res.status(400).json({ error: err.message || 'Error al subir el archivo' });
+    });
+  };
+}
+
+// POST /courses/:id/sala/adjuntos/imagen — foto del pizarrón, una consigna, un mapa.
+// Se recomprime a WebP con el preset 'sala' antes de tocar el disco: lo que la docente sube
+// desde el celular pesa 3 MB y termina en ~100 KB, que es lo que van a bajar los 30 alumnos.
+router.post('/:id/sala/adjuntos/imagen', roomUploadLimiter, exigirGestorEnSalaAbierta,
+  subirImagen('imagen'), async (req, res, next) => {
+    try {
+      if (!req.file) return fallar(req, res, 400, 'No se recibió ninguna imagen');
+
+      const relDir  = dirDeSesion(req);
+      const guardada = await guardarImagenOptimizada(req.file, {
+        preset: 'sala',
+        dir:    path.join(SALAS_BASE, relDir),
+      });
+
+      // El nombre VISIBLE lleva la extensión que quedó en disco, no la que subió la docente:
+      // si sube "pizarron.jpg" y se guarda como WebP, mostrar ".jpg" haría que el archivo
+      // descargado no coincida con su propio nombre.
+      const extFinal = path.extname(guardada.filename).toLowerCase();
+      const base     = path.basename(arreglarNombre(req.file.originalname), path.extname(req.file.originalname));
+
+      const msg = await live.postAttachment(req.sala, usuario(req), 'image', {
+        name:   `${base}${extFinal}`.slice(0, 120),
+        ext:    extFinal,
+        mime:   extFinal === '.webp' ? 'image/webp' : (req.file.mimetype || ''),
+        bytes:  guardada.bytes,
+        path:   path.join(relDir, guardada.filename),
+        width:  guardada.width,
+        height: guardada.height,
+      });
+      // Mismo caso que en el POST de archivo: la sesión se cerró entre el chequeo y la
+      // escritura. La imagen YA está en disco y no va a tener mensaje que la muestre, así que
+      // se limpia acá en vez de dejarla esperando a cleanup-files.js.
+      if (!msg) {
+        await fsp.unlink(path.join(SALAS_BASE, relDir, guardada.filename)).catch(() => {});
+        return fallar(req, res, 409, 'La sala está cerrada');
+      }
+
+      logAudit(req, 'room.share_file',
+        [{ type: 'course', id: req.course._id, name: req.course.name }],
+        { sessionId: String(req.sala._id), tipo: 'imagen', archivo: msg.attachment.name });
+
+      res.status(201).json({ ok: true, mensaje: serializarMensaje(msg, req.userId, req.course._id) });
+    } catch (err) {
+      if (err instanceof ImagenInvalidaError) return fallar(req, res, 400, err.message);
+      next(err);
+    }
+  });
+
+// POST /courses/:id/sala/adjuntos/archivo — el PDF de la guía, la presentación, la planilla.
+router.post('/:id/sala/adjuntos/archivo', roomUploadLimiter, exigirGestorEnSalaAbierta,
+  conArchivo('archivo'), async (req, res, next) => {
+    try {
+      // fileFilter rechaza en silencio (deja req.file vacío): el mensaje de por qué lo damos acá.
+      if (!req.file) {
+        return fallar(req, res, 400,
+          `Ese tipo de archivo no se puede compartir. Aceptamos: ${live.EXT_ARCHIVOS.join(', ')}`);
+      }
+
+      const relDir = dirDeSesion(req);
+      const ext    = path.extname(req.file.filename).toLowerCase();
+
+      const msg = await live.postAttachment(req.sala, usuario(req), 'file', {
+        name:  arreglarNombre(req.file.originalname).slice(0, 120),
+        ext,
+        mime:  req.file.mimetype || '',
+        bytes: req.file.size,
+        path:  path.join(relDir, req.file.filename),
+      });
+      // La sesión se cerró entre el chequeo y la escritura: el archivo ya está en disco y no
+      // va a tener mensaje que lo muestre, así que se limpia acá mismo.
+      if (!msg) {
+        await fsp.unlink(path.join(SALAS_BASE, relDir, req.file.filename)).catch(() => {});
+        return fallar(req, res, 409, 'La sala está cerrada');
+      }
+
+      logAudit(req, 'room.share_file',
+        [{ type: 'course', id: req.course._id, name: req.course.name }],
+        { sessionId: String(req.sala._id), tipo: 'archivo', archivo: msg.attachment.name });
+
+      res.status(201).json({ ok: true, mensaje: serializarMensaje(msg, req.userId, req.course._id) });
+    } catch (err) { next(err); }
+  });
+
+// Content-Disposition con el nombre real, acentos incluidos. El `filename` ASCII es el
+// fallback para clientes viejos; `filename*` en UTF-8 es el que usan los navegadores.
+function disposicion(tipo, nombre) {
+  const ascii = String(nombre).replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  return `${tipo}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(nombre)}`;
+}
+
+// Se muestran DENTRO del navegador la imagen y el PDF, que es lo que el alumno espera al
+// tocar la card ("verla", no "bajarla"). El resto se descarga: un .docx no se abre en el
+// navegador, y forzar la descarga evita cualquier discusión sobre qué hace el visor con él.
+const VER_EN_LINEA = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.pdf'];
+
+// GET /courses/:id/sala/archivos/:mid — el archivo, servido con permiso revalidado.
+//
+// Esta ruta es el motivo por el que los adjuntos no viven en /public. Pasa por el mismo
+// cargarSala que el resto de la sala, así que un alumno de otra división recibe 403 igual que
+// en el chat, y un archivo eliminado ya no existe para nadie.
+router.get('/:id/sala/archivos/:mid', async (req, res, next) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.mid)) {
+      return fallar(req, res, 404, 'Archivo no encontrado');
+    }
+
+    // Por CURSO y no por sesión abierta: los adjuntos de una clase anterior se siguen viendo
+    // desde su transcripción, que es media razón para compartirlos.
+    const msg = await RoomMessage.findOne({
+      _id:    req.params.mid,
+      course: req.course._id,
+      kind:   { $in: ['image', 'file'] },
+    }).lean();
+
+    if (!msg) return fallar(req, res, 404, 'Archivo no encontrado');
+    if (msg.deletedAt) return fallar(req, res, 404, 'Este archivo fue eliminado');
+
+    const abs = rutaDeAdjunto(msg.attachment?.path);
+    // El documento existe pero el archivo no: pasa con una clase ya purgada (los mensajes se
+    // borran a los 3 meses junto con sus archivos). 404 con el motivo, no un 500.
+    if (!abs || !fs.existsSync(abs)) {
+      return fallar(req, res, 404, 'El archivo ya no está disponible');
+    }
+
+    const ext    = String(msg.attachment.ext || '').toLowerCase();
+    const enLinea = VER_EN_LINEA.includes(ext);
+
+    // nosniff es obligatorio acá: sin él, un navegador podría adivinar el tipo de un archivo
+    // subido y ejecutarlo como HTML. La lista cerrada de extensiones ya lo impide, pero las
+    // dos defensas cuestan una línea entre las dos.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', disposicion(enLinea ? 'inline' : 'attachment', msg.attachment.name || 'archivo'));
+    // Privado y corto: 30 alumnos abriendo la misma imagen no la piden 30 veces, pero un
+    // archivo eliminado tampoco sobrevive en la caché de nadie más que unos minutos.
+    res.setHeader('Cache-Control', 'private, max-age=300');
+
+    res.sendFile(abs, (err) => { if (err && !res.headersSent) next(err); });
   } catch (err) { next(err); }
 });
 
@@ -530,6 +819,10 @@ router.get('/:id/sala/clases/:sid', cargarSesion, async (req, res, next) => {
     res.render('rooms/session', {
       course:  req.course,
       fmt:     live.fmt,
+      // Los mismos helpers que usa el chat, para que la card de la transcripción diga el peso
+      // y la extensión igual que la del día de la clase.
+      pesoLegible: live.pesoLegible,
+      etiquetaExt: live.etiquetaExt,
       sesion:  req.session_,
       mensajes,
       asistencia,
