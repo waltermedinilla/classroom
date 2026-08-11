@@ -1308,7 +1308,17 @@ select, .select-input {
    Antes la tenían Usuarios y Materias nada más, y al saltar entre solapas el contenido
    pasaba de 1100 centrado a ancho completo: se corrían de lugar el listado, el título y
    las propias solapas (~90 px a 1280). Que dos pestañas de diez tengan otro ancho es la
-   causa del salto, no un detalle de esas dos. */
+   causa del salto, no un detalle de esas dos.
+
+   2026-08-11 — misma corrección en SUPERADMIN y JEFATURA, que se habían quedado afuera.
+   En superadmin la tenían solo Usuarios y Roles contra 14 vistas sin ella: cada vez que se
+   entraba o salía de esas dos, las 13 solapas se corrían 150 px a la izquierda (medido a
+   1440: el nav arrancaba en x=194 y pasaba a x=44). En jefatura pasaba lo mismo entre el
+   listado de docentes y el detalle. La regla vale para los cuatro paneles: si una vista
+   muestra el nav de sección, va con `.main-content-ancho` — la única forma de que las
+   solapas no se muevan es que TODAS las pantallas del panel midan lo mismo.
+   Los formularios sueltos (alta/edición) siguen angostos a propósito: no muestran el nav,
+   así que no hay solapas que se corran. */
 .main-content-ancho { max-width: min(1400px, 100%); }
 
 /* Código de clase en el encabezado de la materia (solo lo ve el docente).

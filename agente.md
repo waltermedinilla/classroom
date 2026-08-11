@@ -345,6 +345,29 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-11 — Las solapas del superadmin dejaron de moverse al cambiar de sección
+
+**Pedido**: "cuando estoy como rol de superadministrador o como administrador, se me mueven mucho las solapas que tengo activas, incluyendo si me posiciono en usuarios, y es muy molesto. se mueven de derecha a izquierda".
+
+**Causa**: el ancho del contenedor cambiaba según la pantalla. De las 15 vistas del panel de superadmin que muestran el nav, solo **Usuarios** y **Roles** usaban `main-content-ancho` (1400 px); las otras 13 se quedaban en los 1100 px de `main-content`, centrados. Entrar o salir de esas dos corría las 13 solapas **150 px a la izquierda**.
+
+Es exactamente el mismo problema que se corrigió en el panel de admin el 2026-08-03, y que ahí se resolvió poniéndole el contenedor ancho a **todo** el panel. Superadmin y jefatura habían quedado afuera.
+
+**Cambio**: `main-content-ancho` en las 14 vistas que faltaban de superadmin (Resumen, Escuelas, Importar, Sugerencias, Mensajes + detalle, Temas, Auditoría, Backup, Otros, Tareas, Asignar tareas, Monitor, ficha de escuela) y en las 2 de jefatura que faltaban (detalle de docente y entregas de una actividad). Solo el atributo `class` del `<main>`: ninguna ruta, consulta ni regla de CSS nueva.
+
+**La regla, para no volver a romperla**: si una vista muestra el nav de sección, va con `.main-content-ancho`. La única forma de que las solapas no se muevan es que todas las pantallas del panel midan lo mismo. Los formularios sueltos (alta y edición) siguen angostos a propósito — no muestran el nav, así que no hay solapas que se corran.
+
+**Verificado en el navegador** a 1440 px, sobre las 15 pantallas del superadmin (incluidos los detalles de escuela y de mensaje): el nav arranca en x=44 en todas, el contenedor mide 1400 en todas, la solapa "Usuarios" queda siempre en (299, 104) y ninguna desborda horizontalmente. Antes: x=194 en las angostas contra x=44 en las anchas. Smoke: **267/267**.
+
+Las dos vistas de jefatura quedaron sin verificar en el navegador: **no hay ningún usuario con rol `jefatura` en el mirror local** (ni, por lo tanto, en producción), así que no hay sesión con la que renderizarlas. El cambio es el mismo atributo `class` que en las otras 14, y sus vistas hermanas del mismo panel ya lo usaban.
+
+**Dos cosas que se revisaron y NO eran el problema**, para no volver a investigarlas:
+
+- **El panel de admin ya estaba bien.** Sus 13 vistas con nav llevan el contenedor ancho desde el 2026-08-03; medido pantalla por pantalla, las solapas no se mueven ni un píxel. Lo que sí cambia de ancho ahí son los formularios de alta y edición (600 px centrados), que no tienen nav.
+- **La barra de scroll no corre nada.** `html { scrollbar-gutter: stable }` funciona: el `<body>` mide 1424,8 px tanto en una pantalla corta como en una larga. (Ojo con medirlo con `document.documentElement.clientWidth`: ese devuelve 1440 en las cortas y hace parecer que el canal no está reservado.)
+
+**Hallazgo al pasar, sin corregir**: `GET /admin/users/new` (una URL que no existe — la buena es `/users/create`) **deja la petición colgada para siempre** en vez de responder 404. Cae en `/users/:id`, el cast de `"new"` a ObjectId falla y la promesa rechazada no la agarra nadie: en el log aparece `unhandledRejection` y el navegador se queda esperando. Anotado en el backlog.
+
 ### 2026-08-10 — La sala en vivo acepta imágenes y archivos (adjuntos privados)
 
 La docente puede compartir en el chat de la sala **una imagen** (se ve como card con preview, y al tocarla se abre en grande) o **un archivo** (card con la extensión, el nombre y el peso; se abre en una pestaña nueva). Puede eliminarlos, y eliminar significa eliminar.
