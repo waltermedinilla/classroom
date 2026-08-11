@@ -107,26 +107,19 @@
               </div>
               <% if (c.toma.estado === 'cerrada') { %>
                 <div class="as-ventana">
-                  <button class="as-btn primario" data-abrir="pase">Pasar lista</button>
-                  <span style="font-size:13px;color:#5f6368">o dejarla abierta</span>
-                  <select data-minutos>
-                    <%- include('_duraciones') %>
-                  </select>
-                  <button class="as-btn" data-abrir="ventana">Abrir</button>
+                  <%- include('_abrir-ventana', { conPase: true }) %>
                 </div>
               <% } %>
             <% } else { %>
               <div class="as-acciones">
-                <button class="as-btn primario" data-abrir="pase">Pasar lista</button>
-                <button class="as-btn" data-desplegar>Abrir ventana</button>
+                <button class="as-btn primario" data-abrir="pase">Pasar lista yo</button>
+                <%# El nombre del botón dice QUÉ PASA, no cómo se llama el modo por dentro:
+                    "Abrir ventana" no le decía a nadie que el alumno la iba a poder dar. %>
+                <button class="as-btn" data-desplegar>Que la den los alumnos</button>
                 <a class="as-btn" href="/preceptor/asistencia/<%= c._id %>/historial">Historial</a>
               </div>
               <div class="as-ventana">
-                <span style="font-size:13px;color:#5f6368">Cerrar sola en</span>
-                <select data-minutos>
-                  <%- include('_duraciones') %>
-                </select>
-                <button class="as-btn primario" data-abrir="ventana">Abrir</button>
+                <%- include('_abrir-ventana', { conPase: false }) %>
               </div>
             <% } %>
           </div>

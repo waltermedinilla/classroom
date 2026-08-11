@@ -150,16 +150,17 @@
       const r = estado.resumen;
 
       $('tmEstado').className = 'tm-estado ' + estado.estado;
+      // El encabezado dice qué está pasando, no cómo se llama el modo por dentro.
       $('tmEstado').textContent = abierta
-        ? (estado.modo === 'ventana' ? '● Ventana abierta' : '● Pase de lista')
+        ? (estado.autoasistencia ? '● Abierta para los alumnos' : '● Pase de lista')
         : 'Cerrada';
 
       const sub = [];
       if (estado.pasadas > 1) sub.push(estado.pasadas + 'ª pasada de hoy');
       if (abierta) {
         sub.push('Abierta ' + estado.abiertaDesde);
-        if (estado.cierraA) sub.push('cierra ' + estado.cierraA);
-        if (estado.autoasistencia) sub.push('los alumnos pueden darla');
+        if (estado.cierraA) sub.push('se cierra sola ' + estado.cierraA);
+        if (estado.autoasistencia) sub.push('la están dando desde su pantalla');
       } else {
         sub.push('Cerrada ' + estado.cerradaA);
         if (estado.autoCerrada) sub.push('se cerró sola al cambiar el día');

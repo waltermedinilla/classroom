@@ -1,0 +1,26 @@
+<%#
+  Panel que se despliega para dejar la asistencia abierta y que la den los propios alumnos.
+  Lo usan los dos caminos de la tarjeta (la primera vez del día y "pasar lista otra vez"), y
+  dos copias mantenidas por separado se desincronizan la primera vez que se toca una.
+
+  Dice con todas las letras QUÉ va a pasar del lado del alumno. La versión anterior decía
+  "Abrir ventana" y "Cerrar sola en", que describen el mecanismo pero no el efecto: nadie
+  podía adivinar desde ahí que al chico le iba a aparecer un botón en su pantalla.
+
+  Espera en locals: conPase (Boolean). true cuando este panel es la ÚNICA entrada a las dos
+  formas de tomar —el caso de "pasar lista otra vez"—, así que tiene que ofrecer también la
+  manual. En la tarjeta sin toma esa opción ya está afuera y repetirla acá sería ruido.
+%>
+<p style="flex:1 1 100%;font-size:13px;color:#5f6368;margin:0 0 2px">
+  A los alumnos del curso les aparece <strong>“Dar asistencia”</strong> al entrar a la
+  plataforma. Vos podés corregir cualquiera después.
+</p>
+<span style="font-size:13px;color:#5f6368">Se cierra sola en</span>
+<select data-minutos>
+  <%- include('_duraciones') %>
+</select>
+<button class="as-btn primario" data-abrir="ventana">Abrir para los alumnos</button>
+<% if (locals.conPase) { %>
+  <span style="font-size:13px;color:#5f6368">o</span>
+  <button class="as-btn" data-abrir="pase">Pasar lista yo</button>
+<% } %>
