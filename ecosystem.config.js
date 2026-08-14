@@ -27,10 +27,26 @@ module.exports = {
       NODE_ENV: 'production',
     },
 
-    // Logs unificados de todos los workers en un solo archivo
+    // Logs unificados de todos los workers en un solo archivo.
+    //
+    // ⚠️ `error_file` apuntaba a 'logs/error.log', EL MISMO ARCHIVO que escribe winston
+    // (config/logger.js). Resultado: el stderr crudo de Node se intercalaba con el JSON
+    // estructurado y `tail -40 logs/error.log` devolvía casi puros `DeprecationWarning` de
+    // mongoose y punycode — había que filtrar con `grep '"level":"error"'` para ver algo.
+    // El 2026-08-11 eso costó una vuelta entera de diagnóstico.
+    //
+    // Ahora cada uno tiene lo suyo:
+    //   logs/error.log      → winston: errores de la aplicación, JSON, uno por línea
+    //   logs/combined.log   → winston: todo (info/warn/error), incluye el access log
+    //   logs/pm2-error.log  → stderr del proceso: warnings de Node, crashes, arranques
+    //   logs/pm2-out.log    → stdout del proceso
+    //
+    // ⚠️ Al desplegar esto NO alcanza `pm2 restart classroom`: ese comando reusa la
+    // configuración guardada y seguiría escribiendo en el archivo viejo. Hay que releer
+    // este archivo con `pm2 restart ecosystem.config.js --update-env`.
     log_date_format: 'YYYY-MM-DD HH:mm:ss',
-    error_file:      'logs/error.log',
-    out_file:        'logs/out.log',
+    error_file:      'logs/pm2-error.log',
+    out_file:        'logs/pm2-out.log',
     merge_logs:      true,  // Un solo archivo en lugar de uno por worker
 
     // Espera 5 s antes de reiniciar tras un crash (evita bucles de reinicio rápido)

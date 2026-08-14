@@ -61,6 +61,19 @@ const roomMessageSchema = new mongoose.Schema({
     height: { type: Number, default: null }, //   y evita que el chat pegue un salto al cargar
   },
 
+  // Actividad a la que apunta este mensaje. Hoy solo la lleva el aviso de sistema que se
+  // publica cuando la docente crea una actividad desde la clase (routes/activities.js), y es
+  // lo que le permite a la sala pintar el botón "Ver actividad".
+  //
+  // Va como REF y no como una URL armada en el texto: el texto es lo que se lee (y lo que
+  // queda en la transcripción y en el CSV), el link es un dato aparte. Con la URL adentro del
+  // texto habría que parsearla para pintar el botón, y cualquier cambio de ruta rompería los
+  // mensajes viejos.
+  //
+  // Opcional y sin índice: no se consulta por este campo, se lee junto con el mensaje. Los
+  // mensajes anteriores a esta feature lo tienen en null y se pintan como siempre.
+  activity: { type: mongoose.Schema.Types.ObjectId, ref: 'Activity', default: null },
+
   // Posición dentro de la sesión (1..N). Es el cursor del polling: el cliente manda el
   // último `seq` que tiene y recibe solo lo posterior. Se asigna con un $inc atómico sobre
   // RoomSession.lastSeq — ver services/liveRoom.js. NO usar createdAt como cursor: dos

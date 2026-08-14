@@ -19,6 +19,7 @@ const { requireSuperAdmin } = require('../middleware/superadmin');
 const { invalidateUser, invalidateSchool } = require('../middleware/cache');
 const { logAudit } = require('../middleware/audit');
 const { hilo, esperaAlEquipo, ultimoDelEquipo } = require('../services/suggestionThread');
+const { logDeRuta } = require('../middleware/route-log');
 
 // Multer en memoria para importación Excel (no necesita guardarse en disco)
 const xlsUpload = multer({
@@ -58,6 +59,7 @@ router.get('/', async (req, res) => {
     );
     res.render('superadmin/dashboard', { schoolCount, userCount, courseCount, schools: schoolsWithStats });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -80,6 +82,7 @@ router.get('/schools', async (req, res) => {
     );
     res.render('superadmin/schools', { schools: schoolsWithStats, search: search || '' });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -107,6 +110,7 @@ router.post('/schools/create', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -134,6 +138,7 @@ router.get('/schools/:id', async (req, res) => {
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     res.render('superadmin/school-profile', { school, users, courses, subjects, roleCounts, baseUrl });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -166,6 +171,7 @@ router.post('/schools/:id/edit', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -185,6 +191,7 @@ router.post('/schools/:id/delete', async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -209,6 +216,7 @@ router.post('/schools/:id/invite', async (req, res) => {
 
     res.json({ inviteUrl });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -230,6 +238,7 @@ router.post('/schools/:id/revoke-invite', async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -261,6 +270,7 @@ router.post('/users/create', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -314,6 +324,7 @@ router.get('/users', async (req, res) => {
       limit: limitNum,
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -343,6 +354,7 @@ router.post('/users/bulk-school', async (req, res) => {
 
     res.json({ ok: true, updated: userIds.length });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -370,6 +382,7 @@ router.post('/users/bulk-role', async (req, res) => {
 
     res.json({ ok: true, updated: filtered.length });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -409,6 +422,7 @@ router.post('/users/:id/school', async (req, res) => {
     if (err.code === 11000) {
       return res.status(400).json({ error: 'Ya existe un usuario con ese DNI en la escuela destino' });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -437,6 +451,7 @@ router.post('/users/:id/role', async (req, res) => {
 
     res.json({ user });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -448,6 +463,7 @@ router.get('/import', async (req, res) => {
     const schools = await School.find().sort({ name: 1 }).select('_id name color');
     res.render('superadmin/import', { schools });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -677,6 +693,7 @@ router.post('/import/execute', async (req, res) => {
 
     res.json({ results });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor: ' + err.message });
   }
 });
@@ -717,6 +734,7 @@ router.post('/themes/offer', async (req, res) => {
     invalidateSchool(schoolId);
     res.json({ ok: true });
   } catch (e) {
+    logDeRuta(e, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -735,7 +753,8 @@ router.post('/themes/config', async (req, res) => {
     await school.save();
     invalidateSchool(schoolId);
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -749,7 +768,8 @@ router.post('/themes/revoke', async (req, res) => {
     });
     invalidateSchool(schoolId);
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -843,6 +863,7 @@ router.get('/monitor/stats', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: err.message });
   }
 });
@@ -878,7 +899,8 @@ router.get('/suggestions', async (req, res) => {
       hiloDe: hilo,
       esperaAlEquipo,
     });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -895,7 +917,8 @@ router.post('/suggestions/:id/reviewed', async (req, res) => {
     );
 
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -964,7 +987,8 @@ router.post('/suggestions/:id/respond', async (req, res) => {
     );
 
     res.json({ ok: true, suggestion: s });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error al guardar la respuesta' });
   }
 });
@@ -984,7 +1008,8 @@ router.delete('/suggestions/:id', async (req, res) => {
     }
 
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

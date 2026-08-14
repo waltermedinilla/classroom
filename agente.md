@@ -327,6 +327,33 @@ Variables CSS para colores, sombras, radios. Componentes:
 
 ---
 
+## Regla de trabajo: los tests se actualizan con cada cambio
+
+> **Pedido del usuario (2026-08-13): todos los tests deben adecuarse a las actualizaciones que
+> vayamos generando.** No es un paso opcional ni "para después": un cambio de comportamiento
+> está terminado cuando la suite lo refleja y queda en verde.
+
+Qué implica, en concreto:
+
+1. **Test nuevo para cada bug arreglado o feature agregada.** Si el bug lo reportó alguien de la
+   escuela, el test tiene que reproducir *ese* caso y decirlo en un comentario, para que dentro
+   de seis meses se entienda qué protege.
+2. **Adecuar los tests existentes** que el cambio deja desactualizados. Un test que ya no describe
+   el comportamiento correcto se **corrige**; no se borra ni se saltea.
+3. **Comprobar que el test falla sin el arreglo.** Es la única forma de saber que sirve de red.
+4. **Correr las tres suites y reportar los números**: `npm run test:unit`, `npm run test:smoke`,
+   `npm run test:roles`.
+
+Para que la lógica sea testeable, sacarla del DOM o de la ruta y ponerla en una función pura
+(`services/*.js`, o un `public/js/*.js` que exporte con
+`if (typeof module !== 'undefined' && module.exports)` para servir al navegador y a `node --test`).
+El par `public/js/devoluciones.js` + `tests/unit/devoluciones.test.js` es el ejemplo a copiar.
+
+⚠️ Correr smoke y roles seguidos choca con el **rate limit** (429 en la limpieza final de roles,
+que deja usuarios de prueba sin borrar). Espaciar las corridas o limpiar a mano.
+
+---
+
 ## Notas / Issues Conocidos
 1. `GET /courses/create` existe en la ruta pero usa modal en dashboard — no tiene vista propia
 2. Archivos subidos a disco local (`public/archivos/` para adjuntos del docente y novedades; `archivos/entregas/` fuera de `public` para entregas de alumnos), sin cloud storage
@@ -334,16 +361,125 @@ Variables CSS para colores, sombras, radios. Componentes:
 4. La relación materia↔curso es por coincidencia de texto (`Subject.name` === `Course.name`), no hay FK. Renombrar una materia rompe la asociación. Mejora futura: `Course.subject` como ObjectId ref
 5. Rate limiting (`express-rate-limit`) y Helmet **ya están activos** (ver `server.js`)
 6. **Cache por-worker** de usuario y escuela (TTL 45s, ver `middleware/cache.js`): reduce load en Mongo pero no se comparte entre workers de PM2 cluster. Cambios de rol/estado/escuela pueden tardar hasta 45s en aplicar en OTRO worker. Ver mitigaciones en el changelog 2026-07-21.
-7. **`public/js/course.js` es compartido por docente y alumno**, pero `views/course.ejs` renderea DOM distinto según el rol (`<% if (course.isTeacher(user._id)) %>`). Todo `document.getElementById(...)` en el **nivel superior** del script debe usar `?.` — si el elemento no existe para ese rol, el `TypeError` corta la ejecución del archivo entero y deja sin inicializar todos los `const`/`let` de más abajo (falla silenciosa, solo visible en la consola del navegador). Ya pasó una vez: ver changelog 2026-07-28 "course.js abortaba entero para el alumno".
-8. ~~El smoke test `directivo-sees-courses-with-metrics` falla contra una BD espejada de producción por paginación.~~ **Arreglado el 2026-07-28**: el test ahora busca el curso con `?search=` en vez de esperarlo en la primera página. La suite quedó en **97/97**.
-9. Las cuatro rutas de detalle del panel directivo (`/courses/:id`, `/students/:id`, `/teachers/:id`, `/divisions/:id`) devuelven **500 en vez de 404 cuando el `:id` no es un ObjectId válido** — `findById` lanza `CastError` y cae en el `catch` genérico. Con un ID válido pero inexistente sí dan 404 correctamente. Fix: `if (!mongoose.isValidObjectId(req.params.id)) return res.status(404)...` al entrar a cada handler. Conviene revisar si el patrón se repite en `routes/admin.js` y `routes/superadmin.js`.
-10. En el listado de divisiones, **la suma de la columna "Alumnos" supera el total de alumnos de la escuela**. No es un error: los alumnos se cuentan únicos *dentro* de cada división, y un alumno puede cursar materias de más de una.
-11. ~~El superadmin entrando a `/admin` ve tres solapas que no llevan a ningún lado (Tema, Tareas y Plantillas, que son POR ESCUELA y él no tiene escuela).~~ **Arreglado el 2026-08-07** con el campo `needsSchool` de `config/sections.js` — ver el changelog de ese día. Las rutas siguen contestando lo mismo si se escribe la URL a mano: lo que cambió es que el nav ya no ofrece la puerta.
-12. **Variables CSS que se usan pero nunca se declaran.** `--background` y `--text-primary, #1a1a2e` se arreglaron el 2026-08-08 (ver el changelog), pero quedan: `--text-primary` sin fallback (47 usos), `--surface-variant` (10), `--divider` (8), y `--hover-bg`, `--success` y `--surface-2` (1 cada una). Para chequear el estado: `grep -rhoE '\bvar\(--[a-zA-Z0-9_-]+' public views | sed 's/var(//' | sort -u` contra los `--nombre:` declarados en `style.css`. Ojo con los falsos positivos: `--card-color` y `--stat-color` **sí** se definen, pero inline en el atributo `style` de la vista. La regla práctica: una `var()` sin declarar en una propiedad **heredada** (`color`) hace que el elemento herede la del padre y suele pasar desapercibida; en una **no heredada** o en un atajo (`background`, `border`) invalida la declaración entera y se pierde el estilo. Por eso `--divider` dentro de `border: 1px solid var(--divider)` deja el borde en `none` — pasa hoy en la textarea de entrega del alumno (`public/js/course.js:1946`).
+8. **Vistas que asumen `user` no nulo.** `res.locals.user` puede ser null aun detrás de `requireAuth`: la cuenta borrada con cookie viva ya la ataja `req.userMissing` (changelog 2026-08-11), pero queda el camino de una consulta a Mongo que falle dentro de `checkUser` — ahí el usuario queda en null a propósito, para no desloguear a toda la escuela por un problema de base. `views/dashboard.ejs` y `views/partials/header.ejs` ya se protegen. **Siguen sin guarda**: `views/profile.ejs` (22 usos), `views/course.ejs` (5) y `views/admin/user-profile.ejs` (2). No se tocaron porque las tres son inalcanzables con `user` en null: sus rutas consultan Mongo ANTES de renderizar, así que una base caída las hace fallar antes de llegar a la vista. Si alguna vez una de esas rutas puede renderizar sin haber consultado, hay que ponerles la guarda primero.
+8. **`public/js/course.js` es compartido por docente y alumno**, pero `views/course.ejs` renderea DOM distinto según el rol (`<% if (course.isTeacher(user._id)) %>`). Todo `document.getElementById(...)` en el **nivel superior** del script debe usar `?.` — si el elemento no existe para ese rol, el `TypeError` corta la ejecución del archivo entero y deja sin inicializar todos los `const`/`let` de más abajo (falla silenciosa, solo visible en la consola del navegador). Ya pasó una vez: ver changelog 2026-07-28 "course.js abortaba entero para el alumno".
+9. ~~El smoke test `directivo-sees-courses-with-metrics` falla contra una BD espejada de producción por paginación.~~ **Arreglado el 2026-07-28**: el test ahora busca el curso con `?search=` en vez de esperarlo en la primera página. La suite quedó en **97/97**.
+10. Las cuatro rutas de detalle del panel directivo (`/courses/:id`, `/students/:id`, `/teachers/:id`, `/divisions/:id`) devuelven **500 en vez de 404 cuando el `:id` no es un ObjectId válido** — `findById` lanza `CastError` y cae en el `catch` genérico. Con un ID válido pero inexistente sí dan 404 correctamente. Fix: `if (!mongoose.isValidObjectId(req.params.id)) return res.status(404)...` al entrar a cada handler. Conviene revisar si el patrón se repite en `routes/admin.js` y `routes/superadmin.js`.
+11. En el listado de divisiones, **la suma de la columna "Alumnos" supera el total de alumnos de la escuela**. No es un error: los alumnos se cuentan únicos *dentro* de cada división, y un alumno puede cursar materias de más de una.
+12. ~~El superadmin entrando a `/admin` ve tres solapas que no llevan a ningún lado (Tema, Tareas y Plantillas, que son POR ESCUELA y él no tiene escuela).~~ **Arreglado el 2026-08-07** con el campo `needsSchool` de `config/sections.js` — ver el changelog de ese día. Las rutas siguen contestando lo mismo si se escribe la URL a mano: lo que cambió es que el nav ya no ofrece la puerta.
+13. **Variables CSS que se usan pero nunca se declaran.** `--background` y `--text-primary, #1a1a2e` se arreglaron el 2026-08-08 (ver el changelog), pero quedan: `--text-primary` sin fallback (47 usos), `--surface-variant` (10), `--divider` (8), y `--hover-bg`, `--success` y `--surface-2` (1 cada una). Para chequear el estado: `grep -rhoE '\bvar\(--[a-zA-Z0-9_-]+' public views | sed 's/var(//' | sort -u` contra los `--nombre:` declarados en `style.css`. Ojo con los falsos positivos: `--card-color` y `--stat-color` **sí** se definen, pero inline en el atributo `style` de la vista. La regla práctica: una `var()` sin declarar en una propiedad **heredada** (`color`) hace que el elemento herede la del padre y suele pasar desapercibida; en una **no heredada** o en un atajo (`background`, `border`) invalida la declaración entera y se pierde el estilo. Por eso `--divider` dentro de `border: 1px solid var(--divider)` deja el borde en `none` — pasa hoy en la textarea de entrega del alumno (`public/js/course.js:1946`).
 
 ---
 
 ## Historial de Cambios (Changelog)
+
+### 2026-08-13 — Rate limit general: 1200 → 12000 cada 15 minutos por IP
+
+**Síntoma**: 429 *"Demasiadas peticiones"* corriendo `test:smoke` y `test:roles` seguidos — la limpieza final de roles quedaba a medias y dejaba usuarios y divisiones de prueba en la base. El mismo techo lo puede tocar la escuela en el arranque de clase.
+
+**El número no es por persona**: toda la escuela sale por **una sola IP pública NAT** (~300 personas), así que el cupo es para todas juntas. Con 1200 tocaban a **4 requests cada 15 minutos por cabeza**, menos que abrir un curso y su solapa de actividades. Con 12000 son ~40, que cubre navegación activa real con margen para el pico de las 7:30.
+
+**Sigue contando por IP**, decisión del usuario. La unidad correcta sería el usuario logueado (es lo que ya hacen los 5 limiters de `middleware/rate-limits.js`), pero `generalLimiter` se monta **antes** de cookie-parser y de `requireAuth`, así que `req.userId` todavía no existe: habría que adelantar cookieParser y verificar el JWT dentro del `keyGenerator`. Queda anotado como la mejora de fondo, sin hacer.
+
+**Qué NO queda desprotegido**: los endpoints caros (subidas, chat de la sala, mensajes, autoasistencia) tienen su propio limiter **por usuario**, y login/registro pasan por `authLimiter` (3000/15min, sin tocar). El general es la red de última instancia contra un script suelto.
+
+**Verificado**: `RateLimit-Policy: 12000;w=900` en la respuesta, y las dos suites corridas **una detrás de la otra sin esperar** — smoke 272/272 y roles sin hallazgos, con la limpieza completa esta vez (7/7 usuarios y la división, que era justo lo que fallaba con 429).
+
+### 2026-08-13 — Las devoluciones del docente se perdían si no ponía nota
+
+**Reclamo de los docentes**: *"cuando está dando devoluciones de los trabajos entregados, no se guardan"*.
+
+**Causa** (`public/js/course.js`, `saveAllGrades`): la recolección iteraba los **inputs de nota** y arrancaba con `if (val === '') return;`. Si el docente escribía el comentario pero no ponía nota — que es lo normal cuando la devolución es la corrección y la nota viene después — la fila entera se descartaba y el comentario **nunca se mandaba al servidor**. Encima, con cero entradas la pantalla igual mostraba *"✓ Notas guardadas"*, así que el docente se iba convencido de que había guardado. La segunda pérdida silenciosa estaba dos líneas más abajo: `if (isNaN(points) || points < 0 || points > max) return;` descartaba también las notas fuera de rango, sin avisar.
+
+**Arreglo, de punta a punta**:
+
+- **`models/Activity.js`** — `grades[].points` deja de ser `required`. Un grade con `points: null` significa *"hay devolución escrita, todavía no hay nota"*. **No requiere migración**: los documentos existentes ya tienen su nota y siguen siendo válidos.
+- **`POST /activities/:id/grade`** — la nota pasa a ser opcional. Si no viene `points`, la nota que ya estuviera cargada **no se toca** (mandar solo la devolución nunca borra una nota). Se agregó validación de rango server-side (antes `Number(points)` aceptaba cualquier cosa, y `Number('')` convertía un campo vacío en un **0**). Rechaza con 400 el body que no trae ni nota ni devolución.
+- **`public/js/devoluciones.js`** (nuevo) — la lógica de "qué filas hay que mandar" salió de course.js a una función pura, para poder testearla sin DOM. Manda solo lo que el docente tocó, y devuelve aparte las notas mal cargadas para poder avisarlas.
+- **Frontend** — la devolución se guarda con o sin nota; las notas inválidas se avisan por alert en vez de desaparecer; el cartel de confirmación dice qué se guardó (o *"No había cambios para guardar"*, en vez de mentir). El botón y la columna pasaron a llamarse "Guardar" y "Devolución al alumno".
+- **Vista del alumno** — una devolución sin nota **no** lo marca como "Calificada": la caja sigue en "Aún no calificado" y el comentario del docente se muestra igual. En "Mis notas" aparece como "Con devolución".
+- **Paneles de directivo y jefatura** — todo lo que cuenta "calificados" ahora filtra por `points != null` en vez de `grades.length` / `$size: 0`. Sin esto, una devolución sin nota habría sacado a la actividad de "vencidas sin calificar" y habría metido un `null` en los promedios (`$divide` con null).
+
+**Tests**: `tests/unit/devoluciones.test.js`, 19 casos. **Verificado revirtiendo el arreglo**: con la recolección vieja fallan 11, entre ellos el del reclamo original. Suite unit completa: 199/199.
+
+**Verificado en el navegador** (docente real de la BD local, curso con 32 alumnos): devolución sin nota → se guarda y sobrevive a la recarga; editar solo la devolución de un alumno ya calificado → conserva su nota; el alumno ve el comentario y la actividad sigue figurando como no calificada.
+
+### 2026-08-11 — Una sesión cuyo usuario fue borrado tiraba 500 en vez de mandar a /login
+
+**Bug de producción** (`logs/error.log`, 14:07:37, IP 186.141.229.186): `GET /courses` → 500 con `TypeError` en `views/dashboard.ejs:32` — *"Cannot read properties of null (reading 'role')"*.
+
+**Causa**: `requireAuth` (middleware/auth.js) solo validaba **firma y vencimiento del JWT**. A quien le borran la cuenta le queda un token **perfectamente válido** hasta 7 días (el `maxAge` de la cookie), así que pasaba la guarda; pero `checkUser` hidrata `res.locals.user` con `getCachedUser()`, que devuelve `null` cuando el documento ya no está en Mongo. La ruta corría con un usuario inexistente y la vista reventaba. `routes/courses.js` ya se cuidaba (`res.locals.user?.role`, líneas 124 y 131); la vista no.
+
+**Arreglo de fondo**: `checkUser` marca `req.userMissing`, limpia ambas cookies y corta; `requireAuth` lo lee y redirige a `/login`, exactamente el mismo mecanismo que ya existía para `req.userDisabled`.
+
+⚠️ **Solo cubre "la consulta respondió y no hay usuario".** Si `getCachedUser` **lanza** (Mongo caído), cae en el catch de siempre, que deja el usuario en null **sin** marcar el flag — a propósito: ante un problema de base no hay que desloguear a toda la escuela ni borrarle la cookie a nadie.
+
+**Defensa en profundidad**: `views/dashboard.ejs` define `const rol = locals.user ? user.role : null` y lo usa en los 5 lugares donde antes hacía `user.role` pelado (el reporte mencionaba 3; había 2 más). Las comparaciones **negativas** llevan además `rol &&`: con `rol` en null, `null !== 'teacher'` daría true y le mostraría botones de administración a una sesión sin usuario.
+
+**Las otras vistas se revisaron y se decidió NO tocarlas** — ver el punto 7 de Issues Conocidos. `profile.ejs` (22 usos), `course.ejs` (5) y `admin/user-profile.ejs` (2) usan `res.locals.user` sin guarda, pero son inalcanzables con null: sus rutas consultan Mongo antes de renderizar, así que el único camino que queda (base caída) las hace fallar antes. Cambiar 29 usos en vistas de alto tráfico para un caso que no puede ocurrir es más riesgo que beneficio.
+
+**Test**: `sesion-de-usuario-borrado` en tests/smoke/specs.js. Crea el usuario, inicia sesión, lo borra **directo en Mongo** (por la API el DELETE del admin también invalidaría la sesión, y lo que hay que reproducir es la cookie que sobrevive a su dueño) y espera 302 a `/login`.
+
+⚠️ **El test NO puede hacer ningún request entre el login y el borrado**: el `userCache` tiene TTL de 45 s por worker, así que una sola navegación dejaría al usuario cacheado y el borrado no se notaría — el test pasaría sin ejercitar nada.
+
+**Verificado revirtiendo el arreglo**: sin él, el test falla con *"esperaba redirección a /login, recibió 200"*. El **200** (y no 500) es el dato interesante: la guarda de la vista sola evita el crash pero deja al usuario borrado **navegando como sesión fantasma**. Hacen falta las dos capas y por motivos distintos. Suite completa: smoke **269/269**, `test:roles` sin hallazgos, unit 169/169, images 17/17.
+
+### 2026-08-11 — Sistema de logs: access log, requestId y los 118 catch que no decían nada
+
+**Pedido**: "quiero que planifiques un log general, para que al momento de que algo así vuelva a fallar se encuentre rápidamente la solución del problema".
+
+**El diagnóstico que lo motivó**: ese mismo día, un reporte de "el login se queda cargando" se llevó dos horas de descartar red, DNS, Funnel, workers, base de datos y endpoint **a mano**, porque no había forma de contestar la pregunta más básica: *¿qué respondió el servidor y en cuánto tiempo?* El estado de partida:
+
+```
+118  catch en routes/ que responden 5xx        →  0 logueaban nada
+  0  access log: el único logging del proyecto era el manejador global de errores
+```
+
+**Etapa 1 — que nada falle en silencio**
+
+1. **`middleware/request-log.js`**: una línea por request con método, ruta, status, duración, pid, usuario e ip. El nivel sale del status (5xx→error, 4xx→warn, resto→info), así que **un 500 que una ruta se tragó en silencio igual queda registrado**. También marca en `warn` las requests que pasan de 2 s aunque respondan 200: una pantalla que tarda 8 segundos está rota para quien la usa y antes no dejaba huella.
+2. **`middleware/route-log.js`** con `logDeRuta()` y `logRechazo()`. Los 118 catch quedaron migrados (74 + 40 + 2 a mano, más 44 `catch {` sin binding que hubo que convertir a `catch (err) {`).
+3. **Los rechazos deliberados se registran**: `fallar()` de la sala y las cinco validaciones de la suplantación. Eran invisibles porque responden con `res.json()` sin lanzar excepción — el manejador global nunca los ve. Así fue como el rechazo de los `.heic` no dejó una sola línea.
+
+**Etapa 2 — que se pueda correlacionar**
+
+4. **`requestId`** (UUID) por request, devuelto en el header **`X-Request-Id`** y presente en toda línea de esa request. Un usuario copia esa referencia de DevTools y `grep <id> logs/combined.log` trae la request entera. El manejador global lo agrega también al cuerpo del error (`ref: …`).
+5. **`pid` en todas las líneas** (config/logger.js). Con 2 workers en cluster, sin esto no se sabe cuál atendió qué — se perdió media hora persiguiendo un "worker zombi" inexistente.
+6. **Timestamp ISO con offset**. Antes era hora local sin zona y había que cruzarla a mano contra el `Date` en GMT de las respuestas HTTP.
+7. **`ecosystem.config.js`: PM2 dejó de escribir en `logs/error.log`**, que era el mismo archivo de winston. Por eso `tail -40 logs/error.log` devolvía casi puros `DeprecationWarning` y había que filtrar con `grep '"level":"error"'`. Ahora: `error.log`/`combined.log` son de winston, `pm2-error.log`/`pm2-out.log` del proceso.
+
+⚠️ **Al desplegar esto, `pm2 restart classroom` NO alcanza** para el punto 7: ese comando reusa la configuración guardada. Va `pm2 restart ecosystem.config.js --update-env`.
+
+**Dos decisiones que evitan que el log se vuelva inservible** — el modo de falla más común de un logging es ahogarse en su propio ruido:
+
+- **Rutas ruidosas** (`/health`, el poll de la sala, estáticos por carpeta y por extensión, y todo `HEAD`) se registran **solo si fallan**. El poll es el caso extremo: 30 alumnos preguntando cada 4 s son ~450 requests por minuto de una sola clase. Se detectó verificando: el preview local pegaba un `HEAD /` cada 200 ms y en un minuto no se veía otra cosa.
+- **El 503 del modo mantenimiento no es un error.** Durante una ventana rebota la plataforma entera, así que contarlo como error sepultaría `error.log` en alarmas falsas justo el día que más hace falta leerlo. Se marca con `res.locals.mantenimiento`.
+
+**Verificación**: `test:unit` 169/169, `test:images` 17/17, **smoke 268/268**, y —lo que importa— esa corrida completa dejó **658 líneas con 0 de nivel error**. Un log en el que una corrida limpia no genera errores es un log en el que un error significa algo.
+
+**Volumen**: 658 líneas (~130 KB) por corrida de smoke. Con uso real de la escuela esto crece rápido y **todavía no hay rotación** — es la etapa 4 del plan, junto con la captura de errores del navegador (lo único que cubriría un problema del lado del cliente, como se sospechó de la sala en vivo).
+
+### 2026-08-11 — Las fotos de iPhone (.heic) ya se pueden subir, y el límite de imagen pasó a 20 MB
+
+**Pedido**: "uno de los profesores además intentó subir un archivo de imagen y documentos pero no funcionó tampoco en la sala del chat".
+
+**Causa**: `EXT_IMAGENES` (config/imagePresets.js) no incluía `.heic`, que es **el formato por defecto de la cámara del iPhone desde iOS 11**. El input de la sala es `accept="image/*"`, así que el teléfono dejaba elegir la foto y el rechazo llegaba recién en el servidor.
+
+**Lo que lo volvía indiagnosticable**: cuando el `fileFilter` de multer rechaza por extensión, deja `req.file` vacío, y `routes/rooms.js` respondía **"No se recibió ninguna imagen"** — un mensaje que culpa al usuario de no haber adjuntado nada cuando sí adjuntó. El POST de *archivo* sí listaba los formatos aceptados; el de *imagen*, no. Por eso el reporte fue "no funcionó" a secas.
+
+Y no dejaba rastro: los rechazos salen por `fallar()`, que hace `res.status(400).json(...)` **sin lanzar excepción**, así que el manejador global nunca lo ve y `error.log` queda mudo. Un log vacío NO significaba que no hubiera pasado nada.
+
+**Cambios**:
+1. `.heic` y `.heif` agregados a `EXT_IMAGENES`. Salen convertidos a WebP como cualquier otra imagen: el HEIC nunca queda publicado tal cual, así que al alumno le llega algo que su navegador entiende.
+2. `MAX_INPUT_BYTES` de 8 → **20 MB**. Con 8 MB rebotaban fotos de celulares actuales, y era **menor que el límite de los `.zip` de la sala (20 MB)** — siendo que la foto se recomprime a ~100 KB y el zip se guarda entero. Ahora coinciden.
+3. El mensaje de `routes/rooms.js` ahora lista los formatos aceptados, igual que el de archivo.
+4. `accept` actualizado en el avatar (`views/profile.ejs`) y la portada de materia (`views/course.ejs`), que tenían listas explícitas sin HEIC.
+
+**El riesgo que quedó cubierto**: leer HEIC depende de que el libvips del binario de sharp traiga el códec, y **eso varía por plataforma** — el de desarrollo (Windows) puede no coincidir con el de producción (Linux). Verificado localmente: `sharp.format.heif.input.file === true`. Ojo con la asimetría al diagnosticar: **escribir** HEIC casi nunca está disponible (`heifsave: Unsupported compression`, el codificador HEVC tiene patentes) pero **leerlo** sí; acá solo hace falta leer.
+
+Si en producción faltara, `optimizar()` no da el genérico "no es una imagen válida" —que acusaría a una foto perfectamente buena— sino **"Volvé a enviarla como JPG: Ajustes → Cámara → Formatos → Más compatible"**. La severidad del log distingue los dos casos, y la distinción es el punto: `ERROR` solo si falta el loader (problema de instalación, hay que ir al servidor), `WARN` si el loader está y falló el archivo. Loguear "falta el códec" ante cualquier `.heic` roto llenaría `error.log` de alarmas falsas.
+
+**Tests**: `npm run test:images` 17/17 (dos nuevos: las extensiones aceptadas con el límite, y que un `.heic` ilegible dé el mensaje accionable). `npm run test:unit` 169/169.
 
 ### 2026-08-11 — Las solapas del superadmin dejaron de moverse al cambiar de sección
 
@@ -2427,6 +2563,53 @@ Dos arreglos. **El nombre**: "Abrir ventana" pasó a **"Que la den los alumnos"*
 
 **Dos trampas que costaron una vuelta cada una**: el rango de fechas se valida antes de tocar la base (un rango invertido o malformado da 400, no una consulta sin límites contra la colección más grande del sistema); y el BOM del CSV **no se puede verificar desde el smoke**, porque el decoder de `fetch()` se lo come al llamar a `res.text()` — se testea a nivel string en los unitarios.
 
+## Actividad desde la clase en vivo + "Actividades del día" de preceptoría (2026-08-12)
+
+Spec: `specs/actividades-en-clase.spec.md` (aprobada el 2026-08-12).
+
+Dos mitades de un mismo pedido. La primera: **la docente puede dejar la consigna sin salir de la clase**. Al lado del chat de la sala en vivo hay ahora un botón "Crear actividad" que abre el mismo modal de siempre; la actividad queda en la solapa **Actividades** de esa materia como cualquier otra. La segunda: **preceptoría ve, en un calendario del mes, qué materias dejaron actividad cada día** — `/preceptor/actividades`, con el detalle del día al costado.
+
+**Lo que NO se agregó, y es lo que mantiene la feature chica**: ningún campo en `Activity`, ninguna colección, ninguna migración, ningún índice. **La base de producción no se toca.** Todo se apoya en `createdAt`, que ya estaba. Eso salió de tres decisiones del usuario:
+
+- **Cuenta cualquier actividad del día**, no solo la creada desde la sala. El botón del chat es un atajo para crearla, no una categoría aparte: una materia que subió la tarea por el camino de siempre figura igual como "subió". Sin esa decisión hacía falta un campo `roomSession` en el modelo.
+- **Un calendario por curso**, con selector arriba — mismo criterio que la solapa Asistencia.
+- **El vínculo con la clase es un aviso en el chat**, no una marca en la tarjeta: al crearla desde la sala se publica un mensaje de sistema ("*Fulana creó la actividad «X»*") que queda en la transcripción de esa clase.
+
+**Cero formulario nuevo.** La solapa "En vivo" vive dentro de `views/course.ejs`, que ya tenía el modal de creación completo —título, tipo, consigna, entrega, "disponible desde", puntos, adjuntos y links— con su `createActivity()` en `public/js/course.js`. Estaba **sin punto de entrada** desde que el "+" flotante pasó a llevar al formulario de página completa (`/activities/new`): código vivo y mantenido que no abría nadie. El botón de la sala lo reusa tal cual, marcando de dónde salió el pedido (`fromRoom`). Lo único que el modal no ofrece y sí ofrece el formulario grande son las **plantillas** de tareas; para dejar una consigna en el momento no hacía falta.
+
+El `locals.enLaMateria` del partial no es una precaución de más: `views/partials/live-room.ejs` lo usan **dos** contenedores, y en `views/rooms/standalone.ejs` —por donde entran dirección y preceptoría— ese modal no existe.
+
+**El aviso del chat es accionable** (agregado el mismo día, a pedido del usuario): trae un botón chico **"Ver actividad"** que abre la actividad. Con JS **no recarga** —la solapa "En vivo" y la de Actividades son la misma página, así que el detalle se abre ahí mismo sin sacar a nadie de la clase— pero es un `<a href>` de verdad, con el mismo patrón que la lupa de las imágenes: el link es el respaldo (teclado, botón derecho, "abrir en pestaña nueva") y el handler es el comportamiento normal. De paso quedó el **link directo `/courses/:id?actividad=<id>`**, que abre la solapa Actividades y el detalle al cargar — un paso hacia el "deeplink por actividad" que estaba en el roadmap.
+
+El mismo botón está **en la transcripción de la clase archivada** (`views/rooms/session.ejs`): media razón para volver a abrir una clase vieja es encontrar lo que se dejó ese día. Ahí el criterio de quién lo ve se calcula en el servidor (`puedeAbrirMateria = esGestor || esAlumno`) y no por el contenedor, porque esa vista sí la comparten las dos audiencias.
+
+Eso sí suma **un campo**: `RoomMessage.activity` (ref, opcional, `null` por default, sin índice). El id va como dato y no adentro del texto del mensaje: con la URL escrita en el texto habría que parsear el aviso para pintar el botón, y cualquier cambio de rutas rompería los mensajes ya guardados. **No necesita migración ni backfill**: los mensajes anteriores quedan en `null` y se pintan como siempre. El botón **no se pinta en la sala suelta** (dirección y preceptoría), porque el link va a `/courses/:id` y ahí esos roles reciben 403 — un botón que lleva a una pared es peor que no tenerlo. Y como el aviso pasó de `textContent` a `innerHTML` para poder llevarlo, el texto va escapado sí o sí: adentro viaja el título de la actividad, que lo escribió una persona.
+
+**El aviso lo decide el servidor, nunca el cliente.** El id de la sesión no se toma del body: se resuelve con la sala abierta de ese curso. Del otro lado hay el chat de un curso de menores, y un id que viene del navegador es una invitación a escribir en la clase de al lado. Si no hay sala abierta, no hay aviso y la actividad se crea igual. Y va con su propio `try/catch`: la actividad ya está creada, así que **un error al escribir en el chat no puede voltear la respuesta** ni dejar a la docente creyendo que no se guardó nada.
+
+**El día se decide en la zona de la escuela**, con el mismo `diaEscolar()` de `services/liveRoom.js` que archiva la asistencia. Producción corre en UTC: una actividad cargada 21:30 de Buenos Aires caería en la celda del día siguiente. En el resumen del mes eso se resuelve con un `$dateToString` con `timezone` en el aggregate y una ventana de fechas **holgada** (±1 día) en el `$match` — el rango solo tiene que ser lo bastante ancho como para no dejar nada afuera; el corte fino lo hace el bucketing. Así no hay que calcular a mano el desfasaje ni su cambio por horario de verano.
+
+**Lo que la pantalla del día NO dice**: qué materias *deberían* haber subido. El sistema no tiene horario escolar —no hay dato de qué materias tienen clase un martes—, así que lista **todas** las materias del curso partidas en "Subieron" / "No subieron". Ponerle expectativa a eso es lo que el usuario dejó explícitamente para después.
+
+**Solapa** `preceptor_actividades`, apagable por escuela desde `/superadmin/roles`, y **de solo lectura**: no hay ni un POST en esa parte del router, igual que el panel de jefatura. **Tests**: 7 unitarios de la grilla del calendario (`tests/unit/actividadesDelDia.test.js`), 3 smoke nuevos y la sección nueva sumada al toggle de la matriz de roles.
+
+## La docente "cerraba" la sala sin cerrarla (2026-08-13)
+
+Reclamo del usuario: la docente abre la sala en vivo, se va a **Novedades** o **Actividades** —solapas de la misma pantalla— y los alumnos, preceptoría y dirección ven que **cerró la clase**. No la cerraba: la sala seguía abierta en la base y los paneles la seguían listando "en vivo". Lo que pasaba es que **desaparecía de la lista de conectados**, y una sala con la docente afuera se lee como una clase terminada.
+
+**La causa**: `aLaVista()` corta el poll de la sala cuando la solapa "En vivo" no está visible —existe para que abrir la materia no marque presente a cualquiera que la tenga abierta— y sin poll no se refresca el `lastPingAt`. A los 45 s el servidor la da por desconectada. Medido antes de tocar nada: con la sala abierta y la docente en Novedades, el poll de la alumna devolvía `estado: abierta` y `conectados: [la propia alumna]`.
+
+**El arreglo son dos mitades, y las dos hacen falta**:
+
+1. **Latido en el cliente** (`views/partials/live-room.ejs`): cada 20 s, **solo para quien gestiona la sala**, y solo cuando el poll normal no está corriendo. Manda el mismo `/poll` y tira la respuesta —`seq` no se toca, así que los mensajes se piden enteros cuando la sala vuelve a estar a la vista.
+2. **Ventana de presencia de 3 minutos para el personal** (`STAFF_ONLINE_WINDOW_MS` en `services/liveRoom.js`), contra los 45 s de los alumnos. Salió en 2 y el usuario la subió a 3 el mismo día: son ~3 latidos throttleados de margen, así que hacen falta tres seguidos perdidos —y no uno— para que la docente desaparezca de la sala.
+
+Por qué la segunda: el primer intento fue solo el latido y **no alcanzó** — se vio al medirlo. Con la pestaña del navegador en segundo plano el navegador baja los `setInterval` a uno por minuto, más lento que la ventana de 45 s: el latido llegaba tarde y la docente parpadeaba dentro y fuera de la sala. Verificado después del arreglo: con la docente 90 s en Novedades, su último ping era de hace 62 s (o sea, el latido corrió throttleado) y `presenceSummary` la seguía dando conectada.
+
+**La ventana de los alumnos no se toca, y esa asimetría es el punto.** El "N de M presentes" es un dato de la clase que se mira segundo a segundo y tiene que seguir siendo fiel; si un alumno latiera desde Novedades, contaría como presente cualquiera que tenga la materia abierta — justo lo que `aLaVista()` existe para evitar. La presencia del personal no alimenta ningún conteo (solo dice quién está a cargo), así que ahí la tolerancia no falsea ningún número. Y sigue siendo honesta: dice "pingueó hace menos de 3 minutos", no "está"; una máquina apagada se cae igual, un rato después.
+
+**Tests**: 4 unitarios nuevos en `tests/unit/liveRoom.test.js` (42/42). Van ahí y no al smoke porque dependen del paso del tiempo: hay que poder inyectar el `now` en vez de esperar 90 segundos por request.
+
 ## Plan de Futuras Actualizaciones (Roadmap)
 
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`). Resumen de lo pendiente:
@@ -2458,7 +2641,7 @@ Dos arreglos. **El nombre**: "Abrir ventana" pasó a **"Que la den los alumnos"*
 
 ### Funcionalidades faltantes — mediana complejidad
 - Export del gradebook completo (todos los alumnos × todas las actividades).
-- Deeplink directo a una actividad (URL propia por actividad).
+- Deeplink directo a una actividad (URL propia por actividad). **A medias desde el 2026-08-12**: existe `/courses/:id?actividad=<id>`, que abre la solapa Actividades y el detalle al cargar (lo usa el botón "Ver actividad" del chat de la sala). Falta la URL propia de verdad — `/activities/:id` con su vista, para poder compartirla sin depender del curso.
 - Vista "Mis entregas" consolidada cross-curso para el alumno.
 - Link al perfil del alumno desde el tab Personas.
 - Impersonación desde el superadmin.

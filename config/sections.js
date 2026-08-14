@@ -80,6 +80,10 @@ const SECTIONS = [
   // La toma de asistencia del día, por curso. También configurable: hay escuelas donde la
   // asistencia la lleva otro sistema y ofrecerla al pedo confunde más de lo que ayuda.
   { key: 'preceptor_asistencia', panel: 'preceptor', label: 'Asistencia', icon: 'fact_check', path: '/preceptor/asistencia', roles: ['preceptor', 'directivo', 'admin', 'superadmin'] },
+  // Calendario del mes por curso: qué materias dejaron actividad cada día. También configurable
+  // y por el mismo motivo que Asistencia: es seguimiento de la producción docente, y hay escuelas
+  // donde eso lo mira dirección y no preceptoría.
+  { key: 'preceptor_actividades', panel: 'preceptor', label: 'Actividades del día', icon: 'calendar_month', path: '/preceptor/actividades', roles: ['preceptor', 'directivo', 'admin', 'superadmin'] },
 
   // ── Panel Jefatura de Sección (base: middleware/jefatura.js ROLES_CON_ACCESO) ──
   // 'Actividades' es la pantalla de entrada del panel, por eso va locked (ver la INVARIANTE

@@ -105,7 +105,9 @@ router.get('/', async (req, res, next) => {
 
     // Los tres estados se expresan en Mongo para poder paginar de verdad. "Sin calificar"
     // es el que importa: vencida y sin una sola nota puesta.
-    if (estado === 'sin-calificar')  Object.assign(filtro, { dueDate: { $lt: now, $ne: null }, grades: { $size: 0 } });
+    // "Sin calificar" = sin ningún grade CON NOTA. Un grade con points null es una devolución
+    // escrita sin nota, así que la actividad sigue estando sin calificar.
+    if (estado === 'sin-calificar')  Object.assign(filtro, { dueDate: { $lt: now, $ne: null }, grades: { $not: { $elemMatch: { points: { $ne: null } } } } });
     else if (estado === 'vencidas')  Object.assign(filtro, { dueDate: { $lt: now, $ne: null } });
     else if (estado === 'en-curso')  filtro.$or = [{ dueDate: null }, { dueDate: { $gte: now } }];
 
@@ -147,7 +149,7 @@ router.get('/', async (req, res, next) => {
       dueDate:    a.dueDate,
       overdue:    !!a.dueDate && a.dueDate < now,
       submitted:  entregasPorActividad[a._id.toString()] || 0,
-      graded:     (a.grades || []).length,
+      graded:     (a.grades || []).filter(g => g.points != null).length, // sin devoluciones sin nota
     }));
 
     const queryParams = {
@@ -216,7 +218,7 @@ router.get('/actividades/:id', async (req, res, next) => {
         tarde:   !!(cuando && vence && cuando > vence),
         // Se incorporó después de que venciera: no se le puede reprochar la falta.
         tardio:  !entrega && !!(alta && vence && alta > vence),
-        nota:    nota ? nota.points : null,
+        nota:    nota?.points ?? null, // null también cuando hay devolución escrita sin nota
         feedback: nota ? nota.feedback : '',
       };
     });
@@ -270,7 +272,7 @@ router.get('/docentes', async (req, res, next) => {
         { $group: { _id: '$author', n: { $sum: 1 } } },
       ]),
       Activity.aggregate([
-        { $match: { course: { $in: idsAlcance }, dueDate: { $lt: now, $ne: null }, grades: { $size: 0 } } },
+        { $match: { course: { $in: idsAlcance }, dueDate: { $lt: now, $ne: null }, grades: { $not: { $elemMatch: { points: { $ne: null } } } } } },
         { $group: { _id: '$author', n: { $sum: 1 } } },
       ]),
       Activity.aggregate([
@@ -364,7 +366,7 @@ router.get('/docentes/:id', async (req, res, next) => {
       dueDate:    a.dueDate,
       overdue:    !!a.dueDate && a.dueDate < now,
       submitted:  entregasPorActividad[a._id.toString()] || 0,
-      graded:     (a.grades || []).length,
+      graded:     (a.grades || []).filter(g => g.points != null).length, // sin devoluciones sin nota
     }));
 
     // Serie mensual: creadas (por autoría) contra corregidas (por fecha de calificación).

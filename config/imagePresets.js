@@ -69,10 +69,32 @@ const PRESETS = {
 // Extensiones que aceptamos como entrada. La validación REAL de que el archivo es una
 // imagen la hace sharp al decodificarlo (ver services/imageOptimizer.js); esta lista solo
 // descarta lo obvio antes de leer el cuerpo de la request.
-const EXT_IMAGENES = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+//
+// `.heic`/`.heif` van desde el 2026-08-11: es el formato por defecto de la cámara del
+// iPhone desde iOS 11, así que una docente que saca la foto y la sube desde el teléfono
+// manda un .heic sin enterarse. Antes lo rechazábamos por extensión y el cartel que veía
+// era "No se recibió ninguna imagen", que no explica nada — el caso real que motivó esto.
+//
+// Salen convertidos a WebP como cualquier otra imagen, así que al alumno le llega un
+// formato que su navegador entiende: el HEIC nunca queda publicado tal cual.
+const EXT_IMAGENES = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic', '.heif'];
+
+// Extensiones cuya decodificación depende de que libvips traiga el códec HEVC. Se listan
+// aparte porque el modo de falla es distinto al de un archivo corrupto y el mensaje al
+// usuario tiene que decirle qué hacer (ver imageOptimizer.js).
+const EXT_DEPENDEN_DE_CODEC = ['.heic', '.heif'];
 
 // Tamaño máximo de ENTRADA. Es alto a propósito: la salida se comprime a ~40 KB, así que
 // no hay motivo para castigar a alguien que sube la foto tal cual sale del celular.
-const MAX_INPUT_BYTES = 8 * 1024 * 1024;
+//
+// Subido de 8 a 20 MB el 2026-08-11. Con 8 MB rebotaban fotos de celulares actuales (12 MP
+// en HDR pasa los 8 MB sin esfuerzo) y quedaba la asimetría absurda de que un .zip de 20 MB
+// entraba y una foto de 9 MB no — siendo que la foto se recomprime a ~100 KB y el .zip se
+// guarda entero. Ahora los dos límites coinciden.
+//
+// El costo es RAM: multer usa memoryStorage, así que son hasta 20 MB por request en vuelo
+// (ver middleware/image-upload.js). Con el uploadLimiter y el volumen de la escuela, entra
+// de sobra en los 2 workers.
+const MAX_INPUT_BYTES = 20 * 1024 * 1024;
 
-module.exports = { PRESETS, EXT_IMAGENES, MAX_INPUT_BYTES };
+module.exports = { PRESETS, EXT_IMAGENES, EXT_DEPENDEN_DE_CODEC, MAX_INPUT_BYTES };

@@ -14,6 +14,7 @@ const MessageRecipient = require('../models/MessageRecipient');
 const { requireAuth }         = require('../middleware/auth');
 const { logAudit }            = require('../middleware/audit');
 const { messageReplyLimiter } = require('../middleware/rate-limits');
+const { logDeRuta } = require('../middleware/route-log');
 
 const { hilo, esperaAlDestinatario, puedeResponderElUsuario, cuantosMensajes, MAX_MENSAJES } =
   require('../services/messageThread');
@@ -66,7 +67,8 @@ router.get('/mine', async (req, res) => {
       }));
 
     res.json({ messages });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error al cargar tus mensajes' });
   }
 });
@@ -91,7 +93,8 @@ router.post('/mine/:recipientId/read', async (req, res) => {
       );
     }
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -141,7 +144,8 @@ router.post('/mine/:recipientId/reply', messageReplyLimiter, async (req, res) =>
     );
 
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'No se pudo enviar tu respuesta' });
   }
 });

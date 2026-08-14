@@ -16,6 +16,7 @@ const ActivityTemplate       = require('../models/ActivityTemplate');
 const TemplateAssignment     = require('../models/TemplateAssignment');
 const School                 = require('../models/School');
 const { computeAutoGrade }   = require('../services/autoGrader');
+const { logDeRuta } = require('../middleware/route-log');
 
 // El builder del cliente genera ids temporales "tmp-*" para preguntas, opciones,
 // match items, etc. Antes de guardar, tenemos que asignarles ObjectIds reales
@@ -90,6 +91,7 @@ router.get('/', async (req, res) => {
     };
     res.render('superadmin/tasks/index', { templates, stats });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -115,6 +117,7 @@ router.get('/assign', async (req, res) => {
     for (const a of assignments) byPair[`${a.template}|${a.school}`] = a;
     res.render('superadmin/tasks/assign', { templates, schools, byPair });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -126,6 +129,7 @@ router.get('/:id', async (req, res) => {
     if (!t) return res.status(404).json({ error: 'Plantilla no encontrada' });
     res.json({ template: t });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -137,6 +141,7 @@ router.get('/:id/edit', async (req, res) => {
     if (!t) return res.status(404).send('Plantilla no encontrada');
     res.render('superadmin/tasks/builder', { template: t });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -148,6 +153,7 @@ router.get('/:id/preview', async (req, res) => {
     if (!t) return res.status(404).send('Plantilla no encontrada');
     res.render('superadmin/tasks/preview', { template: t });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -161,6 +167,7 @@ router.post('/:id/preview-grade', async (req, res) => {
     const result = computeAutoGrade(t.questions || [], req.body.answers || []);
     res.json({ result });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -187,6 +194,7 @@ router.post('/', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -212,6 +220,7 @@ router.put('/:id', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -231,6 +240,7 @@ router.post('/:id/publish', async (req, res) => {
     );
     res.json({ template: t });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -246,6 +256,7 @@ router.post('/:id/archive', async (req, res) => {
     );
     res.json({ template: t });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -280,6 +291,7 @@ router.post('/:id/offer', async (req, res) => {
     );
     res.json({ assignment: a });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -303,6 +315,7 @@ router.post('/:id/revoke', async (req, res) => {
     );
     res.json({ ok: true });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -328,6 +341,7 @@ router.delete('/:id', async (req, res) => {
     );
     res.json({ ok: true });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

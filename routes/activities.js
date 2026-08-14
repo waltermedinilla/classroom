@@ -18,6 +18,12 @@ const { uploadLimiter } = require('../middleware/rate-limits');
 const ActivityTemplate   = require('../models/ActivityTemplate');
 const TemplateAssignment = require('../models/TemplateAssignment');
 const { computeAutoGrade } = require('../services/autoGrader');
+const { logDeRuta } = require('../middleware/route-log');
+// Sala en vivo: SOLO para avisar en el chat cuando la actividad se creó desde la clase
+// (POST /create con fromRoom). Es la única parte de este router que sabe que las salas existen,
+// y está acotada a un bloque con su propio try/catch — ver specs/actividades-en-clase.spec.md.
+const RoomSession = require('../models/RoomSession');
+const live        = require('../services/liveRoom');
 
 // Adjuntos del docente: dentro de /public (acceso estático directo)
 // Estructura: public/archivos/{schoolId}/actividades/{courseId}/{filename}
@@ -200,7 +206,9 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
         const obj = act.toObject();
         // Para el alumno: extrae solo su propia calificación del array grades y borra el resto
         const myGrade = act.grades.find(g => g.student.toString() === userId);
-        obj.myGrade = myGrade ? { points: myGrade.points, feedback: myGrade.feedback || '' } : null;
+        // points puede venir null: es una devolución escrita sin nota. El front la muestra
+        // como "Con devolución" (no como calificada) — ver renderStudentActivity en course.js.
+        obj.myGrade = myGrade ? { points: myGrade.points ?? null, feedback: myGrade.feedback || '' } : null;
         delete obj.grades; // No exponer notas de otros alumnos
         // Si es una actividad interactiva, filtrar las respuestas correctas del snapshot
         // (el autoGrader corre siempre server-side; el alumno nunca las necesita ver).
@@ -212,7 +220,8 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
     }
 
     res.json({ activities: result, isOwner });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error al cargar actividades' });
   }
 });
@@ -263,6 +272,7 @@ router.get('/available-templates', requireAuth, async (req, res) => {
 
     res.json({ templates });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -353,6 +363,31 @@ router.post('/create', requireAuth, uploadLimiter, upload.array('files', 10), as
 
     await activity.populate('author', 'name');
 
+    // Creada desde el botón de la sala en vivo: la clase se entera en el chat, en el momento.
+    //
+    // La sesión se resuelve ACÁ y no se toma del body: el cliente puede mandar cualquier id, y
+    // del otro lado hay el chat de un curso de menores. Sin sala abierta simplemente no hay
+    // aviso — crear una actividad nunca exigió estar en clase.
+    //
+    // El try/catch propio es el punto: la actividad YA está creada. Que falle escribir en el
+    // chat no puede voltear la respuesta ni dejar al docente creyendo que no se guardó nada.
+    let avisadaEnSala = false;
+    if (req.body.fromRoom) {
+      try {
+        const session = await RoomSession.findOne({ course: course._id, closedAt: null });
+        if (session) {
+          const titulo = activity.title.length > 80 ? activity.title.slice(0, 79) + '…' : activity.title;
+          // El id va aparte del texto: es lo que le permite a la sala pintar el botón
+          // "Ver actividad" sin tener que parsear el mensaje (ver models/RoomMessage.js).
+          await live.systemMessage(session, `${res.locals.user.name} creó la actividad «${titulo}».`,
+            { activity: activity._id });
+          avisadaEnSala = true;
+        }
+      } catch (e) {
+        logDeRuta(e, res);
+      }
+    }
+
     logAudit(req, 'activity.create',
       [
         { type: 'activity', id: activity._id, name: activity.title },
@@ -362,6 +397,7 @@ router.post('/create', requireAuth, uploadLimiter, upload.array('files', 10), as
         tipo:      activity.type,
         adjuntos:  attachments.length,
         ...(activity.points != null ? { puntos: activity.points } : {}),
+        ...(avisadaEnSala ? { desdeSala: true } : {}),
       },
     );
 
@@ -423,6 +459,7 @@ router.post('/upload-attachment', requireAuth, uploadLimiter, (req, res, next) =
     res.json({ url, name: fixFilenameEncoding(req.file.originalname), mime: req.file.mimetype });
   } catch (err) {
     if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }
+    logDeRuta(err, res);
     res.status(500).json({ error: err.message || 'Error al subir el archivo' });
   }
 });
@@ -476,7 +513,8 @@ router.get('/my-pending', requireAuth, requireSection('app_pending'), async (req
     });
 
     res.render('activities/pending', { pending });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -511,15 +549,20 @@ router.get('/:id/grades', requireAuth, async (req, res) => {
     }));
 
     res.json({ activity, studentGrades });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error al cargar calificaciones' });
   }
 });
 
 // POST /activities/:id/grade
-// Guarda o actualiza la nota y el feedback de un alumno (solo el docente owner)
-// Body: { studentId, points, feedback? }
+// Guarda o actualiza la nota y/o la devolución escrita de un alumno (solo el docente owner)
+// Body: { studentId, points?, feedback? }
 // Upsert manual: si ya existe un registro de ese alumno lo actualiza, si no lo inserta
+//
+// La nota es OPCIONAL: el docente puede mandar solo `feedback` para dejar una devolución
+// sin calificar todavía. Si `points` no viene, la nota que ya estuviera cargada NO se toca
+// (mandar solo feedback nunca borra una nota existente).
 router.post('/:id/grade', requireAuth, async (req, res) => {
   try {
     const { studentId, points, feedback } = req.body;
@@ -531,14 +574,37 @@ router.post('/:id/grade', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Sin acceso' });
     }
 
+    // '' / null / undefined = "no manda nota". Ojo con Number(''), que da 0 y antes
+    // convertía un campo vacío en un flamante cero.
+    const mandaNota = points !== undefined && points !== null && String(points).trim() !== '';
+    if (!mandaNota && feedback === undefined) {
+      return res.status(400).json({ error: 'No hay nota ni devolución para guardar' });
+    }
+
+    let nota;
+    if (mandaNota) {
+      nota = Number(points);
+      if (!Number.isFinite(nota) || nota < 0) {
+        return res.status(400).json({ error: 'La nota tiene que ser un número mayor o igual a 0' });
+      }
+      if (activity.points != null && nota > activity.points) {
+        return res.status(400).json({ error: `La nota no puede superar el máximo de la actividad (${activity.points})` });
+      }
+    }
+
     const existing = activity.grades.find(g => g.student.toString() === studentId);
     if (existing) {
-      existing.points   = Number(points);
+      if (mandaNota) existing.points = nota;
       existing.gradedAt = new Date();
       existing.manual   = true; // el docente sobrescribe → protege contra re-autocalificación
       if (feedback !== undefined) existing.feedback = feedback.trim();
     } else {
-      activity.grades.push({ student: studentId, points: Number(points), feedback: (feedback || '').trim(), manual: true });
+      activity.grades.push({
+        student:  studentId,
+        points:   mandaNota ? nota : null, // null = devolución sin nota
+        feedback: (feedback || '').trim(),
+        manual:   true,
+      });
     }
 
     await activity.save();
@@ -552,8 +618,10 @@ router.post('/:id/grade', requireAuth, async (req, res) => {
         { type: 'course',   id: course._id,   name: course.name },
       ],
       {
-        puntos: Number(points),
-        ...(activity.points != null ? { maximo: activity.points } : {}),
+        // Sin nota el registro es una devolución escrita: se loguea como tal en vez de un 0 falso
+        ...(mandaNota
+          ? { puntos: nota, ...(activity.points != null ? { maximo: activity.points } : {}) }
+          : { devolucion: 'sin nota' }),
       },
     );
 
@@ -622,6 +690,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error al eliminar: ' + err.message });
   }
 });
@@ -650,7 +719,8 @@ router.patch('/:id/toggle-late', requireAuth, async (req, res) => {
     );
 
     res.json({ allowLateSubmissions: activity.allowLateSubmissions });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -725,7 +795,8 @@ router.get('/submission-file/:filename', requireAuth, async (req, res) => {
     const disposition = req.query.dl === '1' ? 'attachment' : 'inline';
     res.setHeader('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(file.name)}`);
     res.sendFile(filePath);
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -751,7 +822,8 @@ router.get('/:id/staged-file/:filename', requireAuth, async (req, res) => {
     const disposition = req.query.dl === '1' ? 'attachment' : 'inline';
     res.setHeader('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(safeName)}`);
     res.sendFile(filePath);
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -810,6 +882,7 @@ router.post('/:id/upload-submission-file', requireAuth, uploadLimiter, (req, res
     });
   } catch (err) {
     if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }
+    logDeRuta(err, res);
     res.status(500).json({ error: err.message || 'Error al subir el archivo' });
   }
 });
@@ -979,6 +1052,7 @@ router.post('/:id/submit', requireAuth, uploadLimiter, conditionalMultipart, asy
   } catch (err) {
     // Si multer subió archivos antes de que falle el proceso, los limpia del disco
     (req.files || []).forEach(f => { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); });
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error al enviar la entrega: ' + err.message });
   }
 });
@@ -1036,6 +1110,7 @@ router.get('/:id/export-grades', requireAuth, async (req, res) => {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buf);
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error al generar el archivo: ' + err.message);
   }
 });
@@ -1050,7 +1125,8 @@ router.get('/:id/my-submission', requireAuth, async (req, res) => {
       student:  res.locals.user._id,
     });
     res.json({ submission: submission || null });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -1073,7 +1149,8 @@ router.get('/:id/submissions', requireAuth, async (req, res) => {
       .sort({ updatedAt: -1 }); // Las más recientes primero
 
     res.json({ submissions });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -1110,7 +1187,8 @@ router.post('/:id/view', requireAuth, async (req, res) => {
     );
     // No se audita: es alto volumen y de bajo valor forense.
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -1133,7 +1211,8 @@ router.get('/:id/views', requireAuth, async (req, res) => {
       .sort({ firstViewedAt: 1 }); // Los primeros en abrirla, primero
 
     res.json({ views });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

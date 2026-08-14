@@ -20,4 +20,10 @@
     Asistencia
   </a>
   <% } %>
+  <% if (puede('preceptor_actividades')) { %>
+  <a href="/preceptor/actividades" class="admin-nav-item <%= activePage === 'actividades' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">calendar_month</span>
+    Actividades del día
+  </a>
+  <% } %>
 </nav>

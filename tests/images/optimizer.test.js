@@ -14,7 +14,7 @@ const assert = require('node:assert');
 const sharp  = require('sharp');
 
 const { optimizar, ImagenInvalidaError } = require('../../services/imageOptimizer');
-const { PRESETS } = require('../../config/imagePresets');
+const { PRESETS, EXT_IMAGENES, MAX_INPUT_BYTES } = require('../../config/imagePresets');
 
 // Genera algo que se comporte como una FOTO real frente al compresor.
 //
@@ -207,6 +207,37 @@ describe('imageOptimizer', () => {
 
     await assert.rejects(() => optimizar(basura, 'avatar', 'falso.png', { tolerante: true }),
       (err) => err instanceof ImagenInvalidaError);
+  });
+
+  test('acepta las fotos de iPhone (.heic/.heif) y da 20 MB de margen de entrada', () => {
+    // Caso real del 2026-08-11: una docente subió a la sala una foto sacada con el iPhone
+    // y la rebotamos por extensión. El iPhone graba .heic por defecto desde iOS 11, así
+    // que "sacar la foto y subirla" era un camino roto para media escuela.
+    for (const ext of ['.heic', '.heif']) {
+      assert.ok(EXT_IMAGENES.includes(ext), `${ext} tiene que estar aceptada`);
+    }
+    // El límite viejo (8 MB) rebotaba fotos de celulares actuales, y era MENOR que el de
+    // los .zip de la sala (20 MB) — siendo que la foto se recomprime a ~100 KB.
+    assert.strictEqual(MAX_INPUT_BYTES, 20 * 1024 * 1024);
+  });
+
+  test('un .heic ilegible explica qué hacer, en vez del genérico "no es una imagen válida"', async () => {
+    // El riesgo que cubre: si el libvips del servidor viniera sin el códec HEVC, la foto
+    // sería válida y aun así fallaría. El mensaje tiene que dar la salida (reenviar como
+    // JPG) en lugar de acusar al archivo, que es lo que haría el camino genérico.
+    const noEsHeic = Buffer.from('esto no es un HEIC, por más .heic que le pongas');
+
+    await assert.rejects(
+      () => optimizar(noEsHeic, 'sala', 'IMG_4821.heic'),
+      (err) => {
+        assert.ok(err instanceof ImagenInvalidaError, 'debe ser ImagenInvalidaError');
+        assert.strictEqual(err.status, 400, 'es culpa del archivo, no del servidor: 400');
+        assert.match(err.message, /JPG/, 'debe decirle al usuario cómo salir del paso');
+        assert.doesNotMatch(err.message, /no es una imagen válida/,
+          'el mensaje genérico no sirve acá: la foto SÍ es una imagen');
+        return true;
+      },
+    );
   });
 
   test('falla ruidosamente ante un preset inexistente (error de programación, no del usuario)', async () => {

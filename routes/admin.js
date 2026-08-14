@@ -32,6 +32,7 @@ const School   = require('../models/School');
 const THEMES   = require('../config/themes');
 const ActivityTemplate   = require('../models/ActivityTemplate');
 const TemplateAssignment = require('../models/TemplateAssignment');
+const { logDeRuta, logRechazo } = require('../middleware/route-log');
 
 // Rutas base de archivos en disco (deben coincidir con las de routes/activities.js
 // y routes/announcements.js) para poder eliminar los archivos físicos en la cascada.
@@ -298,6 +299,7 @@ router.post('/users/create', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -388,6 +390,7 @@ router.post('/users/:id/divisions', async (req, res) => {
       count: target.assignedDivisions.length,
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -468,6 +471,7 @@ router.post('/users/:id/courses', async (req, res) => {
       suplente:  suplenteFinal,
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -499,6 +503,7 @@ router.post('/users/:id/role', async (req, res) => {
 
     res.json({ user });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -529,6 +534,7 @@ router.post('/users/:id/toggle-active', async (req, res) => {
 
     res.json({ active: target.active });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -556,6 +562,7 @@ router.post('/users/:id/reset-password', async (req, res) => {
 
     res.json({ ok: true, hint: target.dni ? 'DNI del usuario' : 'Classroom1234' });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -605,6 +612,7 @@ router.post('/users/:id/delete', async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -613,18 +621,27 @@ router.post('/users/:id/delete', async (req, res) => {
 router.post('/users/:id/impersonate', async (req, res) => {
   try {
     const school = res.locals.user.school;
+    // Cada rechazo deja constancia del MOTIVO, no solo del código. Esta ruta era el punto
+    // ciego más grande del proyecto: su `catch` respondía 500 sin loguear y sus cinco
+    // validaciones devolvían 4xx en silencio, así que ante un "no me deja suplantar" no
+    // había manera de saber cuál había saltado — tres de ellas comparten el código 400.
+    const rechazar = (status, motivo) => {
+      logRechazo(res, status, motivo, { destino: req.params.id });
+      return res.status(status).json({ error: motivo });
+    };
+
     const target = await User.findById(req.params.id);
-    if (!target) return res.status(404).json({ error: 'Usuario no encontrado' });
+    if (!target) return rechazar(404, 'Usuario no encontrado');
     if (target.email === PROTECTED_ADMIN_EMAIL || target.role === 'superadmin') {
-      return res.status(400).json({ error: 'No puedes suplantar a este usuario' });
+      return rechazar(400, 'No puedes suplantar a este usuario');
     }
     if (target.active === false) {
-      return res.status(400).json({ error: 'No podés suplantar a un usuario deshabilitado' });
+      return rechazar(400, 'No podés suplantar a un usuario deshabilitado');
     }
     if (school && target.school?.toString() !== school.toString()) {
-      return res.status(403).json({ error: 'Sin acceso' });
+      return rechazar(403, 'Sin acceso');
     }
-    if (req.params.id === req.userId) return res.status(400).json({ error: 'Ya eres este usuario' });
+    if (req.params.id === req.userId) return rechazar(400, 'Ya eres este usuario');
     const twoHours = 2 * 60 * 60 * 1000;
     const impersonateOpts = { httpOnly: true, maxAge: twoHours, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' };
     res.cookie('adminToken', req.cookies.token, impersonateOpts);
@@ -639,6 +656,7 @@ router.post('/users/:id/impersonate', async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -750,6 +768,7 @@ router.post('/courses/create', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -810,6 +829,7 @@ router.post('/courses/:id/edit', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -843,6 +863,7 @@ router.post('/courses/:id/assign-teacher', async (req, res) => {
 
     res.json({ teacherName: teacher.name, teacherId: teacher._id });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -881,6 +902,7 @@ router.post('/courses/:id/co-teachers', async (req, res) => {
 
     res.json({ teacher: { _id: teacher._id, name: teacher.name, email: teacher.email } });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -918,6 +940,7 @@ router.post('/courses/:id/co-teachers/:teacherId/delete', async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -942,6 +965,7 @@ router.post('/courses/:id/delete', async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -986,6 +1010,7 @@ router.post('/divisions/create', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -1020,6 +1045,7 @@ router.post('/divisions/:id/edit', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -1049,6 +1075,7 @@ router.post('/divisions/:id/delete', async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -1183,6 +1210,7 @@ router.post('/secciones/create', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -1216,6 +1244,7 @@ router.post('/secciones/:id/edit', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -1239,6 +1268,7 @@ router.post('/secciones/:id/delete', async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -1293,6 +1323,7 @@ router.post('/subjects/create', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -1327,6 +1358,7 @@ router.post('/subjects/:id/edit', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -1361,6 +1393,7 @@ router.post('/subjects/:id/delete', async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -1818,7 +1851,8 @@ router.post('/theme/respond', requireAuth, requireAdmin, async (req, res) => {
     );
     invalidateSchool(res.locals.user.school);
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -1844,6 +1878,7 @@ router.get('/task-templates', requireAuth, requireAdmin, async (req, res) => {
     const rows = assignments.filter(a => a.template);
     res.render('admin/task-templates/index', { assignments: rows, activePage: 'task-templates' });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -1873,6 +1908,7 @@ router.post('/task-templates/respond', requireAuth, requireAdmin, async (req, re
     );
     res.json({ assignment: a });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -1887,7 +1923,8 @@ router.get('/tasks', requireAuth, requireAdmin, async (req, res) => {
     const school = await School.findById(res.locals.user.school).select('name settings');
     if (!school) return res.status(404).send('Escuela no encontrada');
     res.render('admin/tasks/index', { school, activePage: 'tasks' });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -1922,7 +1959,8 @@ router.post('/tasks/settings', requireAuth, requireAdmin, async (req, res) => {
       { ajuste: key, valor: boolValue },
     );
     res.json({ ok: true, settings: school.settings });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

@@ -1,0 +1,248 @@
+<%# Actividades del día: calendario del mes por curso + detalle del día al costado.
+    Ver specs/actividades-en-clase.spec.md. %>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Actividades del día - Preceptoría - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/preceptor-nav', { activePage: 'actividades' }) %>
+
+    <style>
+      .ad-layout { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; align-items:start; }
+      .ad-card { background:#fff; border:1px solid #dadce0; border-radius:12px; padding:16px; }
+
+      .ad-barra { display:flex; justify-content:space-between; align-items:center; gap:12px;
+                  flex-wrap:wrap; margin-bottom:14px; }
+      .ad-curso select { font-size:14px; padding:8px 10px; border:1px solid #dadce0;
+                         border-radius:8px; font-family:inherit; background:#fff; }
+      .ad-mes { display:flex; align-items:center; gap:6px; }
+      .ad-mes b { font-size:15px; text-transform:uppercase; letter-spacing:.5px; min-width:150px;
+                  text-align:center; }
+      .ad-nav { display:flex; align-items:center; justify-content:center; width:34px; height:34px;
+                border:1px solid #dadce0; border-radius:50%; color:#5f6368; text-decoration:none; }
+      .ad-nav:hover { background:#f8f9fa; }
+
+      .ad-grid { display:grid; grid-template-columns:repeat(7, 1fr); gap:6px; }
+      .ad-dow { font-size:11px; font-weight:600; letter-spacing:.4px; color:#5f6368;
+                text-align:center; padding:6px 0; text-transform:uppercase; }
+      .ad-dow .corto { display:none; }
+
+      <%# Cada celda es un <button>: se llega con el teclado y se entiende que es clickeable.
+          Las de relleno y las de días futuros son <div>, no botones — no hay nada que abrir. %>
+      .ad-celda { aspect-ratio:1/1.05; border:1px solid #dadce0; border-radius:8px; background:#fff;
+                  padding:6px; display:flex; flex-direction:column; align-items:flex-start; gap:4px;
+                  font-family:inherit; cursor:pointer; text-align:left; }
+      .ad-celda:hover { background:#f8f9fa; border-color:#1a73e8; }
+      .ad-celda.sel { border-color:#1a73e8; box-shadow:0 0 0 1px #1a73e8; background:#e8f0fe; }
+      .ad-celda.vacia { border:none; background:transparent; cursor:default; }
+      .ad-celda.futuro { background:#fafafa; color:#bdc1c6; cursor:default; }
+      .ad-celda.hoy .ad-num { background:#1a73e8; color:#fff; border-radius:50%;
+                              width:22px; height:22px; display:flex; align-items:center;
+                              justify-content:center; }
+      .ad-num { font-size:13px; font-weight:500; color:#202124; }
+      .ad-celda.futuro .ad-num { color:#bdc1c6; }
+      .ad-chip { font-size:10px; padding:2px 6px; border-radius:10px; background:#e8f0fe;
+                 color:#174ea6; font-weight:600; }
+      .ad-chip.todas { background:#e6f4ea; color:#137333; }
+
+      .ad-panel h3 { font-size:15px; margin:0 0 2px; }
+      .ad-panel .sub { font-size:12px; color:#5f6368; margin-bottom:12px; }
+      .ad-bloque { margin-bottom:14px; }
+      .ad-bloque > .tit { font-size:12px; font-weight:600; letter-spacing:.3px; color:#5f6368;
+                          text-transform:uppercase; margin-bottom:6px; }
+      .ad-mat { border:1px solid #f1f3f4; border-radius:8px; padding:8px 10px; margin-bottom:6px; }
+      .ad-mat.no { border-style:dashed; color:#5f6368; }
+      .ad-mat .nom { font-size:14px; font-weight:500; color:#202124; }
+      .ad-mat .doc { font-size:12px; color:#5f6368; }
+      .ad-act { font-size:12px; color:#3c4043; margin-top:5px; padding-left:8px;
+                border-left:2px solid #1a73e8; }
+      .ad-act .hora { color:#80868b; }
+      .ad-hint { font-size:13px; color:#5f6368; text-align:center; padding:22px 8px; }
+
+      @media (max-width: 900px) {
+        .ad-layout { grid-template-columns:minmax(0,1fr); }
+        .ad-dow .largo { display:none; }
+        .ad-dow .corto { display:inline; }
+        .ad-celda { aspect-ratio:1/1; padding:4px; }
+        .ad-chip { font-size:9px; padding:1px 4px; }
+      }
+    </style>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Actividades del día</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Qué materias dejaron actividad cada día
+          <% if (scopeAll) { %>
+            <span class="badge" style="background:#e8f0fe;color:#1a73e8;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;margin-left:6px">TODOS LOS CURSOS</span>
+          <% } %>
+        </p>
+      </div>
+    </div>
+
+    <div class="ad-layout">
+      <div class="ad-card">
+        <div class="ad-barra">
+          <div class="ad-curso">
+            <% if (divisiones.length > 1) { %>
+              <select id="adCurso" aria-label="Curso">
+                <% divisiones.forEach(d => { %>
+                  <option value="<%= d._id %>" <%= String(d._id) === String(divisionId) ? 'selected' : '' %>><%= d.name %></option>
+                <% }) %>
+              </select>
+            <% } else { %>
+              <strong style="font-size:16px"><%= division ? division.name : '' %></strong>
+            <% } %>
+          </div>
+          <div class="ad-mes">
+            <a class="ad-nav" href="?division=<%= divisionId %>&mes=<%= mesAnterior %>" title="Mes anterior" aria-label="Mes anterior">
+              <span class="material-symbols-outlined">chevron_left</span>
+            </a>
+            <b><%= mesNombre %></b>
+            <a class="ad-nav" href="?division=<%= divisionId %>&mes=<%= mesSiguiente %>" title="Mes siguiente" aria-label="Mes siguiente">
+              <span class="material-symbols-outlined">chevron_right</span>
+            </a>
+          </div>
+        </div>
+
+        <% if (!totalMaterias) { %>
+          <div class="ad-hint">Este curso todavía no tiene materias cargadas.</div>
+        <% } else { %>
+          <div class="ad-grid">
+            <% ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'].forEach(d => { %>
+              <div class="ad-dow"><span class="largo"><%= d %></span><span class="corto"><%= d.slice(0,3) %></span></div>
+            <% }) %>
+
+            <% semanas.forEach(semana => { semana.forEach(celda => { %>
+              <% if (!celda) { %>
+                <div class="ad-celda vacia"></div>
+              <% } else if (celda.dia > hoy) { %>
+                <%# Los días que todavía no pasaron no se abren: no hay nada que contestar sobre
+                    mañana, y un panel vacío se leería como "no subieron". %>
+                <div class="ad-celda futuro"><span class="ad-num"><%= celda.numero %></span></div>
+              <% } else { %>
+                <% const info = porDia[celda.dia]; %>
+                <button type="button" class="ad-celda <%= celda.dia === hoy ? 'hoy' : '' %>" data-dia="<%= celda.dia %>">
+                  <span class="ad-num"><%= celda.numero %></span>
+                  <% if (info) { %>
+                    <span class="ad-chip <%= info.materias === totalMaterias ? 'todas' : '' %>"><%= info.materias %>/<%= totalMaterias %></span>
+                  <% } %>
+                </button>
+              <% } %>
+            <% }) }) %>
+          </div>
+        <% } %>
+      </div>
+
+      <aside class="ad-card ad-panel" id="adPanel">
+        <div class="ad-hint">Tocá un día del calendario para ver qué materias subieron actividad.</div>
+      </aside>
+    </div>
+  </main>
+
+  <%- include('../partials/footer') %>
+
+  <script>
+  (function () {
+    var DIVISION = '<%= divisionId %>';
+    var HOY      = '<%= hoy %>';
+    var MES      = '<%= mes %>';
+    var panel    = document.getElementById('adPanel');
+
+    var curso = document.getElementById('adCurso');
+    if (curso) {
+      // Cambiar de curso recarga la pantalla con el mismo mes: el calendario es del curso, no al
+      // revés. Se pierde el día seleccionado a propósito — es de otro curso.
+      curso.addEventListener('change', function () {
+        location.href = '?division=' + encodeURIComponent(curso.value) + '&mes=' + encodeURIComponent(MES);
+      });
+    }
+
+    var esc = function (s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    };
+
+    var TIPOS = { tarea: 'Tarea', evaluacion: 'Evaluación', tp: 'Trabajo Práctico' };
+
+    function fechaLarga(dia) {
+      // Se arma en UTC a propósito: `dia` es una fecha de calendario ya resuelta por el servidor
+      // en la zona de la escuela, no un instante. Interpretarla en la zona del equipo la correría
+      // un día en las máquinas del aula, que tienen cualquier zona configurada.
+      var d = new Date(dia + 'T00:00:00Z');
+      return d.toLocaleDateString('es-AR', {
+        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC',
+      });
+    }
+
+    function pintar(dia, data) {
+      var html = '<h3>' + esc(fechaLarga(dia)) + '</h3>' +
+                 '<p class="sub">' + data.subieron.length + ' de ' + data.totalMaterias + ' materias subieron actividad</p>';
+
+      if (data.subieron.length) {
+        html += '<div class="ad-bloque"><div class="tit">Subieron</div>';
+        data.subieron.forEach(function (m) {
+          html += '<div class="ad-mat">' +
+                    '<div class="nom">' + esc(m.materia) + '</div>' +
+                    (m.docente ? '<div class="doc">' + esc(m.docente) + '</div>' : '');
+          m.actividades.forEach(function (a) {
+            html += '<div class="ad-act">' + esc(a.titulo) +
+                    ' · ' + esc(TIPOS[a.tipo] || a.tipo) +
+                    ' <span class="hora">' + esc(a.hora) + '</span></div>';
+          });
+          html += '</div>';
+        });
+        html += '</div>';
+      }
+
+      if (data.noSubieron.length) {
+        html += '<div class="ad-bloque"><div class="tit">No subieron</div>';
+        data.noSubieron.forEach(function (m) {
+          html += '<div class="ad-mat no">' +
+                    '<div class="nom">' + esc(m.materia) + '</div>' +
+                    (m.docente ? '<div class="doc">' + esc(m.docente) + '</div>' : '') +
+                  '</div>';
+        });
+        html += '</div>';
+      }
+
+      if (!data.totalMaterias) html += '<div class="ad-hint">Este curso no tiene materias cargadas.</div>';
+      panel.innerHTML = html;
+    }
+
+    async function abrir(dia, celda) {
+      document.querySelectorAll('.ad-celda.sel').forEach(function (c) { c.classList.remove('sel'); });
+      if (celda) celda.classList.add('sel');
+      panel.innerHTML = '<div class="ad-hint">Cargando…</div>';
+      try {
+        var r = await fetch('/preceptor/actividades/' + DIVISION + '/dia/' + dia, {
+          headers: { Accept: 'application/json' },
+        });
+        if (!r.ok) throw new Error('No se pudo cargar el día');
+        pintar(dia, await r.json());
+      } catch (e) {
+        panel.innerHTML = '<div class="ad-hint">No se pudo cargar el día. Probá de nuevo.</div>';
+      }
+    }
+
+    document.querySelectorAll('.ad-celda[data-dia]').forEach(function (celda) {
+      celda.addEventListener('click', function () { abrir(celda.dataset.dia, celda); });
+    });
+
+    // Si el mes que se está mirando es el actual, arranca en el día de hoy: es la pregunta que
+    // trae al preceptor a esta pantalla nueve de cada diez veces.
+    var celdaHoy = document.querySelector('.ad-celda[data-dia="' + HOY + '"]');
+    if (celdaHoy) abrir(HOY, celdaHoy);
+  })();
+  </script>
+</body>
+</html>

@@ -17,6 +17,7 @@ const { requireAuth }        = require('../middleware/auth');
 const { requireSuperAdmin }  = require('../middleware/superadmin');
 const { logAudit }           = require('../middleware/audit');
 const { messageSendLimiter } = require('../middleware/rate-limits');
+const { logDeRuta } = require('../middleware/route-log');
 
 const {
   ROLES_VALIDOS, construirFiltroGrupo, hayAlgoElegido, resolverDestinatarios,
@@ -154,7 +155,8 @@ router.get('/', async (req, res) => {
       MAX_BODY,
       MAX_SUBJECT,
     });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -179,7 +181,8 @@ router.get('/preview', async (req, res) => {
       .select('dni name role').lean();
 
     res.json({ total: destinatarios.length, porRol, muestra });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'No se pudo calcular el alcance' });
   }
 });
@@ -205,7 +208,8 @@ router.get('/users', async (req, res) => {
       .lean();
 
     res.json({ users });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error al buscar' });
   }
 });
@@ -280,7 +284,7 @@ router.post('/', messageSendLimiter, async (req, res) => {
     );
 
     res.status(201).json({ ok: true, id: creado._id, destinatarios: insertados });
-  } catch {
+  } catch (err) {
     // Un envío sin destinatarios no sirve para nada y ensucia el panel: si el insert falló,
     // el mensaje se va con él.
     if (creado) {
@@ -289,6 +293,7 @@ router.post('/', messageSendLimiter, async (req, res) => {
         await Message.deleteOne({ _id: creado._id });
       } catch { /* si tampoco se puede limpiar, queda el 500 igual */ }
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'No se pudo enviar el mensaje' });
   }
 });
@@ -341,7 +346,8 @@ router.get('/:id', async (req, res) => {
       audienciaTexto: describirAudiencia(mensaje.audience, res.locals.roleNames),
       MAX_BODY,
     });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -378,7 +384,8 @@ router.post('/:id/reply', async (req, res) => {
     );
 
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'No se pudo enviar la respuesta' });
   }
 });
@@ -404,7 +411,8 @@ router.patch('/:id/replies', async (req, res) => {
     );
 
     res.json({ ok: true, allowReplies });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -429,7 +437,8 @@ router.delete('/:id', async (req, res) => {
     );
 
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'No se pudo eliminar el mensaje' });
   }
 });

@@ -17,7 +17,7 @@
 // rutas guardan el original sin tocar). Se pierde la optimización, no el servicio.
 const path   = require('path');
 const logger = require('../config/logger');
-const { PRESETS } = require('../config/imagePresets');
+const { PRESETS, EXT_DEPENDEN_DE_CODEC } = require('../config/imagePresets');
 
 let sharp = null;
 let sharpError = null;
@@ -33,6 +33,19 @@ try {
 
 function sharpDisponible() {
   return sharp !== null;
+}
+
+// ¿Este libvips sabe LEER HEIC/HEIF? Se consulta a sharp en vez de asumirlo: el soporte
+// depende del binario precompilado de cada plataforma, y el de desarrollo (Windows) puede
+// no coincidir con el de producción (Linux).
+//
+// Ojo con la asimetría, que confunde al diagnosticar: ESCRIBIR HEIC casi nunca está
+// disponible (el codificador HEVC tiene patentes; sharp tira "heifsave: Unsupported
+// compression"), pero LEERLO normalmente sí. Acá solo nos importa leer — nunca generamos
+// HEIC, todo sale convertido a WebP.
+function heifSoportado() {
+  return Boolean(sharp && sharp.format && sharp.format.heif && sharp.format.heif.input
+    && (sharp.format.heif.input.buffer || sharp.format.heif.input.file));
 }
 
 // `failOn` decide con qué nivel de problema sharp aborta la decodificación. El default es
@@ -88,6 +101,31 @@ async function optimizar(buffer, presetName, originalname = '', { tolerante = fa
   try {
     metadata = await sharp(buffer, opciones).metadata();
   } catch (err) {
+    // HEIC/HEIF dependen de que libvips traiga el códec HEVC, y eso varía según el binario
+    // precompilado de sharp de cada plataforma. El usuario no tiene forma de adivinar por
+    // qué le rechazamos una foto que su teléfono muestra perfecto, así que el mensaje le
+    // dice qué hacer — sirve igual si el códec falta o si la foto vino cortada.
+    //
+    // La SEVERIDAD del log sí distingue los dos casos, y la distinción importa: si loguearas
+    // "falta el códec" ante cualquier .heic roto, error.log se llenaría de alarmas falsas y
+    // dejaría de servir para lo único que tiene que servir (ver [[logging]] en agente.md).
+    //   - loader ausente  → ERROR: problema de INSTALACIÓN, hay que ir al servidor.
+    //   - loader presente → WARN:  el archivo es el problema, el servidor está bien.
+    if (EXT_DEPENDEN_DE_CODEC.includes(extOriginal)) {
+      const datos = { detalle: err.message, archivo: extOriginal, preset: presetName };
+      if (!heifSoportado()) {
+        logger.error('El servidor no puede decodificar HEIC/HEIF: libvips vino sin el loader', {
+          ...datos,
+          accion: 'en el servidor: node -e "console.log(require(\'sharp\').format.heif)"',
+        });
+      } else {
+        logger.warn('No se pudo decodificar un HEIC/HEIF (el loader está disponible)', datos);
+      }
+      throw new ImagenInvalidaError(
+        'No pudimos leer esta foto de iPhone. Volvé a enviarla como JPG: en el iPhone, ' +
+        'Ajustes → Cámara → Formatos → "Más compatible".',
+        err.message);
+    }
     // sharp no pudo ni leer la cabecera: esto NO es una imagen, por más que la extensión
     // y el Content-Type digan lo contrario. Antes de esto, el fileFilter de multer miraba
     // solo la extensión, así que un archivo arbitrario renombrado a .jpg terminaba guardado

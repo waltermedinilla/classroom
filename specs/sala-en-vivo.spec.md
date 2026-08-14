@@ -344,6 +344,24 @@ apunte a la URL correcta — el partial de tarjetas es uno solo (RN-27).
   `User.lastSeen` para esto: ese campo es global (`middleware/auth.js:59-66`, throttle de
   1 min) y dice "está en la plataforma", no "está en esta clase".
 
+- **RN-05b — El PERSONAL se mide con una ventana de 3 minutos, no de 45 s**
+  (`STAFF_ONLINE_WINDOW_MS`). Agregada el **2026-08-13** por un reclamo del usuario: la docente
+  abría la sala, se iba a Novedades o Actividades —solapas de la misma página— y a los 45 s
+  desaparecía de la sala para todos, que se lee como *"cerró la clase"*. La sala nunca se
+  cerraba: el poll se corta cuando la solapa En vivo no está a la vista (ver `aLaVista()`), y
+  sin poll no hay ping.
+  Se arregla con **dos mitades que se necesitan**: un **latido** en el cliente (cada 20 s, solo
+  para quien gestiona la sala, y solo cuando el poll normal no está corriendo) y esta ventana
+  más larga en el servidor. La ventana hace falta porque con la pestaña del navegador en
+  segundo plano el navegador baja los timers a uno por minuto: con 45 s, el latido throttleado
+  llegaría tarde y la docente parpadearía dentro y fuera de la sala. Arrancó en 2 minutos y el
+  usuario la subió a **3** el mismo día: son ~3 latidos throttleados de margen, así que hacen
+  falta tres seguidos perdidos —y no uno— para que desaparezca de la sala.
+  **La ventana de los alumnos NO se toca**: ese número es el "N de M presentes" de la clase y
+  tiene que seguir siendo fiel. La presencia del personal no alimenta ningún conteo (RN-07),
+  solo dice quién está a cargo. Y sigue siendo honesta: dice "pingueó hace menos de 3 minutos",
+  no "está" — una máquina apagada se cae igual, un rato después.
+
 - **RN-06 — La presencia se acumula, no se pisa.** `touchPresence` hace upsert con
   `$setOnInsert: {firstSeenAt}`, `$set: {lastPingAt}`, `$inc: {pings:1}`. Un alumno que entra,
   se cae y vuelve tiene **un** documento, con su primer ingreso intacto. El tiempo estimado de
@@ -584,6 +602,10 @@ Auditables (van a `config/audit-actions.js`): CU-01, CU-05, CU-06, CU-08, CU-12,
 - **CA-14** — Dado un alumno que dejó de pollear hace 60 s, entonces desaparece de
   `conectados`, aparece en `ausentes`, y su `RoomPresence` **sigue existiendo** con su
   `firstSeenAt` (estuvo, aunque ahora no esté).
+- **CA-14b** — Dada una docente con la sala abierta que se va a otra solapa de su materia,
+  cuando pasan 90 s, entonces **sigue en `conectados`** para alumnos y supervisión (RN-05b),
+  mientras que un alumno con ese mismo último ping ya no. Pasada su ventana (3 minutos), la
+  docente también se cae: es una tolerancia, no un "siempre presente".
 - **CA-15** — Dada una sesión cerrada, cuando se consulta el historial, entonces la lista de
   quiénes estuvieron es la misma que había al cerrarla.
 

@@ -752,13 +752,20 @@ function renderAttachmentPreviews() {
 }
 
 /* ─── Crear Actividad ─── */
-function openActivityModal() {
+// `desdeSala` lo manda el botón "Crear actividad" de la sala en vivo (views/partials/live-room.ejs).
+// Es el MISMO modal: lo único que cambia es que el servidor, al crearla, avisa en el chat de la
+// clase. Se guarda en una variable en vez de en un campo del form porque el modal se reutiliza y
+// un input oculto quedaría marcado para la creación siguiente.
+let activityFromRoom = false;
+function openActivityModal(desdeSala) {
+  activityFromRoom = !!desdeSala;
   document.getElementById('activityModal').classList.add('show');
   document.getElementById('activityTitle').focus();
 }
 
 // Cierra y resetea completamente el modal de creación (limpia arrays de adjuntos locales)
 function closeActivityModal() {
+  activityFromRoom = false;
   document.getElementById('activityModal').classList.remove('show');
   ['activityTitle', 'activityDesc', 'activityDueDate', 'activityPoints', 'activityAvailableFrom']
     .forEach(id => { document.getElementById(id).value = ''; });
@@ -795,9 +802,14 @@ async function createActivity() {
   btn.disabled    = true;
   btn.textContent = 'Creando...';
 
+  // Se copia ANTES del fetch: closeActivityModal() resetea la bandera, y para cuando hay que
+  // refrescar la sala el modal ya se cerró.
+  const desdeSala = activityFromRoom;
+
   const fd = new FormData();
   fd.append('courseId',       window.COURSE_ID);
   fd.append('title',          title);
+  if (desdeSala) fd.append('fromRoom', '1');
   fd.append('type',           document.getElementById('activityType').value || 'tarea');
   fd.append('description',    document.getElementById('activityDesc').value.trim());
   fd.append('dueDate',        document.getElementById('activityDueDate').value || '');
@@ -833,6 +845,10 @@ async function createActivity() {
     if (empty) empty.remove();
     container.prepend(streamEl);
   }
+
+  // El aviso en el chat lo escribe el servidor al crear la actividad; esto solo adelanta el poll
+  // de la sala para que se vea ya, y no dentro de cuatro segundos.
+  if (desdeSala && typeof window.lrRefrescar === 'function') window.lrRefrescar();
 }
 
 /* ─── Pestaña Actividades ─── */
@@ -926,7 +942,8 @@ function addStudentActivityCard(act) {
 
   const now       = new Date();
   const isOverdue = act.dueDate && new Date(act.dueDate) < now;
-  const isGraded  = act.myGrade != null;
+  // Con points null hay devolución escrita pero todavía no hay nota: no es "Calificada"
+  const isGraded  = act.myGrade?.points != null;
 
   // Lógica de estado: calificada > vencida cerrada > tardía abierta > pendiente
   let statusChip, gradeText = '';
@@ -1412,6 +1429,33 @@ function closeActivityDetail() {
   document.getElementById('activityDetailModal').classList.remove('show');
 }
 
+// Abre una actividad desde afuera de la solapa: la usan el botón "Ver actividad" del chat de
+// la sala en vivo y el link directo ?actividad=<id>.
+//
+// No alcanza con openActivityDetail(): el detalle se arma sobre window._activities, que se
+// llena recién cuando la solapa Actividades se carga. Un alumno que toca el botón estando en
+// "En vivo" nunca la abrió, así que primero hay que traer la lista.
+//
+// Se carga ANTES de cambiar de solapa a propósito: loadActivitiesTab() deja
+// _activitiesTabLoaded en true, y así el click de la solapa no dispara una segunda carga
+// contra el mismo contenedor.
+async function abrirActividad(activityId) {
+  if (!activityId) return;
+  if (!window._activities[activityId]) await loadActivitiesTab();
+
+  const tab = document.querySelector('.tab[data-tab="activities"]');
+  if (tab && !tab.classList.contains('active')) tab.click();
+
+  // Puede no estar: el docente la borró, o la programó con "disponible desde" a futuro y el
+  // alumno todavía no la ve (GET /activities/course/:id se las filtra). Decirlo es mejor que
+  // abrir un modal vacío.
+  if (!window._activities[activityId]) {
+    alert('Esa actividad ya no está disponible.');
+    return;
+  }
+  openActivityDetail(activityId);
+}
+
 document.getElementById('activityDetailModal')?.addEventListener('click', function (e) {
   if (e.target === this) closeActivityDetail();
 });
@@ -1514,11 +1558,22 @@ async function loadTeacherDetail(activityId) {
       <thead><tr>
         <th class="gt-col-student">Alumno</th>
         <th class="gt-col-grade">Nota${activity.points != null ? `<span class="gt-pts-max"> / ${activity.points}</span>` : ''}</th>
-        <th class="gt-col-feedback">Feedback al alumno</th>
+        <th class="gt-col-feedback">Devolución al alumno</th>
         <th class="gt-col-view">Visto</th>
         <th class="gt-col-sub">Entrega</th>
       </tr></thead>
       <tbody>`;
+
+    // Snapshot de lo que había al abrir el modal: saveAllGrades manda solo las filas tocadas.
+    // Se guarda acá (y no en data-attributes) porque el feedback puede traer comillas y saltos
+    // de línea que en un atributo HTML habría que escapar a mano.
+    window._devolucionesOriginales = {};
+    studentGrades.forEach(sg => {
+      window._devolucionesOriginales[sg._id] = {
+        nota:     sg.points ?? '',
+        feedback: sg.feedback || '',
+      };
+    });
 
     studentGrades.forEach(sg => {
       const sub          = subMap[sg._id];
@@ -1627,12 +1682,12 @@ async function loadTeacherDetail(activityId) {
     html += `</tbody></table></div>
       ${statsHtml}
       <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px;margin-top:20px">
-        <span class="grade-saved" id="gs-all" style="font-size:13px">✓ Notas guardadas</span>
+        <span class="grade-saved" id="gs-all" style="font-size:13px">✓ Guardado</span>
         <button class="btn btn-outline" onclick="exportGrades('${activity._id}')">
           <span class="material-symbols-outlined">download</span> Exportar Excel
         </button>
         <button class="btn btn-primary" onclick="saveAllGrades('${activity._id}',${activity.points || 9999})">
-          <span class="material-symbols-outlined">save</span> Guardar notas
+          <span class="material-symbols-outlined">save</span> Guardar
         </button>
       </div>`;
   }
@@ -1640,25 +1695,40 @@ async function loadTeacherDetail(activityId) {
   body.innerHTML = html;
 }
 
-// Guarda todas las notas visibles en el modal de detalle de una sola vez
-// Itera los inputs de nota, valida rango y hace una request por cada nota no vacía
+// Guarda de una sola vez las notas Y las devoluciones escritas del modal de detalle.
+// Manda una request por fila tocada; la devolución se guarda aunque la nota esté vacía
+// (ver public/js/devoluciones.js para la lógica de qué se manda y qué no).
 async function saveAllGrades(activityId, max) {
   const inputs  = document.querySelectorAll('#detailBody .grade-input[data-student]');
   const btn     = document.querySelector('#detailBody .btn-primary');
   const savedEl = document.getElementById('gs-all');
+  const previos = window._devolucionesOriginales || {};
 
-  // Recolecta notas válidas y el feedback asociado a cada alumno
-  const entries = [];
+  // Arma una fila por alumno con lo que hay ahora y lo que había al abrir el modal
+  const filas = [];
   inputs.forEach(input => {
-    const val    = input.value.trim();
-    if (val === '') return;
-    const points = Number(val);
-    if (isNaN(points) || points < 0 || points > max) return;
-    const feedbackEl = document.querySelector(`.feedback-input[data-student="${input.dataset.student}"]`);
-    entries.push({ studentId: input.dataset.student, points, feedback: feedbackEl?.value?.trim() || '' });
+    const studentId  = input.dataset.student;
+    const feedbackEl = document.querySelector(`.feedback-input[data-student="${studentId}"]`);
+    filas.push({
+      studentId,
+      nombre:         input.closest('tr')?.querySelector('.gt-student-name')?.textContent || '',
+      nota:           input.value,
+      feedback:       feedbackEl?.value || '',
+      notaPrevia:     previos[studentId]?.nota ?? '',
+      feedbackPrevia: previos[studentId]?.feedback ?? '',
+    });
   });
 
-  if (entries.length === 0) {
+  const { guardar, invalidas } = recolectarDevoluciones(filas, max);
+
+  // Antes las notas mal cargadas se descartaban sin decir nada
+  if (invalidas.length) {
+    alert('Estas notas quedaron fuera de rango (0 a ' + max + ') y no se guardaron:\n' +
+      invalidas.map(i => `• ${i.nombre || i.studentId}: ${i.nota}`).join('\n'));
+  }
+
+  if (guardar.length === 0) {
+    savedEl.textContent = resumenGuardado(guardar);
     savedEl.classList.add('show');
     setTimeout(() => savedEl.classList.remove('show'), 2500);
     return;
@@ -1667,24 +1737,40 @@ async function saveAllGrades(activityId, max) {
   btn.disabled    = true;
   btn.textContent = 'Guardando...';
 
-  // Envía cada nota secuencialmente (detiene al primer error)
-  for (const entry of entries) {
-    const res = await fetch('/activities/' + activityId + '/grade', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(entry),
-    });
-    if (!res.ok) {
-      btn.disabled = false;
-      btn.innerHTML = '<span class="material-symbols-outlined">save</span> Guardar notas';
-      const data = await res.json();
-      alert('Error al guardar nota: ' + (data.error || 'Error desconocido'));
+  const restaurarBoton = () => {
+    btn.disabled  = false;
+    btn.innerHTML = '<span class="material-symbols-outlined">save</span> Guardar';
+  };
+
+  // Envía cada fila secuencialmente (detiene al primer error)
+  for (const entry of guardar) {
+    let res;
+    try {
+      res = await fetch('/activities/' + activityId + '/grade', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(entry),
+      });
+    } catch (e) {
+      restaurarBoton();
+      alert('No se pudo guardar: se cortó la conexión con el servidor. Revisá tu conexión y volvé a intentar.');
       return;
     }
+    if (!res.ok) {
+      restaurarBoton();
+      const data = await res.json().catch(() => ({}));
+      alert('Error al guardar: ' + (data.error || 'Error desconocido'));
+      return;
+    }
+    // Ya guardado: si el docente vuelve a tocar "Guardar" no se reenvía esta fila
+    previos[entry.studentId] = {
+      nota:     entry.points !== undefined ? entry.points : (previos[entry.studentId]?.nota ?? ''),
+      feedback: entry.feedback ?? '',
+    };
   }
 
-  btn.disabled = false;
-  btn.innerHTML = '<span class="material-symbols-outlined">save</span> Guardar notas';
+  restaurarBoton();
+  savedEl.textContent = resumenGuardado(guardar);
   savedEl.classList.add('show');
   setTimeout(() => savedEl.classList.remove('show'), 2500);
 
@@ -1727,9 +1813,11 @@ async function loadStudentDetail(activityId) {
 
   html += attachmentSection(act.attachments);
 
-  // Bloque de calificación del alumno: muestra la nota recibida o "sin calificar"
+  // Bloque de calificación del alumno: muestra la nota recibida o "sin calificar".
+  // myGrade con points null = el docente dejó devolución escrita pero todavía no puso nota:
+  // acá cuenta como "aún no calificado" y el comentario se muestra igual, más abajo.
   html += '<div class="student-grade-box">';
-  if (act.myGrade != null) {
+  if (act.myGrade?.points != null) {
     const pct = act.points ? Math.round((act.myGrade.points / act.points) * 100) : null;
     html += `<span class="material-symbols-outlined" style="color:var(--secondary);font-size:32px">grade</span>
       <div>
@@ -2390,10 +2478,13 @@ async function loadMisNotasTab() {
 
   const now = new Date();
   const rows = sorted.map(act => {
-    const graded = act.myGrade != null;
+    // points null = hay devolución escrita pero todavía no hay nota
+    const graded = act.myGrade?.points != null;
     const gradeCell = graded
       ? `<span class="grade-chip graded">${act.myGrade.points}${act.points != null ? ' / ' + act.points : ' pts'}</span>`
-      : `<span class="grade-chip pending">Sin calificar</span>`;
+      : act.myGrade?.feedback
+        ? `<span class="grade-chip pending">Con devolución</span>`
+        : `<span class="grade-chip pending">Sin calificar</span>`;
 
     // Si está vencida y sin calificar: muestra la fecha en rojo
     const overdue = act.dueDate && new Date(act.dueDate) < now && !graded;
@@ -2416,7 +2507,7 @@ async function loadMisNotasTab() {
     </tr>`;
   }).join('');
 
-  const graded = activities.filter(a => a.myGrade != null).length;
+  const graded = activities.filter(a => a.myGrade?.points != null).length;
   container.innerHTML = `
     <div style="padding:4px 0 16px;font-size:13px;color:var(--text-secondary)">
       <span style="color:var(--secondary);font-weight:600">${graded}</span> de ${activities.length} actividades calificadas
@@ -2470,3 +2561,12 @@ async function saveGrade(activityId, studentId, btn) {
     alert(d.error);
   }
 }
+
+/* ─── Link directo a una actividad (?actividad=<id>) ─── */
+// Lo usan el botón "Ver actividad" del chat de la sala cuando el JS no llegó a interceptarlo
+// (y cualquier link que se comparta a mano). El parámetro se deja en la URL: si el alumno
+// recarga, vuelve a abrir la actividad, que es lo que espera de un link.
+(function () {
+  const id = new URLSearchParams(window.location.search).get('actividad');
+  if (id) abrirActividad(id);
+})();

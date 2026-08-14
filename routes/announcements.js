@@ -6,6 +6,7 @@ const Course   = require('../models/Course');
 const { requireAuth } = require('../middleware/auth');
 const { logAudit }    = require('../middleware/audit');
 const { uploadLimiter } = require('../middleware/rate-limits');
+const { logDeRuta } = require('../middleware/route-log');
 // La imagen se recibe en memoria y se guarda ya redimensionada y en WebP
 // (preset 'novedad': 1600 px de lado mayor). Ver middleware/image-upload.js.
 const {
@@ -29,6 +30,7 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
       .sort({ createdAt: 1 });               // Ascendente: los más viejos primero
     res.json({ announcements });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -69,6 +71,7 @@ router.post('/:id/comment', requireAuth, async (req, res) => {
 
     res.status(201).json({ comment: newComment });
   } catch (e) {
+    logDeRuta(e, res);
     res.status(500).json({ error: 'Error al comentar' });
   }
 });
@@ -131,6 +134,7 @@ router.post('/create', requireAuth, uploadLimiter, subirImagen('image'), async (
       const messages = Object.values(err.errors).map(e => e.message);
       return res.status(400).json({ error: messages.join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -173,6 +177,7 @@ router.put('/:id', requireAuth, async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -219,6 +224,7 @@ router.post('/:id/delete', requireAuth, async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

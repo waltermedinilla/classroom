@@ -53,6 +53,11 @@ async function backupSintetico(collections) {
   }
 }
 
+// El día escolar sale del MISMO service que usa la app (services/liveRoom.js) y no de un
+// toISOString() acá: la zona de la escuela tiene un solo dueño, y un test que se arma la fecha
+// por su cuenta empieza a fallar de noche por un bug que no existe.
+const { diaEscolar } = require('../../services/liveRoom');
+
 const RUN_ID = Date.now().toString(36);
 
 // DNI de prueba, único por corrida y por índice. El DNI pasó a ser OBLIGATORIO en toda
@@ -384,6 +389,52 @@ const specs = [
         body: { email: state.scopedStudentEmail, password: student.password },
         expectStatus: 200,
       });
+    },
+  },
+  {
+    id: 'sesion-de-usuario-borrado',
+    title: 'Una sesión cuyo usuario fue borrado va a /login, no revienta con 500',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, assert }) {
+      // Bug de producción del 2026-08-11: `GET /courses` tiraba 500 con "Cannot read
+      // properties of null (reading 'role')" en views/dashboard.ejs. La cookie dura 7 días,
+      // así que a quien le borran la cuenta le queda un JWT PERFECTAMENTE VÁLIDO —
+      // requireAuth solo miraba firma y vencimiento, lo dejaba pasar, y la vista se
+      // encontraba con `res.locals.user` en null.
+      const email = `smoke.borrado.${RUN_ID}@example.com`;
+      const alta = await client.post('admin', '/admin/users/create', {
+        body: { name: 'Smoke Borrado', email, password: student.password, role: 'student', dni: dniSmoke(34) },
+        expectStatus: 201,
+      });
+
+      await client.post('fantasma', '/login', {
+        body: { email, password: student.password },
+        expectStatus: 200,
+      });
+
+      // ⚠️ NO hacer ningún request con el actor 'fantasma' entre el login y el borrado: el
+      // userCache tiene TTL de 45 s por worker (middleware/cache.js), así que una sola
+      // navegación dejaría al usuario cacheado y el borrado no se notaría hasta que expire
+      // — el test pasaría sin haber ejercitado nada.
+      //
+      // Se borra DIRECTO en Mongo y no por la API a propósito: el DELETE del admin también
+      // invalidaría la sesión, y lo que hay que reproducir es justamente la cookie que
+      // sobrevive a su usuario.
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const r = await mongo.db().collection('users').deleteOne({ _id: new ObjectId(alta.json.user._id) });
+        assert(r.deletedCount === 1, 'el usuario de prueba tendría que haberse borrado de la base');
+      } finally {
+        await mongo.close();
+      }
+
+      const res = await client.get('fantasma', '/courses');
+      assert(res.status !== 500, 'una sesión huérfana no puede tirar 500: es el bug que este test cuida');
+      assert(res.status === 302, `esperaba redirección a /login, recibió ${res.status}`);
+      assert((res.headers.get('location') || '').includes('/login'),
+        `esperaba que redirigiera a /login, redirigió a "${res.headers.get('location')}"`);
     },
   },
   {
@@ -3274,6 +3325,37 @@ const specs = [
       });
     },
   },
+  {
+    // specs/actividades-en-clase.spec.md — CA-11 a CA-17.
+    // Para cuando corre este spec, la materia del curso ya tiene actividades creadas HOY
+    // (las dejó 'teacher-creates-activity'), así que el día de hoy tiene que dar "subió".
+    id: 'preceptor-actividades-del-dia',
+    title: 'El preceptor ve el calendario del mes y el detalle del día de su curso',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const pantalla = await client.get('preceptor',
+        `/preceptor/actividades?division=${state.divisionId}`, { expectStatus: 200 });
+      assert(pantalla.text.includes('Actividades del día'), 'debería abrir la solapa');
+      assert(pantalla.text.includes('data-dia='), 'el calendario debería traer sus días clickeables');
+
+      const hoy = diaEscolar();
+      const dia = await client.get('preceptor',
+        `/preceptor/actividades/${state.divisionId}/dia/${hoy}`, { expectStatus: 200 });
+      assert(dia.json.dia === hoy, 'debería contestar por el día pedido');
+      assert(dia.json.subieron.length + dia.json.noSubieron.length === dia.json.totalMaterias,
+        'la suma de las dos listas tiene que dar el total de materias del curso');
+      assert(dia.json.subieron.some(m => (m.actividades || []).length > 0),
+        'al menos una materia del curso debería figurar con actividad de hoy');
+
+      // Una fecha que no existe no llega a la base.
+      await client.get('preceptor', `/preceptor/actividades/${state.divisionId}/dia/2026-13-40`,
+        { expectStatus: 400 });
+
+      // Y el alcance manda: la división ajena no se lee cambiando el id en la URL.
+      await client.get('preceptor', `/preceptor/actividades/${state.otherDivisionId}/dia/${hoy}`,
+        { expectStatus: 403 });
+    },
+  },
   // ── Preceptoría: asistencia del día (specs/asistencia-preceptoria.spec.md) ──
   //
   // El orden sigue una jornada real y eso es lo que hace legible al bloque: el preceptor deja
@@ -4813,6 +4895,48 @@ const specs = [
     },
   },
   {
+    // specs/actividades-en-clase.spec.md — CA-05, CA-06.
+    id: 'sala-crear-actividad',
+    title: 'La docente crea una actividad desde la clase y la sala lo avisa',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const titulo = `Consigna en clase ${RUN_ID}`;
+      const res = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: titulo, type: 'tarea', fromRoom: '1' },
+        expectStatus: 201,
+      });
+      state.salaActivityId = res.json.activity._id;
+
+      // El aviso viaja por el MISMO poll que el resto de la sala: si se hubiera guardado
+      // fuera de la secuencia de `seq`, no llegaría acá.
+      const poll = await client.get('scopedTeacher', `/courses/${state.courseId}/sala/poll?since=0`, {
+        expectStatus: 200, headers: { Accept: 'application/json' },
+      });
+      const aviso = (poll.json.mensajes || [])
+        .find(m => m.kind === 'system' && String(m.texto || '').includes(titulo));
+      assert(aviso, 'la sala debería tener el aviso de sistema con el título de la actividad');
+
+      // El aviso lleva el link a la actividad (el botón "Ver actividad" del chat). El id va
+      // como dato aparte del texto: si viajara adentro del mensaje habría que parsearlo.
+      assert(aviso.actividad && aviso.actividad.id === state.salaActivityId,
+        'el aviso debería traer el id de la actividad para el botón "Ver actividad"');
+      assert(aviso.actividad.url === `/courses/${state.courseId}?actividad=${state.salaActivityId}`,
+        `la URL del botón salió mal: ${aviso.actividad && aviso.actividad.url}`);
+
+      // Los avisos que no son de una actividad (se abrió la sala) no llevan botón.
+      const apertura = (poll.json.mensajes || [])
+        .find(m => m.kind === 'system' && String(m.texto || '').includes('abrió la sala'));
+      assert(apertura && apertura.actividad === null,
+        'el aviso de apertura de sala no debería traer link a ninguna actividad');
+
+      // Y lo que se creó es una actividad NORMAL: el alumno la ve en su solapa Actividades.
+      const lista = await client.get('scopedStudent', `/activities/course/${state.courseId}`,
+        { expectStatus: 200 });
+      assert((lista.json.activities || []).some(a => a._id === state.salaActivityId),
+        'la actividad creada desde la sala debería aparecer en la solapa Actividades');
+    },
+  },
+  {
     // Vive acá y no con el resto de la asistencia porque necesita las dos cosas a la vez:
     // una sala en vivo con alguien adentro Y una toma abierta. Es el único punto del smoke
     // donde eso pasa.
@@ -5390,6 +5514,31 @@ const specs = [
       // Una clase de otra materia no se lee cambiando el id en la URL.
       await client.get('scopedTeacher', `/courses/${state.courseId}/sala/clases/000000000000000000000000`, { expectStatus: 404 });
       await client.get('scopedTeacher', `/courses/${state.courseId}/sala/clases/no-es-un-id`, { expectStatus: 404 });
+
+      // El aviso de la actividad quedó en la transcripción, como cualquier otro mensaje de
+      // sistema (CA-09).
+      assert(detalle.text.includes('creó la actividad'),
+        'la transcripción debería conservar el aviso de la actividad creada en clase');
+    },
+  },
+  {
+    // specs/actividades-en-clase.spec.md — CA-07. Va DESPUÉS del cierre a propósito: es el
+    // único momento del smoke en que la materia tiene la sala cerrada.
+    id: 'sala-crear-actividad-sin-sala',
+    title: 'Con la sala cerrada, crear "desde la clase" no rompe: crea la actividad y no avisa',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const titulo = `Consigna sin sala ${RUN_ID}`;
+      await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: titulo, type: 'tarea', fromRoom: '1' },
+        expectStatus: 201,
+      });
+
+      // La clase ya archivada no puede haber recibido un aviso nuevo.
+      const detalle = await client.get('scopedTeacher',
+        `/courses/${state.courseId}/sala/clases/${state.salaSessionId}`, { expectStatus: 200 });
+      assert(!detalle.text.includes(titulo),
+        'no debería escribirse ningún aviso en una sala que ya está cerrada');
     },
   },
   {

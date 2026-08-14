@@ -15,6 +15,7 @@ const { getDivisionDetail } = require('../services/divisionDetail');
 const { inicioVentanaSerie, etiquetasMeses, mesCorto } = require('../services/serieMensual');
 // Salas en vivo: el mismo service que alimenta la sala y el panel de preceptoría.
 const liveRoom = require('../services/liveRoom');
+const { logDeRuta } = require('../middleware/route-log');
 
 const router = express.Router();
 router.use(requireAuth, requireDirectivo, sectionGuard('directivo'));
@@ -75,12 +76,13 @@ router.get('/', async (req, res) => {
     const unenrolledCount = allStudents.filter(s => !enrolledSet.has(s._id.toString())).length;
 
     // "Actividades vencidas sin calificar hace > 15 días" — para cursos de esta escuela.
-    // Sin calificar = grades.length === 0. Vencidas hace > 15 días = dueDate < twoWeeksAgo.
+    // Sin calificar = ningún grade CON NOTA. No alcanza con grades.length === 0: un grade puede
+    // ser una devolución escrita sin nota (points: null), y eso sigue siendo "sin calificar".
     const schoolCourseIds = await Course.find({ school }).distinct('_id');
     const overdueUngradedCount = await Activity.countDocuments({
       course:  { $in: schoolCourseIds },
       dueDate: { $ne: null, $lt: twoWeeksAgo },
-      grades:  { $size: 0 },
+      grades:  { $not: { $elemMatch: { points: { $ne: null } } } },
     });
 
     res.render('directivo/dashboard', {
@@ -96,6 +98,7 @@ router.get('/', async (req, res) => {
       activePage: 'dashboard',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -136,13 +139,18 @@ router.get('/courses', async (req, res) => {
           studentCount:    { $size: { $ifNull: ['$students', []] } },
           activityCount:   { $size: '$acts' },
           submissionCount: { $size: '$subs' },
-          // Actividades vencidas (dueDate < ahora) sin ninguna calificación cargada
+          // Actividades vencidas (dueDate < ahora) sin ninguna calificación cargada.
+          // El $filter interno descarta los grades sin nota (devoluciones escritas, points null).
           overdueUngraded: { $size: { $filter: {
             input: '$acts',
             cond: { $and: [
               { $ne: ['$$this.dueDate', null] },
               { $lt: ['$$this.dueDate', now] },
-              { $eq: [{ $size: { $ifNull: ['$$this.grades', []] } }, 0] },
+              { $eq: [{ $size: { $filter: {
+                input: { $ifNull: ['$$this.grades', []] },
+                as:    'g',
+                cond:  { $ne: ['$$g.points', null] },
+              } } }, 0] },
             ] },
           } } },
           owner:    { $arrayElemAt: ['$ownerDoc', 0] },
@@ -200,6 +208,7 @@ router.get('/courses', async (req, res) => {
       activePage: 'courses',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -237,7 +246,8 @@ router.get('/courses/:id', async (req, res) => {
 
     const activitiesWithStats = activities.map(act => {
       const submitted = submissionsByActivity[act._id.toString()] || 0;
-      const graded    = act.grades.length;
+      // Solo los grades con nota: los de points null son devoluciones escritas sin calificar
+      const graded    = act.grades.filter(g => g.points != null).length;
       const overdue   = act.dueDate && act.dueDate < now;
       return {
         _id: act._id, title: act.title, type: act.type, points: act.points,
@@ -264,6 +274,7 @@ router.get('/courses/:id', async (req, res) => {
       activePage: 'courses',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -285,6 +296,8 @@ router.get('/grades', async (req, res) => {
       { $unwind: '$courseDoc' },
       { $match: { 'courseDoc.school': oid(school), points: { $ne: null, $gt: 0 } } },
       { $unwind: '$grades' },
+      // Fuera las devoluciones escritas sin nota: no son notas y romperían el promedio
+      { $match: { 'grades.points': { $ne: null } } },
       // Nota normalizada 0-10: (points_obtenidos / points_maximos) * 10
       { $project: {
           courseId:   '$courseDoc._id',
@@ -366,6 +379,7 @@ router.get('/grades', async (req, res) => {
       activePage: 'grades',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -438,7 +452,8 @@ router.get('/students', async (req, res) => {
       { $unwind: '$courseDoc' },
       { $match: { 'courseDoc.school': oid(school), points: { $ne: null, $gt: 0 } } },
       { $unwind: '$grades' },
-      { $match: { 'grades.student': { $in: studentIds } } },
+      // points null = devolución escrita sin nota; no entra al promedio
+      { $match: { 'grades.student': { $in: studentIds }, 'grades.points': { $ne: null } } },
       { $project: {
           student:    '$grades.student',
           normalized: { $multiply: [{ $divide: ['$grades.points', '$points'] }, 10] },
@@ -507,6 +522,7 @@ router.get('/students', async (req, res) => {
       activePage: 'students',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -536,7 +552,8 @@ router.get('/students/:id', async (req, res) => {
     const entries = submissions.filter(s => s.activity).map(sub => {
       const late = sub.activity.dueDate && sub.updatedAt > sub.activity.dueDate;
       const g = sub.activity.grades.find(g => g.student.toString() === student._id.toString());
-      const normalized = g && sub.activity.points > 0
+      // g?.points puede ser null: devolución escrita sin nota. Sin nota no hay normalizado.
+      const normalized = g?.points != null && sub.activity.points > 0
         ? Math.round(((g.points / sub.activity.points) * 10) * 10) / 10
         : null;
       return {
@@ -545,7 +562,7 @@ router.get('/students/:id', async (req, res) => {
         submittedAt:   sub.createdAt,
         dueDate:       sub.activity.dueDate,
         late,
-        points:        g ? g.points : null,
+        points:        g?.points ?? null,
         maxPoints:     sub.activity.points,
         normalized,
         feedback:      g ? (g.feedback || '') : '',
@@ -567,6 +584,7 @@ router.get('/students/:id', async (req, res) => {
       activePage: 'students',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -635,7 +653,8 @@ router.get('/teachers', async (req, res) => {
       { $match: {
           course:  { $in: courses.map(c => c._id) },
           dueDate: { $ne: null, $lt: twoWeeksAgo },
-          grades:  { $size: 0 },
+          // Sin ningún grade con nota (una devolución sin nota sigue siendo "sin calificar")
+          grades:  { $not: { $elemMatch: { points: { $ne: null } } } },
       } },
       { $group: { _id: '$course', count: { $sum: 1 } } },
     ]);
@@ -649,6 +668,8 @@ router.get('/teachers', async (req, res) => {
     const gradeRows = await Activity.aggregate([
       { $match: { course: { $in: courses.map(c => c._id) }, points: { $ne: null, $gt: 0 } } },
       { $unwind: '$grades' },
+      // points null = devolución escrita sin nota; no entra al promedio
+      { $match: { 'grades.points': { $ne: null } } },
       { $project: {
           course: 1,
           normalized: { $multiply: [{ $divide: ['$grades.points', '$points'] }, 10] },
@@ -792,6 +813,7 @@ router.get('/teachers', async (req, res) => {
       activePage: 'teachers',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -831,7 +853,7 @@ router.get('/teachers/:id', async (req, res) => {
       dueDate:    a.dueDate,
       overdue:    a.dueDate && a.dueDate < now,
       submitted:  submittedByAct[a._id.toString()] || 0,
-      graded:     a.grades.length,
+      graded:     a.grades.filter(g => g.points != null).length, // sin contar devoluciones sin nota
     }));
 
     // ── Serie mensual de ESTE docente ────────────────────────────────────────
@@ -881,6 +903,7 @@ router.get('/teachers/:id', async (req, res) => {
       activePage: 'teachers',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -1002,6 +1025,7 @@ router.get('/divisions', async (req, res) => {
       activePage: 'divisions',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -1027,6 +1051,7 @@ router.get('/divisions/:id', async (req, res) => {
       activePage: 'divisions',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -1064,6 +1089,7 @@ router.get('/en-vivo', async (req, res) => {
       activePage: 'envivo',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -1074,6 +1100,7 @@ router.get('/en-vivo/poll', async (req, res) => {
   try {
     res.json(await panelEnVivo(school));
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

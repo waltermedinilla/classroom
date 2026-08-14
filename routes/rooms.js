@@ -28,6 +28,8 @@ const { logAudit }           = require('../middleware/audit');
 const { roomMessageLimiter, roomUploadLimiter } = require('../middleware/rate-limits');
 const { loadPreceptorScope } = require('../middleware/preceptor');
 const { subirImagen, guardarImagenOptimizada, ImagenInvalidaError } = require('../middleware/image-upload');
+const { EXT_IMAGENES } = require('../config/imagePresets');
+const { logDeRuta, logRechazo } = require('../middleware/route-log');
 const live = require('../services/liveRoom');
 
 const router = express.Router();
@@ -72,6 +74,11 @@ const usuario = (req) => req.res.locals.user;
 // Mismo criterio que middleware/sections.js: la sala es toda fetch(), así que un rechazo
 // tiene que llegar como JSON cuando se lo pide por JSON, y como texto cuando es una navegación.
 function fallar(req, res, status, mensaje) {
+  // Todo rechazo de la sala queda registrado en `warn`. Antes no dejaba NADA: el 2026-08-11
+  // una docente no pudo compartir una foto de iPhone y del lado del servidor no había una
+  // sola línea que lo dijera, porque esto responde con `res.json()` sin lanzar excepción y
+  // el manejador global de errores nunca se entera. El log vacío parecía "no pasó nada".
+  logRechazo(res, status, mensaje);
   if (req.accepts('json') && !req.accepts('html')) {
     return res.status(status).json({ error: mensaje });
   }
@@ -257,6 +264,12 @@ function serializarMensaje(m, userId, courseId) {
       : m.text,
     borrado,
     adjunto: serializarAdjunto(m, courseId),
+    // Actividad a la que apunta el aviso, si es uno de esos. La URL se arma acá y no en el
+    // cliente por el mismo motivo que la hora: que el formato de las rutas de la app lo
+    // decida un solo lugar. Un mensaje borrado no la manda — el hueco no lleva botón.
+    actividad: (m.activity && !borrado)
+      ? { id: String(m.activity), url: `/courses/${courseId}?actividad=${m.activity}` }
+      : null,
     // Texto ya formateado ("14:05"), NO la fecha cruda. La hora la fija el servidor con la
     // zona de la escuela: si la manda cruda, cada navegador la interpreta con la zona horaria
     // que tenga configurada la máquina y el mismo mensaje aparece a una hora distinta en cada
@@ -550,7 +563,14 @@ function conArchivo(campo) {
 router.post('/:id/sala/adjuntos/imagen', roomUploadLimiter, exigirGestorEnSalaAbierta,
   subirImagen('imagen'), async (req, res, next) => {
     try {
-      if (!req.file) return fallar(req, res, 400, 'No se recibió ninguna imagen');
+      // Sin req.file hay dos causas y el usuario tiene que poder distinguirlas: o el
+      // fileFilter rechazó la extensión (el caso real: un .heic de iPhone, que hasta el
+      // 2026-08-11 devolvía "No se recibió ninguna imagen" y no explicaba nada), o
+      // efectivamente no se adjuntó nada. Mismo criterio que el POST de archivo.
+      if (!req.file) {
+        return fallar(req, res, 400,
+          `Esa imagen no se puede compartir. Aceptamos: ${EXT_IMAGENES.join(', ')}`);
+      }
 
       const relDir  = dirDeSesion(req);
       const guardada = await guardarImagenOptimizada(req.file, {
@@ -819,6 +839,11 @@ router.get('/:id/sala/clases/:sid', cargarSesion, async (req, res, next) => {
     res.render('rooms/session', {
       course:  req.course,
       fmt:     live.fmt,
+      // ¿Este usuario puede abrir /courses/:id? De eso depende que el aviso de una actividad
+      // muestre su botón "Ver actividad": el link va a la materia, y dirección y preceptoría
+      // —que sí llegan a esta transcripción— reciben 403 ahí. Mismo criterio que el botón del
+      // chat en vivo, resuelto acá porque la vista archivada no tiene JS que lo decida.
+      puedeAbrirMateria: req.esGestor || req.esAlumno,
       // Los mismos helpers que usa el chat, para que la card de la transcripción diga el peso
       // y la extensión igual que la del día de la clase.
       pesoLegible: live.pesoLegible,

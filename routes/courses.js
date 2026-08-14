@@ -31,6 +31,7 @@ const { cursosDisponibles, automatricular } = require('../services/selfEnroll');
 const { JOIN_BY_CODE_ACTIVO, unirPorCodigo } = require('../services/joinByCode');
 // Tope de materias por alumno: a partir de ahí el panel no le ofrece sumar más.
 const { MAX_MATERIAS_ALUMNO } = require('../services/enrollment');
+const { logDeRuta } = require('../middleware/route-log');
 
 const router = express.Router();
 
@@ -134,6 +135,7 @@ router.get('/', requireAuth, async (req, res) => {
     res.render('dashboard', { courses, pendingSummary, profilePrompt, autoMatricula,
       joinByCode: JOIN_BY_CODE_ACTIVO, cupoMateriasLleno, tomasAsistencia });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -146,6 +148,7 @@ router.get('/divisions', requireAuth, async (req, res) => {
     const divisions = await Division.find({ school }).sort({ name: 1 });
     res.json({ divisions });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -185,6 +188,7 @@ router.post('/self-enroll', requireAuth, async (req, res) => {
 
     res.json({ ok: true, materias: r.materias, curso: r.curso });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -235,6 +239,7 @@ router.post('/create', requireAuth, async (req, res) => {
       const messages = Object.values(err.errors).map(e => e.message);
       return res.status(400).json({ error: messages.join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -262,6 +267,7 @@ router.post('/join', requireAuth, async (req, res) => {
 
     res.json({ ok: true, materia: r.materia });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -318,6 +324,7 @@ router.get('/profile', requireAuth, async (req, res) => {
     const totalStudents = createdCourses.reduce((sum, c) => sum + c.students.length, 0);
     res.render('profile', { createdCourses, activityCount, totalStudents, joinedCourses: [], systemOwnerEmail: SYSTEM_OWNER_EMAIL, INTERESTS, MAX_INTERESTS });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -343,6 +350,7 @@ router.post('/profile/avatar', requireAuth, subirImagen('avatar'), async (req, r
   } catch (err) {
     // El archivo nunca llegó al disco (memoryStorage), así que no hay nada que limpiar.
     if (err instanceof ImagenInvalidaError) return res.status(400).json({ error: err.message });
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error al guardar el avatar' });
   }
 });
@@ -357,7 +365,8 @@ router.delete('/profile/avatar', requireAuth, async (req, res) => {
       invalidateUser(user._id);
     }
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error al eliminar el avatar' });
   }
 });
@@ -386,7 +395,8 @@ router.post('/profile/change-password', requireAuth, async (req, res) => {
     );
 
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -444,6 +454,7 @@ router.post('/profile/change-email', requireAuth, async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -474,7 +485,8 @@ router.patch('/profile/contact', requireAuth, async (req, res) => {
     );
 
     res.json({ ok: true, phone: user.phone, instagram: user.instagram, facebook: user.facebook });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -528,6 +540,7 @@ router.patch('/profile/about', requireAuth, async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -593,6 +606,7 @@ router.get('/:id', requireAuth, async (req, res) => {
       liveEmojis: live.EMOJIS, livePollMs: live.POLL_MS,
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -631,6 +645,7 @@ router.post('/:id/add-student', requireAuth, async (req, res) => {
 
     res.json({ student: { _id: student._id, name: student.name, email: student.email } });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -668,7 +683,8 @@ router.delete('/:id/students/:studentId', requireAuth, async (req, res) => {
     );
 
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -690,7 +706,8 @@ router.post('/:id/students/:studentId/toggle-active', requireAuth, async (req, r
     await student.save();
     invalidateUser(student._id);
     res.json({ active: student.active });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -714,7 +731,8 @@ router.get('/:id/gradebook', requireAuth, async (req, res) => {
       activities: activities.map(a => ({ _id: a._id, title: a.title, dueDate: a.dueDate, points: a.points })),
       gradeMap,
     });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -746,6 +764,7 @@ router.get('/:id/export-students', requireAuth, async (req, res) => {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buf);
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error al generar el archivo: ' + err.message);
   }
 });
@@ -760,6 +779,7 @@ router.get('/:id/data', requireAuth, async (req, res) => {
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
     res.json({ course });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -784,6 +804,7 @@ router.post('/:id/customize', requireAuth, async (req, res, next) => {
     }
     next();
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 }, subirImagen('image'), async (req, res) => {
@@ -817,6 +838,7 @@ router.post('/:id/customize', requireAuth, async (req, res, next) => {
     res.json({ header: newHeader });
   } catch (err) {
     if (err instanceof ImagenInvalidaError) return res.status(400).json({ error: err.message });
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error al guardar la personalización' });
   }
 });

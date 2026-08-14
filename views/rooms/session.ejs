@@ -60,6 +60,21 @@
               <% if (m.kind === 'system') { %>
                 <div style="text-align:center;font-size:12px;color:#80868b;margin:10px 0">
                   <%= m.text %> · <%= fmt.hora(m.createdAt) %>
+                  <%# El aviso de una actividad sigue llevando a la actividad meses después: es
+                      media razón para volver a abrir una clase vieja. Mismo botón que en el chat
+                      en vivo, y con la misma condición — solo para quien puede entrar a la
+                      materia (dirección y preceptoría llegan hasta acá, pero no a /courses/:id).
+                      Si la actividad se borró, la materia avisa en vez de abrir un modal vacío. %>
+                  <% if (m.activity && puedeAbrirMateria) { %>
+                    <a href="/courses/<%= course._id %>?actividad=<%= m.activity %>"
+                       style="display:inline-flex;align-items:center;gap:3px;margin-left:8px;
+                              padding:2px 10px;border:1px solid #1a73e8;border-radius:12px;
+                              background:#e8f0fe;color:#174ea6;font-size:11px;font-weight:600;
+                              text-decoration:none;vertical-align:middle">
+                      <span class="material-symbols-outlined" style="font-size:13px">assignment</span>
+                      Ver actividad
+                    </a>
+                  <% } %>
                 </div>
               <% } else { %>
                 <% const esAdjunto = m.kind === 'image' || m.kind === 'file'; %>

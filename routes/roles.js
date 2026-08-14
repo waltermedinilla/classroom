@@ -22,6 +22,7 @@ const { requireSuperAdmin } = require('../middleware/superadmin');
 const { invalidateSchool }  = require('../middleware/cache');
 const { logAudit }          = require('../middleware/audit');
 const { SECTIONS, PANELS, isConfigurable } = require('../config/sections');
+const { logDeRuta } = require('../middleware/route-log');
 
 const router = express.Router();
 router.use(requireAuth, requireSuperAdmin);
@@ -48,7 +49,8 @@ router.get('/', async (req, res) => {
     res.render('superadmin/roles', {
       schools, school, SECTIONS, PANELS, roles: User.getRoles(), activePage: 'roles',
     });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -102,7 +104,8 @@ router.post('/toggle', async (req, res) => {
     );
 
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -137,7 +140,8 @@ router.post('/reset', async (req, res) => {
     );
 
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

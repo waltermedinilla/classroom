@@ -13,7 +13,7 @@ const assert = require('node:assert');
 const {
   isOnline, presenceSummary, shouldAutoClose, sanitizeText, minutosPresente,
   hora, fechaDia, fechaLarga, fechaCorta, fechaHora, TZ,
-  ONLINE_WINDOW_MS, AUTO_CLOSE_MS, MSG_MAX, POLL_MS,
+  ONLINE_WINDOW_MS, STAFF_ONLINE_WINDOW_MS, AUTO_CLOSE_MS, MSG_MAX, POLL_MS,
   pesoLegible, etiquetaExt, textoAdjunto, csvTranscripcion,
   EXT_ARCHIVOS, MAX_ARCHIVO_BYTES,
 } = require('../../services/liveRoom');
@@ -40,6 +40,48 @@ test('isOnline: sin ping, o con una fecha basura, no rompe', () => {
   assert.strictEqual(isOnline(null, AHORA), false);
   assert.strictEqual(isOnline(undefined, AHORA), false);
   assert.strictEqual(isOnline('no es una fecha', AHORA), false);
+});
+
+test('isOnline: la ventana es un parámetro y por default es la de los alumnos', () => {
+  assert.strictEqual(isOnline(haceMs(90 * 1000), AHORA), false);
+  assert.strictEqual(isOnline(haceMs(90 * 1000), AHORA, STAFF_ONLINE_WINDOW_MS), true);
+  assert.ok(STAFF_ONLINE_WINDOW_MS > ONLINE_WINDOW_MS,
+    'la ventana del personal tiene que ser más tolerante que la de los alumnos');
+});
+
+// ── El docente que se va a otra solapa de su materia sigue en la sala ────────
+//
+// Reclamo del usuario (2026-08-13): la docente abre la sala, se va a Novedades o Actividades,
+// y a los 45 s desaparecía de la sala para todos — que se lee como "cerró la clase". El latido
+// del cliente pingea cada 20 s, pero con la pestaña del navegador en segundo plano Chrome lo
+// baja a uno por minuto: por eso el personal se mide con una ventana de 3 minutos.
+// Los tests van contra la CONSTANTE y no contra el número, para que ajustarla no los rompa.
+
+test('presenceSummary: el docente sigue conectado con un ping de hace 90 s', () => {
+  const r = presenceSummary(
+    [presencia('prof', 'teacher', 90 * 1000), presencia('a1', 'student', 90 * 1000)],
+    roster25, AHORA
+  );
+  assert.strictEqual(r.conectados.length, 1, 'solo la docente sigue en la sala');
+  assert.strictEqual(r.conectados[0].rol, 'teacher');
+  assert.strictEqual(r.presentes, 0, 'el alumno con el mismo ping sí se cae: su ventana es 45 s');
+});
+
+test('presenceSummary: pasada su propia ventana, el docente también se cae', () => {
+  const r = presenceSummary(
+    [presencia('prof', 'teacher', STAFF_ONLINE_WINDOW_MS + 1000)],
+    roster25, AHORA
+  );
+  assert.strictEqual(r.conectados.length, 0,
+    'la ventana larga es una tolerancia, no "siempre presente"');
+});
+
+test('presenceSummary: la tolerancia vale para todo el personal, no solo el docente', () => {
+  const r = presenceSummary(
+    [presencia('prec', 'preceptor', 90 * 1000), presencia('dir', 'directivo', 90 * 1000)],
+    roster25, AHORA
+  );
+  assert.strictEqual(r.conectados.length, 2);
 });
 
 // ── CA-02: el docente aparece primero pero no suma a "presentes" ─────────────

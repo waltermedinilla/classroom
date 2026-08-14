@@ -11,6 +11,7 @@ const { spawn }    = require('child_process');
 const logger       = require('./config/logger');
 const connectDB    = require('./config/db');
 const { checkUser } = require('./middleware/auth');
+const { requestLog } = require('./middleware/request-log');
 const { schoolCache } = require('./middleware/cache');
 const {
   readRawState, getPendingState, promotePending, SYSTEM_OWNER_EMAIL,
@@ -89,10 +90,24 @@ app.use(helmet({
 // Limita peticiones por IP para evitar que un usuario sature el servidor.
 // En modo PM2 cluster, cada worker tiene su propio conteo (limitación aceptable para una escuela).
 
-// Límite general: 1200 peticiones cada 15 minutos por IP
-// Cubre el uso normal de un alumno/docente navegando activamente. Se triplicó desde 400
-// el 2026-07-28 junto con los otros dos limiters — misma lógica que authLimiter/uploadLimiter:
-// ~300 personas de la escuela detrás de la misma IP pública NAT.
+// Límite general: 12000 peticiones cada 15 minutos por IP.
+//
+// Historia del número: 400 → 1200 (2026-07-28) → 12000 (2026-08-13). Cada suba fue por lo
+// mismo, y conviene dejarlo escrito para no volver a discutirlo: **toda la escuela sale por
+// una sola IP pública NAT**, así que este cupo NO es por persona, es para las ~300 juntas.
+// Con 1200 tocaban a 4 requests cada 15 minutos por cabeza — menos que abrir un curso y su
+// solapa de actividades. 12000 son ~40 por persona, que cubre navegación activa real con
+// margen para el arranque de clase (todos entrando a la misma hora).
+//
+// Sigue contando por IP a pedido del usuario (2026-08-13). La unidad correcta sería el
+// usuario logueado, como en middleware/rate-limits.js, pero acá no se puede sin mover cosas:
+// este limiter se monta en la línea ~174, ANTES de cookie-parser y de requireAuth, así que
+// `req.userId` todavía no existe. Para cambiarlo habría que adelantar cookieParser y
+// verificar el JWT dentro del keyGenerator. Queda anotado como la mejora de fondo.
+//
+// Lo que un tope alto NO deja desprotegido: los endpoints caros (subidas, mensajes, chat de
+// la sala, autoasistencia) ya tienen su propio limiter POR USUARIO, y login/registro pasan
+// por authLimiter. Este es la red de última instancia contra un script suelto.
 // Rutas de la sala en vivo y de los paneles que la miran. Quedan FUERA de este limiter, y
 // no es una optimización: es lo que evita que la feature tire abajo la aplicación entera.
 // La sala se sostiene con un poll cada 4 s por persona; con 25 alumnos son ~375 requests por
@@ -105,7 +120,7 @@ const LIVE_ROOM_PATHS = /^\/(courses\/[^/]+\/sala|(directivo|preceptor)\/en-vivo
 
 const generalLimiter = rateLimit({
   windowMs:          15 * 60 * 1000, // Ventana de 15 minutos
-  max:               1200,
+  max:               12000,
   standardHeaders:   true,           // Incluye RateLimit-* en los encabezados
   legacyHeaders:     false,
   message:           { error: 'Demasiadas peticiones. Intentá de nuevo en 15 minutos.' },
@@ -159,6 +174,15 @@ app.get('/health', (req, res) => {
     db:      dbUp ? 'ok' : 'down',
   });
 });
+
+// ── Access log ───────────────────────────────────────────────────────────────
+// Va ANTES del rate limiter y del static a propósito: así también quedan registrados los
+// 429 (cupo agotado) y los 404 de assets, que son dos cosas que el usuario reporta como
+// "no me anda" y que sin esto no dejan ninguna huella. Los estáticos en régimen normal no
+// ensucian nada — el middleware solo registra los que fallan (ver RUIDOSAS).
+//
+// Va DESPUÉS de /health para no registrar el polling del propio script de deploy.
+app.use(requestLog);
 
 // Aplica límite general a todas las rutas dinámicas
 app.use(generalLimiter);
@@ -456,6 +480,11 @@ app.use((req, res, next) => {
   }
 
   res.set('Retry-After', '300');
+  // Marca para el access log: este 503 es DELIBERADO, no una falla. Sin esto, una ventana
+  // de mantenimiento escribiría un ERROR por cada request que llega — con la plataforma
+  // entera rebotando, error.log quedaría sepultado en alarmas falsas justo el día que más
+  // hace falta leerlo. Ver middleware/request-log.js.
+  res.locals.mantenimiento = true;
   if (req.accepts('json') && !req.accepts('html')) {
     return res.status(503).json({ maintenance: true, message: state.message, eta: state.eta });
   }
@@ -616,16 +645,22 @@ app.use('/messages',    messagesInboxRoutes);
 app.use((err, req, res, next) => {
   const status = err.status || err.statusCode || 500;
   logger.error(`${req.method} ${req.path}`, {
+    requestId: req.id || null,
     status,
     error:  err.message,
     stack:  err.stack,
     user:   res.locals.user?._id,
     ip:     req.ip,
   });
+  // El id viaja también en la RESPUESTA. Es lo que convierte un reporte de "me dio error"
+  // en algo accionable: el usuario copia esa referencia y con
+  // `grep <id> logs/combined.log` sale la request entera —access log, rechazos y stack—
+  // sin tener que reconstruir qué estaba haciendo y a qué hora.
+  const ref = req.id ? ` (ref: ${req.id})` : '';
   if (req.accepts('json') && !req.accepts('html')) {
-    return res.status(status).json({ error: err.message || 'Error del servidor' });
+    return res.status(status).json({ error: err.message || 'Error del servidor', requestId: req.id || null });
   }
-  res.status(status).send(status === 404 ? 'Página no encontrada' : 'Error del servidor');
+  res.status(status).send(status === 404 ? 'Página no encontrada' : `Error del servidor${ref}`);
 });
 
 // ── Captura de errores no manejados ─────────────────────────────────────────

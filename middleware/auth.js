@@ -20,6 +20,15 @@ const requireAuth = (req, res, next) => {
   // checkUser ya pudo haber detectado usuario deshabilitado y setear este flag
   if (req.userDisabled) return res.redirect('/login');
 
+  // Usuario borrado de la base con la cookie todavía viva. El JWT sigue siendo VÁLIDO
+  // —firma correcta y sin vencer— así que la verificación de más abajo lo dejaría pasar y
+  // la ruta correría con `res.locals.user` en null. Eso tiraba 500 en producción el
+  // 2026-08-11 (`GET /courses` → views/dashboard.ejs:32, "Cannot read properties of null").
+  //
+  // El chequeo va acá y no en el `try`: el problema no es el token sino que la persona
+  // detrás ya no existe, y eso solo lo sabe checkUser, que corre antes y consultó la base.
+  if (req.userMissing) return res.redirect('/login');
+
   const token = req.cookies.token;
   if (!token) return res.redirect('/login');
 
@@ -56,20 +65,36 @@ const checkUser = async (req, res, next) => {
     // Busca el usuario (cache TTL 5 min primero, luego BD); excluye el password por seguridad
     res.locals.user = await getCachedUser(decoded.userId);
 
+    // El token es válido pero el usuario YA NO ESTÁ en la base: cuenta borrada mientras la
+    // cookie seguía viva (duran 7 días, ver cookieOpts en routes/auth.js). Se limpia la
+    // sesión y se marca el flag que lee requireAuth, igual que con la cuenta deshabilitada.
+    //
+    // ⚠️ Esto cubre el caso "la consulta respondió y no hay usuario". Si la consulta FALLA
+    // (Mongo caído), getCachedUser lanza y cae en el catch de abajo, que deja el usuario en
+    // null SIN marcar el flag — a propósito: ante un problema de base no hay que desloguear
+    // a toda la escuela ni borrarle la cookie a nadie. Para ese camino la red de seguridad
+    // son las guardas de las vistas, que ya no asumen que `user` exista.
+    if (!res.locals.user) {
+      res.clearCookie('token');
+      res.clearCookie('adminToken');
+      res.locals.impersonating = null;
+      req.userMissing = true;
+      return next();
+    }
+
     // Actualiza lastSeen como máximo cada 1 minuto (fire-and-forget, no bloquea la respuesta).
     // Throttle corto a propósito: el monitor de superadmin usa lastSeen para "conectados
     // ahora" (ventana de 2 min) — con un throttle de 5 min ese número quedaba desactualizado.
-    if (res.locals.user) {
-      const oneMinAgo = new Date(Date.now() - 60 * 1000);
-      User.updateOne(
-        { _id: decoded.userId, $or: [{ lastSeen: { $lt: oneMinAgo } }, { lastSeen: null }] },
-        { $set: { lastSeen: new Date() } }
-      ).catch(() => {});
-    }
+    // Sin guarda de null: la rama de arriba ya salió con `return` si el usuario no existe.
+    const oneMinAgo = new Date(Date.now() - 60 * 1000);
+    User.updateOne(
+      { _id: decoded.userId, $or: [{ lastSeen: { $lt: oneMinAgo } }, { lastSeen: null }] },
+      { $set: { lastSeen: new Date() } }
+    ).catch(() => {});
 
     // Si la cuenta está deshabilitada: borra ambas cookies y marca req.userDisabled
     // requireAuth revisa este flag antes de verificar el JWT
-    if (res.locals.user && res.locals.user.active === false) {
+    if (res.locals.user.active === false) {
       res.clearCookie('token');
       res.clearCookie('adminToken');
       res.locals.user         = null;

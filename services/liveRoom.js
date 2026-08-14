@@ -28,6 +28,28 @@ const DIRECTIVO_POLL_MS = 15000;
 // sin sacar al chico de la lista de presentes.
 const ONLINE_WINDOW_MS = 45 * 1000;
 
+// La misma pregunta, pero para el PERSONAL (docente, preceptoría, dirección): mucho más
+// tolerante. No es un capricho, es que la pregunta que contesta cada número es distinta.
+//
+// El "N de M presentes" de los alumnos es un dato de la clase que se mira segundo a segundo, y
+// 45 s es lo que lo mantiene fiel. La presencia del PERSONAL no suma a ese conteo
+// (ver presenceSummary): solo dice quién está a cargo de la sala. Y ahí 45 s daba falsos
+// negativos permanentes — reclamo del usuario del 2026-08-13: la docente abre la sala, se va a
+// Novedades o a Actividades de su propia materia, y a los 45 s desaparece de la sala para todo
+// el mundo. Los alumnos lo leen como "cerró la clase", cuando la sala nunca se cerró.
+//
+// El latido del cliente (views/partials/live-room.ejs) manda un ping cada 20 s mientras la
+// docente tenga la materia abierta. Cuando la pestaña del NAVEGADOR pasa a segundo plano,
+// Chrome baja esos timers a uno por minuto: la ventana tiene que aguantar un latido
+// throttleado sin dejarla parpadear dentro y fuera de la sala.
+//
+// 3 minutos, subido de 2 por pedido del usuario el 2026-08-13: son ~3 latidos throttleados de
+// margen, así que hacen falta tres seguidos perdidos —no uno— para que desaparezca de la sala.
+//
+// Sigue siendo un dato honesto: dice "pingueó hace menos de 3 minutos", no "está". Una máquina
+// apagada cae igual, solo que un rato después.
+const STAFF_ONLINE_WINDOW_MS = 3 * 60 * 1000;
+
 // Autocierre por inactividad. Cubre el caso real de la docente que se olvida la sala abierta
 // al terminar la clase, sin cortar una clase larga por la mitad.
 const AUTO_CLOSE_MS = 3 * 60 * 60 * 1000;
@@ -160,11 +182,13 @@ const ROLE_LABELS = {
 // El borde es INCLUSIVO: exactamente 45 s todavía cuenta como presente. Con la comparación
 // estricta, un ping que llega justo en el límite sacaría al alumno de la lista por un
 // milisegundo de diferencia de reloj.
-function isOnline(lastPingAt, now = new Date()) {
+//
+// La ventana es un parámetro porque no es la misma para todos: ver STAFF_ONLINE_WINDOW_MS.
+function isOnline(lastPingAt, now = new Date(), windowMs = ONLINE_WINDOW_MS) {
   if (!lastPingAt) return false;
   const t = new Date(lastPingAt).getTime();
   if (Number.isNaN(t)) return false;
-  return now.getTime() - t <= ONLINE_WINDOW_MS;
+  return now.getTime() - t <= windowMs;
 }
 
 const initial = (name) => (String(name || '—').trim().charAt(0) || '—').toUpperCase();
@@ -180,7 +204,10 @@ const initial = (name) => (String(name || '—').trim().charAt(0) || '—').toUp
 function presenceSummary(presences = [], roster = [], now = new Date()) {
   const onlineById = new Map();
   for (const p of presences) {
-    if (isOnline(p.lastPingAt, now)) onlineById.set(String(p.user), p);
+    // Dos ventanas, una por audiencia (ver STAFF_ONLINE_WINDOW_MS). El personal aguanta más
+    // sin pinguear porque su presencia no alimenta ningún conteo: solo dice quién está a cargo.
+    const ventana = STAFF_ROLES.includes(p.userRole) ? STAFF_ONLINE_WINDOW_MS : ONLINE_WINDOW_MS;
+    if (isOnline(p.lastPingAt, now, ventana)) onlineById.set(String(p.user), p);
   }
 
   const conectados = [];
@@ -381,7 +408,11 @@ async function postAttachment(session, user, kind, attachment) {
 
 // Mensaje automático de la propia sala (abrió, cerró, entró preceptoría). Se guarda como un
 // mensaje más para que la transcripción se lea en orden con un solo cursor.
-async function systemMessage(session, text) {
+//
+// `activity` es opcional: lo manda el aviso de "se creó una actividad" para que la sala pueda
+// pintar el botón "Ver actividad" (ver models/RoomMessage.js). El resto de los avisos lo
+// omiten y el campo queda en null, que es como se leen todos los mensajes anteriores.
+async function systemMessage(session, text, { activity = null } = {}) {
   const seq = await nextSeq(session._id);
   if (seq === null) return null;
   return RoomMessage.create({
@@ -392,6 +423,7 @@ async function systemMessage(session, text) {
     authorRole: 'system',
     kind:    'system',
     text:    sanitizeText(text),
+    activity,
     seq,
   });
 }
@@ -588,7 +620,7 @@ function csvTranscripcion(messages) {
 
 module.exports = {
   // constantes
-  POLL_MS, DIRECTIVO_POLL_MS, ONLINE_WINDOW_MS, AUTO_CLOSE_MS, PURGE_AFTER_MS,
+  POLL_MS, DIRECTIVO_POLL_MS, ONLINE_WINDOW_MS, STAFF_ONLINE_WINDOW_MS, AUTO_CLOSE_MS, PURGE_AFTER_MS,
   MSG_MAX, MSG_PER_MIN, EMOJIS, STAFF_ROLES, ROLE_LABELS, TZ,
   EXT_ARCHIVOS, MAX_ARCHIVO_BYTES, UPLOADS_PER_10MIN, SALAS_BASE,
   // hora (zona fija de la escuela)

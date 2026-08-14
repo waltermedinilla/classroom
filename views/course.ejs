@@ -351,6 +351,10 @@
             esAlumno: !course.canManage(user),
             emojis:   liveEmojis,
             pollMs:   livePollMs,
+            // La sala embebida en la materia: habilita lo que necesita al resto de esta página
+            // (el modal #activityModal para crear, y la solapa Actividades para "Ver actividad").
+            // En views/rooms/standalone.ejs no se pasa, y ahí esos dos botones no existen.
+            enLaMateria: true,
           }) %>
     </div>
   </main>
@@ -667,7 +671,7 @@
         <div id="customizePanelImage" style="display:none">
           <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
             <label class="btn btn-outline" style="cursor:pointer">
-              <input type="file" id="hImageInput" accept="image/jpeg,image/png,image/webp" hidden onchange="onImageSelected()">
+              <input type="file" id="hImageInput" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" hidden onchange="onImageSelected()">
               <span class="material-symbols-outlined" style="font-size:16px!important">upload</span>
               Subir imagen
             </label>
@@ -738,6 +742,7 @@
     window.COURSE_COLOR = '<%= (course.header && course.header.color) ? course.header.color : "#1a73e8" %>';
     window.COURSE_COLOR2 = '<%= (course.header && course.header.color2) ? course.header.color2 : "" %>';
   </script>
+  <script src="/js/devoluciones.js"></script>
   <script src="/js/course.js"></script>
   <script src="/js/task-runner.js"></script>
   <% if (course.canManage(user)) { %>

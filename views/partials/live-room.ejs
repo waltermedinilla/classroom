@@ -5,6 +5,9 @@
   Un solo lugar donde arreglar un bug de la sala.
 
   Espera en locals: course, sala, modo, esGestor, esAlumno, emojis, pollMs, user.
+  Opcional: enLaMateria (bool) — true solo cuando la sala va embebida en views/course.ejs.
+  De ahí dependen las dos cosas que necesitan al resto de esa página: el botón "Crear
+  actividad" (usa su modal) y el botón "Ver actividad" de los avisos (abre su solapa).
 %>
 <style>
   .lr-wrap { max-width: 900px; margin: 0 auto; }
@@ -100,6 +103,32 @@
                 display:flex; align-items:center; }
   .lr-adj-btn:disabled { opacity:.4; cursor:default; }
 
+  /* "Crear actividad": celeste lleno, y no el blanco de los otros botones de la barra. Es la
+     acción que la docente tiene que encontrar sin buscarla, mientras está dando clase y
+     mirando otra cosa; con `btn-outline` quedaba igual a "Cerrar sala" y a "Clases anteriores"
+     y se perdía entre las tres. Al pasar el mouse se llena de azul: ese cambio termina de
+     decir "esto se toca".
+     El texto va en #174ea6 y no en el #1a73e8 de la marca: sobre el celeste, el azul normal da
+     3,9:1 de contraste —abajo del 4,5:1 que pide WCAG AA para 14 px— y el más oscuro da 6,8:1
+     sin cambiar la lectura del botón.
+     Hex y no variables del tema, como el resto de este partial: la sala es una pantalla clara
+     de punta a punta (todas las .lr-card tienen #fff fijo), así que un color que cambie con el
+     tema quedaría solo, sobre un fondo que no cambia. */
+  .lr-btn-act { background:#e8f0fe; color:#174ea6; border:1px solid #1a73e8; font-weight:600; }
+  .lr-btn-act:hover { background:#1a73e8; color:#fff; box-shadow:0 2px 8px rgba(26,115,232,.3); }
+
+  /* "Ver actividad": el botoncito que lleva a la actividad desde el aviso del chat. Mismo
+     idioma visual que el botón de arriba —celeste, borde azul, se llena al pasar el mouse—
+     pero en chico, porque vive dentro de una línea de sistema y no tiene que competir con
+     el mensaje. Es un <a> de verdad: se llega con el teclado, anda el botón derecho y, si
+     el JS fallara, el href sigue llevando a la actividad. */
+  .lr-ver-act { display:inline-flex; align-items:center; gap:3px; margin-left:8px;
+                padding:2px 10px; border:1px solid #1a73e8; border-radius:12px;
+                background:#e8f0fe; color:#174ea6; font-size:11px; font-weight:600;
+                text-decoration:none; vertical-align:middle; }
+  .lr-ver-act:hover { background:#1a73e8; color:#fff; }
+  .lr-ver-act .material-symbols-outlined { font-size:13px; }
+
   @media (max-width: 600px) {
     .lr-chat { height:300px; }
     .lr-persona { width:50px; }
@@ -143,6 +172,20 @@
           <button class="btn btn-primary"  id="lrAbrir"  style="display:none">Abrir sala</button>
           <button class="btn btn-outline"  id="lrModo"   style="display:none"></button>
           <button class="btn btn-outline"  id="lrCerrar" style="display:none">Cerrar sala</button>
+          <%# Dejar la consigna sin salir de la clase. Abre el modal de creación que la materia YA
+              tiene (#activityModal de views/course.ejs) — no hay un formulario aparte.
+
+              El `locals.enLaMateria` no es una precaución de más: este partial lo usan DOS
+              contenedores, y views/rooms/standalone.ejs (por donde entran dirección y preceptoría)
+              no tiene ese modal. Sin el flag, el botón abriría la nada justo para quien no puede
+              crear actividades. El permiso real lo sigue chequeando el servidor. %>
+          <% if (locals.enLaMateria) { %>
+            <button class="btn lr-btn-act" id="lrActividad" style="display:none"
+                    title="Crear una actividad para esta clase">
+              <span class="material-symbols-outlined" style="font-size:18px;vertical-align:-4px">assignment_add</span>
+              Crear actividad
+            </button>
+          <% } %>
         <% } %>
         <a class="btn btn-outline" href="/courses/<%= course._id %>/sala/clases">Clases anteriores</a>
       </div>
@@ -208,6 +251,10 @@
   const CURSO  = '<%= course._id %>';
   const MODO   = '<%= modo %>';
   const GESTOR = <%= esGestor ? 'true' : 'false' %>;
+  // ¿La sala va embebida en la página de la materia? De eso depende que el aviso de una
+  // actividad muestre el botón "Ver actividad": en la página suelta (dirección y preceptoría)
+  // el link llevaría a /courses/:id, que es justamente lo que esos roles NO pueden abrir.
+  const EN_MATERIA = <%= locals.enLaMateria ? 'true' : 'false' %>;
   const POLL   = <%= pollMs %>;
   const BASE   = '/courses/' + CURSO + '/sala';
 
@@ -289,7 +336,10 @@
       const div = document.createElement('div');
       if (m.kind === 'system') {
         div.className = 'lr-sistema';
-        div.textContent = m.texto + ' · ' + m.hora;
+        // Pasó de textContent a innerHTML para poder colgarle el botón: por eso el texto va
+        // SIEMPRE por esc(). Adentro del aviso viaja el título de la actividad, que lo
+        // escribió una persona — es la entrada de usuario que no puede llegar cruda al DOM.
+        div.innerHTML = esc(m.texto) + ' · ' + esc(m.hora) + botonActividad(m);
       } else {
         div.className = 'lr-msg' + (m.esMio ? ' mio' : '');
         div.dataset.id = m.id;
@@ -314,6 +364,16 @@
       chat.innerHTML = '<div class="lr-vacio">Todavía no hay mensajes.</div>';
     }
     if (pegadoAbajo) chat.scrollTop = chat.scrollHeight;
+  }
+
+  // Botón "Ver actividad" del aviso de sistema. Solo cuando la sala está dentro de la materia:
+  // el link va a /courses/:id, y dirección y preceptoría —los únicos que ven la sala suelta—
+  // reciben 403 ahí. Un botón que lleva a una pared es peor que no tener botón.
+  function botonActividad(m) {
+    if (!m.actividad || !EN_MATERIA) return '';
+    return '<a class="lr-ver-act" href="' + esc(m.actividad.url) + '"' +
+             ' data-actividad="' + esc(m.actividad.id) + '">' +
+             '<span class="material-symbols-outlined">assignment</span>Ver actividad</a>';
   }
 
   // ── Cuerpo del mensaje: burbuja de texto o card de adjunto ─────────────────
@@ -400,6 +460,10 @@
       modoBtn.style.display = abierta ? '' : 'none';
       modoBtn.textContent = s.settings && s.settings.studentsCanWrite
         ? 'Solo yo escribo' : 'Habilitar la palabra';
+      // Solo con la sala ABIERTA: la actividad se crea "desde la clase", y con la sala cerrada
+      // no hay clase a la que avisarle. Para el resto de los casos está el botón + de la materia.
+      const actBtn = $('lrActividad');
+      if (actBtn) actBtn.style.display = abierta ? '' : 'none';
     }
 
     const puedo = s.puedoEscribir;
@@ -467,6 +531,44 @@
     if (document.hidden) { clearInterval(timer); timer = null; }
     else { pollear(); arrancar(); }
   });
+
+  // ── Latido de quien gestiona la sala ───────────────────────────────────────
+  //
+  // EL BUG QUE ARREGLA (reclamo del usuario, 2026-08-13): la docente abre la sala, se va a
+  // Novedades o a Actividades —solapas de ESTA misma página— y a los 45 s desaparece de la
+  // sala para todo el mundo. Los alumnos, y quien esté mirando desde dirección o preceptoría,
+  // leen eso como "la profe cerró la clase". La sala nunca se cerró: simplemente dejó de
+  // pollear, porque `aLaVista()` corta el poll cuando la solapa En vivo no está a la vista, y
+  // sin ese poll el servidor deja de ver su `lastPingAt` dentro de la ventana de conectado.
+  //
+  // POR QUÉ SOLO PARA QUIEN GESTIONA: la presencia de un ALUMNO es el "N de M presentes" de la
+  // clase, y ese número tiene que seguir queriendo decir "está en la sala". Si un alumno
+  // latiera desde Novedades, contaría como presente cualquiera que tenga la materia abierta —
+  // que es exactamente lo que `aLaVista()` existe para evitar. El personal no suma a ese
+  // conteo (ver presenceSummary en services/liveRoom.js): su presencia solo dice quién está a
+  // cargo, y mirar las actividades de la propia materia sigue siendo estar en clase.
+  //
+  // Se manda el MISMO poll y se tira la respuesta: `seq` no se toca, así que los mensajes que
+  // hayan llegado mientras tanto se piden enteros cuando la sala vuelve a estar a la vista.
+  //
+  // El latido SÍ corre con la pestaña del navegador oculta, al revés que el poll de arriba: la
+  // docente que minimiza el navegador para mostrar un video sigue estando en su clase. Ahí
+  // Chrome baja los timers de la página a uno por minuto, así que el latido llega tarde — por
+  // eso el servidor mide al personal con una ventana de 3 minutos y no con la de 45 s de los
+  // alumnos (ver STAFF_ONLINE_WINDOW_MS en services/liveRoom.js). Las dos mitades van juntas:
+  // sin la ventana larga, el latido throttleado la haría parpadear dentro y fuera de la sala.
+  const LATIDO_MS = 20000;
+  async function latir() {
+    if (!GESTOR || estado !== 'abierta') return;
+    // Se saltea SOLO cuando el poll normal está corriendo de verdad: a la vista y con la
+    // pestaña del navegador al frente. Con la pestaña oculta ese poll está apagado
+    // (visibilitychange lo corta), así que ahí el latido es lo único que queda.
+    if (aLaVista() && !document.hidden) return;
+    try {
+      await fetch(BASE + '/poll?since=' + seq, { headers: { Accept: 'application/json' } });
+    } catch (e) { /* un latido perdido no rompe nada: el próximo va en 20 s */ }
+  }
+  if (GESTOR) setInterval(latir, LATIDO_MS);
 
   // ── Acciones ───────────────────────────────────────────────────────────────
   const post = (url, body) => fetch(url, {
@@ -607,6 +709,20 @@
       return;
     }
 
+    // "Ver actividad": con el JS andando abre el detalle sin sacar a nadie de la clase (la
+    // solapa En vivo y la de Actividades son la misma página). El <a> queda como respaldo,
+    // igual que en la lupa de las imágenes, y ctrl/cmd/click del medio se dejan pasar para
+    // no romper "abrir en pestaña nueva".
+    const verAct = e.target.closest('[data-actividad]');
+    if (verAct) {
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+      if (typeof window.abrirActividad === 'function') {
+        e.preventDefault();
+        window.abrirActividad(verAct.dataset.actividad);
+      }
+      return;
+    }
+
     const borrar = e.target.closest('[data-borrar]');
     if (borrar) {
       if (!confirm('¿Borrar este mensaje? Queda registrado que lo borraste. Si es un archivo, se elimina del servidor.')) return;
@@ -632,7 +748,21 @@
       await post(BASE + '/config', { studentsCanWrite: !habilitado });
       pollear();
     });
+
+    // El modal de creación vive en views/course.ejs y su JS en public/js/course.js: acá solo se
+    // lo abre marcando de dónde salió el pedido. El `typeof` es la contraparte del `if` del EJS
+    // —si alguna vez el botón se renderiza donde no está el modal, no pasa nada.
+    const actBtn = $('lrActividad');
+    if (actBtn) {
+      actBtn.addEventListener('click', () => {
+        if (typeof window.openActivityModal === 'function') window.openActivityModal(true);
+      });
+    }
   }
+
+  // Refresco a pedido, para el que crea una actividad desde el botón de arriba: el aviso de
+  // sistema lo escribe el servidor al crearla, y sin esto no se vería hasta el próximo tick.
+  window.lrRefrescar = pollear;
 
   const presentarme = $('lrPresentarme');
   if (presentarme) {

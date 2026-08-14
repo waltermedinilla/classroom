@@ -30,8 +30,11 @@ const {
 const { normalizeDni } = require('../services/dni');
 // Salas en vivo: el mismo service que alimenta la sala y el panel de dirección.
 const liveRoom = require('../services/liveRoom');
+// Solapa "Actividades del día": el calendario por curso.
+const actDia = require('../services/actividadesDelDia');
 const { logAudit } = require('../middleware/audit');
 const { invalidateUser } = require('../middleware/cache');
+const { logDeRuta } = require('../middleware/route-log');
 
 const router = express.Router();
 // sectionGuard va ANTES de loadPreceptorScope para no pagar la query de divisiones en un
@@ -88,6 +91,7 @@ router.get('/', async (req, res) => {
       activePage: 'dashboard',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -111,6 +115,7 @@ router.get('/divisions/:id', async (req, res) => {
       activePage: 'dashboard',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -172,6 +177,7 @@ router.post('/divisions/:id/students', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -294,6 +300,7 @@ router.get('/students/:id', async (req, res) => {
       activePage: 'dashboard',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -349,6 +356,7 @@ router.post('/students/:id/edit', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -389,6 +397,7 @@ router.post('/students/:id/unenroll', async (req, res) => {
       mensaje: `${student.name} salió de ${removed} materia(s) del curso. La cuenta sigue activa.`,
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -437,6 +446,7 @@ router.post('/students/:id/move', async (req, res) => {
                `salió de ${removed} materia(s) y quedó inscripto en ${enrolled}.`,
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -464,6 +474,7 @@ router.post('/students/:id/toggle-active', async (req, res) => {
 
     res.json({ ok: true, active: student.active });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -503,6 +514,7 @@ router.get('/en-vivo', async (req, res) => {
       activePage: 'envivo',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -512,6 +524,65 @@ router.get('/en-vivo/poll', async (req, res) => {
   try {
     res.json(await panelEnVivoPreceptor(res.locals.user.school, req.scopeDivisionIds));
   } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+/* ─── Actividades del día ─────────────────────────────────────────────────── */
+// Calendario del mes por curso: qué materias dejaron actividad cada día y cuáles no.
+// SOLO LECTURA — no hay ni un POST acá, y no debe haberlo (ver la spec).
+// Ver specs/actividades-en-clase.spec.md.
+
+// GET /preceptor/actividades?division=<id>&mes=YYYY-MM
+router.get('/actividades', async (req, res) => {
+  if (!res.locals.user.school)      return res.render('preceptor/no-scope', { motivo: 'sin-escuela' });
+  if (!req.scopeDivisionIds.length) return res.render('preceptor/no-scope', { motivo: 'sin-cursos' });
+
+  try {
+    // El curso pedido tiene que estar en el alcance; si no vino ninguno (o vino uno ajeno), se
+    // usa el primero del alcance en vez de rechazar: es la pantalla de entrada de la solapa.
+    const pedido    = req.query.division;
+    const divisionId = inScope(req, pedido) ? String(pedido) : req.scopeDivisionIds[0];
+    const mes        = actDia.mesValido(req.query.mes) ? req.query.mes : actDia.mesActual();
+
+    const [divisiones, resumen] = await Promise.all([
+      Division.find({ _id: { $in: req.scopeDivisionIds.map(oid) } }).select('name').sort({ name: 1 }).lean(),
+      actDia.mesDeDivision(divisionId, mes),
+    ]);
+
+    res.render('preceptor/actividades', {
+      divisiones,
+      divisionId,
+      division: divisiones.find(d => String(d._id) === String(divisionId)) || null,
+      mes,
+      mesNombre: actDia.nombreDelMes(mes),
+      mesAnterior: actDia.mesAnterior(mes),
+      mesSiguiente: actDia.mesSiguiente(mes),
+      semanas: actDia.grillaDelMes(mes),
+      porDia: resumen.porDia,
+      totalMaterias: resumen.totalMaterias,
+      hoy: liveRoom.diaEscolar(),
+      scopeAll: res.locals.scopeAll,
+      activePage: 'actividades',
+    });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+// GET /preceptor/actividades/:divisionId/dia/:fecha — el panel de la derecha, en JSON.
+// Va por fetch y no recargando la pantalla: tocar día por día un mes entero con una recarga
+// completa cada vez es justamente lo que hace que nadie use un calendario.
+router.get('/actividades/:divisionId/dia/:fecha', async (req, res) => {
+  if (!inScope(req, req.params.divisionId)) return res.status(403).json({ error: 'Acceso denegado' });
+  if (!actDia.diaValido(req.params.fecha))  return res.status(400).json({ error: 'Fecha inválida' });
+
+  try {
+    res.json(await actDia.diaDeDivision(req.params.divisionId, req.params.fecha));
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

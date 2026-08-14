@@ -38,6 +38,7 @@ const RoomMessage   = require('../models/RoomMessage');
 const RoomPresence  = require('../models/RoomPresence');
 const AttendanceSession = require('../models/AttendanceSession');
 const AttendanceMark    = require('../models/AttendanceMark');
+const { logDeRuta } = require('../middleware/route-log');
 
 const router = express.Router();
 
@@ -341,6 +342,7 @@ router.get('/stats', async (req, res) => {
       },
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -364,6 +366,7 @@ router.get('/file-stats', async (req, res) => {
       },
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -472,6 +475,7 @@ router.get('/download', async (req, res) => {
   } catch (err) {
     limpiarStaging();
     if (!res.headersSent) {
+      logDeRuta(err, res);
       res.status(500).json({ error: err.message || 'Error al generar el backup' });
     } else {
       res.destroy(err);
@@ -575,6 +579,7 @@ router.post('/preview', (req, res, next) => {
     res.json({ previewToken: token, manifest, diff, willEmpty: missing.optional });
   } catch (err) {
     cleanupOnError();
+    logDeRuta(err, res);
     res.status(500).json({ error: err.message || 'Error al leer el backup' });
   }
 });
@@ -693,6 +698,7 @@ router.post('/restore', restoreLimiter, async (req, res) => {
 
     res.json({ ok: true, log, safetyBackup: path.basename(safetyDest), vaciadas: [...ausentesDelBackup] });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: err.message || 'Error durante la restauración', log });
   } finally {
     fs.unlink(tarPath, () => {});
@@ -758,6 +764,7 @@ router.get('/maintenance/activity', async (req, res) => {
       } : null,
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'No se pudo consultar quién está trabajando: ' + err.message });
   }
 });
@@ -779,6 +786,7 @@ router.post('/maintenance/schedule', async (req, res) => {
   } catch (err) {
     // Sin poder contar no se programa nada: dejaría una espera que el promotor tampoco
     // podría resolver, y el dueño creería que el sistema está esperando por él.
+    logDeRuta(err, res);
     return res.status(500).json({ error: 'No se pudo contar quién está trabajando: ' + err.message });
   }
 

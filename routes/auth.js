@@ -12,6 +12,7 @@ const {
 // entrada, pero el que ya está adentro sigue trabajando sin enterarse de nada
 // (ver specs/mantenimiento-ventana.spec.md).
 const { getPendingState, SYSTEM_OWNER_EMAIL } = require('../config/maintenance');
+const { logDeRuta } = require('../middleware/route-log');
 
 const router = express.Router();
 
@@ -30,6 +31,10 @@ function ingresoBloqueado(email) {
 }
 
 function rechazarIngreso(res) {
+  // Igual que el middleware de mantenimiento de server.js: el 503 es una decisión nuestra
+  // (ventana en espera), no una falla del servidor. La marca evita que el access log lo
+  // cuente como error. Ver middleware/request-log.js.
+  res.locals.mantenimiento = true;
   return res.status(503).json({ maintenance: true, pending: true, error: PENDING_INGRESS_ERROR });
 }
 
@@ -139,6 +144,7 @@ router.post('/register', async (req, res) => {
       const messages = Object.values(err.errors).map(e => e.message);
       return res.status(400).json({ error: messages.join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -176,6 +182,7 @@ router.post('/login', async (req, res) => {
     res.cookie('token', token, cookieOpts);
     res.json({ user });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -236,6 +243,7 @@ router.post('/register/invite/:token', async (req, res) => {
     if (err.name === 'ValidationError') {
       return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
     }
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -256,7 +264,8 @@ router.get('/register/lookup', async (req, res) => {
       return res.status(404).json({ error: 'No se encontró ningún usuario con ese DNI' });
     }
     res.json({ users });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

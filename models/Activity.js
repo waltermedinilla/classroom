@@ -3,7 +3,11 @@ const mongoose = require('mongoose');
 // Sub-schema para una calificación individual de un alumno en esta actividad
 const gradeSchema = new mongoose.Schema({
   student:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  points:   { type: Number, required: true, min: 0 }, // Nota asignada por el docente
+  // Nota asignada por el docente. NO es required: el docente puede dejar una devolución
+  // escrita sin poner nota todavía (y antes eso se perdía en silencio, ver el fix del
+  // 2026-08-13). points == null significa "hay devolución pero no hay nota":
+  // todo lo que cuenta "calificados" debe filtrar por points != null, no por grades.length.
+  points:   { type: Number, default: null, min: 0 },
   feedback: { type: String, default: '' },             // Comentario escrito del docente al alumno
   gradedAt: { type: Date, default: Date.now },         // Fecha en que se calificó
   // true = el docente la puso (o editó) manualmente vía POST /:id/grade

@@ -14,6 +14,7 @@ const { invalidateAll }     = require('../middleware/cache');
 const { logAudit }          = require('../middleware/audit');
 const { SYSTEM_OWNER_EMAIL } = require('../config/maintenance');
 const { getFix, diagnosticarTodos } = require('../services/dbFixes');
+const { logDeRuta } = require('../middleware/route-log');
 
 const router = express.Router();
 
@@ -36,6 +37,7 @@ router.get('/', async (req, res) => {
       activePage: 'otros',
     });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }
 });
@@ -48,6 +50,7 @@ router.get('/:id/diagnostico', async (req, res) => {
     const d = await fix.diagnosticar();
     res.json({ total: d.total, muestra: d.muestra, nota: d.nota || null, grupos: d.grupos || [] });
   } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'No se pudo diagnosticar: ' + err.message });
   }
 });

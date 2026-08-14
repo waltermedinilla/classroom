@@ -2,6 +2,7 @@ const express    = require('express');
 const Suggestion = require('../models/Suggestion');
 const { requireAuth } = require('../middleware/auth');
 const { logAudit }    = require('../middleware/audit');
+const { logDeRuta } = require('../middleware/route-log');
 const { hilo, esperaAlEquipo, puedeResponderElUsuario, cuantosMensajes, MAX_MENSAJES } =
   require('../services/suggestionThread');
 
@@ -26,7 +27,8 @@ router.post('/', requireAuth, async (req, res) => {
     );
 
     res.status(201).json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error al guardar la sugerencia' });
   }
 });
@@ -50,7 +52,8 @@ router.get('/mine', requireAuth, async (req, res) => {
         esperaAlEquipo: esperaAlEquipo(s),
       })),
     });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error al cargar tus sugerencias' });
   }
 });
@@ -99,7 +102,8 @@ router.post('/mine/:id/reply', requireAuth, async (req, res) => {
     );
 
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error al enviar tu respuesta' });
   }
 });
@@ -117,7 +121,8 @@ router.post('/mine/:id/read', requireAuth, async (req, res) => {
       await Suggestion.updateOne({ _id: s._id }, { $set: { readByUser: true } }, { timestamps: false });
     }
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
