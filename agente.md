@@ -373,6 +373,27 @@ que deja usuarios de prueba sin borrar). Espaciar las corridas o limpiar a mano.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-14 — Watchdog: por qué no se puede entrar al sitio
+
+**El problema que lo motivó**: ante *"a la mañana producción se cae"*, los logs del servidor estaban **impecables** — cero errores, cero reinicios, cero 429. Eso no descartaba nada: probaba que el problema no dejaba huella donde estábamos mirando. Un usuario que "no puede entrar" puede estar trabado en seis capas, y **cinco son invisibles desde adentro de la aplicación**: el DNS público y el Funnel de Tailscale ya dejaron el sitio inalcanzable tres veces (20/07, 22/07, 10/08) con el servidor perfectamente sano.
+
+**Qué hace**: `tools/watchdog.sh` corre por cron cada minuto y mide las seis capas en el mismo instante (app en localhost, workers, Mongo, cupo del rate limit, DNS público y camino público completo con TLS). `npm run watchdog:informe` agrupa las mediciones en **tramos** —"de 07:31 a 08:07 el DNS público estuvo caído mientras la app respondía"— y da el comando exacto del arreglo. `npm run watchdog:manana` filtra solo la franja 6-11 h, que es donde está el problema reportado. Documentación completa en `tools/README-watchdog.md`.
+
+**Regla de diseño**: el `.sh` **solo mide**, no diagnostica. Todo el criterio vive en `services/watchdogDiagnostico.js`, testeado. Si el veredicto se calculara también en bash, tarde o temprano las dos versiones dirían cosas distintas y no habría forma de saber cuál miente.
+
+**El orden de las capas no es arbitrario**: va de adentro hacia afuera, porque una capa rota explica a todas las de afuera. Con la app caída, que el Funnel no enrute es consecuencia, no causa — y decir "es el Funnel" mandaría a revisar Tailscale cuando hay que abrir `error.log`.
+
+**Dos trampas de medición que ya estaban documentadas y quedaron cubiertas en código**: el DNS se consulta contra `8.8.8.8` explícito (el resolver local tiene MagicDNS enganchado y devolvería la IP interna `100.x` como falso OK; si la respuesta cae en el rango CGNAT se marca `dns=local` y no cuenta), y el chequeo público fuerza la IP con `--resolve` (un `curl` al nombre desde el propio servidor sale por el túnel y responde 200 aunque el Funnel esté roto para todo el mundo).
+
+**Tres bugs que aparecieron al correr la herramienta de verdad**, y que ningún test hubiera anticipado:
+1. `ss | grep -c` devuelve "0" **y** exit code 1 cuando no hay coincidencias, así que el `|| echo 0` agregaba un segundo cero en otra línea y **partía el registro en dos**. Ahora todo valor pasa por un sanitizador.
+2. `workers=0` con la app respondiendo 200 se reportaba como caída. Si `/health` devolvió 200 hay workers por definición: lo que falló ahí es la medición, no el servidor.
+3. Lo mismo con `docker ps` diciendo `mongo=down` mientras la app informaba `db:"ok"`. **La medición directa gana sobre la indirecta** — el criterio general que salió de los dos casos.
+
+Las alarmas falsas son la forma más rápida de que se deje de mirar una herramienta de monitoreo, así que los tres casos tienen su test.
+
+**Tests**: 27 en `tests/unit/watchdog.test.js`. Verificado además de punta a punta contra una mañana simulada con 37 minutos de DNS caído: la herramienta detectó el tramo exacto, lo nombró y dio el comando del arreglo. Suites: unit **268/268**, smoke **275/275**.
+
 ### 2026-08-13 — Monitor: el gráfico del rate limit en el tiempo (fase 2)
 
 Completa la sección: curva de ocupación del cupo con el techo punteado, barras de peticiones por intervalo (rojas donde hubo 429), eje temporal y selector **1h / 6h / 24h / 7d**. La matemática vive en `public/js/ratelimit-chart.js` —sin DOM, para poder testearla— y se dibuja con `<polyline>` a mano, igual que las sparklines de Ancho de banda: el proyecto no usa librerías de charting.
