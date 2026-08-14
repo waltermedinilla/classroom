@@ -1005,6 +1005,70 @@ const specs = [
     },
   },
 
+  // ── Telemetría del rate limit (/superadmin/monitor/ratelimit) ─────────────
+  // Alimenta la sección "Rate limit" del monitor. Ver specs/monitor-ratelimit.spec.md.
+  // Nació del 2026-08-13: el cupo se agotó corriendo dos suites seguidas y la única huella
+  // de un 429 era una línea `warn` en el log.
+  {
+    id: 'monitor-ratelimit-shape',
+    title: 'El monitor informa el cupo actual del rate limit y la serie acumulada',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, env, assert }) {
+      await client.post('superadmin', '/login', {
+        body: { email: env.SMOKE_SUPERADMIN_EMAIL, password: env.SMOKE_SUPERADMIN_PASSWORD },
+        expectStatus: 200,
+      });
+
+      const res = await client.get('superadmin', '/superadmin/monitor/ratelimit?rango=1h', { expectStatus: 200 });
+      const d = res.json;
+      assert(d, 'debería responder JSON');
+
+      // `ahora` sale de req.rateLimit: si el middleware de telemetría se desmontara del
+      // server, o el limiter dejara de correr sobre /superadmin, esto se cae acá.
+      assert(d.ahora, 'debería traer el cupo de la IP que consulta');
+      assert(d.ahora.limite > 0, `el límite debería ser positivo, vino ${d.ahora.limite}`);
+      assert(d.ahora.usado >= 1, 'este mismo request ya consume cupo, así que usado >= 1');
+      assert(d.ahora.restante === d.ahora.limite - d.ahora.usado,
+        `restante tiene que cerrar con limite - usado (${d.ahora.restante} vs ${d.ahora.limite - d.ahora.usado})`);
+      assert(Array.isArray(d.serie), 'serie debería ser un array');
+      assert(d.resumen, 'debería traer el resumen');
+      assert(d.bucketMin === 1, `el rango 1h se agrupa por minuto, vino ${d.bucketMin}`);
+    },
+  },
+  {
+    id: 'monitor-ratelimit-counts-usage',
+    title: 'El cupo consumido sube con cada petición, y el rango inválido no rompe',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const leer = async (rango = '1h') => (
+        await client.get('superadmin', `/superadmin/monitor/ratelimit?rango=${rango}`, { expectStatus: 200 })
+      ).json;
+
+      const antes = await leer();
+      await client.get('superadmin', '/superadmin/monitor', { expectStatus: 200 });
+      const despues = await leer();
+
+      // ⚠️ En PM2 cluster cada worker tiene SU contador, así que dos lecturas seguidas
+      // pueden caer en workers distintos y el número bajaría sin que nada esté roto. El
+      // smoke corre contra un server de un solo proceso (npm run dev / node server.js),
+      // que es donde esta comparación tiene sentido.
+      assert(despues.ahora.usado > antes.ahora.usado,
+        `el consumo debería subir: antes ${antes.ahora.usado}, después ${despues.ahora.usado}`);
+
+      // Basura en la query string: cae en 1h en vez de reventar el panel entero
+      const raro = await leer('no-existe');
+      assert(raro.rango === '1h', `un rango desconocido debería caer en 1h, vino ${raro.rango}`);
+    },
+  },
+  {
+    id: 'monitor-ratelimit-forbidden-for-admin',
+    title: 'Un admin de escuela no puede ver la telemetría del rate limit (403)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      await client.get('admin', '/superadmin/monitor/ratelimit', { expectStatus: 403 });
+    },
+  },
+
   // ── Permisos de solapas por rol (/superadmin/roles) ───────────────────────
   // El superadmin habilita/deshabilita, por escuela, qué solapa ve y puede abrir cada rol
   // (config/sections.js + middleware/sections.js). Todos estos specs dejan la escuela como

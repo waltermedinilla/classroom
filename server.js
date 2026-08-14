@@ -20,6 +20,7 @@ const {
   countActiveUsers, shouldPromote, minutesAgo, CHECK_INTERVAL_MS,
 } = require('./services/maintenanceWindow');
 const { logAudit } = require('./middleware/audit');
+const rateLimitStats = require('./services/rateLimitStats');
 const School     = require('./models/School');
 const Suggestion = require('./models/Suggestion');
 const MessageRecipient   = require('./models/MessageRecipient');
@@ -118,15 +119,25 @@ app.use(helmet({
 // correcta para esto.
 const LIVE_ROOM_PATHS = /^\/(courses\/[^/]+\/sala|(directivo|preceptor)\/en-vivo)(\/|$)/;
 
+const RATE_LIMIT_MSG = { error: 'Demasiadas peticiones. Intentá de nuevo en 15 minutos.' };
+
 const generalLimiter = rateLimit({
   windowMs:          15 * 60 * 1000, // Ventana de 15 minutos
   max:               12000,
   standardHeaders:   true,           // Incluye RateLimit-* en los encabezados
   legacyHeaders:     false,
-  message:           { error: 'Demasiadas peticiones. Intentá de nuevo en 15 minutos.' },
+  message:           RATE_LIMIT_MSG,
   skip: (req) => req.path.startsWith('/css/')
               || req.path.startsWith('/js/')      // No limita estáticos
               || LIVE_ROOM_PATHS.test(req.path),  // Ni el polling de la sala en vivo
+  // El handler es el ÚNICO lugar donde se pueden contar los 429: al agotarse el cupo,
+  // express-rate-limit responde acá y no llama a next(), así que para el middleware de
+  // telemetría de más abajo esas requests no existen. Definirlo desactiva el envío
+  // automático de `message`, por eso se responde a mano con el mismo cuerpo de siempre.
+  handler: (req, res, _next, options) => {
+    rateLimitStats.registrarBloqueo(req);
+    res.status(options.statusCode).json(RATE_LIMIT_MSG);
+  },
 });
 
 // Límite para login/registro: 3000 intentos cada 15 minutos por IP.
@@ -186,6 +197,12 @@ app.use(requestLog);
 
 // Aplica límite general a todas las rutas dinámicas
 app.use(generalLimiter);
+
+// Telemetría del cupo, para la sección "Rate limit" de /superadmin/monitor. Va pegado al
+// limiter porque lee el `req.rateLimit` que éste deja seteado, y solo mira: no decide nada
+// ni puede fallar hacia afuera. Las rutas exentas por `skip` no pasan por acá, así que la
+// métrica mide el tráfico que CONSUME CUPO, no el total.
+app.use(rateLimitStats.registrarPaso);
 
 // ── Body parsers y cookies ───────────────────────────────────────────────────
 app.use(express.static('public'));
@@ -728,8 +745,18 @@ connectDB().then(() => {
     logger.info(`Promotor de mantenimiento activo (cada ${CHECK_INTERVAL_MS / 1000}s, PID ${process.pid})`);
   }
 
+  // ── Telemetría del rate limit ──────────────────────────────────────────────
+  // Vuelca a Mongo cada minuto lo que el worker acumuló en memoria. Corre en TODOS los
+  // workers (a diferencia del promotor de mantenimiento): cada uno tiene su propio contador
+  // de rate limit y su propia porción del tráfico, así que si uno no volcara, su parte
+  // simplemente no existiría en el gráfico.
+  rateLimitStats.iniciarVolcado();
+
   const shutdown = (signal) => {
     logger.info(`Cerrando servidor por ${signal} (PID ${process.pid})`);
+    // Último volcado antes de cerrar: sin esto se pierde el minuto en curso en cada deploy,
+    // y los deploys son justo el momento en el que uno mira estos números.
+    rateLimitStats.volcar().catch(() => {});
     server.close(() => {
       logger.info('Servidor cerrado correctamente.');
       process.exit(0);

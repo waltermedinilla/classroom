@@ -113,6 +113,31 @@
     .metric-card-click { cursor: pointer; transition: border-color .15s, box-shadow .15s; }
     .metric-card-click:hover,
     .metric-card-click:focus-visible { border-color: var(--primary); box-shadow: var(--shadow-md, var(--shadow-sm)); }
+
+    /* ── Gráfico de rate limit (fase 2 de specs/monitor-ratelimit.spec.md) ── */
+    .rl-chart-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .rl-rangos { display: flex; gap: 4px; }
+    .rl-rango {
+      font-size: 11px; font-weight: 600; padding: 3px 10px; cursor: pointer;
+      border: 1px solid var(--border, #dadce0); border-radius: 12px;
+      background: transparent; color: var(--text-secondary);
+    }
+    .rl-rango:hover { border-color: #9334e6; color: #9334e6; }
+    .rl-rango.activo { background: #9334e6; border-color: #9334e6; color: #fff; }
+    .rl-chart { width: 100%; height: 90px; display: block; margin-top: 10px; overflow: visible; }
+    .rl-eje {
+      display: flex; justify-content: space-between;
+      font-size: 10px; color: var(--text-hint); margin-top: 2px;
+    }
+    /* align-items:flex-end para que las barras crezcan desde el piso */
+    .rl-barras { display: flex; align-items: flex-end; gap: 1px; height: 26px; margin-top: 6px; }
+    .rl-barras > div { flex: 1 1 0; min-width: 0; border-radius: 1px 1px 0 0; }
+    .rl-leyenda {
+      display: flex; gap: 14px; flex-wrap: wrap;
+      font-size: 11px; color: var(--text-secondary); margin-top: 10px;
+    }
+    .rl-leyenda i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; }
+
     @media (max-width: 600px) {
       .monitor-grid { grid-template-columns: 1fr 1fr; }
       .metric-value { font-size: 26px; }
@@ -193,6 +218,88 @@
         <svg class="net-sparkline" viewBox="0 0 120 32" preserveAspectRatio="none">
           <polyline id="m-net-tx-spark" points="" fill="none" stroke="#ea4335" stroke-width="2" vector-effect="non-scaling-stroke"/>
         </svg>
+      </div>
+    </div>
+
+    <!-- Rate limit -->
+    <div class="section-title">Rate limit</div>
+    <div class="monitor-grid">
+      <div class="metric-card" style="border-top:3px solid #9334e6">
+        <span class="material-symbols-outlined metric-icon" style="color:#9334e6">speed</span>
+        <div class="metric-label">Cupo de esta IP</div>
+        <div style="display:flex;align-items:baseline;gap:4px">
+          <div class="metric-value" style="font-size:26px" id="m-rl-usado">—</div>
+          <span style="font-size:14px;color:var(--text-secondary)" id="m-rl-limite"> / —</span>
+        </div>
+        <div class="bar-track">
+          <div class="bar-fill" id="m-rl-bar" style="width:0%;background:#9334e6"></div>
+        </div>
+        <div class="metric-sub" id="m-rl-reset">—</div>
+      </div>
+
+      <div class="metric-card" style="border-top:3px solid #ea4335">
+        <span class="material-symbols-outlined metric-icon" style="color:#ea4335">block</span>
+        <div class="metric-label" id="m-rl-429-label">Bloqueos 429</div>
+        <div class="metric-value" id="m-rl-429">—</div>
+        <div class="metric-sub" id="m-rl-429-sub">—</div>
+      </div>
+
+      <div class="metric-card" style="grid-column: span 2">
+        <span class="material-symbols-outlined metric-icon" style="color:#ea8600">trending_up</span>
+        <div class="metric-label" id="m-rl-pico-label">Pico de consumo</div>
+        <div class="metric-value" style="font-size:26px" id="m-rl-pico">—</div>
+        <div class="metric-sub" id="m-rl-pico-ip">—</div>
+      </div>
+    </div>
+
+    <!-- Consumo en el tiempo (fase 2) -->
+    <div class="monitor-grid" style="margin-top:14px">
+      <div class="metric-card" style="grid-column: 1 / -1">
+        <div class="rl-chart-head">
+          <div>
+            <span class="material-symbols-outlined metric-icon" style="font-size:20px;color:#9334e6">show_chart</span>
+            <span class="metric-label">Consumo del cupo en el tiempo</span>
+          </div>
+          <div class="rl-rangos" id="m-rl-rangos">
+            <button class="rl-rango activo" data-rango="1h">1h</button>
+            <button class="rl-rango" data-rango="6h">6h</button>
+            <button class="rl-rango" data-rango="24h">24h</button>
+            <button class="rl-rango" data-rango="7d">7d</button>
+          </div>
+        </div>
+
+        <!-- Ocupación del cupo. preserveAspectRatio="none" estira el trazo con el ancho de
+             la tarjeta; vector-effect mantiene la línea de 2px (mismo truco que las
+             sparklines de Ancho de banda, más arriba en este archivo). -->
+        <svg class="rl-chart" viewBox="0 0 300 90" preserveAspectRatio="none" role="img"
+             aria-label="Consumo del cupo del rate limit en el tiempo">
+          <line id="m-rl-techo" x1="0" x2="300" y1="0" y2="0"
+                stroke="#ea4335" stroke-width="1" stroke-dasharray="4 3" opacity=".65"
+                vector-effect="non-scaling-stroke"/>
+          <path     id="m-rl-area"  d=""      fill="#9334e6" fill-opacity=".16"/>
+          <polyline id="m-rl-linea" points="" fill="none" stroke="#9334e6" stroke-width="2"
+                    vector-effect="non-scaling-stroke"/>
+        </svg>
+        <div class="rl-eje" id="m-rl-eje"></div>
+
+        <div class="metric-label" style="margin-top:14px">Peticiones por intervalo</div>
+        <div class="rl-barras" id="m-rl-barras"></div>
+
+        <div class="rl-leyenda">
+          <span><i style="background:#9334e6"></i> Cupo consumido</span>
+          <span><i style="background:#ea4335"></i> Techo (<span id="m-rl-techo-val">—</span>)</span>
+          <span><i style="background:var(--text-hint);opacity:.45"></i> Sin datos</span>
+        </div>
+
+        <!-- Sin estas aclaraciones el número engaña: ver specs/monitor-ratelimit.spec.md -->
+        <div style="font-size:11px;color:var(--text-hint);margin-top:12px;line-height:1.5">
+          No incluye estáticos ni el polling de la sala en vivo (están exentos del limiter),
+          así que el tráfico real es mayor que esta curva.<br>
+          El total suma los <strong id="m-rl-workers">—</strong> workers de PM2, cada uno con
+          su propio cupo: el techo efectivo real es esa cantidad de veces el valor dibujado.
+          Y el monitor, refrescando cada 5 s, consume ~180 peticiones por cada 15 minutos con
+          la pestaña abierta.
+        </div>
       </div>
     </div>
 
@@ -331,6 +438,9 @@
   <%- include('../partials/footer') %>
   <%- include('../partials/backup-compress-modal') %>
 
+  <!-- Matemática del gráfico de rate limit. Va aparte para poder testearla con node:test
+       (tests/unit/ratelimitChart.test.js); las funciones quedan como globales. -->
+  <script src="/js/ratelimit-chart.js"></script>
   <script>
     const REFRESH_SECONDS = 5; // más frecuente que el resto del panel: bajo costo y da sensación de "tiempo real"
     let countdown = REFRESH_SECONDS;
@@ -403,6 +513,114 @@
       const el = document.getElementById(id);
       if (el) el.textContent = val;
     }
+
+    // "en 12 min" / "en 45 s". El reset del limiter es lo que responde la pregunta
+    // "¿cuándo se me libera el cupo?", que es lo que uno quiere saber cuando ve un 429.
+    function formatReset(seg) {
+      if (seg == null) return 'sin datos de reinicio';
+      if (seg >= 60)   return `se reinicia en ${Math.round(seg / 60)} min`;
+      return `se reinicia en ${seg} s`;
+    }
+
+    // Rango elegido para el gráfico. Los botones solo cambian esto y piden de nuevo.
+    let rlRango = '1h';
+    const RL_ETIQUETA = { '1h': 'la última hora', '6h': 'las últimas 6 horas', '24h': 'las últimas 24 horas', '7d': 'los últimos 7 días' };
+
+    // Ancho/alto del viewBox del <svg>. Las coordenadas se calculan en este espacio y el
+    // preserveAspectRatio="none" las estira al ancho real de la tarjeta.
+    const RL_W = 300, RL_H = 90;
+
+    function dibujarGrafico(data) {
+      const { rellenarBuckets, topeEjeY, puntosSerie, pathArea, alturasTrafico, etiquetasEjeX } = window;
+
+      // Se rellenan los buckets sin muestra ANTES de dibujar: si no, un hueco de tres horas
+      // quedaría pegado al punto anterior y la curva mentiría sobre cuándo pasó cada cosa.
+      const serie = rellenarBuckets(data.serie, data.desde, data.hasta, data.bucketMin);
+      const tope  = topeEjeY(serie, (data.resumen && data.resumen.limite) || (data.ahora && data.ahora.limite) || 0);
+      const opts  = { ancho: RL_W, alto: RL_H, tope };
+
+      document.getElementById('m-rl-linea').setAttribute('points', puntosSerie(serie, 'picoUsado', opts));
+      document.getElementById('m-rl-area').setAttribute('d', pathArea(serie, 'picoUsado', opts));
+
+      // Techo: solo se dibuja si el límite entra en la escala. Si el pico se pasó del máximo
+      // configurado (posible: el cupo es por worker), la línea baja dentro del recuadro sola.
+      const limite = (data.resumen && data.resumen.limite) || (data.ahora && data.ahora.limite) || 0;
+      const yTecho = tope > 0 ? RL_H - Math.min(1, limite / tope) * RL_H : 0;
+      const techo  = document.getElementById('m-rl-techo');
+      techo.setAttribute('y1', yTecho.toFixed(1));
+      techo.setAttribute('y2', yTecho.toFixed(1));
+      setText('m-rl-techo-val', limite ? limite.toLocaleString('es-AR') : '—');
+
+      // Barras de tráfico, con su propia escala (ver alturasTrafico).
+      // El gap se saca cuando hay muchas barras: en 7d son 168 y en un teléfono cada una
+      // mide 0,8 px, así que el separador de 1 px terminaba siendo más ancho que el dato.
+      const cont = document.getElementById('m-rl-barras');
+      cont.style.gap = serie.length > 80 ? '0' : '1px';
+      cont.innerHTML = alturasTrafico(serie).map(b => {
+        const alto  = Math.max(b.alto * 100, b.vacio ? 0 : 2); // mínimo visible si hubo tráfico
+        const color = b.bloqueado ? '#ea4335' : (b.vacio ? 'var(--text-hint)' : '#1a73e8');
+        const op    = b.vacio ? '.2' : '.75';
+        return `<div style="height:${alto.toFixed(1)}%;background:${color};opacity:${op}"></div>`;
+      }).join('');
+
+      document.getElementById('m-rl-eje').innerHTML =
+        etiquetasEjeX(serie, data.rango).map(m => `<span>${m.label}</span>`).join('');
+    }
+
+    async function fetchRateLimit() {
+      try {
+        const res  = await fetch('/superadmin/monitor/ratelimit?rango=' + rlRango);
+        const data = await res.json();
+
+        if (data.ahora) {
+          const { usado, limite, resetEnSeg } = data.ahora;
+          const pct = limite > 0 ? Math.round((usado / limite) * 100) : 0;
+          setText('m-rl-usado',  usado.toLocaleString('es-AR'));
+          setText('m-rl-limite', ' / ' + limite.toLocaleString('es-AR'));
+          setText('m-rl-reset',  `${pct}% del cupo · ${formatReset(resetEnSeg)}`);
+          const bar = document.getElementById('m-rl-bar');
+          bar.style.width      = Math.min(100, pct) + '%';
+          bar.style.background = barColor(pct);
+        } else {
+          setText('m-rl-reset', 'Esta ruta está exenta del limiter');
+        }
+
+        const r = data.resumen || {};
+        setText('m-rl-429', (r.bloqueadasTotal || 0).toLocaleString('es-AR'));
+        setText('m-rl-429-sub', r.ultimoBloqueo
+          ? 'último: ' + new Date(r.ultimoBloqueo).toLocaleString('es-AR')
+          : 'ninguno en ' + RL_ETIQUETA[data.rango]);
+        setText('m-rl-429-label', 'Bloqueos 429 (' + RL_ETIQUETA[data.rango] + ')');
+        setText('m-rl-pico-label', 'Pico de consumo en ' + RL_ETIQUETA[data.rango]);
+        document.getElementById('m-rl-429').style.color =
+          (r.bloqueadasTotal || 0) > 0 ? '#ea4335' : 'var(--secondary)';
+
+        // El pico es "qué tan cerca del techo llegó UNA IP", no la suma de todas: por eso
+        // se compara contra el límite de un worker y no contra el total del cluster.
+        const pico = r.picoMaximo || 0;
+        const tope = r.limite || (data.ahora && data.ahora.limite) || 0;
+        setText('m-rl-pico', tope > 0
+          ? `${pico.toLocaleString('es-AR')} (${Math.round((pico / tope) * 100)}% del cupo)`
+          : pico.toLocaleString('es-AR'));
+        setText('m-rl-pico-ip', r.picoIp
+          ? `IP que lo provocó: ${r.picoIp}`
+          : (pico > 0 ? 'sin IP registrada' : 'sin actividad registrada todavía'));
+        setText('m-rl-workers', r.workers || '—');
+
+        dibujarGrafico(data);
+      } catch {
+        setText('m-rl-reset', 'No se pudo leer el consumo del rate limit');
+      }
+    }
+
+    // Botones de rango: cambian la ventana y piden de nuevo, sin esperar al refresco de 5 s.
+    document.getElementById('m-rl-rangos').addEventListener('click', (e) => {
+      const btn = e.target.closest('.rl-rango');
+      if (!btn) return;
+      rlRango = btn.dataset.rango;
+      document.querySelectorAll('.rl-rango').forEach(b => b.classList.toggle('activo', b === btn));
+      fetchRateLimit();
+    });
 
     async function fetchStats() {
       document.getElementById('statusDot').style.background = '#ea8600';
@@ -519,6 +737,11 @@
         // Uptime
         setText('m-uptime-proc', formatUptime(data.uptime.process));
         setText('m-uptime-sys',  formatUptime(data.uptime.system));
+
+        // Rate limit — va en su propio fetch para no ensanchar /monitor/stats, que se llama
+        // cada 5 s y ya hace disco + varias queries. Si falla, deja los guiones y no rompe
+        // el resto del monitor (mismo criterio que el bloque de almacenamiento).
+        fetchRateLimit();
 
         // Timestamp
         const ts = new Date(data.timestamp);

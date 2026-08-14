@@ -373,6 +373,36 @@ que deja usuarios de prueba sin borrar). Espaciar las corridas o limpiar a mano.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-13 — Monitor: el gráfico del rate limit en el tiempo (fase 2)
+
+Completa la sección: curva de ocupación del cupo con el techo punteado, barras de peticiones por intervalo (rojas donde hubo 429), eje temporal y selector **1h / 6h / 24h / 7d**. La matemática vive en `public/js/ratelimit-chart.js` —sin DOM, para poder testearla— y se dibuja con `<polyline>` a mano, igual que las sparklines de Ancho de banda: el proyecto no usa librerías de charting.
+
+**Cache de 30 s por rango en el endpoint.** Sin él, dejar la pestaña abierta en "7d" serían 12 lecturas por minuto de ~20 mil documentos para dibujar una curva que cambia una vez por minuto. El `ahora` no se cachea: es el dato en vivo.
+
+**Tres cosas que aparecieron recién al verificar con datos reales**, y que son la parte que importa de este cambio:
+
+1. **Los huecos mentían.** Un minuto sin tráfico no genera documento, así que dibujando solo los puntos existentes un hueco de tres horas quedaba pegado al anterior, idéntico a uno de un minuto. Ahora se rellena la ventana completa con ceros y esos buckets quedan marcados como "sin datos" — que no es lo mismo que un cero real: puede ser que el servidor estuviera apagado.
+2. **El contador de workers se inflaba con cada deploy.** Contaba PIDs distintos de todo el rango, y el PID cambia en cada reinicio: un día con cuatro deploys mostraba "5 workers". Como el texto de la vista dice que el techo efectivo es esa cantidad de veces el cupo, el número engañaba justo sobre lo que hay que entender. Ahora es el máximo de PIDs distintos **dentro de un mismo minuto**, que es la concurrencia real.
+3. **Legibilidad**: el eje salía en formato 12 h (`es-AR` da "12:59 a. m." por defecto) y en móvil las barras de "7d" medían 0,8 px con un gap de 1 px, o sea más separador que dato. Eje a 24 h y gap fuera cuando hay más de 80 buckets.
+
+**Tests**: 20 unitarios nuevos (`tests/unit/ratelimitChart.test.js`) + 2 que fijan el conteo de workers. Suites: unit **241/241**, smoke **275/275**, roles sin hallazgos. Verificado en el navegador con datos reales en los cuatro rangos, en escritorio y en móvil, comprobando que ninguna coordenada se sale del `viewBox`.
+
+### 2026-08-13 — Monitor: consumo del rate limit en el tiempo (fase 1)
+
+**Pedido**: *"una vista para que pueda visualizar a través del tiempo el ratelimit usado y el actual"*, al lado de Ancho de banda. Spec completa en `specs/monitor-ratelimit.spec.md`.
+
+**Lo que hacía falta resolver antes de graficar nada**: `ecosystem.config.js` levanta **2 workers** y `express-rate-limit` guarda las cuentas en el `MemoryStore` de cada proceso. Hay dos contadores independientes para la misma IP, y `/monitor/stats` cae en uno u otro por round-robin: graficar la lectura cruda daría un diente de sierra sin significado. Por eso la telemetría se guarda **por minuto y por worker** (`{ minuto, pid }` único) y se **suma al consultar**. El corolario que esto deja a la vista: **el techo efectivo real es ~2x el `max` configurado**, porque una IP recibe 429 recién cuando el worker que le tocó agotó su cuenta. La solución de fondo (store compartido) está anotada como D-03 y **no se hizo**.
+
+**El otro punto no obvio**: los 429 solo se pueden contar desde el `handler` del limiter. Al agotarse el cupo, express-rate-limit responde y **no llama a `next()`**, así que para cualquier middleware posterior esas requests no existen y el contador daría siempre cero — justo el número que importa. Definir `handler` además **desactiva el envío automático de `message`**, así que hay que responder el cuerpo a mano; hay un test que fija ese cuerpo para que nadie le cambie el error a la escuela sin darse cuenta.
+
+**Qué se ve**: cupo de la IP que consulta (usado/límite, barra y "se reinicia en X min"), bloqueos 429 de la última hora con la fecha del último, y el pico de consumo con **la IP que lo provocó** — lo único que distingue "toda la escuela navegando" de "un script suelto". La vista aclara en el mismo lugar las dos cosas sin las cuales el número engaña: que estáticos y sala en vivo están exentos del limiter, y que el total suma los 2 workers.
+
+**Costo**: 2880 documentos por día (2 workers x 1440 min), TTL de 14 días, una escritura por worker por minuto. Si Mongo está caído se descarta la muestra y la app sigue: es telemetría, no puede tumbar un request.
+
+**Tests**: 21 unitarios (`tests/unit/rateLimitStats.test.js`) + 3 smoke. El 429 se prueba montando un express con `max: 3`, porque provocarlo contra el server real serían 12000 peticiones. Suites: unit **220/220**, smoke **275/275**, roles sin hallazgos.
+
+⚠️ **Colección nueva en producción** (`ratelimitsamples`): se crea sola con el índice TTL al primer volcado. No hay que migrar nada ni tocar datos existentes.
+
 ### 2026-08-13 — Rate limit general: 1200 → 12000 cada 15 minutos por IP
 
 **Síntoma**: 429 *"Demasiadas peticiones"* corriendo `test:smoke` y `test:roles` seguidos — la limpieza final de roles quedaba a medias y dejaba usuarios y divisiones de prueba en la base. El mismo techo lo puede tocar la escuela en el arranque de clase.

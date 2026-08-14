@@ -14,6 +14,10 @@ const Subject    = require('../models/Subject');
 const Suggestion = require('../models/Suggestion');
 const THEMES     = require('../config/themes');
 const { getNetworkStats } = require('../config/network');
+const RateLimitSample = require('../models/RateLimitSample');
+const {
+  rangoValido, configDeRango, agregarSerie, resumirMuestras,
+} = require('../services/rateLimitStats');
 const { requireAuth }      = require('../middleware/auth');
 const { requireSuperAdmin } = require('../middleware/superadmin');
 const { invalidateUser, invalidateSchool } = require('../middleware/cache');
@@ -865,6 +869,70 @@ router.get('/monitor/stats', async (req, res) => {
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Cache de la parte histórica, por rango. El monitor refresca cada 5 s y "7d" son ~20 mil
+// documentos: sin esto, dejar la pestaña abierta en ese rango serían 4 lecturas por minuto
+// de toda la colección para dibujar una curva que cambia una vez por minuto. Mismo criterio
+// (y casi el mismo número) que el cache de 60 s de services/diskStats.js.
+// El `ahora` NO se cachea: es el dato en vivo y sale del propio request.
+const rlCache = new Map(); // rango → { t, serie, resumen, desde }
+const RL_CACHE_MS = 30 * 1000;
+
+// GET /superadmin/monitor/ratelimit?rango=1h|6h|24h|7d
+// Consumo del rate limit general en el tiempo. Ver specs/monitor-ratelimit.spec.md.
+//
+// Dos datos de naturaleza distinta en la misma respuesta:
+//   - `ahora`: el cupo de LA IP QUE CONSULTA, en EL WORKER que atendió este request. Sale de
+//     req.rateLimit, es exacto y es instantáneo. Si el superadmin mira desde su casa, no es
+//     el cupo de la escuela: la vista lo aclara.
+//   - `serie` y `resumen`: la telemetría acumulada, sumando los dos workers por bucket.
+router.get('/monitor/ratelimit', async (req, res) => {
+  try {
+    const rango = rangoValido(req.query.rango) ? req.query.rango : '1h';
+    const { ventanaMin, bucketMin } = configDeRango(rango);
+    const desde = new Date(Date.now() - ventanaMin * 60 * 1000);
+
+    let cacheado = rlCache.get(rango);
+    if (!cacheado || Date.now() - cacheado.t > RL_CACHE_MS) {
+      const muestras = await RateLimitSample.find({ minuto: { $gte: desde } })
+        .select('minuto pid pasadas bloqueadas picoUsado picoIp limite')
+        .sort({ minuto: 1 })
+        .lean();
+
+      cacheado = {
+        t:       Date.now(),
+        desde,
+        serie:   agregarSerie(muestras, bucketMin),
+        resumen: resumirMuestras(muestras),
+      };
+      rlCache.set(rango, cacheado);
+    }
+
+    const rl = req.rateLimit;
+    res.json({
+      rango,
+      bucketMin,
+      // req.rateLimit no está si la ruta quedó exenta del limiter; hoy no es el caso de
+      // /superadmin/*, pero un `skip` nuevo no debería romper el panel entero.
+      ahora: rl ? {
+        usado:      rl.used,
+        restante:   rl.remaining,
+        limite:     rl.limit,
+        resetEnSeg: rl.resetTime ? Math.max(0, Math.round((new Date(rl.resetTime) - Date.now()) / 1000)) : null,
+        pid:        process.pid,
+      } : null,
+      // Bordes de la ventana: el front rellena con ceros los buckets sin muestra y necesita
+      // saber hasta dónde llega el eje, no solo dónde cae el último dato que hubo.
+      desde:   cacheado.desde,
+      hasta:   new Date(),
+      serie:   cacheado.serie,
+      resumen: cacheado.resumen,
+    });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error al cargar el consumo del rate limit' });
   }
 });
 
