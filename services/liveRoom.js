@@ -51,8 +51,22 @@ const ONLINE_WINDOW_MS = 45 * 1000;
 const STAFF_ONLINE_WINDOW_MS = 3 * 60 * 1000;
 
 // Autocierre por inactividad. Cubre el caso real de la docente que se olvida la sala abierta
-// al terminar la clase, sin cortar una clase larga por la mitad.
-const AUTO_CLOSE_MS = 3 * 60 * 60 * 1000;
+// al terminar la clase.
+//
+// Lo que mide es SALA VACÍA, no "clase sin mensajes": `lastActivityAt` se refresca con
+// cualquier poll (cada 4 s por persona adentro) y con el latido de quien gestiona la sala
+// (cada 20 s). Que pasen 30 minutos sin tocarlo significa que no quedó NADIE —ni la docente ni
+// un solo alumno— en ~450 polls seguidos. Una clase larga en silencio no corre riesgo: mientras
+// haya alguien mirando, el reloj se reinicia solo.
+//
+// Bajado de 3 h a 30 min el 2026-08-17. Las 3 h venían de cuando el autocierre solo se
+// evaluaba al entrar a la sala: eran generosas porque el disparador era poco confiable, y en la
+// práctica dejaban el panel de dirección lleno de clases terminadas. Con el barrido de
+// closeStaleSessions() el disparador ya no depende de que alguien vuelva a la sala, así que el
+// número puede decir lo que de verdad quiere decir. 30 min es el doble del recreo más largo:
+// una desconexión general del WiFi de la escuela tendría que durar media hora para cerrar una
+// clase en curso.
+const AUTO_CLOSE_MS = 30 * 60 * 1000;
 
 // Antigüedad a partir de la cual cleanup-rooms.js puede purgar los MENSAJES de una sesión
 // cerrada. La presencia (la asistencia) no se purga nunca. Decisión del usuario: 3 meses
@@ -260,6 +274,42 @@ function shouldAutoClose(session, now = new Date()) {
   return now.getTime() - last > AUTO_CLOSE_MS;
 }
 
+// A qué hora terminó realmente una clase que se cierra sola.
+//
+// Es su ÚLTIMA señal de vida, no el momento en que el sistema se dio cuenta. La diferencia se
+// ve: una sala que quedó abierta el martes y se barre el jueves tiene que figurar como cerrada
+// el martes a las 10:40 —que es cuando se fue el último—, no el jueves a las 8:03. Si no, el
+// pie "Cerradas hoy" del panel se llena de clases de la semana pasada y las horas del historial
+// y del CSV mienten.
+//
+// Para el cierre a mano no aplica: ahí la hora es cuando la persona apretó el botón.
+function horaDeCierre(session, now = new Date(), { auto = false } = {}) {
+  if (!auto) return now;
+  const t = new Date(session?.lastActivityAt || session?.openedAt);
+  if (Number.isNaN(t.getTime())) return now;
+
+  // Nunca antes de la apertura: una clase que "terminó" antes de empezar sale con duración
+  // negativa en el historial y en el CSV. En la práctica lastActivityAt siempre va después
+  // —nace en la apertura y solo avanza—, pero un dato viejo o retocado a mano no puede
+  // producir un registro imposible.
+  const abrio = new Date(session?.openedAt);
+  return !Number.isNaN(abrio.getTime()) && abrio > t ? abrio : t;
+}
+
+// ¿Hay alguien A CARGO de esta sala conectado ahora mismo?
+//
+// `gestorIds` son la titular y sus suplentes (Course.owner + coTeachers). Preceptoría y
+// dirección NO cuentan: que un preceptor esté mirando la sala no significa que se esté
+// dictando la clase, y el panel de dirección pregunta justamente eso.
+//
+// Usa la ventana del personal (3 min), no la de los alumnos: es la misma pregunta que contesta
+// presenceSummary y tiene que contestarla igual en las dos pantallas.
+function gestorEnLinea(presences = [], gestorIds = [], now = new Date()) {
+  const gestores = new Set(gestorIds.map(String));
+  return presences.some(p =>
+    gestores.has(String(p.user)) && isOnline(p.lastPingAt, now, STAFF_ONLINE_WINDOW_MS));
+}
+
 // Normaliza el texto de un mensaje antes de guardarlo.
 // No escapa HTML: eso lo hace la vista con <%= %>, que es el único lugar donde el escapado
 // es correcto. Guardar el texto ya escapado rompería el export a CSV y la búsqueda.
@@ -329,20 +379,67 @@ async function openSession(course, user, title = '') {
 }
 
 // Cierra la sala. `auto` distingue el cierre por inactividad del que hace una persona.
-async function closeSession(session, user = null, { auto = false } = {}) {
-  if (session.closedAt) return session;
+//
+// El cierre se escribe con un findOneAndUpdate condicionado a `closedAt: null` y NO con
+// save(): es lo que lo hace seguro con los dos workers de PM2. Dos barridos simultáneos (o un
+// barrido y la docente apretando "Cerrar") leen los dos la sesión abierta, pero solo uno gana
+// la escritura; el que pierde se va sin tocar nada. Con save() ganaban los dos y la clase
+// terminaba con el aviso de cierre repetido en la transcripción.
+//
+// Por eso el mensaje de sistema va DESPUÉS de ganar la carrera, y no antes como estaba.
+async function closeSession(session, user = null, { auto = false, now = new Date() } = {}) {
+  if (!session || session.closedAt) return session;
+
+  const cierre = horaDeCierre(session, now, { auto });
+
+  const cerrada = await RoomSession.findOneAndUpdate(
+    { _id: session._id, closedAt: null },
+    { $set: { closedAt: cierre, closedBy: user?._id || null, autoClosed: !!auto } },
+    { new: true }
+  );
+  if (!cerrada) return session;   // otro worker la cerró primero
 
   await systemMessage(
-    session,
+    cerrada,
     auto ? 'La sala se cerró automáticamente por inactividad.'
          : `${user?.name || 'La docente'} cerró la sala.`
   );
 
-  session.closedAt   = new Date();
-  session.closedBy   = user?._id || null;
-  session.autoClosed = !!auto;
-  await session.save();
-  return session;
+  // El mensaje anterior pasó por nextSeq, que refresca lastActivityAt: sin esto una sesión
+  // cerrada quedaría con su última actividad DESPUÉS de su propio cierre.
+  await RoomSession.updateOne({ _id: cerrada._id }, { $set: { lastActivityAt: cierre } });
+  cerrada.lastActivityAt = cierre;
+
+  return cerrada;
+}
+
+// Barrido de salas que quedaron abiertas sin nadie adentro.
+//
+// Por qué existe: hasta el 2026-08-17 el autocierre se evaluaba en UN solo lugar —al pedir la
+// sala de una materia (routes/rooms.js)—, así que una clase que terminaba y a la que nadie
+// volvía a entrar se quedaba abierta para siempre. Nada la miraba. En el espejo de producción
+// había 40 salas "en vivo" sin un solo ping desde hacía entre 3 y 6 días, y los paneles de
+// dirección y preceptoría las listaban todas como clases en curso.
+//
+// Sigue siendo perezoso (no hay setInterval: con 2 workers en cluster un timer correría dos
+// veces), pero ahora los paneles de supervisión también son disparador, que es exactamente
+// donde el problema se ve. `match` es el MISMO filtro con el que el panel lista: el barrido
+// cierra lo que esa pantalla mostraría, ni una sesión de más.
+//
+// Devuelve cuántas cerró. No lanza: que falle un barrido no puede tumbar el panel.
+async function closeStaleSessions(match, now = new Date()) {
+  try {
+    const abiertas = await RoomSession.find({ ...match, closedAt: null })
+      .select('_id course openedAt lastActivityAt closedAt');
+
+    const vencidas = abiertas.filter(s => shouldAutoClose(s, now));
+    for (const s of vencidas) await closeSession(s, null, { auto: true, now });
+
+    return vencidas.length;
+  } catch (err) {
+    console.error('[liveRoom] barrido de salas vencidas:', err.message);
+    return 0;
+  }
 }
 
 // Asigna el `seq` siguiente de la sesión de forma ATÓMICA y crea el mensaje.
@@ -460,7 +557,16 @@ async function getOpenSessions(schoolId, { divisionIds = undefined, now = new Da
   const match = { school: oid(schoolId), closedAt: null };
   if (Array.isArray(divisionIds)) match.division = { $in: divisionIds.map(oid) };
 
-  const cutoff = new Date(now.getTime() - ONLINE_WINDOW_MS);
+  // Antes de listar, cerrar lo que ya terminó: sin esto el panel muestra como "en vivo"
+  // cualquier clase vieja a cuya sala nadie volvió a entrar. Va acá y no en la ruta para que
+  // valga igual en los dos paneles (dirección y preceptoría) y en su poll.
+  await closeStaleSessions(match, now);
+
+  // La ventana ancha (la del personal) es la que se pide a la base; los alumnos se filtran
+  // después con la suya. Al revés —pidiendo 45 s— la docente que pingueó hace 1 minuto no
+  // vendría en el resultado y la tarjeta la daría por desconectada. Ver STAFF_ONLINE_WINDOW_MS.
+  const cutoff     = new Date(now.getTime() - Math.max(ONLINE_WINDOW_MS, STAFF_ONLINE_WINDOW_MS));
+  const cutoffStud = new Date(now.getTime() - ONLINE_WINDOW_MS);
 
   const rows = await RoomSession.aggregate([
     { $match: match },
@@ -476,7 +582,7 @@ async function getOpenSessions(schoolId, { divisionIds = undefined, now = new Da
         pipeline: [
           { $match: { $expr: { $eq: ['$session', '$$s'] }, lastPingAt: { $gte: cutoff } } },
           { $sort:  { firstSeenAt: 1 } },
-          { $project: { user: 1, userName: 1, userRole: 1 } },
+          { $project: { user: 1, userName: 1, userRole: 1, lastPingAt: 1 } },
         ],
         as: 'presentes',
     } },
@@ -498,8 +604,10 @@ async function getOpenSessions(schoolId, { divisionIds = undefined, now = new Da
 
   return rows.map((r) => {
     const alumnos  = (r.curso.students || []).length;
-    const presStud = r.presentes.filter(p => !STAFF_ROLES.includes(p.userRole));
+    const presStud = r.presentes.filter(p =>
+      !STAFF_ROLES.includes(p.userRole) && new Date(p.lastPingAt) >= cutoffStud);
     const msg      = r.msgs[0] || { n: 0, ultimo: null };
+    const gestores = [r.curso.owner, ...(r.curso.coTeachers || [])].filter(Boolean);
     return {
       sessionId: String(r._id),
       courseId:  String(r.curso._id),
@@ -511,6 +619,11 @@ async function getOpenSessions(schoolId, { divisionIds = undefined, now = new Da
       desdeMin:  Math.max(0, Math.round((now - new Date(r.openedAt)) / 60000)),
       presentes: presStud.length,
       total:     alumnos,
+      // Sala abierta NO es lo mismo que docente dando clase: puede haberse ido hace 10 minutos
+      // y la sala todavía no vencer. La tarjeta lo dice en vez de dejar que dirección lo
+      // suponga, que es de donde salía el reclamo "aparecen clases que ya deberían estar
+      // cerradas". Solo cuentan titular y suplentes: ver gestorEnLinea.
+      docenteEnLinea: gestorEnLinea(r.presentes, gestores, now),
       mensajes:  msg.n,
       ultimoMensajeHace: msg.ultimo
         ? Math.max(0, Math.round((now - new Date(msg.ultimo)) / 1000))
@@ -626,11 +739,11 @@ module.exports = {
   // hora (zona fija de la escuela)
   fmt, hora, fechaDia, fechaLarga, fechaCorta, fechaHora, diaEscolar,
   // puras
-  isOnline, presenceSummary, shouldAutoClose, sanitizeText, minutosPresente, initial,
-  pesoLegible, etiquetaExt, textoAdjunto,
+  isOnline, presenceSummary, shouldAutoClose, horaDeCierre, gestorEnLinea, sanitizeText,
+  minutosPresente, initial, pesoLegible, etiquetaExt, textoAdjunto,
   // con base
-  openSession, closeSession, postMessage, postAttachment, systemMessage, touchPresence,
-  getOpenSessions, getTodayClosed,
+  openSession, closeSession, closeStaleSessions, postMessage, postAttachment, systemMessage,
+  touchPresence, getOpenSessions, getTodayClosed,
   // export
   csvAsistencia, csvTranscripcion,
   // El "dialecto" de CSV del proyecto (punto y coma + BOM, para el Excel en español). Se

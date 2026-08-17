@@ -136,6 +136,20 @@
     /* En 360 px la card ocupa lo que haya: con el ancho fijo de 340 quedaba pegada a los bordes. */
     .lr-card-adj, .lr-adj-borrado { max-width:100%; }
     .lr-img { max-height:200px; }
+
+    /* ── La barra de escribir, con el pulgar ────────────────────────────────
+       Medido a 375 px: el cuadro de escribir daba 19 px de alto, los botones de
+       adjuntar 24×24, el de enviar 24×24 y los emoji ~22. Es un chat que se usa
+       durante la clase y desde el teléfono, así que son los controles que más
+       se tocan de toda la sala. */
+    .lr-composer { padding:4px 6px; gap:4px; }
+    /* 16px no es un capricho de tamaño: por debajo de eso, Safari en iPhone hace
+       zoom solo al enfocar el campo y deja la página corrida de costado. */
+    .lr-composer input { font-size:16px; padding:10px 4px; }
+    .lr-adj-btn { width:40px; height:40px; justify-content:center; }
+    #lrEnviar { width:44px; height:44px; display:flex; align-items:center; justify-content:center; }
+    .lr-emojis { gap:2px; }
+    .lr-emojis button { font-size:22px; padding:8px; }
   }
 </style>
 

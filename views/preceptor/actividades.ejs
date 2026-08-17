@@ -31,7 +31,11 @@
                 border:1px solid #dadce0; border-radius:50%; color:#5f6368; text-decoration:none; }
       .ad-nav:hover { background:#f8f9fa; }
 
-      .ad-grid { display:grid; grid-template-columns:repeat(7, 1fr); gap:6px; }
+      <%# minmax(0,1fr) y no 1fr: un track `1fr` no baja de su contenido (min-width:auto), así
+          que en un teléfono los 7 días sumaban 351 px dentro de una tarjeta de 315 y la
+          columna del SÁBADO quedaba cortada fuera de pantalla — medido a 375 px: iba de
+          x 335 a 380. Es el mismo motivo por el que .ad-layout ya usaba minmax(0,1fr). %>
+      .ad-grid { display:grid; grid-template-columns:repeat(7, minmax(0, 1fr)); gap:6px; }
       .ad-dow { font-size:11px; font-weight:600; letter-spacing:.4px; color:#5f6368;
                 text-align:center; padding:6px 0; text-transform:uppercase; }
       .ad-dow .corto { display:none; }

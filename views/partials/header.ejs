@@ -389,6 +389,18 @@ const _activeTheme = (function() {
           <span>Salir de vista</span>
         </a>
       <% } %>
+      <%# Cerrar sesión también acá, no solo en el menú del avatar. En un teléfono el
+          .header-right no entra en el ancho y el avatar queda fuera de pantalla, así que
+          ese menú era inalcanzable y no había NINGUNA forma de salir de la sesión.
+          El media query de style.css ya achica el header, pero el ítem se deja en todos
+          los anchos: es la vía obvia y no molesta en escritorio. %>
+      <% if (typeof user !== 'undefined' && user) { %>
+        <div class="drawer-divider"></div>
+        <button class="drawer-item drawer-item-btn" onclick="logout()">
+          <span class="material-symbols-outlined">logout</span>
+          <span>Cerrar sesión</span>
+        </button>
+      <% } %>
     </div>
   </div>
 </nav>

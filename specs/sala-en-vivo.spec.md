@@ -7,8 +7,8 @@
 > chat grupal donde todos leen y escriben (RN-14) · historial archivado por clase (RN-01) ·
 > dirección entra en observación silenciosa pero auditada (RN-19, RN-20) · el preceptor entra
 > siempre visible (RN-26) · las rutas de la sala fuera del `generalLimiter` (RN-09) ·
-> purga de mensajes a los 3 meses conservando la asistencia (RN-23) · autocierre a las 3 h
-> (RN-08).
+> purga de mensajes a los 3 meses conservando la asistencia (RN-23) · autocierre por sala
+> vacía, 30 min desde el 2026-08-17 (RN-08).
 >
 > **Se implementa en dos fases mergeables por separado**, en este orden:
 > **Fase A — la sala** (modelos, rutas de curso, solapa "En vivo", backup).
@@ -151,7 +151,7 @@ Todas las constantes en un solo lugar, con su fundamento escrito al lado:
 const POLL_MS          = 4000;        // cada cuánto pollea el alumno/docente (RN-03)
 const DIRECTIVO_POLL_MS= 15000;       // cada cuánto se repintan las tarjetas (RN-17)
 const ONLINE_WINDOW_MS = 45000;       // "conectado ahora" = ping en los últimos 45 s (RN-05)
-const AUTO_CLOSE_MS    = 3*60*60*1000;// 3 h sin actividad → autocierre (RN-08)
+const AUTO_CLOSE_MS    = 30*60*1000;  // 30 min sin NADIE adentro → autocierre (RN-08)
 const MSG_MAX          = 500;         // caracteres por mensaje
 const MSG_PER_MIN      = 10;          // mensajes por usuario por minuto (RN-09)
 const EMOJIS = ['👋','👍','✋','❓','😀','🎉','✅','😕','❤️','😮','🙏','👏'];
@@ -372,11 +372,35 @@ apunte a la URL correcta — el partial de tarjetas es uno solo (RN-27).
   "presentes" que se muestran son **solo de alumnos** (`total` = `course.students.length`),
   pero el círculo de la docente aparece primero en la fila. Que se vea quién está a cargo.
 
-- **RN-08 — Autocierre a las 3 h sin actividad, sin cron.** Se evalúa **perezosamente**: cada
-  `poll` y cada listado del directivo revisa `shouldAutoClose()` y cierra si corresponde, con
+- **RN-08 — Autocierre a los 30 min de SALA VACÍA, sin cron.** Se evalúa **perezosamente**:
+  cada `poll` y **cada listado de los paneles de supervisión** (`getOpenSessions`, o sea
+  dirección y preceptoría) revisa `shouldAutoClose()` y cierra lo que corresponda, con
   `autoClosed: true` y un mensaje de sistema *"La sala se cerró automáticamente por
   inactividad."*. No se agrega un scheduler: con 2 workers, un `setInterval` correría dos
   veces y sería la cuarta forma de que este proyecto se pise a sí mismo en cluster.
+
+  Lo que mide son 30 minutos **sin que nadie toque la sala**, no una clase sin mensajes:
+  `lastActivityAt` se refresca con cualquier poll (4 s) y con el latido de quien la gestiona
+  (20 s), así que una clase larga en silencio no corre riesgo mientras haya alguien mirando.
+
+  ⚠️ **Corregido el 2026-08-17**: esta regla decía "y cada listado del directivo" desde el
+  primer día, pero el código **solo** lo hacía en las rutas de la sala. Una clase a la que
+  nadie volvía a entrar quedaba abierta para siempre: en el espejo de producción había 40
+  salas "en vivo" sin un ping desde hacía entre 3 y 6 días. La ventana era de 3 h por esa
+  misma razón —el disparador no era confiable— y bajó a 30 min al arreglarse.
+
+  El `closedAt` de un cierre automático se fecha en la **última señal de vida**, no en el
+  momento del barrido (`horaDeCierre`): una sala que quedó abierta el martes tiene que figurar
+  cerrada el martes, o el pie "Cerradas hoy" se llena de clases de la semana pasada y las
+  horas del historial y del CSV mienten. Nunca antes de `openedAt`.
+
+- **RN-08b — Sala abierta no es lo mismo que docente dando clase.** Las tarjetas de los
+  paneles traen `docenteEnLinea`: si ninguno de los docentes a cargo (titular +
+  `coTeachers`) pingueó dentro de la ventana del personal (RN-05b), la tarjeta lo dice con un
+  chip ámbar *"sin docente"* en vez del verde *"en vivo"*. Preceptoría y dirección adentro
+  **no** cuentan: que un preceptor esté mirando no significa que se esté dictando la clase, y
+  es exactamente lo que el panel pregunta. Sin esto, los 30 minutos de gracia del autocierre
+  se ven igual que una clase en curso.
 
 - **RN-09 — Límite de escritura por USUARIO, no por IP.** 10 mensajes por minuto por usuario.
   Y —crítico— **las rutas de la sala quedan fuera del `generalLimiter`** de `server.js:85`,
@@ -568,8 +592,10 @@ Auditables (van a `config/audit-actions.js`): CU-01, CU-05, CU-06, CU-08, CU-12,
   **primera** en `conectados` pero **no** suma al conteo de presentes (RN-07).
 - **CA-03** — Dada una materia con `total: 0`, entonces el resumen devuelve `presentes: 0`,
   `total: 0` y ningún `NaN` ni `Infinity` (RN-24).
-- **CA-04** — Dada una sesión con `lastActivityAt` hace 2 h 59 min, `shouldAutoClose` es
-  `false`; hace 3 h 01 min, `true`; una sesión **ya cerrada**, `false` siempre.
+- **CA-04** — Dada una sesión con `lastActivityAt` un minuto antes del límite,
+  `shouldAutoClose` es `false`; un minuto después, `true`; una sesión **ya cerrada**, `false`
+  siempre. Y una sesión abierta hace 3 horas pero con actividad hace 4 segundos, `false`: lo
+  que se mide es sala vacía, no duración de la clase.
 - **CA-05** — Dado un texto de 800 caracteres, `sanitizeText` devuelve 500; dado `"   "`,
   devuelve `''` (y el POST lo rechaza); dado un texto con 6 saltos de línea seguidos, los
   colapsa a 2.
@@ -589,9 +615,17 @@ Auditables (van a `config/audit-actions.js`): CU-01, CU-05, CU-06, CU-08, CU-12,
 - **CA-10** — Dada una sala abierta, cuando la docente hace `POST /cerrar`, entonces
   `closedAt` queda seteado, se agrega un mensaje `kind: 'system'`, y un `POST /mensajes`
   posterior responde 409.
-- **CA-11** — Dada una sesión con `lastActivityAt` hace más de 3 h, cuando alguien hace
+- **CA-11** — Dada una sesión con `lastActivityAt` más allá del límite, cuando alguien hace
   `GET /poll`, entonces la sesión queda cerrada con `autoClosed: true` y el poll responde
   `estado: 'cerrada'` (RN-08).
+- **CA-11b** — Dada esa misma sesión y **sin** que nadie entre a su sala, cuando dirección o
+  preceptoría cargan su panel (o su `poll`), entonces la sesión **deja de listarse** y queda
+  cerrada con `autoClosed: true` y `closedAt` fechado en su última actividad —no en el momento
+  del barrido— (RN-08). Una sala con actividad reciente en el mismo barrido **no** se cierra.
+- **CA-11c** — Dada una sala abierta cuyo docente a cargo no pinguea hace más que la ventana
+  del personal, entonces su tarjeta llega con `docenteEnLinea: false` y se pinta con el chip
+  ámbar "sin docente"; con la docente adentro, `true` y chip verde. Un preceptor o un alumno
+  presentes no la ponen en `true` (RN-08b).
 
 ### Sala — presencia
 

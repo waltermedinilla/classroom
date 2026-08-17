@@ -2,8 +2,8 @@
 // Correr con: npm run test:unit    (node --test tests/unit/*.test.js)
 //
 // Estas funciones se testean acá y no con un smoke HTTP porque dependen del PASO DEL TIEMPO:
-// la ventana de "conectado ahora" y el autocierre a las 3 h necesitan poder inyectar el
-// `now`, cosa que una request real no permite sin esperar tres horas.
+// la ventana de "conectado ahora" y el autocierre por inactividad necesitan poder inyectar el
+// `now`, cosa que una request real no permite sin quedarse esperando media hora.
 //
 // Cubren los criterios CA-01 a CA-06 de specs/sala-en-vivo.spec.md.
 
@@ -11,7 +11,8 @@ const test   = require('node:test');
 const assert = require('node:assert');
 
 const {
-  isOnline, presenceSummary, shouldAutoClose, sanitizeText, minutosPresente,
+  isOnline, presenceSummary, shouldAutoClose, horaDeCierre, gestorEnLinea,
+  sanitizeText, minutosPresente,
   hora, fechaDia, fechaLarga, fechaCorta, fechaHora, TZ,
   ONLINE_WINDOW_MS, STAFF_ONLINE_WINDOW_MS, AUTO_CLOSE_MS, MSG_MAX, POLL_MS,
   pesoLegible, etiquetaExt, textoAdjunto, csvTranscripcion,
@@ -155,14 +156,95 @@ test('presenceSummary: sin argumentos no explota', () => {
 
 // ── CA-04: autocierre ───────────────────────────────────────────────────────
 
-test('shouldAutoClose: a las 2 h 59 min todavía no', () => {
+test('shouldAutoClose: un minuto antes del límite todavía no', () => {
   const s = { closedAt: null, lastActivityAt: haceMs(AUTO_CLOSE_MS - 60 * 1000) };
   assert.strictEqual(shouldAutoClose(s, AHORA), false);
 });
 
-test('shouldAutoClose: a las 3 h 01 min sí', () => {
+test('shouldAutoClose: un minuto después del límite sí', () => {
   const s = { closedAt: null, lastActivityAt: haceMs(AUTO_CLOSE_MS + 60 * 1000) };
   assert.strictEqual(shouldAutoClose(s, AHORA), true);
+});
+
+// Lo que mide el autocierre es SALA VACÍA, no duración de la clase: cualquiera adentro
+// refresca lastActivityAt con su poll de 4 s. Si esto se rompiera, una clase larga se cortaría
+// sola por la mitad — que es justo el miedo que mantenía la ventana en 3 horas.
+test('shouldAutoClose: una clase de 3 horas con gente adentro NO se cierra', () => {
+  const s = { closedAt: null, openedAt: haceMs(3 * 60 * 60 * 1000), lastActivityAt: haceMs(4000) };
+  assert.strictEqual(shouldAutoClose(s, AHORA), false);
+});
+
+// El número puede ajustarse, pero no hasta volver al problema que este cambio arregla: una
+// ventana de horas deja el panel de dirección lleno de clases que ya terminaron.
+test('la ventana de autocierre está entre la presencia del personal y una hora', () => {
+  assert.ok(AUTO_CLOSE_MS > STAFF_ONLINE_WINDOW_MS * 5, 'tiene que tolerar un recreo largo');
+  assert.ok(AUTO_CLOSE_MS <= 60 * 60 * 1000, 'más de una hora vuelve a llenar el panel de fantasmas');
+});
+
+// ── Hora real de cierre de una sala que se cerró sola ────────────────────────
+
+test('horaDeCierre: el cierre automático usa la última señal de vida, no el ahora', () => {
+  const fin = haceMs(2 * 60 * 60 * 1000);
+  const s   = { openedAt: haceMs(3 * 60 * 60 * 1000), lastActivityAt: fin };
+  assert.strictEqual(horaDeCierre(s, AHORA, { auto: true }).getTime(), fin.getTime());
+});
+
+test('horaDeCierre: el cierre a mano es el momento del botón', () => {
+  const s = { openedAt: haceMs(90 * 60 * 1000), lastActivityAt: haceMs(60 * 60 * 1000) };
+  assert.strictEqual(horaDeCierre(s, AHORA).getTime(), AHORA.getTime());
+  assert.strictEqual(horaDeCierre(s, AHORA, { auto: false }).getTime(), AHORA.getTime());
+});
+
+test('horaDeCierre: nunca queda antes de la apertura (duración negativa)', () => {
+  const abrio = haceMs(60 * 60 * 1000);
+  const s = { openedAt: abrio, lastActivityAt: haceMs(90 * 60 * 1000) };
+  assert.strictEqual(horaDeCierre(s, AHORA, { auto: true }).getTime(), abrio.getTime());
+});
+
+test('horaDeCierre: sin lastActivityAt cae en openedAt; con basura, en el ahora', () => {
+  const abierta = haceMs(5 * 60 * 60 * 1000);
+  assert.strictEqual(
+    horaDeCierre({ openedAt: abierta }, AHORA, { auto: true }).getTime(), abierta.getTime());
+  assert.strictEqual(
+    horaDeCierre({ lastActivityAt: 'cualquier cosa' }, AHORA, { auto: true }).getTime(),
+    AHORA.getTime());
+  assert.strictEqual(horaDeCierre(null, AHORA, { auto: true }).getTime(), AHORA.getTime());
+});
+
+// ── Sala abierta ≠ docente dando clase ──────────────────────────────────────
+//
+// Es lo que pinta el chip ámbar de las tarjetas de dirección y preceptoría.
+
+test('gestorEnLinea: la titular con un ping de hace 90 s cuenta', () => {
+  const pres = [{ user: 'prof', userRole: 'teacher', lastPingAt: haceMs(90 * 1000) }];
+  assert.strictEqual(gestorEnLinea(pres, ['prof'], AHORA), true);
+});
+
+test('gestorEnLinea: pasada la ventana del personal, ya no', () => {
+  const pres = [{ user: 'prof', userRole: 'teacher',
+                  lastPingAt: haceMs(STAFF_ONLINE_WINDOW_MS + 1000) }];
+  assert.strictEqual(gestorEnLinea(pres, ['prof'], AHORA), false);
+});
+
+test('gestorEnLinea: el suplente también es docente a cargo', () => {
+  const pres = [{ user: 'sup', userRole: 'teacher', lastPingAt: haceMs(1000) }];
+  assert.strictEqual(gestorEnLinea(pres, ['prof', 'sup'], AHORA), true);
+});
+
+// El caso que motivó el chip: la clase terminó, la docente se fue, y el preceptor entró a
+// mirar. La sala sigue abierta y con alguien adentro, pero nadie está dictando.
+test('gestorEnLinea: preceptoría y alumnos adentro no alcanzan', () => {
+  const pres = [
+    { user: 'prec', userRole: 'preceptor', lastPingAt: haceMs(1000) },
+    { user: 'a1',   userRole: 'student',   lastPingAt: haceMs(1000) },
+  ];
+  assert.strictEqual(gestorEnLinea(pres, ['prof'], AHORA), false);
+});
+
+test('gestorEnLinea: sin presencias, sin gestores o sin argumentos no rompe', () => {
+  assert.strictEqual(gestorEnLinea([], ['prof'], AHORA), false);
+  assert.strictEqual(gestorEnLinea([{ user: 'prof', lastPingAt: haceMs(1000) }], [], AHORA), false);
+  assert.strictEqual(gestorEnLinea(undefined, undefined, AHORA), false);
 });
 
 test('shouldAutoClose: una sesión ya cerrada nunca se vuelve a cerrar', () => {

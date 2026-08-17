@@ -12,6 +12,9 @@
   .lc-card:hover { border-color:#1a73e8; }
   .lc-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
   .lc-vivo { font-size:11px; background:#e6f4ea; color:#137333; padding:3px 9px; border-radius:12px; }
+  /* Sala abierta pero sin la docente conectada: la clase puede haber terminado hace un rato y
+     la sala todavía no vencer. Ámbar, no verde: no es un error, es "mirá esto". */
+  .lc-vivo.sindoc { background:#fef7e0; color:#b06000; }
   .lc-div { font-size:12px; color:#5f6368; }
   .lc-materia { font-size:15px; font-weight:500; margin-bottom:2px; }
   .lc-docente { font-size:13px; color:#5f6368; margin-bottom:12px; }
@@ -109,9 +112,15 @@
         .map(a => '<div class="lc-bola" style="background:' + color(a.inicial) + '">' + esc(a.inicial) + '</div>')
         .join('');
 
+      // El chip dice si la docente está en la sala AHORA, no solo si la sala quedó abierta.
+      // Sin esto, una clase que terminó hace 10 minutos se veía igual que una en curso.
+      const chip = s.docenteEnLinea === false
+        ? '<span class="lc-vivo sindoc">◌ sin docente · ' + s.desdeMin + ' min</span>'
+        : '<span class="lc-vivo">● en vivo · ' + s.desdeMin + ' min</span>';
+
       return '<a class="lc-card" href="' + url + '">' +
         '<div class="lc-top">' +
-          '<span class="lc-vivo">● en vivo · ' + s.desdeMin + ' min</span>' +
+          chip +
           '<span class="lc-div">' + esc(s.division) + '</span>' +
         '</div>' +
         '<div class="lc-materia">' + esc(s.materia) + '</div>' +

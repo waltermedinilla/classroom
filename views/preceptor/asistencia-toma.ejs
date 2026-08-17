@@ -78,7 +78,9 @@
 
     <div class="tm-cab">
       <div>
-        <a href="/preceptor/asistencia" style="font-size:13px;color:#1a73e8;text-decoration:none">← Asistencia</a>
+        <%# inline-block + padding: como <a> suelto medía 17 px de alto, la mitad de lo que
+            necesita un pulgar. Es el único camino de vuelta desde el pase de lista. %>
+        <a href="/preceptor/asistencia" style="font-size:13px;color:#1a73e8;text-decoration:none;display:inline-block;padding:8px 4px">← Asistencia</a>
         <h2 style="margin:6px 0 2px"><%= division.name %></h2>
         <p style="color:var(--text-secondary);font-size:14px" id="tmFecha"><%= fecha %></p>
       </div>

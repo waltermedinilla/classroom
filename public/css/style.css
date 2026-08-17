@@ -209,6 +209,13 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
 .drawer-item.active { background: var(--primary-light); color: var(--primary); }
 .drawer-item:hover { background: rgba(0,0,0,0.04); }
 .drawer-item .material-symbols-outlined { font-size: 22px; }
+/* "Cerrar sesión" es un <button>, no un <a>: sin esto hereda el look de botón del
+   navegador (fondo gris, borde, fuente distinta) y desentona con el resto del menú. */
+.drawer-item-btn {
+  width: calc(100% - 16px); background: none; border: none;
+  font-family: inherit; text-align: left; cursor: pointer;
+}
+.drawer-divider { height: 1px; background: var(--border); margin: 8px 16px 8px 0; }
 
 /* ─── Main Content ─── */
 .main-content { margin-top: 80px; padding: 24px 32px; max-width: 1100px; margin-left: auto; margin-right: auto; }
@@ -2467,4 +2474,154 @@ table.acciones-fijas, table.nombre-fijo { overflow: clip; }
 /* La barra de suplantación es fija y en móvil tapaba el encabezado. */
 @media (max-width: 900px) {
   .impersonation-bar { font-size: 12px; padding: 8px 12px; flex-wrap: wrap; gap: 6px; }
+}
+
+/* ─── Encabezado en móvil ───────────────────────────────────────────────────
+   Medido a 375 px: el contenido del header sumaba 562 px sobre 375 disponibles.
+   El badge de rol quedaba cortado (x 330→397) y el botón del avatar caía ENTERO
+   fuera de pantalla (x 405→445). Como `body` tiene `overflow-x: hidden`, no se
+   recortaba con scroll sino que directamente desaparecía — y ese avatar es el
+   único acceso al menú con "Cerrar sesión", así que en un teléfono no había
+   forma de salir de la sesión. El ítem del drawer (ver header.ejs) cubre eso;
+   acá se recupera el ancho sacando lo que en un teléfono es redundante. */
+@media (max-width: 900px) {
+  .header { padding: 0 12px; }
+  /* El ícono del logo ya identifica el inicio, y el título de la sección se
+     repite en el h2 justo debajo. */
+  .header-title { display: none; }
+  /* El rol propio sigue estando en el menú de usuario, junto al nombre y correo. */
+  .user-role { display: none; }
+  .header-logo { padding: 4px; gap: 0; }
+  .header-center { padding: 0 8px; }
+  .header-school-name { max-width: none; font-size: 14px; }
+}
+
+/* ─── Solapas de la materia en móvil ────────────────────────────────────────
+   Las 5 solapas suman 642 px contra 347 de ancho útil: "Mis notas", "Personas"
+   y "En vivo" quedaban fuera de pantalla, y sin manera de llegar (`.tabs` no
+   scrollea —overflow visible— y el body recorta). Un alumno no podía ver sus
+   notas desde el teléfono.
+
+   Se resuelve con pastillas que envuelven en dos filas en vez de scroll
+   horizontal: así las cinco están a la vista de una, sin que el alumno tenga
+   que adivinar que hay contenido corrido al costado. El subrayado se cambia por
+   relleno porque la línea inferior no funciona cuando hay más de una fila. */
+@media (max-width: 900px) {
+  .tabs {
+    flex-wrap: wrap; gap: 6px;
+    border-bottom: none; margin-bottom: 18px;
+  }
+  .tab {
+    flex: 1 1 auto; justify-content: center;
+    padding: 9px 12px; font-size: 13px; gap: 6px;
+    margin-bottom: 0;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--surface);
+  }
+  .tab .material-symbols-outlined { font-size: 17px; }
+  .tab.active {
+    background: var(--primary); color: #fff; border-color: var(--primary);
+  }
+  .tab.active:hover { color: #fff; background: var(--primary); }
+}
+
+/* ─── Mi perfil en móvil ────────────────────────────────────────────────────
+   `.profile-header` es una fila avatar + datos + acciones. A 375 px los datos se
+   cortaban (x 166→401, con el nombre y el correo tapados) y los botones
+   "Cambiar correo" / "Cambiar contraseña" caían enteros fuera de pantalla
+   (x 433→639): el alumno no podía cambiar su contraseña desde el teléfono. */
+@media (max-width: 900px) {
+  .profile-header {
+    flex-direction: column; align-items: center; text-align: center;
+    gap: 16px; padding: 24px 16px;
+  }
+  .profile-info { min-width: 0; width: 100%; }
+  /* Los nombres vienen en APELLIDO, NOMBRE completo y son largos: sin esto
+     desbordan la tarjeta en vez de cortar. */
+  .profile-info h2 { font-size: clamp(19px, 5vw, 26px); overflow-wrap: anywhere; }
+  .profile-email { overflow-wrap: anywhere; }
+  .profile-actions {
+    margin-left: 0; margin-top: 0; width: 100%; align-self: stretch;
+  }
+  .profile-actions .btn { width: 100%; justify-content: center; }
+}
+
+/* ─── Área táctil de los enlaces de aviso ───────────────────────────────────
+   Las bandas de "Mis pendientes" y "Completar perfil" tenían enlaces de 21 px de
+   alto: la mitad del mínimo cómodo para un pulgar. Se agranda el área sin
+   cambiar cómo se ven. */
+@media (max-width: 900px) {
+  .pending-band-link, .profile-band-link { display: inline-block; padding: 7px 2px; }
+  .profile-band-close { width: 32px; height: 32px; }
+}
+
+/* ─── Calificar entregas en móvil ───────────────────────────────────────────
+   Rol docente. `.grade-table` reparte 5 columnas por porcentaje (24/10/30/13/23).
+   A 375 px eso deja la tabla en 286 px y cada columna en nada: el nombre del
+   alumno en 69 px, la nota en 29 px y —lo peor— el textarea de la devolución en
+   67 px de ancho. No desborda: se comprime hasta ser inservible, que en la
+   práctica es lo mismo. Es la pantalla donde el docente pasa más tiempo.
+
+   Cada alumno pasa a ser una tarjeta apilada. Es solo CSS: el marcado lo genera
+   `loadTeacherDetail()` en public/js/course.js y no hace falta tocarlo. */
+@media (max-width: 900px) {
+  .grade-table,
+  .grade-table tbody,
+  .grade-table tr,
+  .grade-table td { display: block; width: auto; }
+
+  /* Sin cabecera, cada campo se rotula abajo con ::before. El "/ N" que vivía en
+     el <th> de Nota no se pierde: el modal ya dice "N pts máx." más arriba. */
+  .grade-table thead { display: none; }
+
+  .grade-table tbody tr {
+    border: 1px solid var(--border); border-radius: var(--radius-xs);
+    padding: 12px; margin-bottom: 10px;
+  }
+  .grade-table tbody tr:last-child { margin-bottom: 0; }
+  .grade-table tbody tr:hover td { background: none; }
+  .grade-table tbody td { border-bottom: none; padding: 0; }
+  .grade-table tbody td + td { margin-top: 10px; }
+
+  .gt-col-grade::before,
+  .gt-col-feedback::before {
+    display: block; margin-bottom: 4px;
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .3px; color: var(--text-hint);
+  }
+  .gt-col-grade::before    { content: 'Nota'; }
+  .gt-col-feedback::before { content: 'Devolución al alumno'; }
+
+  /* "Visto" y "Entrega" son dos badges cortos: en la misma línea se leen de una,
+     y apilados desperdiciarían media tarjeta. Necesitan ganarle en especificidad
+     al `display: block` de `.grade-table td` de arriba. */
+  .grade-table .gt-col-view,
+  .grade-table .gt-col-sub { display: inline-block; margin-right: 14px; }
+
+  .grade-table .grade-input { width: 88px; padding: 8px; font-size: 15px; }
+  .grade-table .feedback-input { font-size: 14px; min-height: 62px; }
+  /* Con el ancho completo de la tarjeta, el nombre ya no necesita recortarse. */
+  .gt-student-name { white-space: normal; }
+}
+
+/* ─── Libro de calificaciones en móvil ──────────────────────────────────────
+   Este sí scrollea al costado y mantiene la columna de alumnos anclada, así que
+   funciona. El problema es el reparto: 200 px de nombre sobre 347 disponibles
+   dejaban 147 px para las notas, menos de una columna de actividad (150 px). Se
+   achica el nombre para que entre nombre + una actividad completa. */
+@media (max-width: 900px) {
+  .gb-student-col { width: 132px; min-width: 132px; }
+  .gb-act-col     { min-width: 128px; width: 128px; padding: 12px 12px 8px; }
+}
+
+/* ─── Controles chicos del docente ──────────────────────────────────────────
+   Medidos por debajo del mínimo cómodo para un pulgar. */
+@media (max-width: 900px) {
+  /* Copiar el código de clase: 26 px. */
+  .course-code-copy { width: 32px; height: 32px; }
+  /* "Personalizar" la portada de la materia: 31 px de alto. */
+  .header-customize-btn { min-height: 34px; }
+  /* Los checkbox nativos miden 13 px. La etiqueta que los envuelve sí es
+     tocable, así que esto es legibilidad, no alcance. */
+  .main-content input[type="checkbox"] { width: 18px; height: 18px; }
 }

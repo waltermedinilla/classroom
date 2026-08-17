@@ -65,7 +65,9 @@ async function backupSintetico(collections) {
 // El día escolar sale del MISMO service que usa la app (services/liveRoom.js) y no de un
 // toISOString() acá: la zona de la escuela tiene un solo dueño, y un test que se arma la fecha
 // por su cuenta empieza a fallar de noche por un bug que no existe.
-const { diaEscolar } = require('../../services/liveRoom');
+// AUTO_CLOSE_MS viene del mismo lugar por la misma razón: el spec envejece una sala "más allá
+// del límite" sin repetir el número, así que ajustar la ventana no lo rompe.
+const { diaEscolar, AUTO_CLOSE_MS } = require('../../services/liveRoom');
 
 const RUN_ID = Date.now().toString(36);
 
@@ -6901,6 +6903,8 @@ const specs = [
       assert(sala.materia.includes(RUN_ID), 'la tarjeta debería nombrar la materia');
       assert(typeof sala.presentes === 'number' && typeof sala.total === 'number',
         'la tarjeta debería traer presentes y total');
+      assert(typeof sala.docenteEnLinea === 'boolean',
+        'la tarjeta tiene que decir si hay docente a cargo conectado, no dejarlo a la suposición');
       assert(sala.desdeMin >= 0 && Number.isFinite(sala.desdeMin), 'los minutos no pueden ser NaN');
 
       // Se busca NaN/Infinity como VALOR RENDERIZADO (entre tags, después de ":" o de "="),
@@ -6925,6 +6929,70 @@ const specs = [
         'las tarjetas de preceptoría tienen que llevar al ingreso VISIBLE');
       assert(html.text.includes("INGRESO = 'observacion'"),
         'las tarjetas de dirección tienen que llevar al ingreso en observación');
+    },
+  },
+  {
+    // El bug que arregla (2026-08-17): el autocierre se evaluaba SOLO al pedir la sala de una
+    // materia, así que una clase que terminaba y a cuya sala nadie volvía a entrar se quedaba
+    // "en vivo" para siempre. En el espejo de producción había 40 salas abiertas sin un ping
+    // desde hacía días, todas listadas como clases en curso en el panel de dirección.
+    //
+    // Verificado en rojo neutralizando el barrido de getOpenSessions: la sala envejecida
+    // seguía apareciendo en el panel y closedAt seguía en null.
+    id: 'envivo-barrido-salas-viejas',
+    title: 'El panel cierra las salas que quedaron abiertas sin nadie adentro',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state, assert }) {
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const sesiones = mongo.db().collection('roomsessions');
+        const sid = new ObjectId(state.salaSessionId);
+
+        // Se la envejece: último ping un minuto más allá del límite. Nadie adentro.
+        const fin = new Date(Date.now() - (AUTO_CLOSE_MS + 60 * 1000));
+        await sesiones.updateOne({ _id: sid }, { $set: { lastActivityAt: fin } });
+
+        const panel = await client.get('salaDirectivo', '/directivo/en-vivo/poll', {
+          expectStatus: 200, headers: { Accept: 'application/json' },
+        });
+        assert(!panel.json.salas.some(s => s.courseId === state.courseId),
+          'una sala sin actividad más allá del límite no puede seguir listada como clase en vivo');
+
+        const doc = await sesiones.findOne({ _id: sid });
+        assert(doc.closedAt, 'el panel tendría que haberla cerrado, no solo esconderla');
+        assert(doc.autoClosed === true, 'tiene que quedar marcada como cierre automático');
+        // La hora que se guarda es la de la última señal de vida, no la del barrido: si no,
+        // el pie "Cerradas hoy" se llena de clases de la semana pasada.
+        assert(Math.abs(new Date(doc.closedAt) - fin) < 1000,
+          `el cierre debería fecharse en la última actividad (${fin.toISOString()}), ` +
+          `quedó en ${new Date(doc.closedAt).toISOString()}`);
+
+        // Se devuelve el escenario como estaba: los specs de abajo siguen con ESTA sesión
+        // abierta y con su transcripción intacta.
+        await sesiones.updateOne({ _id: sid }, {
+          $set: { closedAt: null, closedBy: null, autoClosed: false, lastActivityAt: new Date() },
+        });
+        await mongo.db().collection('roommessages')
+          .deleteMany({ session: sid, kind: 'system', text: /cerró automáticamente/ });
+
+        // La docente vuelve a la sala y pollea: la tarjeta tiene que reflejarlo.
+        await client.get('scopedTeacher', `/courses/${state.courseId}/sala/poll`, {
+          expectStatus: 200, headers: { Accept: 'application/json' },
+        });
+
+        const otraVez = await client.get('salaDirectivo', '/directivo/en-vivo/poll', {
+          expectStatus: 200, headers: { Accept: 'application/json' },
+        });
+        const sala = otraVez.json.salas.find(s => s.courseId === state.courseId);
+        assert(sala,
+          'una sala con actividad reciente NO debe cerrarse: el barrido cierra las vacías, no todas');
+        assert(sala.docenteEnLinea === true,
+          'con la docente adentro, la tarjeta no puede mostrar el chip "sin docente"');
+      } finally {
+        await mongo.close();
+      }
     },
   },
   {

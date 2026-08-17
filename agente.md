@@ -387,6 +387,86 @@ que deja usuarios de prueba sin borrar). Espaciar las corridas o limpiar a mano.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-17 — El panel de dirección mostraba clases que habían terminado hacía días
+
+**Reclamo**: "en la solapa de 'en vivo' en el rol de director aparecen muchas clases que ya deberían estar cerradas, porque los docentes no están en vivo".
+
+Medido en el espejo de producción antes de tocar nada: **40 salas figuraban abiertas, y ninguna tenía un solo ping desde hacía entre 2,8 y 6,2 días.** No era un problema de la pantalla: esas sesiones estaban abiertas de verdad en la base.
+
+#### La causa
+
+El autocierre existía (`shouldAutoClose`, 3 h sin actividad) pero se evaluaba en **un solo lugar**: al pedir la sala de una materia (`routes/rooms.js`). O sea que una clase terminaba, la docente cerraba la pestaña, **nadie volvía a entrar a esa sala** — y no había quién disparara el cierre. La sesión quedaba abierta para siempre y los paneles de dirección y preceptoría, que listan por `closedAt: null`, las mostraban todas como clases en curso.
+
+Lo llamativo: **la spec ya decía que tenía que ser así**. RN-08 de `specs/sala-en-vivo.spec.md` decía textual "cada `poll` y cada listado del directivo revisa `shouldAutoClose()`" desde el primer día. El listado del directivo nunca lo hizo.
+
+#### Qué se cambió
+
+- **Barrido en los paneles** — `closeStaleSessions()` en `services/liveRoom.js`, llamado desde `getOpenSessions()`. Sigue siendo perezoso (nada de `setInterval`: con 2 workers correría dos veces), pero ahora el disparador está donde el problema se ve. Cierra exactamente lo que ese panel listaría: recibe el mismo filtro, así que el preceptor no cierra salas fuera de su alcance.
+- **La ventana bajó de 3 h a 30 min** (`AUTO_CLOSE_MS`). Las 3 h venían de cuando el disparador era poco confiable y había que ser generoso. Lo que el número mide es **sala vacía**, no clase silenciosa: `lastActivityAt` se refresca con cualquier poll (4 s por persona adentro) y con el latido de la docente (20 s), así que 30 minutos sin tocarlo significan que no quedó nadie en ~450 polls seguidos. Una clase larga en silencio no corre riesgo.
+- **El cierre automático se fecha en la última señal de vida**, no en el momento del barrido (`horaDeCierre`). Una sala que quedó abierta el martes figura cerrada el martes a las 10:40, que es cuando se fue el último. Sin esto, el pie "Cerradas hoy" del panel se habría llenado de golpe con 40 clases de la semana pasada. Nunca antes de `openedAt`.
+- **`closeSession` pasó a ser atómico**: `findOneAndUpdate` condicionado a `closedAt: null` en vez de `save()`. Con dos workers, dos barridos simultáneos escribían los dos y la transcripción terminaba con el aviso de cierre repetido.
+- **Chip "sin docente" en las tarjetas** (`docenteEnLinea`, `views/partials/live-cards.ejs`). Sala abierta no es lo mismo que clase dictándose: con los 30 minutos de gracia, una clase que terminó recién sigue listada un rato. Ahora la tarjeta lo dice —ámbar en vez de verde— en vez de dejarlo a la suposición. Cuentan titular y suplentes (`Course.owner` + `coTeachers`) con la ventana del personal de RN-05b; preceptoría y dirección adentro **no** cuentan, que es justo lo que preguntaba el reclamo.
+
+#### Verificación
+
+- Sobre el espejo real: `getOpenSessions()` cerró las 40 en 228 ms, `closedAt` quedó fechado en la última actividad con 0 s de desfasaje, y "Cerradas hoy" pasó de mostrar 40 fantasmas a las 2 clases que de verdad terminaron ese día.
+- **En rojo**: neutralizando el barrido, una sesión envejecida sigue listada como en vivo y con `closedAt: null`.
+- En el navegador (panel de dirección, dos salas sembradas): chip verde con la docente adentro, ámbar sin ella; al envejecer la segunda, desaparece del panel y aparece en "Cerradas hoy" con su hora real.
+- Suites: **327 smoke** (spec nuevo `envivo-barrido-salas-viejas`), **325 unitarios** (11 casos nuevos en `liveRoom.test.js`), matriz de roles sin hallazgos.
+
+**No toca la BD de producción**: no hay campos ni índices nuevos. Al desplegar, el primer directivo que abra el panel cierra de una las salas viejas que haya, por el mismo camino que usa la app.
+
+### 2026-08-17 — La vista de alumno en el celular: tres cosas que no se podían hacer
+
+**Pedido**: "puedes probar el rol de alumno, como se vería si utiliza el celular, quiero que pruebes todas sus vistas y funciones, para que pueda visualizar lo que necesite cuando lo necesite, si es necesario, reacomoda sus botones".
+
+Se recorrió el rol completo a 375 px (inicio, materia con sus 5 solapas, perfil, pendientes, sala en vivo, modal de entrega) midiendo posiciones reales en el navegador. Aparecieron **tres funciones directamente inalcanzables desde un teléfono** — no incómodas: imposibles. Las tres tenían la misma causa: contenido pensado en fila que no entra en 375 px y que `body { overflow-x: hidden }` **recorta en vez de dejar scrollear**, así que se volvía invisible sin ninguna pista de que estaba ahí.
+
+| Qué no se podía hacer | Por qué | Medición |
+|---|---|---|
+| **Cerrar sesión** | el botón del avatar es el único acceso a ese menú, y caía fuera de pantalla | header-right x 234→**445** sobre 375 |
+| **Ver las notas propias** | "Mis notas", "Personas" y "En vivo" quedaban fuera y `.tabs` no scrolleaba | 5 solapas = 642 px sobre 347 útiles |
+| **Cambiar la contraseña** | los botones del perfil quedaban fuera de pantalla | acciones x 433→**639** |
+
+#### Qué se cambió
+
+- **Header** (`@media max-width:900px`): se ocultan el texto "Materias" del logo (~90 px) y el badge de rol (~75 px). El rol no se pierde: sigue dentro del menú de usuario junto al nombre y el correo, y hay un test que lo fija — ocultarlo del header solo es aceptable mientras eso siga siendo cierto. Resultado: header-right 227→363, entra completo, y el nombre de la escuela pasó de 24 px aplastados a 111 px legibles.
+- **Salida de sesión en el menú lateral** (`views/partials/header.ejs`). Es el arreglo de fondo: el botón de hamburguesa entra en cualquier ancho, así que colgar la salida de ahí no depende de que el header entre. Va en todos los anchos, no solo en móvil.
+- **Solapas de la materia**: envuelven en dos filas como pastillas, en lugar de scroll horizontal. Se eligió así a propósito — con scroll el alumno tiene que *adivinar* que hay contenido corrido al costado, y el pedido era justamente "que pueda visualizar lo que necesite cuando lo necesite". La solapa activa pasa de subrayado a relleno porque el borde inferior deja de señalar nada cuando hay más de una fila.
+- **Mi perfil**: se apila en columna, los botones van a ancho completo y los nombres largos (`APELLIDO APELLIDO, NOMBRE NOMBRE`) cortan en vez de desbordar.
+- **Área táctil**: los enlaces de las bandas de aviso pasaron de 21 px de alto a ≥32. En el panel de inicio, los controles por debajo del mínimo cómodo bajaron de **35 a 2**.
+
+#### Verificación
+
+Medido en el navegador a 375 px, no a ojo: cero desbordes en las cinco vistas, las 5 solapas alcanzables y funcionando, los modales de correo/contraseña entran con campos de 40 px. **Escritorio sin tocar** (todo vive dentro de `@media (max-width: 900px)`, y hay un test que verifica que ninguna regla se escape). Modo oscuro con contraste suficiente: solapa activa 4.51:1, inactiva 8.07:1.
+
+`tests/unit/movilAlumno.test.js` fija las cuatro invariantes; 8 de sus 10 casos fallan si se revierte el arreglo. Las tres suites pasan (307 unitarios, 326 smoke, roles sin hallazgos).
+
+**Pendiente**: esta pasada cubrió solo el rol **alumno**. Faltan docente, preceptor, jefe, directivo, admin y superadmin — el header y el menú lateral ya quedaron arreglados para todos, pero las vistas propias de cada rol no se revisaron.
+
+### 2026-08-17 — Móvil, segunda pasada: docente y preceptor
+
+Continuación de la anterior, mismo método (medir posiciones reales a 375 px, rol por rol).
+
+#### Docente
+
+- **Calificar entregas** era la peor. `.grade-table` reparte 5 columnas por porcentaje (24/10/30/13/23); a 375 px la tabla quedaba en 286 px y con ella el nombre del alumno en 69 px, la nota en 29 y **el textarea de la devolución en 67 px de ancho**. Acá no había desborde: se comprimía hasta ser inservible, que para el que la usa es lo mismo. Y es la pantalla donde el docente pasa más tiempo. Ahora cada alumno es una tarjeta apilada — la devolución pasó de 67 a **261 px**, la nota de 48×28 a 85×36 y el nombre completo se lee entero. Es solo CSS: el marcado lo genera `loadTeacherDetail()` y no se tocó. Los rótulos "Nota" y "Devolución al alumno" se reponen con `::before` al ocultar el `<thead>`; el "/ N" del encabezado no se pierde porque el modal ya dice "N pts máx." más arriba.
+- **Libro de calificaciones**: funcionaba (scrollea y ancla la columna de alumnos), pero repartía mal — 200 px de nombre sobre 347 dejaban menos de una columna de actividad a la vista. Con el nombre en 132 px entran las tres columnas juntas.
+- **Sala en vivo**: la barra de escribir daba 19 px de alto, adjuntar 24×24, enviar 24×24 y los emoji ~22. Es un chat que se usa durante la clase y desde el teléfono. Quedó en 41 px el campo, 44×44 enviar, 40×40 adjuntar. El campo va a **16 px de fuente a propósito**: por debajo de eso Safari en iPhone hace zoom solo al enfocar y deja la página corrida de costado.
+
+#### Preceptor
+
+El panel ya estaba bien (el nav colapsa en desplegable y el pase de lista tiene botones de 40 px). Dos cosas:
+
+- **El calendario de "Actividades del día" cortaba la columna del SÁBADO** (x 335→380 sobre 375). Causa: `grid-template-columns: repeat(7, 1fr)`. Un track `1fr` no baja de su contenido (`min-width: auto`), así que los 7 días sumaban 351 px dentro de una tarjeta de 315. Se cambió a `minmax(0, 1fr)` — que es lo que `.ad-layout`, en el mismo archivo, ya venía usando por este mismo motivo.
+- El enlace "← Asistencia" del pase de lista medía 17 px de alto y es el único camino de vuelta.
+
+#### Verificación
+
+Cero desbordes y cero controles por debajo del mínimo cómodo en todas las vistas recorridas de los dos roles. `tests/unit/movil.test.js` (renombrado desde `movilAlumno.test.js`, ahora cubre los tres roles) tiene 18 casos; 16 fallan si se revierten los arreglos. Las tres suites pasan: 315 unitarios, 326 smoke, roles sin hallazgos.
+
+**Pendiente**: faltan jefe, directivo, admin y superadmin.
+
 ### 2026-08-17 — El servidor puede empujar el backup a otra PC por FTP
 
 **Pedido**: "podrías crear en la sección de backup una opción más tipo que ingrese una ip o un dns como esta computadora tiene en tailscale y puede transferir desde ftp, del servidor acá a local, todo lo necesario para poder descargar la base de datos completa junto con los archivos".
@@ -2949,28 +3029,61 @@ Por qué la segunda: el primer intento fue solo el latido y **no alcanzó** — 
 
 ## Plan de Futuras Actualizaciones (Roadmap)
 
-> Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`). Resumen de lo pendiente:
+> Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`).
+> **Sincronizado con el backlog el 2026-08-17.** Suites de referencia a esa fecha: **327 smoke ·
+> 325 unitarios · matriz de roles sin hallazgos**. Lo que se resuelve se saca de acá: si un
+> renglón dice "pendiente", es porque lo sigue estando.
+
+### 🔴 Investigaciones abiertas
+- **Producción no carga a la mañana** (desde 2026-08-14). Descartados con evidencia: workers, memoria, Mongo, `EADDRINUSE` y rate limit. Hipótesis viva: el **Tailscale Funnel**, único camino de entrada y ya responsable de tres caídas con el mismo síntoma. Hay dos sondas midiendo (una local por cron, una externa) y `tools/watchdog.sh` mide las 6 capas. Falta leer los resultados y cerrar el caso; si confirma el Funnel, la conversación siguiente es servir la escuela por Caddy con dominio propio.
+- **Docentes reportan error al subir PDFs de ~3 MB** ("antes andaba"). Local no reproduce (1/3/5/10/25 MB dan 200 en <400 ms) y los topes nunca cambiaron, así que es de producción. Desde el 2026-08-15 hay con qué diagnosticarlo: pedir el código `SUB-XXXXXX` del cartel y correr `node tools/ver-subida.js <código>`. Falta el caso real.
+
+### Mantenimiento de producción — código listo, falta ejecutar
+- **Correr el backfill de imágenes** (`optimize-existing-images.js`): ~198 MB históricos sin comprimir. ⚠️ Toca la base (reescribe URLs), va con backup + modo mantenimiento. Verificar primero que `sharp` esté instalado en el server. Ver el changelog de v1.0.7.
+- **Activar PostHog**: el código está completo y en modo no-op. Falta crear el proyecto en Cloud EU, cargar `POSTHOG_KEY` en el `.env` de producción y `pm2 reload --update-env`. Ver la sección "Analítica de producto".
+- **Instalar `ghostscript` en el servidor** para habilitar la compresión de PDFs del backup (315 MB de ahorro potencial). Sin él la feature degrada sola. Ver el changelog del 2026-08-08.
+- **Reflejar en producción la consolidación de materias duplicadas**: las 62 fusiones se aplicaron solo contra el espejo local. La vía acordada es backup local → restore en producción, y exige auditar de nuevo antes (comparar un backup fresco de producción contra el local, colección por colección).
+
+### Cambios que tocan la BD de producción — avisar antes
+- **Índice parcial en `schools.inviteToken`**: `partialFilterExpression: { inviteToken: { $type: 'string' } }` en lugar de `sparse`. Es el arreglo de fondo del bug que impedía crear una segunda escuela (`sparse` saltea el campo ausente, no el que vale `null`). Necesita `dropIndex` + `createIndex`.
+- **Índice único en `subjects` `{school, name}`**: hoy la colección solo tiene `_id_`, así que el catch del 11000 de `POST /admin/subjects/create` es código muerto y los nombres repetidos entran. Engancha con la deuda de `Subject`↔`Course` por texto.
+- **Índice `{ course: 1, createdAt: -1 }` en `activities`**: no se agregó a propósito (el `{course:1, availableFrom:1}` cubre el prefijo). Es el candidato si el calendario del mes se nota lento con uso real.
 
 ### Correcciones / deuda técnica pendiente
-- 🔴 **Los 12 backups de seguridad de `backups/` (2,8 GB) no se pueden restaurar** (detectado 2026-08-08). `POST /preview` los rechaza con 400 porque no incluyen `roomsessions`/`roommessages`/`roompresences`, agregadas a `COLLECTIONS` después de que se generaran. Afecta a **todos** los `pre-restore-*.tar.gz`, del 2026-07-22 al 2026-08-03 — es decir, a las redes de seguridad que el propio `/restore` genera antes de pisar la base. Decisión de diseño pendiente: ¿el restore debería tolerar colecciones faltantes (restaurando las presentes, con aviso explícito en el preview) o mantenerse estricto? Hay argumento fuerte para tolerar: una colección ausente significa "no existía entonces", no "está corrupto".
+- **Fechas sin zona horaria fija fuera de la sala en vivo** (~40 lugares). La sala se arregló el 2026-08-07 con `TZ` fija en el servidor, pero el resto de la app sigue formateando con `toLocaleDateString`/`toLocaleTimeString`: unas en el navegador (zona del equipo del aula) y otras en el servidor sin zona (producción corre en UTC → **3 horas de más** en vencimientos, entregas y auditoría). Lo natural es exponer el `fmt` de `services/liveRoom.js` en `res.locals` y barrer las vistas. Es ancho y de bajo riesgo, pero toca muchas pantallas a la vez: **preguntar antes de encararlo**.
+- **`generalLimiter` cuenta por IP, no por usuario** (`server.js`): la escuela entera sale por una sola IP pública (NAT). Se subió el cupo a 12000/15min el 2026-08-13 como parche; la mejora de fondo es adelantar `cookieParser` y verificar el JWT en el `keyGenerator`, como ya hacen los limiters de `middleware/rate-limits.js`. Ojo: el techo efectivo es ~2x por los 2 workers, cada uno con su `MemoryStore`.
+- **Escribir `specs/sala-adjuntos.spec.md` y modularizar `routes/rooms.js`** (~700 líneas, mezcla la sala con toda la mecánica de adjuntos). Pedido explícito del usuario al implementarlos derecho. Lo natural es sacar el almacenamiento a `services/roomAttachments.js`; `arreglarNombre()` está duplicado a propósito con `routes/activities.js` y ahí es candidato a unificarse.
 - **`backups/` no tiene retención ni UI**: crece sin límite (2,8 GB hoy) y no se ve desde ningún panel. Cada `/restore` le suma un tarball del tamaño del backup completo.
-- **El envío del backup por FTP sigue siendo manual** (desde 2026-08-17 existe `/superadmin/backup/ftp/enviar`, pero hay que apretar el botón). Automatizarlo por cron es el Nivel 2 del backup: reusar `buildBackupStaging()` + `enviarBackup()` desde un timer en vez de una ruta, con la salvedad de que el timer tiene que correr en un solo worker de PM2 (mismo patrón que el promotor de mantenimiento en `server.js`, vía `NODE_APP_INSTANCE`).
-- **Quedan directorios `classroom-backup-staging-*` huérfanos en `os.tmpdir()`** (2 del 2026-08-14 en la máquina local). No son peligrosos —contienen enlaces, no copias, así que borrarlos no toca `public/archivos`— pero son basura que se acumula. Falta averiguar por qué camino de `GET /download` se escapan del `limpiarStaging()`; el envío por FTP verificado el 2026-08-17 no dejó ninguno.
-- **Instalar `ghostscript` en el servidor de producción** para habilitar la compresión de PDFs del backup (315 MB de ahorro potencial). Sin él la feature degrada sola. Ver el changelog del 2026-08-08.
-- **Correr el backfill de imágenes en producción** (`optimize-existing-images.js`). El optimizador ya está activo para las subidas nuevas, pero los ~198 MB históricos siguen en disco. Requiere backup + modo mantenimiento porque actualiza URLs en la base. Ver el changelog de v1.0.7.
-- ~~**`npm install` en el servidor antes de desplegar v1.0.7**: `sharp` pasó de `devDependencies` a `dependencies` y el webhook de deploy no corre `npm install`.~~ **Obsoleto desde el 2026-07-29** (commit `2214c6f`): el webhook `POST /deploy` corre `npm install --omit=dev --no-audit --no-fund` entre el `git reset` y el `pm2 reload`, y **aborta sin recargar los workers si falla**, justamente para no dejarlos sin dependencias. O sea que toda dependencia nueva en `dependencies` se instala sola al pushear. Verificable en `deploy.log`.
-- Extender el optimizador a las **fotos en entregas de alumnos y a los adjuntos de actividades**. ⚠️ La estimación vieja de "hoy 0 MB, pero va a crecer" quedó obsoleta: medido el 2026-08-08 son **511 MB en entregas + 400 MB en adjuntos**, con 581 MB de imágenes sin optimizar entre las dos. Preset más conservador (2000 px, calidad 85) porque puede ser la foto de una hoja escrita que el docente necesita leer. El spec `entrega-pdf-no-se-toca` ya fija que los PDFs no se toquen. Ojo: esto es distinto de la compresión del backup (2026-08-08), que **no toca los archivos del servidor** — acá se trata de achicar el disco de verdad, y por eso necesita ventana de mantenimiento.
-- El spec `suggestions-student-sees-answer-and-badge` depende de `suggestions-superadmin-can-respond` pero no declara su mismo `requiresEnv`: si se corre el smoke sin credenciales de superadmin, falla en cascada en vez de saltearse.
-- **`POST /courses/create` no valida el rol del llamante**: cualquier usuario autenticado con escuela (incluido un alumno) puede crear una materia por POST directo y queda como `owner`, lo que por `isTeacher()` le habilita calificar y gestionar alumnos de esa materia. El botón está oculto en la vista para alumnos y docentes, pero esconder el botón no cierra el endpoint — mismo criterio que se aplicó al apagar "unirse por código". Ya se bloqueó explícitamente para `preceptor` y `jefe` (este último lo detectó el smoke al crear el rol, 2026-08-06); **falta el resto**. Convertirlo en lista blanca exige decidir antes si `directivo` y `soe` conservan la posibilidad: hoy la UI se las ofrece en `views/dashboard.ejs:37`.
-- ✅ **RESUELTO (2026-07-30)** — los 9 specs que fallaban por `JOIN_BY_CODE_ENABLED` quedaron arreglados al eliminar la matriculación por código. Baseline actual: **126/126**.
-- **Alumnos con el mismo DNI que NO comparten curso**: `dni-duplicado-en-curso` ya deja fusionarlos eligiendo cuenta y correo (2026-08-06), pero solo agrupa dentro de una misma división. En el mirror quedan 4 pares que no comparten curso y no tiene herramienta ninguna. Agruparlos por escuela+DNI, como en docentes, exige antes decidir en qué curso queda el alumno fusionado — y ese dato no está en la base.
-- **Completar el DNI de las 118 cuentas que no lo tienen** (109 alumnos, 8 docentes, el superadmin). Hasta que estén todas, el DNI no puede marcarse `required` en el schema. Falta decidir si se hace con un listado en `/admin` o con un script de backfill contra los padrones de la escuela.
-- Limpieza de archivos huérfanos cuando se cancela el creador full-page sin guardar (los adjuntos ya subidos quedan en disco).
-- Relación `Subject` ↔ `Course` por texto (frágil ante renombrados). Migrar a ObjectId ref.
-- Eliminación de escuela sin cascada (`POST /superadmin/schools/:id/delete` deja usuarios/cursos huérfanos).
-- Terminología confusa en admin-nav ("Cursos" → Divisions, "Materias" → Courses, "Catálogo" → Subjects).
-- **Alta de usuario duplicada en dos vistas**: el modal de `views/admin/users.ejs` y la página `views/admin/user-form.ejs` son el mismo formulario mantenido por separado (mismos campos, mismo `POST /admin/users/create`, JS casi idéntico con prefijo `u` en los ids del modal). Cualquier campo nuevo hay que agregarlo dos veces o queda a medias. Unificar en un partial.
+- **El envío del backup por FTP sigue siendo manual** (desde 2026-08-17 existe `/superadmin/backup/ftp/enviar`, pero hay que apretar el botón). Automatizarlo por cron es el Nivel 2: reusar `buildBackupStaging()` + `enviarBackup()` desde un timer, que tiene que correr en un solo worker de PM2 (mismo patrón que el promotor de mantenimiento, vía `NODE_APP_INSTANCE`).
+- **Restaurar desde un `.tar.gz` ya presente en el server** (`backups/`, subido por scp/rsync): hoy el único camino es el upload por HTTP en `POST /preview`, que para backups grandes suma el `requestTimeout` y una copia extra en `os.tmpdir()`.
+- **Los archivos de disco no entran al backup**: `routes/backup.js` respalda colecciones, no filesystem. Un restore deja entregas, adjuntos de actividad y adjuntos de sala apuntando a archivos que no están (la ruta contesta 404, no rompe).
+- **Quedan directorios `classroom-backup-staging-*` huérfanos en `os.tmpdir()`** (2 del 2026-08-14 en la máquina local). No son peligrosos —contienen enlaces, no copias— pero se acumulan. Falta averiguar por qué camino de `GET /download` se escapan del `limpiarStaging()`; el envío por FTP no dejó ninguno.
+- Extender el optimizador de imágenes a las **fotos en entregas de alumnos y a los adjuntos de actividades**: medido el 2026-08-08 son **511 MB en entregas + 400 MB en adjuntos**, con 581 MB de imágenes sin optimizar entre las dos. Preset más conservador (2000 px, calidad 85) porque puede ser la foto de una hoja escrita que el docente necesita leer. Necesita ventana de mantenimiento (achica el disco de verdad, a diferencia de la compresión del backup).
+- **No se puede BORRAR una nota ya puesta** desde la UI: se puede vaciar la devolución, pero no la nota. Con `points` opcional (2026-08-13) ahora sería fácil de agregar.
+- **XSS de baja severidad preexistente**: `renderTeacherDetail` interpola `sg.feedback` y `act.description` sin escapar. Es contenido del propio docente visto por él, pero el feedback ahora lo escribe más gente.
+- **Etapa 2 de permisos por rol**: las pestañas de adentro de la materia (Novedades, Actividades, Calificaciones, Mis notas, Personas) son tabs client-side sin URL propia, así que ocultarlas no bloquearía nada. Cumplir "oculta y bloquea" ahí exige `requireSection` endpoint por endpoint más un `panel:'course'` en `config/sections.js`. Es lo único que le daría a **Docente** y **Alumno** algo real que configurar. Descartado para la v1 por decisión del usuario.
+- **Revisión de UI móvil**: hechos alumno, docente y preceptor (2026-08-17). Faltan **jefe, directivo, admin y superadmin** — el header y el menú lateral ya quedaron resueltos para todos, pero no las vistas propias de cada rol.
+- **Limpieza de archivos huérfanos** cuando se cancela el creador full-page sin guardar (los adjuntos ya subidos quedan en disco).
+- **Relación `Subject` ↔ `Course` por texto** (frágil ante renombrados). Migrar a ObjectId ref.
+- **Eliminación de escuela sin cascada** (`POST /superadmin/schools/:id/delete` deja usuarios/cursos huérfanos).
+- **Los importadores no validan el rol del docente**: los flujos `cargos`, `sistema` y `alumnos` de `routes/admin.js` y `routes/superadmin.js` crean materias con `owner: teacherId` sin pasar por `resolveCourseTeacher`. Hoy no se explota porque los docentes se crean en el mismo flujo, pero es la puerta que estaba abierta en `edit`.
+- **`middleware/admin.js:requireSuperadmin` y `middleware/superadmin.js:requireSuperAdmin` son duplicados exactos** (distinta capitalización). No se consolidaron para no tocar los 5 routers que los usan.
+- **El rol `soe` está en el enum pero no tiene panel** ni middleware que lo acepte: en la grilla de Roles su columna sale casi entera en `—`.
+- **Terminología confusa en admin-nav** ("Cursos" → Divisions, "Materias" → Courses, "Catálogo" → Subjects).
+- **Alta de usuario duplicada en dos vistas**: el modal de `views/admin/users.ejs` y la página `views/admin/user-form.ejs` son el mismo formulario mantenido por separado. Cualquier campo nuevo hay que agregarlo dos veces o queda a medias. Unificar en un partial.
 - **`NODE_ENV=production` en el `.env` local**: activa el view cache de Express, así que los cambios en `.ejs` NO se reflejan sin reiniciar el proceso (nodemon tampoco vigila `.ejs`). Es una trampa al desarrollar vistas — parece que el cambio "no se aplicó".
+
+### Datos de producción / del espejo
+- **Dos materias sin titular en producción**: hay que asignarles docente desde `/admin/courses` (el borrado del usuario ya ocurrió y no se deshace). No requiere tocar la base.
+- **Completar el DNI de las 118 cuentas que no lo tienen** (109 alumnos, 8 docentes, el superadmin). Hasta que estén todas, el DNI no puede marcarse `required` en el schema. Falta decidir entre un listado en `/admin` o un backfill contra los padrones.
+- **Alumnos con el mismo DNI que NO comparten curso**: `dni-duplicado-en-curso` ya deja fusionarlos eligiendo cuenta y correo, pero solo dentro de una misma división. Quedan 4 pares sin herramienta; agruparlos por escuela+DNI exige decidir antes en qué curso queda el alumno fusionado, que es justo el dato que no está en la base.
+- **Referencias colgadas históricas en `Course.students`**: ids de alumnos borrados antes del fix de 2026-08-03. No rompen nada (Mongoose los descarta al popular) pero **inflan el contador de alumnos** del listado de admin, que usa `students.length` crudo. Falta un diagnóstico en `/superadmin/otros` que los cuente y limpie.
+
+### Tests
+- **45 rutas sin ejercitar por ninguna suite** (medido el 2026-08-15, excluyendo el spec `objectid-invalido-da-404` que nombra 384 rutas y falsea la cuenta). Lo más grande: **plantillas de tareas entera** (12 de 14 rutas), 12 rutas de edición del panel admin, 6 de actividades, 5 del superadmin.
+- **El smoke deja ~3 cuentas huérfanas por corrida**: los specs de limpieza no cubren los patrones `sinmateria.*`, `scoped.teacher.new.*`, `dnipuntos.*`, `latejoiner.*`, `am.otro.*`. No toca producción, pero infla los contadores del espejo local.
+- El spec `suggestions-student-sees-answer-and-badge` depende de `suggestions-superadmin-can-respond` pero no declara su mismo `requiresEnv`: sin credenciales de superadmin falla en cascada en vez de saltearse.
+- **Nota operativa**: la máquina de desarrollo se queda sin RAM corriendo suites en paralelo (`node --test` levanta un proceso por archivo). Si aparecen fallos raros con "out of memory", correr con `--test-concurrency=1` antes de sospechar una regresión.
 
 ### Funcionalidades faltantes — rápidas
 - Editar / eliminar novedades y comentarios (no existen `PUT`/`DELETE` en `Announcement`).
@@ -2983,7 +3096,7 @@ Por qué la segunda: el primer intento fue solo el latido y **no alcanzó** — 
 - Deeplink directo a una actividad (URL propia por actividad). **A medias desde el 2026-08-12**: existe `/courses/:id?actividad=<id>`, que abre la solapa Actividades y el detalle al cargar (lo usa el botón "Ver actividad" del chat de la sala). Falta la URL propia de verdad — `/activities/:id` con su vista, para poder compartirla sin depender del curso.
 - Vista "Mis entregas" consolidada cross-curso para el alumno.
 - Link al perfil del alumno desde el tab Personas.
-- Impersonación desde el superadmin.
+- ~~Impersonación desde el superadmin.~~ **Ya existe**: `POST /admin/users/:id/impersonate` (el superadmin pasa el chequeo de escuela porque la suya es `null`) y se sale con `GET /exit-impersonate`. Verificado el 2026-08-17. Lo que nunca existió es una ruta bajo `/superadmin`, que era lo que buscaba la auditoría original.
 
 ### Funcionalidades faltantes — mayor complejidad
 - Notificaciones (in-app / email / push).
