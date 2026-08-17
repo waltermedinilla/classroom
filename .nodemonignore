@@ -1,6 +1,10 @@
 # Archivos de estado runtime que no deben disparar un reinicio de nodemon en dev.
 # En producción no aplica (PM2 corre con watch:false, ver ecosystem.config.js).
 maintenance.json
+# Destino FTP del backup (ver config/ftpDestino.js). Mismo caso que maintenance.json:
+# es estado de runtime en la raíz y con extensión .json, así que sin esto cada vez que se
+# guarda el destino nodemon reinicia el server entero.
+ftp-destino.json
 backups/*
 logs/*
 public/archivos/*

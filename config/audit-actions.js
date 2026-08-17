@@ -140,6 +140,11 @@ const ACTIONS = {
   // ── Sistema (backup / restore / mantenimiento — solo dueño del sistema) ──
   'system.backup_create':    { label: 'generó un backup',           icon: 'cloud_download', color: '#137333', category: 'system' },
   'system.restore':          { label: 'restauró un backup',         icon: 'restore',        color: '#ea4335', category: 'system' },
+  // Backup empujado por FTP a otra máquina. Se registra aunque la transferencia después
+  // falle: el hecho auditable es que una copia completa de la base SALIÓ del servidor
+  // hacia un destino externo, y eso pasa desde el primer byte.
+  'system.backup_ftp':        { label: 'envió un backup por FTP',     icon: 'cloud_upload',   color: '#1a73e8', category: 'system' },
+  'system.backup_ftp_config': { label: 'cambió el destino FTP de backups', icon: 'settings_ethernet', color: '#ea8600', category: 'system' },
   'system.maintenance_on':   { label: 'activó modo mantenimiento',  icon: 'engineering',    color: '#ea8600', category: 'system' },
   'system.maintenance_off':  { label: 'desactivó modo mantenimiento', icon: 'engineering',  color: '#137333', category: 'system' },
   // Ventana de mantenimiento: se pide y el sistema espera a que la plataforma se vacíe.

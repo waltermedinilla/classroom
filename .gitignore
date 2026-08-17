@@ -8,6 +8,9 @@ archivos/salas/
 sin-commitear/
 backups/
 maintenance.json
+# Destino FTP al que se empuja el backup: tiene la contraseña del servidor FTP del dueño
+# (cifrada con JWT_SECRET, pero igual no va al repo). Ver config/ftpDestino.js
+ftp-destino.json
 Classroom San Jose.mp4
 Classroom San Jose-resaltar.mp4
 "Ejemplos de Imágenes/WhatsApp Image*"

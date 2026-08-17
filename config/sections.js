@@ -47,7 +47,9 @@ const SECTIONS = [
   { key: 'admin_subjects',       panel: 'admin', label: 'Catálogo',   icon: 'auto_stories', path: '/admin/subjects',       roles: ['admin', 'superadmin'] },
   // Secciones = el alcance del rol Jefe de Sección (models/Section.js). Nada que ver con
   // las "secciones" de este archivo, que son las solapas — coinciden en la palabra y nada más.
-  { key: 'admin_sections',       panel: 'admin', label: 'Secciones',  icon: 'groups',       path: '/admin/secciones',      roles: ['admin', 'superadmin'] },
+  // El rol `jefe` entra a esta solapa para configurar las secciones que tiene a cargo — es
+  // la única del panel de admin que ve, y la sirve routes/sections.js, no routes/admin.js.
+  { key: 'admin_sections',       panel: 'admin', label: 'Secciones',  icon: 'groups',       path: '/admin/secciones',      roles: ['admin', 'superadmin', 'jefe'] },
   { key: 'admin_import',         panel: 'admin', label: 'Importar',   icon: 'upload_file',  path: '/admin/import',         roles: ['admin', 'superadmin'] },
   { key: 'admin_audit',          panel: 'admin', label: 'Auditoría',  icon: 'history',      path: '/admin/audit',          roles: ['admin', 'superadmin'] },
   // Las tres de abajo editan la configuración de UNA escuela (el tema, las tareas y las

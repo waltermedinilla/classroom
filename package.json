@@ -15,6 +15,7 @@
     "cleanup:dry": "node cleanup-files.js --dry-run",
     "cleanup:rooms": "node cleanup-rooms.js",
     "cleanup:rooms:dry": "node cleanup-rooms.js --dry-run",
+    "logs:subida": "node tools/ver-subida.js",
     "watchdog": "bash tools/watchdog.sh",
     "watchdog:ahora": "node tools/analizar-watchdog.js --ahora",
     "watchdog:informe": "node tools/analizar-watchdog.js",
@@ -30,6 +31,7 @@
     "prepare": "husky || true"
   },
   "dependencies": {
+    "basic-ftp": "^6.2.0",
     "bcryptjs": "^2.4.3",
     "compression": "^1.8.1",
     "connect-mongo": "^4.6.0",

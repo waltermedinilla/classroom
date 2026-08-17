@@ -74,6 +74,37 @@
       vertical-align: -2px; margin-right: 6px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Envío por FTP ─── */
+    .ftp-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 12px; margin-bottom: 14px;
+    }
+    .ftp-campo { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .ftp-campo > span { font-size: 12px; color: var(--text-secondary); }
+    .ftp-campo input, .ftp-campo select {
+      padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px;
+      background: var(--surface); color: var(--text-primary); box-sizing: border-box; width: 100%;
+    }
+    .ftp-hint { font-size: 11.5px; color: var(--text-hint); }
+    .ftp-pasos { margin-top: 14px; font-size: 13px; }
+    .ftp-pasos summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5px; }
+    .ftp-pasos ol { margin: 10px 0 0; padding-left: 22px; line-height: 1.65; }
+    .ftp-pasos li { margin-bottom: 6px; }
+    .ftp-pasos code {
+      background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 12px;
+    }
+    .ftp-barra {
+      height: 8px; background: var(--bg); border-radius: 99px; overflow: hidden;
+      border: 1px solid var(--border); margin: 8px 0 6px;
+    }
+    .ftp-barra > div {
+      height: 100%; width: 0; background: var(--primary); transition: width .4s linear;
+    }
+    .ftp-cifras {
+      display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+    }
   </style>
 </head>
 <body>
@@ -118,6 +149,150 @@
         </button>
       </div>
       <div id="downloadStatus" style="margin-top:10px;font-size:13px;display:none"></div>
+    </div>
+
+    <!-- ─── Enviar por FTP a otra PC ─── -->
+    <div class="backup-section">
+      <h3><span class="material-symbols-outlined" style="color:#1a73e8">lan</span>Enviar el backup a otra PC por FTP</h3>
+
+      <p style="font-size:13px;color:var(--text-secondary);margin:0 0 14px">
+        En vez de bajar el backup por el navegador, el servidor lo empuja directo a otra máquina
+        (por ejemplo tu PC, usando su IP o su nombre de Tailscale). Va el paquete completo:
+        la base de datos entera más todos los archivos subidos, el mismo <code>.tar.gz</code>
+        que genera el botón de arriba y que sirve para restaurar.
+      </p>
+
+      <div class="backup-warning" style="margin-bottom:16px">
+        <span class="material-symbols-outlined" style="color:#ea8600">swap_horiz</span>
+        <div>
+          <strong>Importante, porque FTP funciona al revés de lo que suena:</strong> el que manda es
+          este servidor, pero <strong>la PC que recibe tiene que estar corriendo un servidor FTP</strong>
+          y encendida durante toda la transferencia. FTP no puede "empujarle" un archivo a una
+          máquina que no está escuchando. Abajo están los pasos para dejarlo andando en Windows.
+        </div>
+      </div>
+
+      <div id="ftpConfigLoading" style="font-size:13px;color:var(--text-hint)">Cargando destino guardado...</div>
+
+      <div id="ftpForm" style="display:none">
+        <div class="ftp-grid">
+          <label class="ftp-campo" style="grid-column:span 2">
+            <span>IP o nombre de la PC que recibe</span>
+            <input type="text" id="ftpHost" autocomplete="off" placeholder="100.101.102.103  ó  mi-pc.tailc1c538.ts.net">
+            <span class="ftp-hint">La que muestra Tailscale para esa máquina.</span>
+          </label>
+          <label class="ftp-campo">
+            <span>Puerto</span>
+            <input type="number" id="ftpPuerto" min="1" max="65535" placeholder="21">
+          </label>
+          <label class="ftp-campo">
+            <span>Modo de conexión</span>
+            <select id="ftpModo">
+              <option value="plano">Sin cifrar (FTP)</option>
+              <option value="ftps">FTPS explícito (AUTH TLS)</option>
+              <option value="ftps-implicito">FTPS implícito (puerto 990)</option>
+            </select>
+          </label>
+          <label class="ftp-campo">
+            <span>Usuario</span>
+            <input type="text" id="ftpUsuario" autocomplete="off" placeholder="usuario del servidor FTP">
+          </label>
+          <label class="ftp-campo">
+            <span>Contraseña</span>
+            <input type="password" id="ftpPassword" autocomplete="new-password" placeholder="">
+            <span class="ftp-hint" id="ftpPasswordHint"></span>
+          </label>
+          <label class="ftp-campo" style="grid-column:span 2">
+            <span>Carpeta de destino en esa PC</span>
+            <input type="text" id="ftpDirectorio" autocomplete="off" placeholder="/backups-classroom">
+            <span class="ftp-hint">Si no existe, se crea. Es relativa a la carpeta raíz del sitio FTP.</span>
+          </label>
+        </div>
+
+        <label style="font-size:12.5px;color:var(--text-secondary);display:flex;gap:8px;align-items:flex-start;margin-bottom:6px">
+          <input type="checkbox" id="ftpGuardarPassword" style="margin-top:2px">
+          <span id="ftpGuardarPasswordTexto">
+            Recordar la contraseña en el servidor (cifrada con la clave del sistema), así el envío
+            se puede disparar con un solo clic.
+          </span>
+        </label>
+
+        <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:14px">
+          Comprimir antes de enviar (achica el paquete, tarda más CPU del servidor):
+          <label style="margin-left:10px"><input type="checkbox" id="ftpCompImagenes"> imágenes</label>
+          <label style="margin-left:10px"><input type="checkbox" id="ftpCompPdf"> PDF</label>
+          <span id="ftpCompNota" class="ftp-hint" style="display:block;margin-top:4px"></span>
+        </div>
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn btn-outline" id="ftpProbarBtn" onclick="ftpProbar()">
+            <span class="material-symbols-outlined">network_check</span>
+            Probar conexión
+          </button>
+          <button class="btn btn-outline" id="ftpGuardarBtn" onclick="ftpGuardar()">
+            <span class="material-symbols-outlined">save</span>
+            Guardar destino
+          </button>
+          <button class="btn btn-primary" id="ftpEnviarBtn" onclick="ftpEnviar()">
+            <span class="material-symbols-outlined">cloud_upload</span>
+            Enviar backup ahora
+          </button>
+          <button class="btn btn-outline" id="ftpCancelarBtn" style="display:none;border-color:#c5221f;color:#c5221f" onclick="ftpCancelar()">
+            <span class="material-symbols-outlined">stop_circle</span>
+            Cancelar envío
+          </button>
+          <button class="btn btn-outline" id="ftpOlvidarBtn" style="display:none;margin-left:auto" onclick="ftpOlvidar()">
+            <span class="material-symbols-outlined">delete</span>
+            Olvidar destino
+          </button>
+        </div>
+
+        <div id="ftpStatus" style="margin-top:14px;font-size:13px"></div>
+
+        <details class="ftp-pasos">
+          <summary>Cómo dejar tu PC con Windows lista para recibir (una sola vez)</summary>
+          <ol>
+            <li>
+              <strong>Instalar el servidor FTP.</strong> Panel de control → Programas →
+              <em>Activar o desactivar las características de Windows</em> →
+              <code>Internet Information Services</code> → <code>Servidor FTP</code>
+              (marcar <em>Servicio FTP</em> y <em>Extensibilidad de FTP</em>) y también
+              <code>Herramientas de administración web</code> → <em>Consola de administración de IIS</em>.
+              Alternativa más simple si preferís: instalar <strong>FileZilla Server</strong>.
+            </li>
+            <li>
+              <strong>Crear el sitio FTP.</strong> Administrador de IIS → clic derecho en <em>Sitios</em> →
+              <em>Agregar sitio FTP</em>. Elegí la carpeta donde querés que caigan los backups
+              (ojo: que tenga espacio, el paquete pesa cerca de 1 GB).
+            </li>
+            <li>
+              <strong>Enlace y autenticación.</strong> En el asistente, dejá el puerto <code>21</code>,
+              elegí <em>Sin SSL</em> si vas a usar el modo "Sin cifrar", marcá
+              <em>Autenticación básica</em> y en autorización dale
+              <strong>permiso de Leer y Escribir</strong> a tu usuario. Sin el permiso de escritura
+              la conexión entra pero el envío falla.
+            </li>
+            <li>
+              <strong>Abrir el firewall.</strong> Firewall de Windows → <em>Permitir una aplicación</em> →
+              habilitá <code>Servidor FTP</code> para redes privadas. Además, en IIS →
+              <em>Compatibilidad con firewall FTP</em>, poné un rango de puertos pasivos
+              (por ejemplo <code>50000-50100</code>) y abrí ese mismo rango en el firewall:
+              es el paso que más se olvida y el que hace fallar la transferencia justo después
+              de conectar bien.
+            </li>
+            <li>
+              <strong>Averiguar la dirección.</strong> Abrí Tailscale en esa PC y copiá su IP
+              <code>100.x.y.z</code> o su nombre. Pegala arriba, apretá <em>Probar conexión</em> y,
+              si da verde, ya podés enviar.
+            </li>
+          </ol>
+          <p style="margin:10px 0 0;color:var(--text-secondary);font-size:12.5px">
+            Sobre el cifrado: el tráfico entre las dos máquinas viaja dentro del túnel de Tailscale,
+            que ya va cifrado. Por eso el modo "Sin cifrar" es aceptable acá y es el que menos
+            configuración necesita. FTPS agrega una segunda capa si el servidor de tu PC la soporta.
+          </p>
+        </details>
+      </div>
     </div>
 
     <!-- ─── Restaurar ─── -->
@@ -269,6 +444,300 @@
         renderLastBackupNote();
         status.innerHTML = '<span style="color:#137333">✔ Descarga en curso: buscá <b>classroom-backup-….tar.gz</b> en la barra de descargas del navegador. Con la base actual son unos 850 MB, puede tardar varios minutos.</span>';
       }, 5000);
+    }
+
+    // ─── Envío por FTP ──────────────────────────────────────────────────────
+    // El servidor arma el .tar.gz y lo empuja a la PC del dueño. La respuesta de /ftp/enviar
+    // NO es un JSON al final sino un stream NDJSON (un evento por línea): el envío puede
+    // durar una hora y sin progreso en pantalla nadie sabe si sigue vivo.
+    let ftpEnvioAbort = null;   // AbortController del envío en curso
+    let ftpTienePassword = false;
+
+    function ftpDatosDelFormulario() {
+      return {
+        host:       document.getElementById('ftpHost').value.trim(),
+        puerto:     document.getElementById('ftpPuerto').value.trim(),
+        usuario:    document.getElementById('ftpUsuario').value.trim(),
+        modo:       document.getElementById('ftpModo').value,
+        directorio: document.getElementById('ftpDirectorio').value.trim(),
+        password:   document.getElementById('ftpPassword').value,
+      };
+    }
+
+    function ftpMensaje(html, tipo) {
+      const el = document.getElementById('ftpStatus');
+      const clase = tipo === 'ok' ? 'backup-result-ok' : tipo === 'error' ? 'backup-result-err' : '';
+      el.innerHTML = clase ? `<div class="${clase}">${html}</div>` : html;
+    }
+
+    function ftpDuracion(ms) {
+      const s = Math.round(ms / 1000);
+      if (s < 60) return s + ' s';
+      const m = Math.floor(s / 60);
+      if (m < 60) return `${m} min ${String(s % 60).padStart(2, '0')} s`;
+      return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
+    }
+
+    async function cargarFtpConfig() {
+      try {
+        const res  = await fetch('/superadmin/backup/ftp/config');
+        const data = await res.json();
+
+        const d = data.destino;
+        if (d) {
+          document.getElementById('ftpHost').value       = d.host;
+          document.getElementById('ftpPuerto').value     = d.puerto;
+          document.getElementById('ftpUsuario').value    = d.usuario;
+          document.getElementById('ftpModo').value       = d.modo;
+          document.getElementById('ftpDirectorio').value = d.directorio;
+          document.getElementById('ftpOlvidarBtn').style.display = '';
+        }
+
+        ftpTienePassword = data.tienePassword;
+        document.getElementById('ftpGuardarPassword').checked = data.tienePassword;
+        document.getElementById('ftpPasswordHint').textContent = data.tienePassword
+          ? 'Hay una guardada: dejalo vacío para usarla.'
+          : '';
+
+        // Sin JWT_SECRET el servidor no puede cifrar nada, y guardar en claro la contraseña
+        // del FTP de casa no es una opción. Se dice por qué en vez de dejar un check que
+        // falla sin explicación al apretar "Guardar".
+        if (!data.puedeGuardarPassword) {
+          const chk = document.getElementById('ftpGuardarPassword');
+          chk.checked  = false;
+          chk.disabled = true;
+          document.getElementById('ftpGuardarPasswordTexto').innerHTML =
+            'No se puede recordar la contraseña en este servidor (falta <code>JWT_SECRET</code>). ' +
+            'Escribila cada vez que envíes.';
+        }
+
+        document.getElementById('ftpConfigLoading').style.display = 'none';
+        document.getElementById('ftpForm').style.display = 'block';
+      } catch {
+        document.getElementById('ftpConfigLoading').textContent = 'No se pudo cargar el destino guardado';
+      }
+    }
+
+    // El puerto por defecto cambia con el modo, pero solo se pisa si el dueño tenía puesto
+    // el default del modo anterior: si escribió 2121 a mano, cambiar de modo no se lo borra.
+    document.getElementById('ftpModo').addEventListener('change', (e) => {
+      const puerto = document.getElementById('ftpPuerto');
+      if (e.target.value === 'ftps-implicito' && (puerto.value === '' || puerto.value === '21')) puerto.value = 990;
+      if (e.target.value !== 'ftps-implicito' && puerto.value === '990') puerto.value = 21;
+    });
+
+    // Las herramientas de compresión son binarios del sistema (sharp, Ghostscript) y pueden
+    // faltar en el servidor. Se consulta el mismo endpoint que usa el modal de compresión,
+    // que ya cachea el recorrido de disco 60 s.
+    async function ftpCargarHerramientas() {
+      try {
+        const res  = await fetch('/superadmin/backup/file-stats');
+        const data = await res.json();
+        const faltan = [];
+        if (!data.herramientas.imagenes) {
+          document.getElementById('ftpCompImagenes').disabled = true;
+          faltan.push('imágenes (falta sharp en el servidor)');
+        }
+        if (!data.herramientas.pdf) {
+          document.getElementById('ftpCompPdf').disabled = true;
+          faltan.push('PDF (falta Ghostscript en el servidor: <code>sudo apt install ghostscript</code>)');
+        }
+        if (faltan.length) {
+          document.getElementById('ftpCompNota').innerHTML = 'No se puede comprimir ' + faltan.join(' ni ') + '.';
+        }
+      } catch { /* que falle esto no puede romper la pantalla; los checks quedan habilitados */ }
+    }
+
+    function ftpComprimirPedido() {
+      const tipos = [];
+      if (document.getElementById('ftpCompImagenes').checked) tipos.push('imagenes');
+      if (document.getElementById('ftpCompPdf').checked)      tipos.push('pdf');
+      return tipos;
+    }
+
+    async function ftpGuardar() {
+      const btn = document.getElementById('ftpGuardarBtn');
+      btn.disabled = true;
+      ftpMensaje('<span class="spinner-inline"></span>Guardando destino...');
+      try {
+        const res = await fetch('/superadmin/backup/ftp/config', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...ftpDatosDelFormulario(),
+            guardarPassword: document.getElementById('ftpGuardarPassword').checked,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'No se pudo guardar');
+
+        ftpTienePassword = data.tienePassword;
+        document.getElementById('ftpPassword').value = '';
+        document.getElementById('ftpPasswordHint').textContent = data.tienePassword
+          ? 'Hay una guardada: dejalo vacío para usarla.'
+          : '';
+        document.getElementById('ftpOlvidarBtn').style.display = '';
+        ftpMensaje(`✔ Destino guardado: <strong>${esc(data.destino.host)}:${data.destino.puerto}${esc(data.destino.directorio)}</strong>`, 'ok');
+      } catch (err) {
+        ftpMensaje('✗ ' + esc(err.message), 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function ftpOlvidar() {
+      if (!confirm('¿Borrar el destino FTP guardado (incluida la contraseña)?')) return;
+      try {
+        const res = await fetch('/superadmin/backup/ftp/config', { method: 'DELETE' });
+        if (!res.ok) throw new Error('No se pudo borrar');
+        ['ftpHost', 'ftpPuerto', 'ftpUsuario', 'ftpDirectorio', 'ftpPassword'].forEach(id => {
+          document.getElementById(id).value = '';
+        });
+        ftpTienePassword = false;
+        document.getElementById('ftpGuardarPassword').checked = false;
+        document.getElementById('ftpPasswordHint').textContent = '';
+        document.getElementById('ftpOlvidarBtn').style.display = 'none';
+        ftpMensaje('✔ Destino olvidado.', 'ok');
+      } catch (err) {
+        ftpMensaje('✗ ' + esc(err.message), 'error');
+      }
+    }
+
+    async function ftpProbar() {
+      const btn = document.getElementById('ftpProbarBtn');
+      btn.disabled = true;
+      ftpMensaje('<span class="spinner-inline"></span>Conectando y probando permiso de escritura...');
+      try {
+        const res = await fetch('/superadmin/backup/ftp/probar', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(ftpDatosDelFormulario()),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'No se pudo conectar');
+
+        ftpMensaje(
+          `✔ Conexión correcta con <strong>${esc(data.host)}:${data.puerto}</strong>. ` +
+          `Se pudo escribir en <strong>${esc(data.carpeta)}</strong>.` +
+          (data.limpio ? '' : ' <em>Quedó un archivo de prueba <code>.classroom-prueba-de-escritura</code> ' +
+                              'que no se pudo borrar: el usuario FTP puede escribir pero no eliminar.</em>'),
+          'ok');
+      } catch (err) {
+        ftpMensaje('✗ ' + esc(err.message), 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function ftpCancelar() {
+      if (ftpEnvioAbort) ftpEnvioAbort.abort();
+    }
+
+    async function ftpEnviar() {
+      const enviarBtn = document.getElementById('ftpEnviarBtn');
+      const cancelBtn = document.getElementById('ftpCancelarBtn');
+      enviarBtn.disabled = true;
+      cancelBtn.style.display = '';
+      ftpMensaje('<span class="spinner-inline"></span>Preparando el envío...');
+
+      ftpEnvioAbort = new AbortController();
+      const arranque = Date.now();
+      let estimado = 0, ultimoBytes = 0, termino = false;
+
+      const pintarProgreso = (bytes, ms) => {
+        // El estimado sale del peso de los archivos del servidor: el .tar.gz pesa casi lo
+        // mismo (ya son JPEG/PDF comprimidos). Puede quedar corto, así que la barra se
+        // clava en 99% hasta que llega el evento de fin en vez de mostrar 103%.
+        const pct = estimado ? Math.min(99, Math.round(bytes / estimado * 100)) : 0;
+        const velocidad = ms > 0 ? bytes / (ms / 1000) : 0;
+        const restante  = (estimado && velocidad > 0 && bytes < estimado)
+          ? ftpDuracion((estimado - bytes) / velocidad * 1000) : null;
+
+        ftpMensaje(`
+          <div><span class="spinner-inline"></span>Transfiriendo... no cierres esta pestaña.</div>
+          <div class="ftp-barra"><div style="width:${pct}%"></div></div>
+          <div class="ftp-cifras">
+            <span>${formatBytes(bytes)}${estimado ? ' de ~' + formatBytes(estimado) : ''}</span>
+            <span>${formatBytes(velocidad)}/s</span>
+            <span>${ftpDuracion(ms)} transcurridos</span>
+            ${restante ? `<span>faltan ~${restante}</span>` : ''}
+          </div>`);
+      };
+
+      const manejarEvento = (ev) => {
+        if (ev.tipo === 'estado') {
+          ftpMensaje('<span class="spinner-inline"></span>' + esc(ev.mensaje));
+        } else if (ev.tipo === 'inicio') {
+          estimado = ev.estimadoBytes || 0;
+          pintarProgreso(0, 0);
+        } else if (ev.tipo === 'progreso') {
+          ultimoBytes = ev.bytes;
+          pintarProgreso(ev.bytes, ev.ms);
+        } else if (ev.tipo === 'fin') {
+          termino = true;
+          if (ev.ok) {
+            localStorage.setItem(LAST_BACKUP_KEY, JSON.stringify({ date: new Date().toISOString(), size: ev.bytes }));
+            renderLastBackupNote();
+            ftpMensaje(
+              `✅ Backup enviado: <strong>${formatBytes(ev.bytes)}</strong> en ${ftpDuracion(ev.ms)}.` +
+              `<div style="margin-top:6px;font-size:12px">Quedó en <code>${esc(ev.remoto)}</code> de la PC de destino.</div>`,
+              'ok');
+          } else if (ev.cancelado) {
+            ftpMensaje('Envío cancelado. Se borró el archivo parcial del destino.', 'error');
+          } else {
+            ftpMensaje(`✗ ${esc(ev.error)}` +
+              (ev.bytes ? `<div style="margin-top:6px;font-size:12px">Se habían transferido ${formatBytes(ev.bytes)} antes de cortarse.</div>` : ''),
+              'error');
+          }
+        }
+      };
+
+      try {
+        const res = await fetch('/superadmin/backup/ftp/enviar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...ftpDatosDelFormulario(), comprimir: ftpComprimirPedido() }),
+          signal: ftpEnvioAbort.signal,
+        });
+
+        // Los errores que el servidor puede detectar ANTES de empezar (destino incompleto,
+        // sin contraseña, rate limit) llegan como JSON con status de error. A partir del
+        // 200 la respuesta es el stream y los fallos vienen adentro, en el evento `fin`.
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || `El servidor respondió ${res.status}`);
+        }
+
+        const lector = res.body.getReader();
+        const dec    = new TextDecoder();
+        let buffer   = '';
+        while (true) {
+          const { value, done } = await lector.read();
+          if (done) break;
+          buffer += dec.decode(value, { stream: true });
+          const lineas = buffer.split('\n');
+          buffer = lineas.pop();
+          for (const linea of lineas) {
+            if (linea.trim()) manejarEvento(JSON.parse(linea));
+          }
+        }
+
+        // Stream cortado sin evento `fin`: se cayó la conexión con el navegador, no el FTP.
+        // Hay que decirlo, porque del lado del servidor el envío pudo haber seguido.
+        if (!termino) {
+          ftpMensaje('✗ Se perdió la conexión con el servidor antes de terminar. Revisá la carpeta de ' +
+                     'destino: si hay un archivo <code>.part</code>, el envío quedó a medias.', 'error');
+        }
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          ftpMensaje(`Envío cancelado a los ${formatBytes(ultimoBytes)} (${ftpDuracion(Date.now() - arranque)}). ` +
+                     'El archivo parcial se borra solo del destino.', 'error');
+        } else {
+          ftpMensaje('✗ ' + esc(err.message), 'error');
+        }
+      } finally {
+        ftpEnvioAbort = null;
+        enviarBtn.disabled = false;
+        cancelBtn.style.display = 'none';
+      }
     }
 
     // ─── Restore ───
@@ -702,6 +1171,10 @@
     loadStats();
     renderLastBackupNote();
     loadMaintenanceStatus();
+    cargarFtpConfig();
+    // Diferido: /file-stats recorre el disco y no vale la pena que compita con /stats,
+    // que es lo que la pantalla necesita mostrar primero.
+    setTimeout(ftpCargarHerramientas, 400);
   </script>
 </body>
 </html>

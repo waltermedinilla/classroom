@@ -2134,7 +2134,17 @@ function uploadSubFile(actId, file) {
   fd.append('file', file);
   const xhr = new XMLHttpRequest();
 
+  // Ruta en una constante: el diagnóstico reporta cuál falló, y si no es exactamente la que
+  // se llamó, el reporte manda a buscar al lugar equivocado.
+  const rutaSubida = '/activities/' + actId + '/upload-submission-file';
+  // Seguimiento del diagnóstico. Lo que aporta es cuántos bytes llegó a empujar el
+  // navegador: distingue "se cortó en camino" (red del aula, proxy, límite de un
+  // intermediario — nada de eso deja rastro en el log del servidor) de "subió entero y el
+  // servidor lo rechazó". Ver public/js/subida-diagnostico.js.
+  const seg = SubidaDiag.seguir(rutaSubida, file);
+
   xhr.upload.onprogress = (e) => {
+    SubidaDiag.progreso(seg, e);
     if (!e.lengthComputable) return;
     const pct = Math.round((e.loaded / e.total) * 100);
     const c = document.getElementById('subucard-' + uid);
@@ -2182,8 +2192,10 @@ function uploadSubFile(actId, file) {
         </button>`;
     } else {
       c.remove();
-      const msg = data?.error || `Error inesperado (${xhr.status})`;
-      showUploadErrModal('No se pudo subir el archivo', msg);
+      // El mensaje del servidor, si vino, el diagnóstico lo respeta y lo muestra igual; lo
+      // que agrega es el código para poder encontrar después qué pasó exactamente.
+      showUploadErrModal('No se pudo subir el archivo',
+        SubidaDiag.mensaje(SubidaDiag.fallar(seg, xhr, 'http')));
     }
     syncSubmitBtn();
   };
@@ -2192,11 +2204,21 @@ function uploadSubFile(actId, file) {
     window._subPendingUploads--;
     const c = document.getElementById('subucard-' + uid);
     if (c) c.remove();
-    showUploadErrModal('Error de conexión', 'No se pudo conectar con el servidor. Verificá tu conexión e intentá de nuevo.');
+    showUploadErrModal('No se pudo subir el archivo',
+      SubidaDiag.mensaje(SubidaDiag.fallar(seg, null, 'red')));
     syncSubmitBtn();
   };
 
-  xhr.open('POST', '/activities/' + actId + '/upload-submission-file');
+  xhr.ontimeout = () => {
+    window._subPendingUploads--;
+    const c = document.getElementById('subucard-' + uid);
+    if (c) c.remove();
+    showUploadErrModal('No se pudo subir el archivo',
+      SubidaDiag.mensaje(SubidaDiag.fallar(seg, null, 'timeout')));
+    syncSubmitBtn();
+  };
+
+  xhr.open('POST', rutaSubida);
   xhr.setRequestHeader('Accept', 'application/json');
   xhr.send(fd);
 }

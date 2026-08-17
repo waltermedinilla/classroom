@@ -638,20 +638,28 @@
     const fd = new FormData();
     fd.append(tipo === 'imagen' ? 'imagen' : 'archivo', file);
 
+    // progresoMedible:false porque acá se sube con fetch, que no informa progreso de subida.
+    // Sin ese aviso el reporte diría "se envió 0 de N MB" y mandaría a buscar el problema a
+    // la red aunque la red haya andado perfecto. Ver public/js/subida-diagnostico.js.
+    const ruta = BASE + '/adjuntos/' + tipo;
+    const seg  = SubidaDiag.seguir(ruta, file, { progresoMedible: false });
+
     try {
-      const r = await fetch(BASE + '/adjuntos/' + tipo, {
+      const r = await fetch(ruta, {
         method: 'POST', body: fd, headers: { Accept: 'application/json' },
       });
       if (!r.ok) {
-        const e = await r.json().catch(() => ({}));
-        alert(e.error || 'No se pudo compartir el archivo.');
+        // El cuerpo se lee UNA vez y se reusa para las dos cosas (el mensaje y el reporte):
+        // una Response no se puede leer dos veces.
+        const cuerpo = await r.text().catch(() => '');
+        alert(SubidaDiag.mensaje(SubidaDiag.fallar(seg, SubidaDiag.desdeRespuesta(r, cuerpo), 'http')));
         return;
       }
       // Se ESPERA el poll antes de sacar la card provisoria: si no, hay un parpadeo en el que
       // la card ya no está y la real todavía no llegó.
       await pollear();
     } catch (e) {
-      alert('No se pudo compartir el archivo. Revisá la conexión.');
+      alert(SubidaDiag.mensaje(SubidaDiag.fallar(seg, null, 'red')));
     } finally {
       provisoria.remove();
       botonesAdjunto(true);

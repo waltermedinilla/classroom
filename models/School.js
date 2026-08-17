@@ -20,8 +20,18 @@ const schoolSchema = new Schema({
   description: { type: String, default: '', trim: true },
   // Color de la escuela (restringido a la paleta COLORS); se muestra en badges y encabezados del panel
   color:       { type: String, default: '#1a73e8', enum: { values: COLORS, message: 'Color no válido' } },
-  // Token aleatorio de 48 hex chars; null = sin enlace activo
-  inviteToken: { type: String, default: null },
+  // Token aleatorio de 48 hex chars. "Sin enlace activo" se representa con el campo
+  // AUSENTE, no con null, y eso NO es un detalle de estilo: el índice de abajo es
+  // `sparse`, y sparse saltea los documentos donde el campo no está — uno que vale `null`
+  // sí está y sí se indexa. Con `default: null`, toda escuela nacía ocupando el mismo
+  // casillero del índice único y la SEGUNDA escuela que se creara chocaba contra la
+  // primera: 400 "Ya existe una escuela con ese nombre", con el nombre de rehén de un
+  // problema que no era del nombre. Como en producción hay una sola escuela, el botón
+  // "Nueva escuela" nunca había funcionado y nadie podía saberlo.
+  // Todo el código que lo lee usa truthiness (`school.inviteToken ? …`), así que undefined
+  // y null se comportan igual: el cambio no se ve en ninguna pantalla.
+  // Smoke: superadmin-crea-dos-escuelas.
+  inviteToken: { type: String },
   // Temas visuales ofrecidos por el superadmin; cada uno aceptado/rechazado por el admin
   themes: [{
     slug:       { type: String },
@@ -61,7 +71,20 @@ const schoolSchema = new Schema({
   rolePermissions: { type: Schema.Types.Mixed, default: undefined },
 }, { timestamps: true });
 
-// Índice único sparse: solo indexa escuelas que tienen token activo (null no se indexa)
+// Índice único sparse: solo indexa las escuelas donde el campo EXISTE.
+//
+// ⚠️ El comentario original de esta línea decía "null no se indexa" y era falso: `sparse`
+// mira si el campo está presente, no su valor. Un `null` explícito se indexa como cualquier
+// otro valor, y por eso dos escuelas sin enlace chocaban entre sí. Se arregló del lado del
+// documento (arriba: sin `default`, y `$unset` al revocar), que es lo que NO obliga a tocar
+// la base de producción.
+//
+// El arreglo de fondo sería cambiar este índice por uno parcial:
+//   { unique: true, partialFilterExpression: { inviteToken: { $type: 'string' } } }
+// que además protegería contra cualquier `null` que se cuele en el futuro. Requiere
+// dropIndex + createIndex sobre la base de PRODUCCIÓN, así que se avisa antes y se hace
+// aparte. Mientras tanto, la única escuela que hoy tiene `inviteToken: null` guardado no
+// molesta: un solo null es válido para un índice único.
 schoolSchema.index({ inviteToken: 1 }, { unique: true, sparse: true });
 
 // Hook pre-validate: genera el slug automáticamente a partir del nombre si todavía no tiene uno

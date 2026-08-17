@@ -35,6 +35,9 @@ const actDia = require('../services/actividadesDelDia');
 const { logAudit } = require('../middleware/audit');
 const { invalidateUser } = require('../middleware/cache');
 const { logDeRuta } = require('../middleware/route-log');
+// Guarda de forma del :id, en la primera línea de cada handler con parámetro.
+// Ver middleware/objectId.js y el issue conocido nº 10 de agente.md.
+const { idMalo } = require('../middleware/objectId');
 
 const router = express.Router();
 // sectionGuard va ANTES de loadPreceptorScope para no pagar la query de divisiones en un
@@ -101,6 +104,9 @@ router.get('/', async (req, res) => {
 // nómina de alumnos. Reusa el mismo servicio que el panel del directivo para que ambos
 // paneles no puedan divergir en los números.
 router.get('/divisions/:id', async (req, res) => {
+  // Antes del alcance: con un id mal formado no hay curso que proteger, y 404 dice la verdad
+  // (403 sugeriría que existe uno al que este preceptor no llega).
+  if (idMalo(req, res, 'Curso no encontrado')) return;
   if (!inScope(req, req.params.id)) return res.status(403).send('Acceso denegado');
 
   try {
@@ -129,6 +135,7 @@ router.get('/divisions/:id', async (req, res) => {
 // único {school, dni} solo permite una cuenta por DNI, así que si la persona ya está en el
 // sistema no se crea otra — se le completa la matrícula en las materias que le falten.
 router.post('/divisions/:id/students', async (req, res) => {
+  if (idMalo(req, res, 'Curso no encontrado')) return;
   if (!inScope(req, req.params.id)) return res.status(403).json({ error: 'Acceso denegado' });
 
   try {
@@ -187,6 +194,7 @@ router.post('/divisions/:id/students', async (req, res) => {
 // las divisiones a cargo: si el alumno además cursa algo fuera del alcance del preceptor
 // (repitentes, materias de otro año), eso no es asunto suyo y no aparece.
 router.get('/students/:id', async (req, res) => {
+  if (idMalo(req, res, 'Alumno no encontrado')) return;
   try {
     const student = await User.findById(req.params.id)
       .select('_id name email dni active role school phone createdAt');
@@ -309,6 +317,7 @@ router.get('/students/:id', async (req, res) => {
 // Nombre, correo, DNI y teléfono. La contraseña NO se toca acá: resetearla quedó fuera del
 // alcance del rol (decisión explícita del usuario) y sigue siendo cosa del admin.
 router.post('/students/:id/edit', async (req, res) => {
+  if (idMalo(req, res, 'Alumno no encontrado')) return;
   try {
     const student = await User.findById(req.params.id);
     if (!student) return res.status(404).json({ error: 'Alumno no encontrado' });
@@ -369,6 +378,7 @@ router.post('/students/:id/edit', async (req, res) => {
 // docentes en `DELETE /courses/:id/students/:studentId`. Sacarlo escondería su trabajo y la
 // corrección del docente sin dejar rastro de que existieron.
 router.post('/students/:id/unenroll', async (req, res) => {
+  if (idMalo(req, res, 'Alumno no encontrado')) return;
   try {
     const { divisionId } = req.body;
     if (!inScope(req, divisionId)) return res.status(403).json({ error: 'Ese curso no está a tu cargo' });
@@ -410,6 +420,7 @@ router.post('/students/:id/unenroll', async (req, res) => {
 // Misma guarda de entregas que arriba, y por el mismo motivo: si ya entregó en el curso
 // de origen, mudarlo dejaría ese trabajo colgado de una materia donde ya no figura.
 router.post('/students/:id/move', async (req, res) => {
+  if (idMalo(req, res, 'Alumno no encontrado')) return;
   try {
     const { fromDivisionId, toDivisionId } = req.body;
     if (!inScope(req, fromDivisionId)) return res.status(403).json({ error: 'El curso de origen no está a tu cargo' });
@@ -455,6 +466,7 @@ router.post('/students/:id/move', async (req, res) => {
 // Baja LÓGICA: active:false impide iniciar sesión pero no borra nada (ver middleware/auth.js).
 // El borrado definitivo no está disponible para este rol.
 router.post('/students/:id/toggle-active', async (req, res) => {
+  if (idMalo(req, res, 'Alumno no encontrado')) return;
   try {
     const student = await User.findById(req.params.id);
     if (!student) return res.status(404).json({ error: 'Alumno no encontrado' });
@@ -576,6 +588,8 @@ router.get('/actividades', async (req, res) => {
 // Va por fetch y no recargando la pantalla: tocar día por día un mes entero con una recarga
 // completa cada vez es justamente lo que hace que nadie use un calendario.
 router.get('/actividades/:divisionId/dia/:fecha', async (req, res) => {
+  // `:fecha` no se valida acá: no es un ObjectId, lo parsea el propio handler.
+  if (idMalo(req, res, 'Curso no encontrado', { param: 'divisionId', como: 'json' })) return;
   if (!inScope(req, req.params.divisionId)) return res.status(403).json({ error: 'Acceso denegado' });
   if (!actDia.diaValido(req.params.fecha))  return res.status(400).json({ error: 'Fecha inválida' });
 

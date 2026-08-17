@@ -52,7 +52,13 @@
         <% } %>
         <% /* El preceptor tampoco: no dicta materias, las administra desde /preceptor.
               El jefe de sección, menos: su rol es de solo lectura.
-              El endpoint POST /courses/create además los rechaza por rol. */ %>
+              El docente tampoco crea materias ni cursos (decisión del 2026-07-25, cerrada
+              del lado del endpoint el 2026-08-14): las da de alta el administrador y ahí le
+              asigna el titular.
+              Desde el 2026-08-14 esta condición NO es lo único que los frena: la lista
+              blanca ROLES_QUE_CREAN_MATERIAS de routes/courses.js rechaza el POST directo
+              de todos los que no aparecen acá. Si se agrega un rol a este `if`, hay que
+              agregarlo también allá o el botón va a dar 403. */ %>
         <% if (rol && rol !== 'student' && rol !== 'teacher' && rol !== 'preceptor' && rol !== 'jefe') { %>
         <button class="btn btn-primary" data-analytics="create_course_open" onclick="showCreateModal()">
           <span class="material-symbols-outlined">add</span>

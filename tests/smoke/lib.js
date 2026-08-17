@@ -31,7 +31,10 @@ class SmokeClient {
     });
   }
 
-  async request(actor, method, path, { body, form, headers = {}, expectStatus } = {}) {
+  // `timeoutMs` corta la espera y tira 'tardó más de Nms'. Sin él, una ruta que deja el
+  // request COLGADO (el CastError dentro de un handler async sin try/catch, que Express 4
+  // no captura) no falla el spec: cuelga el corredor entero, que no tiene timeout propio.
+  async request(actor, method, path, { body, form, headers = {}, expectStatus, timeoutMs } = {}) {
     // Serialización: `body` = JSON; `form` = FormData multipart (para probar /upload-*)
     let payload, contentType;
     if (form !== undefined) {
@@ -42,16 +45,25 @@ class SmokeClient {
       contentType = 'application/json';
     }
 
-    const res = await fetch(this.baseUrl + path, {
-      method,
-      redirect: 'manual',
-      headers: {
-        ...(contentType ? { 'Content-Type': contentType } : {}),
-        ...(actor ? { Cookie: this._cookieHeader(actor) } : {}),
-        ...headers,
-      },
-      body: payload,
-    });
+    let res;
+    try {
+      res = await fetch(this.baseUrl + path, {
+        method,
+        redirect: 'manual',
+        headers: {
+          ...(contentType ? { 'Content-Type': contentType } : {}),
+          ...(actor ? { Cookie: this._cookieHeader(actor) } : {}),
+          ...headers,
+        },
+        body: payload,
+        ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+      });
+    } catch (err) {
+      if (timeoutMs && (err.name === 'TimeoutError' || err.cause?.name === 'TimeoutError')) {
+        throw new Error(`${method} ${path} → no contestó: tardó más de ${timeoutMs}ms`);
+      }
+      throw err;
+    }
     this._storeCookies(actor, res);
 
     let json = null, text = null, byteLength = null, firstBytes = null;

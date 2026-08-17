@@ -189,8 +189,14 @@
     </div>
   </div>
 
+  <!-- Diagnóstico de subidas fallidas. Va ANTES del script de esta página, que lo usa. -->
+  <script src="/js/subida-diagnostico.js"></script>
   <script>
     const COURSE_ID = '<%= course._id %>';
+    // En una constante y no armada dos veces: el diagnóstico reporta la ruta que falló, y si
+    // la que reporta no es exactamente la que se llamó, el reporte manda a buscar al lugar
+    // equivocado — que es el único error que un diagnóstico no puede permitirse.
+    const RUTA_SUBIDA = '/activities/upload-attachment?courseId=' + encodeURIComponent(COURSE_ID);
 
     // Carga plantillas habilitadas para este curso. Si el feature flag está apagado
     // en el server, la respuesta es {templates:[]} y el selector queda oculto.
@@ -333,8 +339,14 @@
       fd.append('file', file);
 
       const xhr = new XMLHttpRequest();
+      // Seguimiento para el diagnóstico. Lo importante que aporta es cuántos bytes llegó a
+      // empujar el navegador: es lo que distingue "se cortó en camino" (red, proxy, límite
+      // de un intermediario — nada de eso deja rastro en el log del servidor) de "subió
+      // entero y el servidor lo rechazó". Ver public/js/subida-diagnostico.js.
+      const seg = SubidaDiag.seguir(RUTA_SUBIDA, file);
 
       xhr.upload.onprogress = (e) => {
+        SubidaDiag.progreso(seg, e);
         if (!e.lengthComputable) return;
         const pct = Math.round((e.loaded / e.total) * 100);
         const c = document.getElementById('ucard-' + uid);
@@ -363,8 +375,10 @@
             </button>`;
         } else {
           if (c) c.remove();
-          const msg = data?.error || `Error inesperado (${xhr.status})`;
-          showUploadErrModal('No se pudo subir el archivo', msg);
+          // El mensaje del servidor, si vino, lo respeta el diagnóstico y lo muestra igual;
+          // lo que agrega es el código para poder encontrar después qué pasó exactamente.
+          showUploadErrModal('No se pudo subir el archivo',
+            SubidaDiag.mensaje(SubidaDiag.fallar(seg, xhr, 'http')));
         }
         syncCreateBtn();
       };
@@ -373,11 +387,21 @@
         pendingUploads--;
         const c = document.getElementById('ucard-' + uid);
         if (c) c.remove();
-        showUploadErrModal('Error de conexión', 'No se pudo conectar con el servidor. Verificá tu conexión e intentá de nuevo.');
+        showUploadErrModal('No se pudo subir el archivo',
+          SubidaDiag.mensaje(SubidaDiag.fallar(seg, null, 'red')));
         syncCreateBtn();
       };
 
-      xhr.open('POST', '/activities/upload-attachment?courseId=' + encodeURIComponent(COURSE_ID));
+      xhr.ontimeout = () => {
+        pendingUploads--;
+        const c = document.getElementById('ucard-' + uid);
+        if (c) c.remove();
+        showUploadErrModal('No se pudo subir el archivo',
+          SubidaDiag.mensaje(SubidaDiag.fallar(seg, null, 'timeout')));
+        syncCreateBtn();
+      };
+
+      xhr.open('POST', RUTA_SUBIDA);
       xhr.setRequestHeader('Accept', 'application/json');
       xhr.send(fd);
     }

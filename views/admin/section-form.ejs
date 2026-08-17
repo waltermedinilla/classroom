@@ -114,12 +114,40 @@
           <label class="sf-label" style="margin-top:24px">
             A cargo de
             <span class="sf-hint">
-              Solo aparecen los usuarios con el rol Jefe de Sección. Si no ves a la persona,
-              primero asignale ese rol desde <a href="/admin/users">Usuarios</a>.
+              <% if (puedeAdministrar) { %>
+                Solo aparecen los usuarios con el rol Jefe de Sección. Si no ves a la persona,
+                primero asignale ese rol desde <a href="/admin/users">Usuarios</a>.
+              <% } else { %>
+                Quién está a cargo lo define el administrador de la escuela.
+              <% } %>
             </span>
           </label>
 
-          <% if (!jefes.length) { %>
+          <%# Para el jefe la lista es de solo lectura: si pudiera editarla podría darle acceso
+              a las notas de su sección a cualquier otro jefe —o sacárselo a un colega— sin que
+              el admin se entere. El servidor conserva los `heads` que ya estaban, así que da
+              igual lo que mande el formulario (ver armarSeccion en routes/sections.js). %>
+          <% if (!puedeAdministrar) { %>
+            <% const aCargo = jefes.filter(j => seccion.heads.includes(j.id)) %>
+            <% if (!aCargo.length) { %>
+              <p class="sf-hint">Nadie figura a cargo de esta sección.</p>
+            <% } else { %>
+              <% aCargo.forEach(j => { %>
+                <div class="sf-jefe" style="cursor:default">
+                  <%# --text-secondary y no --text-hint: sobre el blanco de la tarjeta el hint
+                      da 2,64 de contraste, abajo del 3:1 que pide WCAG para un gráfico.
+                      Con secondary da 6,05, igual que los chips de la grilla. %>
+                  <span class="material-symbols-outlined" style="font-size:18px;color:var(--text-secondary);margin-top:2px">badge</span>
+                  <div style="min-width:0">
+                    <div class="sf-jefe-nombre">
+                      <%= j.nombre %><%= j.activo ? '' : ' — cuenta deshabilitada' %>
+                    </div>
+                    <div class="sf-jefe-mail"><%= j.email %></div>
+                  </div>
+                </div>
+              <% }) %>
+            <% } %>
+          <% } else if (!jefes.length) { %>
             <div class="sf-aviso">
               <span class="material-symbols-outlined" style="font-size:17px">warning</span>
               <span>

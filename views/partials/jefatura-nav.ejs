@@ -14,4 +14,13 @@
     Docentes
   </a>
   <% } %>
+  <%# Única solapa del nav que NO cuelga de /jefatura: la pantalla de secciones es la misma
+      que usa el admin (routes/sections.js la sirve para los dos). Por eso la key es
+      `admin_sections` y no una `jefe_*`. %>
+  <% if (puede('admin_sections')) { %>
+  <a href="/admin/secciones" class="admin-nav-item <%= activePage === 'secciones' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">groups</span>
+    Secciones
+  </a>
+  <% } %>
 </nav>

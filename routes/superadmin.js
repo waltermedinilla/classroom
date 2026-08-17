@@ -24,16 +24,26 @@ const { invalidateUser, invalidateSchool } = require('../middleware/cache');
 const { logAudit } = require('../middleware/audit');
 const { hilo, esperaAlEquipo, ultimoDelEquipo } = require('../services/suggestionThread');
 const { logDeRuta } = require('../middleware/route-log');
+// Guarda de forma del :id. Sin ella un id que no es ObjectId sale como 500 en vez de 404
+// (o deja el request colgado, en los handlers sin try/catch). Ver middleware/objectId.js.
+const { idMalo } = require('../middleware/objectId');
+const { conErroresDeSubida } = require('../middleware/upload-errors');
 
 // Multer en memoria para importación Excel (no necesita guardarse en disco)
+// El tope va en una constante para que el número del límite y el del mensaje de error no
+// puedan separarse: conErroresDeSubida lo nombra en la respuesta.
+const XLS_MAX_MB = 15;
 const xlsUpload = multer({
   storage: multer.memoryStorage(),
-  limits:  { fileSize: 15 * 1024 * 1024 },
+  limits:  { fileSize: XLS_MAX_MB * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = /\.(xls|xlsx)$/i.test(file.originalname);
     ok ? cb(null, true) : cb(new Error('Solo archivos .xls o .xlsx'));
   },
 });
+// Ídem routes/admin.js: sin el envoltorio, un archivo del formato equivocado o pasado de
+// tamaño salía como 500. Ver middleware/upload-errors.js.
+const subirExcel = conErroresDeSubida(xlsUpload.single('file'), { maxMb: XLS_MAX_MB, queEs: 'El Excel' });
 
 const router = express.Router();
 // Todos los endpoints requieren login Y rol superadmin (sin filtro de escuela)
@@ -122,6 +132,7 @@ router.post('/schools/create', async (req, res) => {
 // GET /superadmin/schools/:id — Perfil completo de una escuela: stats, usuarios, cursos, materias
 // Carga todos los datos de una vez; los tabs se muestran/ocultan en el cliente
 router.get('/schools/:id', async (req, res) => {
+  if (idMalo(req, res, 'Escuela no encontrada')) return;
   try {
     const school = await School.findById(req.params.id);
     if (!school) return res.status(404).send('Escuela no encontrada');
@@ -148,12 +159,14 @@ router.get('/schools/:id', async (req, res) => {
 });
 
 router.get('/schools/:id/edit', async (req, res) => {
+  if (idMalo(req, res, 'Escuela no encontrada')) return;
   const school = await School.findById(req.params.id);
   if (!school) return res.status(404).send('Escuela no encontrada');
   res.render('superadmin/school-form', { school });
 });
 
 router.post('/schools/:id/edit', async (req, res) => {
+  if (idMalo(req, res, 'Escuela no encontrada')) return;
   try {
     const { name, description, color } = req.body;
     const school = await School.findByIdAndUpdate(
@@ -181,6 +194,7 @@ router.post('/schools/:id/edit', async (req, res) => {
 });
 
 router.post('/schools/:id/delete', async (req, res) => {
+  if (idMalo(req, res, 'Escuela no encontrada')) return;
   try {
     // Snapshot ANTES del delete para que el evento sea legible aunque la escuela ya no exista.
     const snap = await School.findById(req.params.id).select('name').lean();
@@ -204,6 +218,7 @@ router.post('/schools/:id/delete', async (req, res) => {
 // Cualquier token previo queda inválido automáticamente al sobreescribirse
 // Retorna { inviteUrl } con la URL completa lista para compartir
 router.post('/schools/:id/invite', async (req, res) => {
+  if (idMalo(req, res, 'Escuela no encontrada')) return;
   try {
     const crypto = require('crypto');
     const school = await School.findById(req.params.id);
@@ -228,10 +243,15 @@ router.post('/schools/:id/invite', async (req, res) => {
 // POST /superadmin/schools/:id/revoke-invite — elimina el token (el enlace queda inválido)
 // Los usuarios que intenten usar el enlace antiguo verán pantalla de error
 router.post('/schools/:id/revoke-invite', async (req, res) => {
+  if (idMalo(req, res, 'Escuela no encontrada')) return;
   try {
     const school = await School.findById(req.params.id);
     if (!school) return res.status(404).json({ error: 'Escuela no encontrada' });
-    school.inviteToken = null;
+    // $unset y no `= null`: el índice único de inviteToken es sparse, y sparse solo saltea
+    // el campo AUSENTE. Dejarlo en null volvía a ocupar el casillero del índice, y la
+    // siguiente escuela sin enlace chocaba contra esta. Ver el comentario del campo en
+    // models/School.js. Smoke: superadmin-enlace-de-invitacion-va-y-viene.
+    school.inviteToken = undefined;
     await school.save();
 
     logAudit(req, 'school.invite_revoke',
@@ -334,6 +354,26 @@ router.get('/users', async (req, res) => {
 });
 
 /* ─── Bulk actions ─── */
+
+// Resuelve la escuela destino de las dos rutas que reasignan usuarios (en lote y de a uno).
+// Devuelve su nombre —que es lo que necesita el log— o `null` si ese id no es ninguna
+// escuela, incluido el id mal formado (que sin el chequeo previo saldría como 500 por el
+// CastError; `idMalo` cubre los :id de la URL, no los del body).
+//
+// Las dos rutas buscaban la escuela DESPUÉS de escribir y solo para ponerle nombre al log,
+// así que un schoolId inexistente pasaba igual y dejaba a los usuarios apuntando a la nada.
+// No rompe el día que se hace —Mongoose descarta la referencia al popular— pero es la misma
+// clase de referencia colgada que en agosto tiró abajo /admin/courses con un 500, meses
+// después y en una pantalla que no tenía nada que ver.
+//
+// schoolId vacío es OTRA cosa y sigue siendo válido: significa "sacarles la escuela".
+async function escuelaDestino(schoolId) {
+  if (!schoolId) return 'sin escuela';
+  if (!mongoose.isValidObjectId(schoolId)) return null;
+  const s = await School.findById(schoolId).select('name').lean();
+  return s ? s.name : null;
+}
+
 // POST /superadmin/users/bulk-school — Asigna una escuela a múltiples usuarios a la vez
 // Body: { userIds: string[], schoolId: string | "" }
 // schoolId="" → desasigna la escuela (school = null)
@@ -342,15 +382,12 @@ router.post('/users/bulk-school', async (req, res) => {
     const { userIds, schoolId } = req.body;
     if (!Array.isArray(userIds) || !userIds.length)
       return res.status(400).json({ error: 'No se especificaron usuarios' });
+
+    const destName = await escuelaDestino(schoolId);
+    if (destName === null) return res.status(404).json({ error: 'Escuela no encontrada' });
+
     await User.updateMany({ _id: { $in: userIds } }, { school: schoolId || null });
     userIds.forEach(invalidateUser);
-
-    // Snapshot del nombre de la escuela destino (o "sin escuela") para el log.
-    let destName = 'sin escuela';
-    if (schoolId) {
-      const s = await School.findById(schoolId).select('name').lean();
-      destName = s?.name || '';
-    }
     logAudit(req, 'user.bulk_school', [],
       { usuarios: userIds.length, destino: destName },
       { schoolId: schoolId || null },
@@ -372,6 +409,15 @@ router.post('/users/bulk-role', async (req, res) => {
     if (!Array.isArray(userIds) || !userIds.length)
       return res.status(400).json({ error: 'No se especificaron usuarios' });
     if (!role) return res.status(400).json({ error: 'Rol no especificado' });
+    // El enum del schema NO alcanza acá: `updateMany` no corre los validadores (a diferencia
+    // de findByIdAndUpdate, que abajo los pide con runValidators). Sin esta línea el lote
+    // escribía cualquier string en `role`, y el documento quedaba fuera del enum: no es
+    // escalada de privilegios —ningún middleware reconoce un rol desconocido— pero tapia la
+    // cuenta, porque cualquier ruta que después haga `.save()` sobre ella revalida el
+    // documento entero y falla. El síntoma aparece lejos: el dueño deja de poder cambiar su
+    // contraseña. Smoke: bulk-role-rechaza-rol-invalido.
+    if (!User.getRoles().includes(role))
+      return res.status(400).json({ error: 'Rol no válido' });
 
     // Filtra el propio userId para evitar auto-cambio de rol en operaciones masivas
     const filtered = userIds.filter(id => id !== req.userId);
@@ -396,6 +442,7 @@ router.post('/users/bulk-role', async (req, res) => {
 // Body: { schoolId: string | "" }
 // Error 11000 puede ocurrir si el DNI del usuario ya está registrado en la escuela destino
 router.post('/users/:id/school', async (req, res) => {
+  if (idMalo(req, res, 'Usuario no encontrado')) return;
   try {
     const { schoolId } = req.body;
     // Snapshot ANTES del update para poder loguear la escuela de origen.
@@ -403,18 +450,15 @@ router.post('/users/:id/school', async (req, res) => {
     if (!before) return res.status(404).json({ error: 'Usuario no encontrado' });
     const fromName = before.school?.name || 'sin escuela';
 
+    const toName = await escuelaDestino(schoolId);
+    if (toName === null) return res.status(404).json({ error: 'Escuela no encontrada' });
+
     const user = await User.findByIdAndUpdate(
       req.params.id,
       { school: schoolId || null },
       { new: true }
     );
     invalidateUser(req.params.id);
-
-    let toName = 'sin escuela';
-    if (schoolId) {
-      const s = await School.findById(schoolId).select('name').lean();
-      toName = s?.name || '';
-    }
     logAudit(req, 'user.school_change',
       [{ type: 'user', id: user._id, name: user.name }],
       { de: fromName, a: toName },
@@ -436,6 +480,7 @@ router.post('/users/:id/school', async (req, res) => {
 // El superadmin puede asignar cualquier rol, incluso superadmin
 // No puede cambiarse el rol a sí mismo
 router.post('/users/:id/role', async (req, res) => {
+  if (idMalo(req, res, 'Usuario no encontrado')) return;
   try {
     const { role } = req.body;
     const target = await User.findById(req.params.id);
@@ -443,6 +488,13 @@ router.post('/users/:id/role', async (req, res) => {
     if (req.params.id === req.userId) {
       return res.status(400).json({ error: 'No puedes cambiar tu propio rol' });
     }
+    // Se valida ANTES de pedirle al update que valide. El runValidators de abajo ya
+    // rechazaba el rol inválido, pero su ValidationError caía en el catch genérico y salía
+    // como 500 "Error del servidor": un dato equivocado del que pide, contado como una falla
+    // nuestra. Ensucia el error.log —que es donde se mira cuando algo se rompe de verdad— y
+    // no le dice nada al que está del otro lado. Smoke: role-de-a-uno-rechaza-con-400.
+    if (!User.getRoles().includes(role))
+      return res.status(400).json({ error: 'Rol no válido' });
     const oldRole = target.role;
     const user = await User.findByIdAndUpdate(req.params.id, { role }, { new: true, runValidators: true });
     invalidateUser(req.params.id);
@@ -506,7 +558,7 @@ router.get('/import/template', (req, res) => {
 // POST /superadmin/import/upload — Parsea el Excel de importación del superadmin
 // Detecta las hojas "Usuarios", "Materias", "Cursos" (insensible a mayúsculas)
 // Retorna: { usuarios, materias, cursos, warnings } como preview antes de confirmar
-router.post('/import/upload', xlsUpload.single('file'), (req, res) => {
+router.post('/import/upload', subirExcel, (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No se recibió ningún archivo' });
     const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
@@ -974,6 +1026,7 @@ router.get('/suggestions', async (req, res) => {
 });
 
 router.post('/suggestions/:id/reviewed', async (req, res) => {
+  if (idMalo(req, res, 'Sugerencia no encontrada')) return;
   try {
     const s = await Suggestion.findByIdAndUpdate(req.params.id, { status: 'reviewed' }, { new: true });
     if (!s) return res.status(404).json({ error: 'Sugerencia no encontrada' });
@@ -1003,6 +1056,9 @@ router.post('/suggestions/:id/reviewed', async (req, res) => {
 // Siempre se resetea readByUser=false: el usuario tiene que ver el badge del sobre tanto por
 // un mensaje nuevo como por una corrección de lo que ya había leído.
 router.post('/suggestions/:id/respond', async (req, res) => {
+  // Antes que la validación del texto: si la sugerencia ni siquiera puede existir, el error
+  // útil es ese y no "la respuesta no puede estar vacía".
+  if (idMalo(req, res, 'Sugerencia no encontrada')) return;
   try {
     const { text } = req.body;
     if (!text || !text.trim()) {
@@ -1062,6 +1118,7 @@ router.post('/suggestions/:id/respond', async (req, res) => {
 });
 
 router.delete('/suggestions/:id', async (req, res) => {
+  if (idMalo(req, res, 'Sugerencia no encontrada')) return;
   try {
     // Snapshot antes del delete para preservar el texto de la sugerencia en el log
     const snap = await Suggestion.findById(req.params.id).select('text school').lean();

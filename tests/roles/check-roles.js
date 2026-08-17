@@ -127,8 +127,16 @@ async function main() {
     await c.post('admin0', `/admin/users/${actores.preceptor.id}/divisions`, {
       body: { divisionIds: [divisionId], allDivisions: false }, expectStatus: 200,
     });
-    const curso = await c.post(actores.teacher.actor, '/courses/create', {
-      body: { name: `Materia RolCheck ${RUN}`, divisionId, room: 'R1' }, expectStatus: 201,
+    // La materia la da de alta el ADMIN y le asigna el titular. Antes la creaba el propio
+    // docente por POST /courses/create; desde el 2026-08-14 ese endpoint es lista blanca y
+    // el docente quedó afuera (no crea materias ni cursos). El escenario no cambia: la
+    // materia sigue quedando con el docente como titular, que es lo que el resto mide.
+    const curso = await c.post('admin0', '/admin/courses/create', {
+      body: {
+        name: `Materia RolCheck ${RUN}`, divisionId,
+        teacherId: actores.teacher.id, room: 'R1',
+      },
+      expectStatus: 201,
     });
     courseId = curso.json.course._id;
     await c.post(actores.teacher.actor, `/courses/${courseId}/add-student`, {

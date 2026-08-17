@@ -7,6 +7,9 @@ const { requireAuth } = require('../middleware/auth');
 const { logAudit }    = require('../middleware/audit');
 const { uploadLimiter } = require('../middleware/rate-limits');
 const { logDeRuta } = require('../middleware/route-log');
+// Guarda de forma del :id, en la primera línea de cada handler con parámetro.
+// Ver middleware/objectId.js y el issue conocido nº 10 de agente.md.
+const { idMalo } = require('../middleware/objectId');
 // La imagen se recibe en memoria y se guarda ya redimensionada y en WebP
 // (preset 'novedad': 1600 px de lado mayor). Ver middleware/image-upload.js.
 const {
@@ -23,6 +26,7 @@ const ARCHIVOS_BASE = path.join(__dirname, '../public/archivos');
 // Devuelve todas las novedades de un curso, con autor y comentarios populados
 // Ordenadas de más antigua a más nueva (para construir el stream cronológico en el frontend)
 router.get('/course/:courseId', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Curso no encontrado', { param: 'courseId', como: 'json' })) return;
   try {
     const announcements = await Announcement.find({ course: req.params.courseId })
       .populate('author', 'name email')      // Nombre del que publicó
@@ -40,6 +44,7 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
 // Body: { text }
 // Retorna: { comment } con el nuevo comentario populado con el nombre del autor
 router.post('/:id/comment', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Novedad no encontrada')) return;
   try {
     const { text } = req.body;
     if (!text?.trim()) return res.status(400).json({ error: 'El comentario no puede estar vacío' });
@@ -143,6 +148,7 @@ router.post('/create', requireAuth, uploadLimiter, subirImagen('image'), async (
 // palabras ajenas, ni siquiera el admin (para eso está el borrado). La imagen no se toca
 // acá; para cambiarla hay que borrar la novedad y publicarla de nuevo.
 router.put('/:id', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Novedad no encontrada')) return;
   try {
     const { text } = req.body;
     if (!text?.trim()) return res.status(400).json({ error: 'La novedad no puede estar vacía' });
@@ -187,6 +193,7 @@ router.put('/:id', requireAuth, async (req, res) => {
 // materia (docente titular/suplente o admin de la escuela): es la única vía de moderación
 // sobre una novedad publicada por un alumno.
 router.post('/:id/delete', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Novedad no encontrada')) return;
   try {
     const ann = await Announcement.findById(req.params.id);
     if (!ann) return res.status(404).json({ error: 'Novedad no encontrada' });

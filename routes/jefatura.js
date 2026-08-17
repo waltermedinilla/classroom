@@ -9,6 +9,10 @@
 // definió así. Agregar uno cambia la naturaleza del rol y hay que decidirlo explícitamente,
 // no de pasada.
 //
+// La única escritura que el rol tiene es sobre el CONTENIDO de sus propias secciones, y vive
+// en routes/sections.js (/admin/secciones), no acá: define qué mira, no toca lo que mira.
+// Sobre las actividades, las entregas y las notas sigue sin poder escribir nada.
+//
 // REGLA: toda ruta con un :id valida contra el alcance (materiaEnScope / docenteEnScope).
 // Que algo no aparezca en la grilla no impide que alguien escriba el id en la URL, y acá
 // lo que hay del otro lado son notas de alumnos.

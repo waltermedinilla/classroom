@@ -33,6 +33,11 @@ const THEMES   = require('../config/themes');
 const ActivityTemplate   = require('../models/ActivityTemplate');
 const TemplateAssignment = require('../models/TemplateAssignment');
 const { logDeRuta, logRechazo } = require('../middleware/route-log');
+// Guarda de forma del :id, al entrar a cada handler con parámetro. Pesa especialmente en
+// este archivo: sus GET son async SIN try/catch, así que un id mal formado no da 500 sino
+// que deja el request COLGADO. Ver middleware/objectId.js.
+const { idMalo } = require('../middleware/objectId');
+const { conErroresDeSubida } = require('../middleware/upload-errors');
 
 // Rutas base de archivos en disco (deben coincidir con las de routes/activities.js
 // y routes/announcements.js) para poder eliminar los archivos físicos en la cascada.
@@ -89,14 +94,21 @@ async function cascadeDeleteCourse(courseId) {
   await Course.findByIdAndDelete(courseId);
 }
 
+// El tope va en una constante para que el número del límite y el del mensaje de error no
+// puedan separarse: conErroresDeSubida lo nombra en la respuesta.
+const XLS_MAX_MB = 15;
 const xlsUpload = multer({
   storage: multer.memoryStorage(),
-  limits:  { fileSize: 15 * 1024 * 1024 },
+  limits:  { fileSize: XLS_MAX_MB * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = /\.(xls|xlsx)$/i.test(file.originalname);
     ok ? cb(null, true) : cb(new Error('Solo archivos .xls o .xlsx'));
   },
 });
+// Sin este envoltorio, confundir el .csv del padrón con el .xlsx —el error de dedo típico
+// de esta pantalla— salía como 500 "Error del servidor (ref: ...)" en vez de decir qué
+// formato se espera. Ver middleware/upload-errors.js.
+const subirExcel = conErroresDeSubida(xlsUpload.single('file'), { maxMb: XLS_MAX_MB, queEs: 'El Excel' });
 
 const formatName = (raw) => {
   const comma = raw.indexOf(',');
@@ -305,6 +317,9 @@ router.post('/users/create', async (req, res) => {
 });
 
 router.get('/users/:id', async (req, res) => {
+  // Este es el handler donde se descubrió el problema: `/admin/users/new` no existe (la
+  // buena es `/users/create`) y caía acá, dejando la petición colgada para siempre.
+  if (idMalo(req, res, 'Usuario no encontrado')) return;
   const school = res.locals.user.school;
   const target = await User.findById(req.params.id);
   if (!target) return res.status(404).send('Usuario no encontrado');
@@ -356,6 +371,7 @@ router.get('/users/:id', async (req, res) => {
 // dinámicamente contra las divisiones de la escuela (ver middleware/preceptor.js), así que
 // las divisiones que se creen después quedan incluidas sin tener que volver acá.
 router.post('/users/:id/divisions', async (req, res) => {
+  if (idMalo(req, res, 'Usuario no encontrado')) return;
   try {
     const school = res.locals.user.school;
     const target = await User.findById(req.params.id);
@@ -409,6 +425,7 @@ router.post('/users/:id/divisions', async (req, res) => {
 // pero un POST armado a mano no debe poder destildarlas (quitarlo dejaría la materia sin
 // docente). Desmarcar una materia donde es suplente sí lo saca.
 router.post('/users/:id/courses', async (req, res) => {
+  if (idMalo(req, res, 'Usuario no encontrado')) return;
   try {
     const school = res.locals.user.school;
     const target = await User.findById(req.params.id);
@@ -477,6 +494,7 @@ router.post('/users/:id/courses', async (req, res) => {
 });
 
 router.post('/users/:id/role', async (req, res) => {
+  if (idMalo(req, res, 'Usuario no encontrado')) return;
   try {
     const school = res.locals.user.school;
     const target = await User.findById(req.params.id);
@@ -491,6 +509,11 @@ router.post('/users/:id/role', async (req, res) => {
       return res.status(400).json({ error: 'No puedes cambiar tu propio rol de admin' });
     }
     if (req.body.role === 'superadmin') return res.status(403).json({ error: 'No permitido' });
+    // Mismo motivo que en routes/superadmin.js: el runValidators de abajo rechaza el rol
+    // inválido, pero su ValidationError termina en el catch genérico y sale como 500. Un
+    // rol que no existe es un 400. Smoke: role-de-a-uno-del-admin-rechaza-con-400.
+    if (!User.getRoles().includes(req.body.role))
+      return res.status(400).json({ error: 'Rol no válido' });
     const oldRole = target.role;
     const user = await User.findByIdAndUpdate(req.params.id, { role: req.body.role }, { new: true, runValidators: true });
     invalidateUser(req.params.id);
@@ -509,6 +532,7 @@ router.post('/users/:id/role', async (req, res) => {
 });
 
 router.post('/users/:id/toggle-active', async (req, res) => {
+  if (idMalo(req, res, 'Usuario no encontrado')) return;
   try {
     const school = res.locals.user.school;
     const target = await User.findById(req.params.id);
@@ -540,6 +564,7 @@ router.post('/users/:id/toggle-active', async (req, res) => {
 });
 
 router.post('/users/:id/reset-password', async (req, res) => {
+  if (idMalo(req, res, 'Usuario no encontrado')) return;
   try {
     const school = res.locals.user.school;
     const target = await User.findById(req.params.id);
@@ -568,6 +593,7 @@ router.post('/users/:id/reset-password', async (req, res) => {
 });
 
 router.post('/users/:id/delete', async (req, res) => {
+  if (idMalo(req, res, 'Usuario no encontrado')) return;
   try {
     const school = res.locals.user.school;
     const target = await User.findById(req.params.id);
@@ -619,6 +645,7 @@ router.post('/users/:id/delete', async (req, res) => {
 
 /* ─── Impersonation ─── */
 router.post('/users/:id/impersonate', async (req, res) => {
+  if (idMalo(req, res, 'Usuario no encontrado')) return;
   try {
     const school = res.locals.user.school;
     // Cada rechazo deja constancia del MOTIVO, no solo del código. Esta ruta era el punto
@@ -774,6 +801,7 @@ router.post('/courses/create', async (req, res) => {
 });
 
 router.get('/courses/:id/edit', async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada')) return;
   const school = res.locals.user.school;
   const sf     = school ? { school } : {};
   const course = await Course.findById(req.params.id).populate('division').populate('owner', 'name email').populate('coTeachers', 'name email');
@@ -790,6 +818,7 @@ router.get('/courses/:id/edit', async (req, res) => {
 });
 
 router.post('/courses/:id/edit', async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada')) return;
   try {
     const school   = res.locals.user.school;
     const existing = await Course.findById(req.params.id);
@@ -835,6 +864,7 @@ router.post('/courses/:id/edit', async (req, res) => {
 });
 
 router.post('/courses/:id/assign-teacher', async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada')) return;
   try {
     const school = res.locals.user.school;
     const course = await Course.findById(req.params.id);
@@ -871,6 +901,7 @@ router.post('/courses/:id/assign-teacher', async (req, res) => {
 // POST /admin/courses/:id/co-teachers — agrega un docente suplente (no reemplaza al
 // titular, a diferencia de /assign-teacher). Para sacarlo, ver el /delete de abajo.
 router.post('/courses/:id/co-teachers', async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada')) return;
   try {
     const school = res.locals.user.school;
     const course = await Course.findById(req.params.id);
@@ -911,6 +942,9 @@ router.post('/courses/:id/co-teachers', async (req, res) => {
 // No toca al titular (para cambiarlo está /assign-teacher): quitar al owner dejaría la
 // materia huérfana y la alerta del directivo la marcaría como "sin docente".
 router.post('/courses/:id/co-teachers/:teacherId/delete', async (req, res) => {
+  // Los DOS parámetros: validar solo `:id` dejaría el CastError de `:teacherId` sin atajar.
+  if (idMalo(req, res, 'Materia no encontrada')) return;
+  if (idMalo(req, res, 'Ese docente no es suplente de esta materia', { param: 'teacherId' })) return;
   try {
     const school = res.locals.user.school;
     const course = await Course.findById(req.params.id);
@@ -946,6 +980,7 @@ router.post('/courses/:id/co-teachers/:teacherId/delete', async (req, res) => {
 });
 
 router.post('/courses/:id/delete', async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada')) return;
   try {
     const school = res.locals.user.school;
     const course = await Course.findById(req.params.id);
@@ -1016,6 +1051,9 @@ router.post('/divisions/create', async (req, res) => {
 });
 
 router.get('/divisions/:id/edit', async (req, res) => {
+  // "Curso" y no "División" a propósito: es como se llama la Division en la UI del panel
+  // (ver la nota de terminología en agente.md), y el resto del handler ya usa ese texto.
+  if (idMalo(req, res, 'Curso no encontrado')) return;
   const school   = res.locals.user.school;
   const division = await Division.findById(req.params.id);
   if (!division) return res.status(404).send('Curso no encontrado');
@@ -1024,6 +1062,7 @@ router.get('/divisions/:id/edit', async (req, res) => {
 });
 
 router.post('/divisions/:id/edit', async (req, res) => {
+  if (idMalo(req, res, 'Curso no encontrado')) return;
   try {
     const school   = res.locals.user.school;
     const existing = await Division.findById(req.params.id);
@@ -1051,6 +1090,7 @@ router.post('/divisions/:id/edit', async (req, res) => {
 });
 
 router.post('/divisions/:id/delete', async (req, res) => {
+  if (idMalo(req, res, 'Curso no encontrado')) return;
   try {
     const school   = res.locals.user.school;
     const division = await Division.findById(req.params.id);
@@ -1080,198 +1120,11 @@ router.post('/divisions/:id/delete', async (req, res) => {
   }
 });
 
-/* ─── Secciones (alcance del rol Jefe de Sección) ─────────────────────────────
-   Una Sección es un recorte del establecimiento con nombre: mezcla divisiones ENTERAS con
-   materias sueltas, y tiene uno o más jefes. Ver models/Section.js para el porqué de la
-   forma; acá solo está el CRUD.
-
-   OJO con la palabra: estas Secciones son datos de la escuela. Las "secciones" de
-   config/sections.js y del sectionGuard de arriba son las SOLAPAS del panel. No se tocan
-   entre sí.                                                                              */
-
-// Filtra una lista de ids dejando solo los que existen y son de `school`. Mismo criterio y
-// mismo motivo que resolveScopeDivisions: sin esto, un POST armado a mano podría meter
-// materias de otra escuela dentro de una sección y el jefe las vería.
-async function resolveDeLaEscuela(Model, ids, school, extraFiltro = {}) {
-  if (!Array.isArray(ids) || !ids.length || !school) return [];
-  const validos = await Model.find({ _id: { $in: ids.filter(mongoose.isValidObjectId) }, school, ...extraFiltro })
-    .select('_id').lean();
-  return validos.map(d => d._id);
-}
-
-// Cuántas materias abarca realmente una sección, con el mismo criterio que usa el panel del
-// jefe: las materias de sus divisiones enteras MÁS las sueltas, sin contar dos veces una
-// materia que esté por los dos caminos.
-async function materiasDeSeccion(seccion, school) {
-  if (!seccion.divisions.length && !seccion.courses.length) return 0;
-  return Course.countDocuments({
-    school,
-    $or: [
-      { division: { $in: seccion.divisions } },
-      { _id: { $in: seccion.courses } },
-    ],
-  });
-}
-
-router.get('/secciones', async (req, res) => {
-  const school = res.locals.user.school;
-  const sf     = school ? { school } : {};
-  const { search } = req.query;
-  const filter = { ...sf };
-  if (search) filter.name = { $regex: search, $options: 'i' };
-
-  const secciones = await Section.find(filter)
-    .populate('divisions', 'name')
-    .populate('heads', 'name email active')
-    .sort({ name: 1 })
-    .lean();
-
-  const filas = await Promise.all(secciones.map(async (s) => ({
-    ...s,
-    materias: await materiasDeSeccion(s, school),
-  })));
-
-  res.render('admin/sections', { secciones: filas, search: search || '' });
-});
-
-// El formulario de alta y el de edición son la misma vista. Las dos ramas cargan el árbol
-// completo de divisiones y materias de la escuela: son ~40 y ~420 documentos, chico como
-// para mandarlo entero y armar el acordeón del lado del navegador.
-async function datosFormularioSeccion(school) {
-  const [divisiones, materias, jefes] = await Promise.all([
-    Division.find({ school }).sort({ name: 1 }).select('_id name').lean(),
-    Course.find({ school }).sort({ name: 1 }).select('_id name division').lean(),
-    // Solo usuarios con el rol: asignar como jefe a alguien que no lo es le dejaría el
-    // alcance guardado sin poder entrar nunca al panel.
-    User.find({ school, role: 'jefe' }).sort({ name: 1 }).select('_id name email active').lean(),
-  ]);
-  return {
-    divisiones: divisiones.map(d => ({ id: d._id.toString(), nombre: d.name })),
-    materias:   materias.map(c => ({ id: c._id.toString(), nombre: c.name, division: c.division?.toString() || '' })),
-    jefes:      jefes.map(u => ({ id: u._id.toString(), nombre: u.name, email: u.email, activo: u.active !== false })),
-  };
-}
-
-router.get('/secciones/create', async (req, res) => {
-  const school = res.locals.user.school;
-  if (!school) return res.status(400).send('Sin escuela asignada');
-  res.render('admin/section-form', { seccion: null, ...await datosFormularioSeccion(school) });
-});
-
-router.get('/secciones/:id/edit', async (req, res) => {
-  const school  = res.locals.user.school;
-  const seccion = await Section.findById(req.params.id).lean();
-  if (!seccion) return res.status(404).send('Sección no encontrada');
-  if (school && seccion.school?.toString() !== school.toString()) return res.status(403).send('Acceso denegado');
-  res.render('admin/section-form', {
-    seccion: {
-      ...seccion,
-      divisions: seccion.divisions.map(String),
-      courses:   seccion.courses.map(String),
-      heads:     seccion.heads.map(String),
-    },
-    ...await datosFormularioSeccion(school),
-  });
-});
-
-// Deja el body en la forma que se guarda, validando las tres listas contra la escuela.
-// Devuelve un string con el error si algo no cierra, o null si está todo bien.
-async function armarSeccion(body, school) {
-  const divisions = await resolveDeLaEscuela(Division, body.divisionIds, school);
-  const courses   = await resolveDeLaEscuela(Course,   body.courseIds,   school);
-  const heads     = await resolveDeLaEscuela(User,     body.headIds,     school, { role: 'jefe' });
-
-  // Que la sección quede vacía no se bloquea: el admin puede querer crearla y llenarla
-  // después. La pantalla avisa en ámbar, y el jefe ve la pantalla de "sin alcance".
-  if (Array.isArray(body.headIds) && body.headIds.length !== heads.length) {
-    return { error: 'Alguno de los jefes elegidos no existe, no es de esta escuela o ya no tiene el rol Jefe de Sección.' };
-  }
-  return { datos: { name: (body.name || '').trim(), divisions, courses, heads } };
-}
-
-router.post('/secciones/create', async (req, res) => {
-  try {
-    const school = res.locals.user.school;
-    if (!school) return res.status(400).json({ error: 'Sin escuela asignada' });
-
-    const { datos, error } = await armarSeccion(req.body, school);
-    if (error) return res.status(400).json({ error });
-
-    const seccion = await Section.create({ ...datos, school });
-
-    logAudit(req, 'section.create',
-      [{ type: 'section', id: seccion._id, name: seccion.name }],
-      { cursos: seccion.divisions.length, materias: seccion.courses.length, jefes: seccion.heads.length },
-    );
-
-    res.status(201).json({ seccion });
-  } catch (err) {
-    if (err.code === 11000) return res.status(400).json({ error: 'Ya existe una sección con ese nombre en esta escuela' });
-    if (err.name === 'ValidationError') {
-      return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
-    }
-    logDeRuta(err, res);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-});
-
-router.post('/secciones/:id/edit', async (req, res) => {
-  try {
-    const school   = res.locals.user.school;
-    const existing = await Section.findById(req.params.id);
-    if (!existing) return res.status(404).json({ error: 'Sección no encontrada' });
-    if (school && existing.school?.toString() !== school.toString()) return res.status(403).json({ error: 'Sin acceso' });
-
-    const { datos, error } = await armarSeccion(req.body, school);
-    if (error) return res.status(400).json({ error });
-
-    const seccion = await Section.findByIdAndUpdate(req.params.id, datos, { new: true, runValidators: true });
-
-    // No hace falta invalidateUser: los jefes se resuelven leyendo Section en cada request
-    // (middleware/jefatura.js), no desde el doc de usuario cacheado. El cambio se ve ya.
-    logAudit(req, 'section.edit',
-      [{ type: 'section', id: seccion._id, name: seccion.name }],
-      {
-        ...(existing.name !== seccion.name ? { de: existing.name, a: seccion.name } : {}),
-        cursos: seccion.divisions.length, materias: seccion.courses.length, jefes: seccion.heads.length,
-      },
-      { schoolId: existing.school || null },
-    );
-
-    res.json({ seccion });
-  } catch (err) {
-    if (err.code === 11000) return res.status(400).json({ error: 'Ya existe una sección con ese nombre' });
-    if (err.name === 'ValidationError') {
-      return res.status(400).json({ error: Object.values(err.errors).map(e => e.message).join(', ') });
-    }
-    logDeRuta(err, res);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-});
-
-// Sin guarda referencial a propósito: borrar una sección no destruye ningún dato de la
-// escuela, solo les saca el alcance a sus jefes. La vista lo dice en el confirm().
-router.post('/secciones/:id/delete', async (req, res) => {
-  try {
-    const school  = res.locals.user.school;
-    const seccion = await Section.findById(req.params.id);
-    if (!seccion) return res.status(404).json({ error: 'Sección no encontrada' });
-    if (school && seccion.school?.toString() !== school.toString()) return res.status(403).json({ error: 'Sin acceso' });
-
-    await Section.findByIdAndDelete(req.params.id);
-
-    logAudit(req, 'section.delete',
-      [{ type: 'section', id: seccion._id, name: seccion.name }],
-      { jefes: seccion.heads.length },
-      { schoolId: seccion.school || null },
-    );
-
-    res.json({ ok: true });
-  } catch (err) {
-    logDeRuta(err, res);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-});
+/* ─── Secciones ─────────────────────────────────────────────────────────────
+   El CRUD de /admin/secciones se mudó a routes/sections.js, que se monta aparte en
+   server.js. No es un archivo más por prolijidad: el Jefe de Sección tiene que poder
+   configurar el contenido de sus propias secciones, y el `requireAdmin` de la línea 133
+   cubre todo este router. Ver el encabezado de routes/sections.js.                      */
 
 /* ─── Subjects ─── */
 router.get('/subjects', async (req, res) => {
@@ -1329,6 +1182,7 @@ router.post('/subjects/create', async (req, res) => {
 });
 
 router.get('/subjects/:id/edit', async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada')) return;
   const school  = res.locals.user.school;
   const subject = await Subject.findById(req.params.id);
   if (!subject) return res.status(404).send('Materia no encontrada');
@@ -1337,6 +1191,7 @@ router.get('/subjects/:id/edit', async (req, res) => {
 });
 
 router.post('/subjects/:id/edit', async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada')) return;
   try {
     const school   = res.locals.user.school;
     const existing = await Subject.findById(req.params.id);
@@ -1364,6 +1219,7 @@ router.post('/subjects/:id/edit', async (req, res) => {
 });
 
 router.get('/subjects/:id', async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada')) return;
   const school  = res.locals.user.school;
   const sf      = school ? { school } : {};
   const subject = await Subject.findById(req.params.id);
@@ -1378,6 +1234,7 @@ router.get('/subjects/:id', async (req, res) => {
 });
 
 router.post('/subjects/:id/delete', async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada')) return;
   try {
     const school  = res.locals.user.school;
     const subject = await Subject.findById(req.params.id);
@@ -1455,7 +1312,7 @@ router.get('/import/template', (req, res) => {
   res.send(buf);
 });
 
-router.post('/import/upload', xlsUpload.single('file'), (req, res) => {
+router.post('/import/upload', subirExcel, (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No se recibió ningún archivo' });
     const wb = XLSX.read(req.file.buffer, { type: 'buffer' });

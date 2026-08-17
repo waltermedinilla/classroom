@@ -45,6 +45,7 @@ const roomRoutes         = require('./routes/rooms');
 const announcementRoutes = require('./routes/announcements');
 const activityRoutes     = require('./routes/activities');
 const adminRoutes        = require('./routes/admin');
+const sectionsRoutes     = require('./routes/sections');
 const superadminRoutes   = require('./routes/superadmin');
 const directivoRoutes    = require('./routes/directivo');
 const preceptorRoutes    = require('./routes/preceptor');
@@ -55,6 +56,7 @@ const dbFixesRoutes      = require('./routes/dbFixes');
 const suggestionRoutes   = require('./routes/suggestions');
 const messageRoutes      = require('./routes/messages');
 const messagesInboxRoutes = require('./routes/messagesInbox');
+const diagnosticoRoutes   = require('./routes/diagnostico');
 const auditRoutes        = require('./routes/audit');
 const tasksRoutes        = require('./routes/tasks');
 const rolesRoutes        = require('./routes/roles');
@@ -619,6 +621,10 @@ app.use('/activities', activityRoutes);
 // ANTES de adminRoutes/superadminRoutes para que intercepte esas rutas antes de
 // caer en el 404 de los otros routers (que no las conocen).
 app.use('/',            auditRoutes);
+// Secciones: va ANTES de /admin porque gana el primero que matchea. El router de admin
+// exige rol admin para todo el panel; este deja entrar además al Jefe de Sección, acotado
+// a las secciones que tiene a cargo. Si se montara después, nunca llegaría un request.
+app.use('/admin/secciones', sectionsRoutes);
 app.use('/admin',      adminRoutes);
 // Montado ANTES de /superadmin para que Express lo intercepte primero sin ambigüedad
 // (aunque hoy superadmin.js no tiene rutas que choquen con /backup/*).
@@ -655,6 +661,9 @@ app.use('/suggestions', suggestionRoutes);
 // Bandeja del destinatario de los mensajes del superadmin. El panel del que ENVÍA se monta
 // más arriba, junto al resto de los sub-routers de /superadmin.
 app.use('/messages',    messagesInboxRoutes);
+// Reportes de falla que el navegador manda porque el servidor no puede verlos solo — hoy,
+// subidas que se cortaron en camino y por lo tanto no dejaron línea en el access log.
+app.use('/diagnostico', diagnosticoRoutes);
 
 // ── Manejador de errores global ──────────────────────────────────────────────
 // Captura cualquier error no manejado en los middlewares/rutas.

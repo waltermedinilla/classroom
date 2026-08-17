@@ -17,6 +17,9 @@ const TemplateAssignment     = require('../models/TemplateAssignment');
 const School                 = require('../models/School');
 const { computeAutoGrade }   = require('../services/autoGrader');
 const { logDeRuta } = require('../middleware/route-log');
+// Guarda de forma del :id, en la primera línea de cada handler con parámetro.
+// Ver middleware/objectId.js y el issue conocido nº 10 de agente.md.
+const { idMalo } = require('../middleware/objectId');
 
 // El builder del cliente genera ids temporales "tmp-*" para preguntas, opciones,
 // match items, etc. Antes de guardar, tenemos que asignarles ObjectIds reales
@@ -124,6 +127,7 @@ router.get('/assign', async (req, res) => {
 
 // GET /superadmin/tasks/:id — detalle de una plantilla (JSON).
 router.get('/:id', async (req, res) => {
+  if (idMalo(req, res, 'Plantilla no encontrada', { como: 'json' })) return;
   try {
     const t = await ActivityTemplate.findById(req.params.id).lean();
     if (!t) return res.status(404).json({ error: 'Plantilla no encontrada' });
@@ -136,6 +140,7 @@ router.get('/:id', async (req, res) => {
 
 // GET /superadmin/tasks/:id/edit — builder cargado con la plantilla existente.
 router.get('/:id/edit', async (req, res) => {
+  if (idMalo(req, res, 'Plantilla no encontrada')) return;
   try {
     const t = await ActivityTemplate.findById(req.params.id).lean();
     if (!t) return res.status(404).send('Plantilla no encontrada');
@@ -148,6 +153,7 @@ router.get('/:id/edit', async (req, res) => {
 
 // GET /superadmin/tasks/:id/preview — jugarla como si fuera alumno (sin persistir).
 router.get('/:id/preview', async (req, res) => {
+  if (idMalo(req, res, 'Plantilla no encontrada')) return;
   try {
     const t = await ActivityTemplate.findById(req.params.id).lean();
     if (!t) return res.status(404).send('Plantilla no encontrada');
@@ -161,6 +167,7 @@ router.get('/:id/preview', async (req, res) => {
 // POST /superadmin/tasks/:id/preview-grade — corre autoGrader sobre respuestas
 // del propio superadmin y devuelve el breakdown. NO persiste nada.
 router.post('/:id/preview-grade', async (req, res) => {
+  if (idMalo(req, res, 'Plantilla no encontrada')) return;
   try {
     const t = await ActivityTemplate.findById(req.params.id).lean();
     if (!t) return res.status(404).json({ error: 'Plantilla no encontrada' });
@@ -202,6 +209,7 @@ router.post('/', async (req, res) => {
 // PUT /superadmin/tasks/:id — actualizar plantilla (solo campos editables).
 // Cambiar status manualmente NO se permite acá — usar /publish o /archive.
 router.put('/:id', async (req, res) => {
+  if (idMalo(req, res, 'Plantilla no encontrada')) return;
   try {
     const { title, description, defaultPoints, questions } = req.body;
     const patch = {};
@@ -227,6 +235,7 @@ router.put('/:id', async (req, res) => {
 
 // POST /superadmin/tasks/:id/publish — draft → published (habilita asignación a escuelas).
 router.post('/:id/publish', async (req, res) => {
+  if (idMalo(req, res, 'Plantilla no encontrada')) return;
   try {
     const t = await ActivityTemplate.findById(req.params.id);
     if (!t) return res.status(404).json({ error: 'Plantilla no encontrada' });
@@ -248,6 +257,7 @@ router.post('/:id/publish', async (req, res) => {
 // POST /superadmin/tasks/:id/archive — published → archived (oculta de listados por defecto).
 // Las TemplateAssignment vivas y las Activity instanciadas NO se tocan.
 router.post('/:id/archive', async (req, res) => {
+  if (idMalo(req, res, 'Plantilla no encontrada')) return;
   try {
     const t = await ActivityTemplate.findByIdAndUpdate(req.params.id, { $set: { status: 'archived' } }, { new: true });
     if (!t) return res.status(404).json({ error: 'Plantilla no encontrada' });
@@ -266,6 +276,7 @@ router.post('/:id/archive', async (req, res) => {
 // ya la había rechazado, la re-ofrece (status vuelve a 'offered', se limpia
 // respondedBy/respondedAt).
 router.post('/:id/offer', async (req, res) => {
+  if (idMalo(req, res, 'Plantilla no encontrada')) return;
   try {
     const { schoolId } = req.body;
     const t = await ActivityTemplate.findById(req.params.id);
@@ -300,6 +311,7 @@ router.post('/:id/offer', async (req, res) => {
 // Body: { schoolId }. Borrado del TemplateAssignment. Si el admin ya había
 // aceptado, la revocación deja a los docentes sin acceso (Fase 5 chequea el doc).
 router.post('/:id/revoke', async (req, res) => {
+  if (idMalo(req, res, 'Plantilla no encontrada')) return;
   try {
     const { schoolId } = req.body;
     const t = await ActivityTemplate.findById(req.params.id).select('_id title');
@@ -322,6 +334,7 @@ router.post('/:id/revoke', async (req, res) => {
 
 // DELETE /superadmin/tasks/:id — borrado duro. Bloqueado si tiene asignaciones vivas.
 router.delete('/:id', async (req, res) => {
+  if (idMalo(req, res, 'Plantilla no encontrada')) return;
   try {
     const t = await ActivityTemplate.findById(req.params.id);
     if (!t) return res.status(404).json({ error: 'Plantilla no encontrada' });

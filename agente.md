@@ -258,6 +258,18 @@ Agregar `data-analytics="nombre_del_evento"` al `<button>`/`<a>` — no hace fal
 | POST | `/admin/import/upload` | Parsea XLS, auto-detecta tipo, devuelve JSON |
 | POST | `/admin/import/execute` | Ejecuta la importación según tipo y opciones |
 
+#### Secciones (`routes/sections.js`) — `requireAuth` + rol `admin`/`superadmin`/**`jefe`** + `requireSection('admin_sections')`
+> Vive **fuera** de `routes/admin.js` aunque su path empiece con `/admin`, y se monta antes que él en `server.js`. Es lo que permite dejar entrar al Jefe de Sección sin aflojar el `requireAdmin` que cubre todo el panel. El jefe solo ve y edita las secciones donde figura en `Section.heads`.
+
+| Método | Ruta | Comportamiento | Jefe |
+|---|---|---|---|
+| GET | `/admin/secciones` | Listado con buscador; para el jefe, filtrado por `heads` | ✅ |
+| GET | `/admin/secciones/create` | Formulario de alta | ❌ 403 |
+| POST | `/admin/secciones/create` | Crea la sección | ❌ 403 |
+| GET | `/admin/secciones/:id/edit` | Formulario con el árbol de cursos y materias de la escuela | ✅ solo las suyas |
+| POST | `/admin/secciones/:id/edit` | Guarda nombre y contenido. Para el jefe **ignora `headIds`** | ✅ solo las suyas |
+| POST | `/admin/secciones/:id/delete` | Elimina la sección (no toca cursos ni materias) | ❌ 403 |
+
 ---
 
 ## Frontend (Archivos Públicos)
@@ -364,7 +376,9 @@ que deja usuarios de prueba sin borrar). Espaciar las corridas o limpiar a mano.
 8. **Vistas que asumen `user` no nulo.** `res.locals.user` puede ser null aun detrás de `requireAuth`: la cuenta borrada con cookie viva ya la ataja `req.userMissing` (changelog 2026-08-11), pero queda el camino de una consulta a Mongo que falle dentro de `checkUser` — ahí el usuario queda en null a propósito, para no desloguear a toda la escuela por un problema de base. `views/dashboard.ejs` y `views/partials/header.ejs` ya se protegen. **Siguen sin guarda**: `views/profile.ejs` (22 usos), `views/course.ejs` (5) y `views/admin/user-profile.ejs` (2). No se tocaron porque las tres son inalcanzables con `user` en null: sus rutas consultan Mongo ANTES de renderizar, así que una base caída las hace fallar antes de llegar a la vista. Si alguna vez una de esas rutas puede renderizar sin haber consultado, hay que ponerles la guarda primero.
 8. **`public/js/course.js` es compartido por docente y alumno**, pero `views/course.ejs` renderea DOM distinto según el rol (`<% if (course.isTeacher(user._id)) %>`). Todo `document.getElementById(...)` en el **nivel superior** del script debe usar `?.` — si el elemento no existe para ese rol, el `TypeError` corta la ejecución del archivo entero y deja sin inicializar todos los `const`/`let` de más abajo (falla silenciosa, solo visible en la consola del navegador). Ya pasó una vez: ver changelog 2026-07-28 "course.js abortaba entero para el alumno".
 9. ~~El smoke test `directivo-sees-courses-with-metrics` falla contra una BD espejada de producción por paginación.~~ **Arreglado el 2026-07-28**: el test ahora busca el curso con `?search=` en vez de esperarlo en la primera página. La suite quedó en **97/97**.
-10. Las cuatro rutas de detalle del panel directivo (`/courses/:id`, `/students/:id`, `/teachers/:id`, `/divisions/:id`) devuelven **500 en vez de 404 cuando el `:id` no es un ObjectId válido** — `findById` lanza `CastError` y cae en el `catch` genérico. Con un ID válido pero inexistente sí dan 404 correctamente. Fix: `if (!mongoose.isValidObjectId(req.params.id)) return res.status(404)...` al entrar a cada handler. Conviene revisar si el patrón se repite en `routes/admin.js` y `routes/superadmin.js`.
+10. ~~Las cuatro rutas de detalle del panel directivo devuelven **500 en vez de 404 cuando el `:id` no es un ObjectId válido**, y los GET de `routes/admin.js` directamente **dejan el request colgado**.~~ **Arreglado el 2026-08-14** con `idMalo()` de `middleware/objectId.js` en las 40 rutas con parámetro de `admin.js`, `superadmin.js` y `directivo.js` — ver el changelog de ese día. Lo cubre el smoke `objectid-invalido-da-404`.
+    - **Barrido completo el mismo día**: no queda ninguna ruta `:id` sin guarda en toda la app. **Al agregar una ruta con `:id` nueva, la guarda va en la primera línea del handler** — el smoke no la va a reclamar sola, porque su lista de rutas está escrita a mano.
+    - Dos parámetros que NO llevan guarda a propósito, porque no son ObjectId: el `:id` de `routes/dbFixes.js` (es la clave del arreglo, la valida `getFix()`) y el `:token` de `routes/auth.js`. Tampoco la llevan `:filename` ni `:fecha`.
 11. En el listado de divisiones, **la suma de la columna "Alumnos" supera el total de alumnos de la escuela**. No es un error: los alumnos se cuentan únicos *dentro* de cada división, y un alumno puede cursar materias de más de una.
 12. ~~El superadmin entrando a `/admin` ve tres solapas que no llevan a ningún lado (Tema, Tareas y Plantillas, que son POR ESCUELA y él no tiene escuela).~~ **Arreglado el 2026-08-07** con el campo `needsSchool` de `config/sections.js` — ver el changelog de ese día. Las rutas siguen contestando lo mismo si se escribe la URL a mano: lo que cambió es que el nav ya no ofrece la puerta.
 13. **Variables CSS que se usan pero nunca se declaran.** `--background` y `--text-primary, #1a1a2e` se arreglaron el 2026-08-08 (ver el changelog), pero quedan: `--text-primary` sin fallback (47 usos), `--surface-variant` (10), `--divider` (8), y `--hover-bg`, `--success` y `--surface-2` (1 cada una). Para chequear el estado: `grep -rhoE '\bvar\(--[a-zA-Z0-9_-]+' public views | sed 's/var(//' | sort -u` contra los `--nombre:` declarados en `style.css`. Ojo con los falsos positivos: `--card-color` y `--stat-color` **sí** se definen, pero inline en el atributo `style` de la vista. La regla práctica: una `var()` sin declarar en una propiedad **heredada** (`color`) hace que el elemento herede la del padre y suele pasar desapercibida; en una **no heredada** o en un atajo (`background`, `border`) invalida la declaración entera y se pierde el estilo. Por eso `--divider` dentro de `border: 1px solid var(--divider)` deja el borde en `none` — pasa hoy en la textarea de entrega del alumno (`public/js/course.js:1946`).
@@ -372,6 +386,274 @@ que deja usuarios de prueba sin borrar). Espaciar las corridas o limpiar a mano.
 ---
 
 ## Historial de Cambios (Changelog)
+
+### 2026-08-17 — El servidor puede empujar el backup a otra PC por FTP
+
+**Pedido**: "podrías crear en la sección de backup una opción más tipo que ingrese una ip o un dns como esta computadora tiene en tailscale y puede transferir desde ftp, del servidor acá a local, todo lo necesario para poder descargar la base de datos completa junto con los archivos".
+
+**El problema que resuelve**: bajar el backup por el navegador es la parte frágil de toda la operación. Son ~850 MB atravesando el Funnel de Tailscale hasta la pestaña, y cualquier corte obliga a empezar de cero. Empujando el paquete directo por el túnel, la transferencia va de máquina a máquina y la pantalla solo mira el progreso.
+
+#### La dirección de la flecha, que es al revés de lo que suena
+
+FTP no puede "empujarle" un archivo a alguien que no está escuchando. Acá **el servidor de la escuela es el CLIENTE** y **la PC que recibe tiene que estar corriendo un servidor FTP** (IIS FTP Server o FileZilla Server) y quedarse prendida durante toda la transferencia. Es la única forma de que "del servidor a local" funcione con FTP, y es lo primero que dice la pantalla, con los pasos concretos de Windows en un desplegable — incluido el rango de puertos del modo pasivo, que es el paso que más se olvida y el que hace fallar la transferencia justo *después* de conectar bien.
+
+#### Cómo funciona
+
+`POST /superadmin/backup/ftp/enviar` arma el mismo `.tar.gz` que `GET /download` y lo streamea **directo al socket FTP**: el paquete nunca toca el disco del servidor, igual que la descarga desde el 2026-08-10. Es el mismo archivo, así que sirve para restaurar sin ninguna diferencia.
+
+La respuesta **no** es un JSON al final sino un stream **NDJSON** (un evento por línea): `estado` → `inicio` → `progreso` cada 2 s → `fin`. Un envío puede durar una hora y sin progreso en pantalla nadie sabe si sigue vivo. El latido de 2 s no es cosmético: entre el servidor y el navegador hay un proxy que corta las conexiones calladas.
+
+**Consecuencia a tener presente si alguien toca esta ruta**: los headers salen ANTES de saber si el envío va a funcionar, así que un fallo posterior viaja como evento `fin` con `ok:false` y no como status HTTP. Todo lo que se pueda validar antes de ese punto (destino incompleto, falta de contraseña) se valida antes y **sí** sale como 400 — hay un smoke que lo fija.
+
+| Pieza | Qué hace |
+|---|---|
+| `config/ftpDestino.js` | destino guardado en `ftp-destino.json` (raíz, gitignored), normalización de lo que se tipea y cifrado de la contraseña |
+| `services/backupFtp.js` | conexión, prueba de escritura, subida en streaming con `.part` + rename, y la traducción de errores |
+| `tests/unit/ftpServidorDePrueba.js` | servidor FTP mínimo para los tests (no es dependencia de la app) |
+| `GET/POST/DELETE /superadmin/backup/ftp/config` | leer, guardar y olvidar el destino. La contraseña **nunca** vuelve al navegador |
+| `POST /superadmin/backup/ftp/probar` | login + escritura real. 502 si falla la máquina del otro lado, no 400 |
+| `POST /superadmin/backup/ftp/enviar` | arma y empuja el paquete, con progreso NDJSON. Acepta `comprimir: ["imagenes","pdf"]` |
+
+#### Decisiones que no se ven en el código
+
+- **Se sube como `.part` y se renombra al final.** Misma idea que la respuesta chunked de `/download`: un envío cortado tiene que **verse** cortado. Sin esto, en la carpeta de destino quedaría un `.tar.gz` de tamaño plausible que solo se descubre incompleto el día que hace falta restaurarlo, que es el peor día posible. Hay un test que lo fija.
+- **"Probar conexión" prueba ESCRITURA, no login.** Sube un archivito y lo borra. IIS crea los sitios FTP en modo lectura por defecto, y enterarse a los 800 MB transferidos sería inaceptable.
+- **Los errores se traducen uno por uno** (`mensajeDeError` en `services/backupFtp.js`). Un FTP contra una PC hogareña falla de maneras muy específicas y muy repetidas —firewall sobre los puertos pasivos, MagicDNS apagado, permiso de solo lectura, elegir FTPS implícito cuando el server habla explícito— y `connect ECONNREFUSED 100.64.1.5:21` no orienta a nadie. Cada mensaje dice qué revisar.
+- **La contraseña del FTP se guarda cifrada** (AES-256-GCM con clave derivada de `JWT_SECRET`, `config/ftpDestino.js`). No es una bóveda —quien tenga root tiene las dos mitades— pero evita el accidente probable: que la contraseña del FTP de casa termine legible en un archivo copiado sin mirar. Sin `JWT_SECRET` no se guarda ninguna y la pantalla lo explica. `ftp-destino.json` va en `.gitignore` **y en `.nodemonignore`** (mismo caso que `maintenance.json`: JSON de runtime en la raíz, sin eso cada guardado reinicia el server en dev).
+- **La contraseña guardada solo se reusa contra el mismo host+puerto+usuario** para el que se guardó. Cambiar el host y apretar "Probar" no puede mandarle la credencial de otra máquina a un destino tipeado con un error.
+- **`rejectUnauthorized: false` en FTPS**, a propósito y solo acá: los servidores FTP caseros usan certificado autofirmado y validarlo haría fallar el 100% de los casos reales. El camino entre las dos máquinas ya va cifrado por WireGuard; el TLS del FTPS es una segunda capa, no la única defensa.
+- **No hay lock entre workers de PM2**, deliberadamente. Dos envíos simultáneos son caros pero inofensivos (el nombre lleva timestamp, no se pisan), mientras que un lock trabado por un proceso muerto dejaría al dueño sin poder mandar el backup justo el día que lo necesita. Alcanza con el limitador (5/hora) y el botón deshabilitado.
+- **Cerrar la pestaña corta de verdad** el empaquetado y el FTP (`res.on('close')` → `AbortController` → `client.close()`), y el `.part` que quedó se borra en una conexión nueva. Sin esto el servidor seguiría comprimiendo y subiendo cientos de MB que ya nadie espera.
+- **Auditoría**: `system.backup_ftp` se registra **antes** de transferir, igual criterio que `/download`. El hecho auditable es que una copia completa de la base salió del servidor hacia un destino externo, y eso pasa desde el primer byte. `system.backup_ftp_config` registra los cambios de destino.
+
+#### Verificación
+
+**End-to-end real, no con mocks.** Los tests unitarios levantan un servidor FTP de verdad (`tests/unit/ftpServidorDePrueba.js`, ~10 comandos del protocolo, sin dependencias nuevas) y verifican que lo que llega es byte por byte lo que se mandó. En el navegador se hizo un envío completo contra ese mismo servidor: 261 MB transferidos, `.tar.gz` verificado (manifest 1.0, 14 colecciones, 1428 usuarios, los 3 archivos con su tamaño exacto), progreso llegando incremental (2,3 s → 85 MB · 4,4 s → 186 MB · fin → 261 MB) y cancelación a mitad dejando **cero** archivos con nombre final y **cero** `.part` huérfanos.
+
+Un detalle que se verificó y conviene no perder: la respuesta sale **sin** `Content-Encoding`, o sea que `app.use(compression())` no la toca. Igual el código llama a `res.flush()` después de cada evento, por si algún día ese filtro cambia — sin eso el progreso llegaría todo junto al final, que es justo lo que esta ruta existe para evitar.
+
+**Tests**: 13 unitarios de la transferencia (`tests/unit/backupFtp.test.js`) + 16 del destino guardado (`tests/unit/ftpDestino.test.js`) + 4 smoke (forma de la config sin filtrar la contraseña, validación, traducción del error de conexión, y que el envío exija contraseña **antes** de armar nada). Los smoke nunca guardan un destino ni disparan un envío real: usan un usuario imposible, así que el chequeo de "es otro destino" corta antes de tocar el `ftp-destino.json` de la máquina de desarrollo. Suites completas: **297/297 unitarios, 326/326 smoke, roles sin hallazgos.**
+
+**Dependencia nueva**: `basic-ftp` (^6.2.0) — MIT, sin dependencias propias, CommonJS, sin binarios del sistema.
+
+**Lo que sigue pendiente**: automatizarlo (que el envío salga solo por cron, sin que nadie apriete el botón) es el Nivel 2 del backup y no está hecho.
+
+### 2026-08-15 — Cuando una subida falla, ahora queda dicho POR QUÉ
+
+Docentes reportaron que archivos de ~3 MB (PDFs, sobre todo) fallaban con un cartel de error, y que **antes andaban**. En local no se reproduce a ningún tamaño: 1, 3, 5, 10 y 25 MB entran los cinco en menos de 400 ms, y los topes (50 MB adjunto, 20 MB entrega, 15 MB Excel) están holgados y no se tocaron nunca (`git log -S`). O sea que el problema es de producción y no del código — y ahí se choca con el límite de lo que el servidor puede contar de sí mismo.
+
+**El agujero**: el access log contesta "qué respondió el servidor", y no sirve para nada cuando la request **nunca llegó**. Un intermediario que corta el cuerpo por tamaño, la conexión del aula que se cae a mitad de una subida, un timeout de proxy: el docente ve un error, el log del servidor está impecable, y no hay forma de cruzar las dos cosas. El mecanismo nuevo es el otro extremo del cable — **cuenta lo que vio el navegador**.
+
+#### Cómo se usa
+
+El cartel de error muestra un código corto (`SUB-7F3A2C`). Con una foto de la pantalla alcanza:
+
+```
+node tools/ver-subida.js SUB-7F3A2C     # una en particular
+node tools/ver-subida.js                # las últimas 15, para ver si hay patrón
+node tools/ver-subida.js --hoy
+```
+
+En producción, si se corre desde otro lado: `LOGS_DIR=/home/walter/classroom/logs node tools/ver-subida.js SUB-...`
+
+**Que el código NO aparezca también es un resultado**, y de los más informativos: significa que el navegador no pudo ni avisar, así que el problema está antes de la aplicación (red del aula, Funnel, DNS).
+
+#### El dato que decide todo: `enviados` vs `bytes`
+
+Es lo que justifica el mecanismo entero. Se registra cuántos bytes logró empujar el navegador antes de morir:
+
+- **`enviados < bytes`** → se cortó EN CAMINO. Red, Funnel, proxy, límite de cuerpo. No va a haber línea en ningún log de la app porque nunca le llegó.
+- **`enviados = bytes`** → subió entero y algo lo rechazó. Ahí sí hay línea, y `requestId` la encuentra directo.
+
+Por eso hay que llamar a `SubidaDiag.progreso()` en cada `onprogress`: sin eso el reporte no distingue esos dos casos, que son problemas de personas distintas.
+
+La otra bifurcación la resuelve sola `tools/ver-subida.js`: la app contesta **JSON con `error` en todos** sus errores de subida, así que si el cuerpo no es JSON nuestro, el que rechazó está delante del servidor. El informe lo dice con todas las letras en vez de dejárselo deducir al que lee.
+
+#### Qué se tocó
+
+- **`public/js/subida-diagnostico.js`** (nuevo): arma el reporte, lo manda y devuelve el código. Nunca lanza — si el diagnóstico se rompe, la subida ya falló y lo último que hay que hacer es tapar el error de verdad con uno nuestro. El aviso sale con `fetch(..., { keepalive: true })` para que salga aunque cierren la pestaña, que es lo que hace cualquiera cuando algo falla.
+- **`routes/diagnostico.js`** (nuevo, `POST /diagnostico/subida`): recibe el reporte. **Todo lo que entra lo escribe el cliente y por lo tanto es mentira posible**: se recorta, se castea y se encierra en una lista de valores conocidos antes de tocar el log. Un log al que se le pueden escribir megabytes desde el navegador es un log que cualquiera puede inundar para tapar otra cosa. Lo único que no viene del cliente —y es lo que lo hace útil— es quién lo mandó: eso sale de la sesión. Va con `requireAuth` y limitador **por usuario** (30/hora): si un aula se queda sin internet, los 30 chicos reportan a la vez, que es justo cuando más se quiere el dato.
+- **Los tres caminos de subida**: adjunto de actividad (docente, `views/activities/new.ejs`), entrega (alumno, `public/js/course.js`) y adjuntos de la sala en vivo (`views/partials/live-room.ejs`). Se sumó `ontimeout`, que en los dos primeros no estaba manejado.
+- **`tools/ver-subida.js`** (nuevo): busca por código e imprime un veredicto que dice **dónde seguir buscando**, más un resumen cuando se lo llama sin argumentos (¿le pasa a uno o a todos?).
+
+#### La trampa de fetch, que casi mete un dato falso
+
+La sala sube con `fetch`, y **fetch no puede informar progreso de subida**. Sin decirlo explícitamente, el reporte de toda subida de la sala habría dicho "se envió 0 de N MB" — o sea "se cortó apenas arrancó" — y habría mandado a buscar el problema a la red aunque la red hubiera andado perfecto. De ahí `seguir(ruta, file, { progresoMedible: false })`: el campo se omite y el informe muestra `?`. **Un diagnóstico que miente con seguridad es peor que no tener ninguno**, y es el modo de falla al que un mecanismo como este es más propenso.
+
+#### Verificado
+
+3 specs nuevos (`diagnostico-subida-*`), incluido uno que comprueba que **el log no se puede inundar** desde el navegador. Y en el navegador de verdad, los dos casos que importan, de punta a punta —cartel → aviso → log → `ver-subida.js`—: conexión cortada al 33% (dice "se cortó en camino") y un 413 con HTML de nginx (dice "lo rechazó un intermediario, ningún log de la app lo va a explicar").
+
+**322/322 smoke, 268 unitarios, 17 de imágenes, matriz de roles sin hallazgos.**
+
+#### 🟡 Detectado de paso: el smoke deja cuentas huérfanas
+
+Revisando la base local aparecieron **18 cuentas `@example.com` acumuladas desde el 10/08**: unas 3 por corrida que los specs de limpieza no cubren (`sinmateria.*`, `scoped.teacher.new.*`, `dnipuntos.*`, `latejoiner.*`, `am.otro.*`). Se borraron a mano después de confirmar que no tenían ninguna entrega asociada.
+
+No afecta producción —el smoke se niega a correr contra un host remoto— pero ensucia el espejo local e infla los contadores de alumnos de los paneles, que es justo lo que hace difícil creerles. **Falta extender los specs de limpieza a esos cinco patrones.**
+
+### 2026-08-15 — Revisión del sistema: se midió la cobertura y se arregló lo que había en la zona ciega
+
+Punto de partida: las cuatro suites en verde (268 unitarios, 17 de imágenes, 283 smoke, matriz de 8 roles × 40 secciones sin hallazgos). Con todo pasando, la pregunta útil no era "¿qué falla?" sino **"¿qué no está mirando nadie?"**.
+
+Se cruzaron las rutas declaradas en `routes/*.js` contra las que tocan los tests. Y ahí, en esa zona, estaban los cinco problemas de abajo. Ninguno se había visto en producción salvo el primero, que nadie podía ver.
+
+**Cómo se mide, porque la primera medición mintió.** Contar "¿algún test nombra esta ruta?" da 29 sin tocar, y es un número inflado: el spec `objectid-invalido-da-404` **nombra 384 rutas** para pegarles con un id mal formado, y que una ruta figure ahí no significa que esté probada — significa que se verificó que no se cuelga. Excluyendo ese bloque, el número real de arranque era **~65 de 232 rutas sin ejercitar funcionalmente**, y al terminar esta tanda quedaron **45**.
+
+La medición quedó en **`tools/cobertura-rutas.js`** (`node tools/cobertura-rutas.js`), que excluye ese spec por defecto y con `--con-objectid` muestra el número laxo para que se vea la diferencia. Es análisis estático: no necesita el server ni la base.
+
+> Al medir cobertura de rutas, excluir siempre `objectid-invalido-da-404`. Si no, el número sale bien justo donde peor conviene que salga bien.
+
+**Lo que falta, por tamaño del hueco**: la feature de **plantillas de tareas entera** (12 de sus 14 rutas: crear, publicar, ofrecer, revocar, previsualizar, asignar — nunca se ejercitó ninguna), **12 rutas de edición del panel de admin** (editar materia, división, catálogo, co-titulares, restablecer contraseña), **6 de actividades** (`/activities/new`, exportar notas, `my-submission`, los dos servidores de archivos) y **5 del superadmin** (editar escuela, `import/execute`, las dos de sugerencias).
+
+#### 🔴 No se podía crear una segunda escuela. Nunca.
+
+`POST /superadmin/schools/create` funciona la primera vez y falla **siempre** a partir de la segunda, con `400 "Ya existe una escuela con ese nombre"` — y el nombre no tenía nada que ver.
+
+El choque es entre dos líneas de `models/School.js` que se leen bien por separado:
+
+```js
+inviteToken: { type: String, default: null },                          // el campo siempre existe, y vale null
+schoolSchema.index({ inviteToken: 1 }, { unique: true, sparse: true }); // "null no se indexa" ← esto era falso
+```
+
+**`sparse` saltea los documentos donde el campo está AUSENTE, no los que valen `null`.** Un `null` explícito se indexa como cualquier otro valor. Como toda escuela nacía con `inviteToken: null`, la segunda chocaba contra la primera en el índice único. El manejador del error 11000 de la ruta traduce cualquier duplicado a "ese nombre", que es exactamente el lugar equivocado donde mirar.
+
+Se arregló **del lado del documento**, que es lo que no obliga a tocar la base de producción: el campo ya no tiene `default` (ausente = sin enlace) y `revoke-invite` lo saca con `undefined` en vez de escribir `null` — sin ese segundo cambio, una escuela que hubiera tenido enlace y lo perdiera volvía a ocupar el casillero. Todas las vistas leen el campo por truthiness, así que `undefined` y `null` se comportan igual y no cambia ninguna pantalla.
+
+> **El arreglo de fondo requiere tocar la BD de producción y quedó pendiente de aviso**: cambiar el índice por uno parcial (`partialFilterExpression: { inviteToken: { $type: 'string' } }`), que además protegería contra cualquier `null` que se cuele en el futuro. Necesita `dropIndex` + `createIndex`. La única escuela que hoy tiene `inviteToken: null` guardado no molesta — un solo null es válido para un índice único.
+
+**Tests**: `superadmin-crea-dos-escuelas` y `superadmin-enlace-de-invitacion-va-y-viene`. El primero crea **dos** a propósito: con una sola, el spec pasa siempre y el bug queda invisible. Eso es lo que lo mantuvo escondido tres meses — en producción hay una escuela, así que el botón "Nueva escuela" nunca funcionó y no había forma de enterarse.
+
+#### 🟠 `bulk-role` escribía roles fuera del enum
+
+`POST /superadmin/users/bulk-role` usa `updateMany`, y **`updateMany` no corre los validadores del schema** salvo que se le pida. Las vías de a uno sí los piden (`runValidators: true`), así que la misma operación **aceptaba por lote lo que rechazaba de a uno**. Verificado: `{"role":"DIRECTOR_SUPREMO"}` → `200 {"ok":true,"updated":1}`, y así quedaba en la base.
+
+No es escalada de privilegios: ningún middleware reconoce un rol desconocido, así que la cuenta queda con los permisos mínimos (falla cerrado). Lo que hace es **tapiarla**: cualquier ruta que después haga `.save()` sobre ese documento revalida el enum entero y explota. El síntoma aparece lejísimos del origen — el dueño de la cuenta deja de poder cambiar su contraseña, con un 500 genérico.
+
+Arreglado validando contra `User.getRoles()` antes de escribir. Tests: `bulk-role-rechaza-rol-invalido` y `bulk-role-invalido-no-tapia-la-cuenta` (este último es el que muestra la consecuencia real, y por eso está separado).
+
+#### 🟠 Los usuarios podían quedar apuntando a una escuela que no existe
+
+`POST /superadmin/users/bulk-school` y `POST /superadmin/users/:id/school` buscaban la escuela **después** de escribir, y solo para ponerle nombre al log. Un `schoolId` inexistente pasaba con `200 {"ok":true}` y dejaba las cuentas colgadas de la nada.
+
+No rompe el día que se hace —Mongoose descarta la referencia al popular— pero es **la misma clase de referencia colgada que en agosto tiró abajo `/admin/courses` con un 500**: aparece meses después, en una pantalla que no tiene nada que ver. Ahora la escuela se resuelve antes de escribir (`escuelaDestino()`, compartida por las dos rutas) y un id inexistente o mal formado devuelve 404. `schoolId: ""` sigue siendo válido: significa "sacarles la escuela".
+
+#### 🟠 Un error del usuario al subir un archivo salía como "Error del servidor"
+
+multer corta la subida **antes** del handler (archivo pasado de tamaño, tipo no permitido) y avisa lanzando un error. Cuatro rutas no lo interceptaban, así que ese error llegaba al manejador global: `500 "Error del servidor (ref: ...)"`. El que subió se queda sin saber qué hizo mal, y el `error.log` —que es donde se mira cuando algo se rompe **de verdad**— se llena de fallas que no son fallas.
+
+Las cuatro: `POST /admin/import/upload`, `POST /superadmin/import/upload`, `POST /activities/create` y `POST /activities/:id/submit`. Confundir el `.csv` del padrón con el `.xlsx` —el error de dedo típico de la pantalla de importación— daba 500.
+
+El patrón ya existía escrito a mano en cuatro lugares (`subirImagen`, `conArchivo` y dos envoltorios inline en `activities.js`). Se extrajo a **`middleware/upload-errors.js`** (`conErroresDeSubida`) y se aplicó a las cuatro que faltaban; los cuatro de antes quedaron como están a propósito, para no arriesgar una regresión en caminos ya cubiertos. De paso, los topes pasaron a constantes (`XLS_MAX_MB`, `ADJUNTO_MAX_MB`) para que el número del límite y el del mensaje no puedan separarse.
+
+#### 🟡 El catálogo de materias acepta nombres repetidos (NO arreglado — requiere tocar la BD)
+
+`routes/admin.js` tiene el manejador del error 11000 para `POST /admin/subjects/create` ("Ya existe una materia con ese nombre"), pero **`subjects` no tiene ningún índice único**: el único índice de la colección es `_id_`. Ese catch es código muerto y los nombres repetidos entran sin chistar.
+
+Importa más de lo que parece por la deuda nº 4 de "Issues Conocidos": la relación Subject↔Course se resuelve por el **texto** del nombre, así que dos materias homónimas en la misma escuela hacen que el detalle de materia muestre cursos de la otra, sin ningún error a la vista. Hoy en el espejo local hay **0 grupos repetidos**, así que todavía no mordió.
+
+No se arregló porque el arreglo es un índice nuevo en la base de producción. El spec `admin-crea-materia-en-el-catalogo` **fija el comportamiento actual** y explica por qué.
+
+#### Cobertura nueva (24 de las 29 rutas)
+
+Además de lo de arriba: el ciclo completo de un tema cruzando los dos paneles (el superadmin ofrece → el admin acepta → configurar → revocar), la cuenta propia de cualquier rol (`change-password`, `PATCH /profile/contact`, `POST /logout` — las tres que los ocho roles usan igual y ninguna estaba), el buscador por DNI del registro, el alta de usuarios del superadmin, las dos plantillas de importación, `/courses/divisions`, `/activities/available-templates` y el camino feliz de `/activities/upload-attachment`.
+
+**Total de la corrida: 319 specs, 0 fallos** (venía de 283). Más 268 unitarios, 17 de imágenes y la matriz de 8 roles × 40 secciones sin hallazgos.
+
+`POST /superadmin/backup/restore` queda excluido **a propósito** y no cuenta como deuda: es destructivo, y se verifica a mano con un round-trip real.
+
+#### `npm run test:smoke -- --only=<regex>`
+
+La suite entera tarda unos diez minutos y esperar eso para ver si un spec nuevo quedó en verde no escala. `--only` filtra por id (es una regex, para poder pedir un grupo que no comparte prefijo: `--only='bulk|de-a-uno'`) y siempre cuela `admin-login` y `superadmin-login`, sin los cuales todo devuelve 302.
+
+> ⚠️ Es **solo para desarrollo**: los specs dependen del `state` que dejaron los anteriores, así que un filtro que corte esa cadena hace fallar specs que en la corrida completa pasan. La corrida que vale sigue siendo la de siempre, sin flags. Y **no editar archivos `.js` mientras corre**: nodemon reinicia el server y la corrida se llena de `fetch failed` que no son regresiones (pasó dos veces armando esto).
+
+### 2026-08-14 — Quién puede crear una materia: de lista negra a lista blanca
+
+`POST /courses/create` solo exigía tener sesión. El botón "Crear clase" nunca estuvo para el alumno, pero eso es la **vista**: con un POST directo, cualquiera con sesión creaba una materia y quedaba como `owner` — y `Course.isTeacher()` mira justamente el `owner`, así que a partir de ahí podía **calificar, publicar novedades y agregar o sacar alumnos** de esa materia. Estaba abierto desde el 2026-07-30.
+
+**El arreglo es cambiar la lista negra por una lista blanca**, que es lo que importa más que los nombres que tenga: antes se nombraba a los que NO podían (`preceptor` y `jefe`, agregados el 2026-08-06 cuando el smoke los detectó), así que **todo rol que no estuviera nombrado entraba** — incluido el alumno, e incluido cualquier rol que se agregue mañana al enum. Ahora es al revés: `ROLES_QUE_CREAN_MATERIAS` en `routes/courses.js` nombra a los que sí, y lo que no está nombrado queda afuera (fail-closed).
+
+Quedan adentro `superadmin`, `admin`, `directivo` y `soe`. Afuera: `student`, `teacher`, `preceptor` y `jefe`.
+
+**El docente quedó afuera por decisión explícita del usuario** ("el docente no puede crear materias ni cursos"), y con eso el endpoint dice por fin lo mismo que la vista: `views/dashboard.ejs` no le muestra el botón "Crear clase" desde el 2026-07-25, pero hasta hoy el POST directo se lo aceptaba igual. Las materias las da de alta el administrador desde `/admin/courses/create`, que además le pide el titular. **Los cursos (`Division`) ya los tenía cerrados**: los únicos lugares que crean divisiones son `routes/admin.js` y `routes/superadmin.js`, ambos detrás de su guarda de rol.
+
+Eso obligó a rehacer lo que se apoyaba en la vía vieja, que era más de lo que parecía:
+
+- **4 specs del smoke** creaban la materia con el docente. Ahora la crean con el `admin` pasando `teacherId`, así que el escenario no cambia —la materia sigue quedando con el docente como titular, que es lo que miden los specs de abajo— pero se arma por la puerta que corresponde. `course-create` pasó a llamarse "El administrador crea una materia y le asigna el docente titular" y **asserta explícitamente que el owner es el docente y no el admin que la creó**.
+- **`tests/roles/check-roles.js`** armaba su escenario igual. Mismo cambio.
+
+**Tests**: dos specs nuevos, `student-cannot-create-course` y `teacher-cannot-create-course`. Los dos, además de esperar el 403, comprueban en `/admin/courses` que **la materia no exista** — si el rechazo llegara después del `Course.create`, el que la pidió seguiría siendo owner igual. El del alumno se verificó en rojo volviendo a meterlo en la lista: falla con **201 y `owner` = el id del alumno**, y arrastra otros 7 specs con él (la materia fantasma ensucia los conteos), que es una buena medida del radio que tenía el agujero. **283/283 smoke, 268/268 unitarios, matriz de roles sin hallazgos.**
+
+Va con `logRechazo`, así que el intento queda en el log con el rol que lo hizo.
+
+> Al agregar un rol al `if` del botón en `views/dashboard.ejs` hay que agregarlo **también** a `ROLES_QUE_CREAN_MATERIAS`, o el botón va a dar 403. Está anotado en los dos lados.
+
+### 2026-08-14 — Un `:id` mal formado ya no cuelga el request ni da 500
+
+Cierra el issue conocido nº 10, que estaba abierto desde el 2026-07-30 y se había agravado el día anterior al confirmarse que el patrón se repetía fuera del panel directivo.
+
+**Eran dos síntomas de la misma causa.** Un `:id` que no tiene forma de ObjectId hace lanzar `CastError` a `findById`, y de ahí en más depende de cómo esté escrito el handler:
+
+| | Qué pasaba | Dónde |
+|---|---|---|
+| Handler `async` **con** `try/catch` | El catch genérico lo contesta como **500** | Casi todos los POST |
+| Handler `async` **sin** `try/catch` | Nadie captura el rechazo (Express 4 no lo hace): el request queda **colgado para siempre** | Los GET de `routes/admin.js` |
+
+El segundo es el feo: no hay error en pantalla, el navegador se queda esperando y en el log aparece un `unhandledRejection` sin ruta. Se detectó con `GET /admin/users/new` — una URL que no existe, porque la buena es `/users/create`, y que caía en `/users/:id`.
+
+**El arreglo es una guarda explícita al entrar a cada handler**, `idMalo()` en `middleware/objectId.js`. **No es un middleware de Express a propósito**: se llama ruta por ruta, así que ninguna ruta cambia de comportamiento sin que se la haya tocado. La alternativa —capturar el `CastError` en el manejador de errores de `server.js`— se descartó porque no arregla el caso colgado: ahí el rechazo nunca llega al manejador de errores.
+
+- **La forma de la respuesta sigue a la del handler**: 404 en texto para los GET (renderean vistas) y 404 en JSON para POST/DELETE (se llaman por `fetch()` y el front espera `{ error }`). Mandar el shape equivocado dejaría a la pantalla sin poder mostrar el mensaje.
+- **Los tres paneles primero** (36 rutas): 21 de `routes/admin.js`, 11 de `routes/superadmin.js` y 4 de `routes/directivo.js`. `POST /admin/courses/:id/co-teachers/:teacherId/delete` lleva **dos** guardas: validar solo `:id` dejaba el `CastError` de `:teacherId` sin atajar.
+- **Y después el resto de la app** (55 rutas más): `activities.js` (14), `courses.js` (8, dos de ellas con `:studentId`), `tasks.js` (10), `preceptor.js` (8), `announcements.js` (4), `messages.js` (4), `messagesInbox.js` (2) y `suggestions.js` (2). Ya no queda ninguna ruta `:id` sin validar.
+- **`rooms.js`, `attendance.js` y `jefatura.js` no se tocaron: ya validaban.** Vale la pena mirar cómo, porque es mejor que la guarda repetida: `rooms.js` lo resuelve con `router.use('/:id/sala', …, cargarSala)` —un solo punto para sus 16 rutas— y `attendance.js` con `cargarDivision`/`cargarToma` como middleware por ruta. Cuando un router tiene muchas rutas colgando del mismo `:id`, ese es el camino.
+- **Dos guardas se pusieron ANTES de su middleware, no en el handler**: la de `POST /activities/:id/upload-submission-file` va antes de multer (si no, el archivo se escribe en disco y el 404 posterior lo deja huérfano) y la de `POST /messages/mine/:recipientId/reply` antes del `messageReplyLimiter` (un id imposible no debería gastar una de las 10 respuestas por ventana).
+- **Lo que quedó sin guarda a propósito**: el `:id` de `routes/dbFixes.js` no es un ObjectId sino la clave del arreglo (`getFix()` ya contesta 404), y `:token`, `:filename` y `:fecha` tampoco son ids.
+- Los textos de cada 404 son los que ya usaba el handler, incluido el `'Curso no encontrado'` de las rutas de `Division` (así se llama la Division en la UI del panel — ver la nota de terminología).
+
+**El recuento final, para que la próxima auditoría empiece con el número puesto**: hay **127 rutas con parámetro** en toda la app — 88 con guarda nueva, 32 que ya validaban de antes (`rooms` 16, `attendance` 11, `sections` 3, `jefatura` 2), 6 exentas a propósito (`dbFixes` 4, `auth` 2) y `GET /activities/submission-file/:filename`, que no lleva ningún ObjectId.
+
+> ⚠️ **Contarlas con `grep '^router\.'` da 126 y se saltea una.** `routes/attendance.js` declara **dos** routers (`router` y `alumnoRouter`, que se exportan como `panelRouter` y `alumnoRouter` y se montan en `/preceptor/asistencia` y `/asistencia`), así que `POST /asistencia/:id/presente` —el botón "Dar asistencia" del alumno— queda fuera de cualquier barrido que asuma que el router siempre se llama `router`. Esa ruta **ya validaba** por su cuenta; lo que faltaba era que el smoke la mirara. El patrón para no repetir el error: `grep -rnE "^[a-zA-Z_]+\.(get|post|put|delete|patch)\('[^']*:"`.
+
+**Tests**: smoke nuevo `objectid-invalido-da-404`, que recorre 95 rutas × 4 formas de id inválido (`new`, texto suelto, 24 caracteres no hex, 23 caracteres) más 8 combinaciones de las rutas con dos parámetros: **384 comprobaciones**. Incluye a propósito las que ya validaban de antes (`sections.js`, `rooms.js`, `attendance.js`, `jefatura.js`): el spec es la red que evita que esas guardas se pierdan en un refactor.
+
+Se verificó en rojo neutralizando `idMalo` y volviendo a correr la suite entera: **fallan 338 comprobaciones, y solo ese spec** — las otras 280 del smoke siguen pasando, que es la prueba de que las guardas no cambian nada para un id válido. (Las que igual pasan en rojo son las que ya validaban por su cuenta y no dependen de `idMalo`.)
+
+Una excepción anotada en el spec: `/superadmin/tasks/new` **es** una ruta real (el formulario de alta, definido antes del `/:id`), así que ahí `new` no se prueba. Lo mismo vale para `/activities/new`.
+
+`tests/smoke/lib.js` sumó la opción `timeoutMs`, sin la cual una ruta colgada no falla el spec sino que cuelga el corredor entero, que no tiene timeout propio. **281/281 smoke, 268/268 unitarios, matriz de roles sin hallazgos.**
+
+### 2026-08-14 — El Jefe de Sección configura el contenido de sus propias secciones
+
+**Pedido**: *"con el rol de jefe de sección necesito crear la parte de configuración de secciones que se van a mostrar, son materias de cursos o cursos completos"*, con nombres como **Ciclo Básico, Electricidad, Mecánica y Construcciones**. Y, sobre el alcance: *"el jefe puede ver las materias que desee de los cursos que desee"*.
+
+La entidad ya existía desde el 2026-08-06 (ver "Rol Jefe de Sección + Secciones" más abajo): lo que faltaba era que la pantalla fuera **alcanzable desde el rol**, que hasta acá solo miraba.
+
+**`routes/sections.js` es un archivo nuevo, y no es prolijidad.** `routes/admin.js:133` monta `requireAdmin` sobre **todo** el panel de una sola vez. Meterle una excepción para que entre el jefe le habría abierto también Usuarios, Cursos, Importar y Auditoría. Con las 6 rutas mudadas a su propio router —montado en `server.js` **antes** de `/admin`, que es lo que hace que gane el match— la guarda del panel se queda intacta y el permiso se decide caso por caso. El smoke lo comprueba por los dos lados: 403 en las cinco solapas del admin, 200 en `/admin/secciones`.
+
+**Dónde quedó la línea**:
+
+| El jefe puede | El jefe no puede | Por qué |
+|---|---|---|
+| Editar contenido y nombre de **sus** secciones | Crear secciones | Crear sería otorgarse un alcance desde cero |
+| Elegir **cualquier** curso y **cualquier** materia de su escuela | Borrarlas | La sección puede estar compartida: los dejaría sin alcance a todos |
+| | Tocar `heads` | Sería darle acceso a las notas de su sección a un tercero |
+
+- **`heads` no se lee del body en la rama del jefe.** El formulario lo manda igual (la vista es la misma), así que lo que lo hace seguro es que `armarSeccion` recibe los `heads` que la sección ya tenía y **no mira** `body.headIds`. Sin eso, el POST que sale de su propia pantalla —donde la lista de jefes es de solo lectura y por lo tanto viaja vacía— lo habría **expulsado de su propia sección**. Hay un smoke dedicado (`jefatura-secciones-no-cambia-los-jefes`).
+- **La grilla se filtra por `heads`, no solo la barrera del `:id`.** Sin el filtro, el jefe vería el nombre, el contenido y los jefes de todas las secciones de la escuela aunque no pudiera abrirlas.
+- **`config/sections.js`**: `admin_sections` suma el rol `jefe`. Eso hace aparecer la solapa y, de yapa, la celda *Jefe × Secciones* en `/superadmin/roles`, así se puede apagar por escuela sin tocar código. **No se agregó ninguna entrada al catálogo**: son las mismas 40, una de ellas con un rol más. Por eso `tests/roles/check-roles.js` no necesitó cambios — recorre `SECTIONS` y espera 200 donde `s.roles.includes(rol)`, así que absorbe solo el rol nuevo.
+- **La pantalla es una sola para los dos paneles**: `views/admin/sections.ejs` elige `admin-nav` o `jefatura-nav` según el rol. Es la única solapa de `jefatura-nav` que no cuelga de `/jefatura`, y por eso su key es `admin_sections` y no una `jefe_*`.
+- **`GET /:id/edit` valida la forma del id.** Antes, un id que no fuera un ObjectId hacía lanzar `CastError` a `findById`, y en Express 4 un throw dentro de un handler `async` deja el request **colgado**. Acá pesa más que en otras pantallas: la barrera es lo único que separa a un jefe de las notas de otra sección, y se prueba justamente escribiendo ids a mano.
+
+**El riesgo, que es una decisión tomada y no un descuido**: un jefe puede meterle a su sección los 51 cursos de la escuela y quedarse con las 502 materias. Se le planteó al usuario con dos formas de acotarlo (que solo pudiera sacar, o un tope fijado por el admin) y eligió explícitamente el alcance libre. El control es posterior y vive en la auditoría: cada `section.edit` queda con el conteo de cursos, materias y jefes.
+
+**Tests**: 5 smokes nuevos (ve solo las suyas · una ajena da 403 por GET y por POST · no crea ni borra · configura la suya y el alcance cambia en el request siguiente · guardar sin jefes no lo expulsa) y el viejo `jefatura-no-entra-a-otros-paneles` adecuado, que ahora comprueba 403 en cinco solapas del admin y 200 en Secciones. **280/280 smoke, 40/40 × 8 roles sin fugas, 268/268 unitarios.** Los 5 nuevos se verificaron en rojo neutralizando la barrera antes de darlos por buenos.
+
+**Verificado en el navegador** con un jefe real: la solapa aparece en el nav de jefatura, la grilla muestra solo su sección sin "Nueva Sección" ni "Eliminar", el árbol le ofrece los 51 cursos, el bloque de jefes va de solo lectura, guarda desde el formulario conservando `heads`, y el curso agregado aparece en el filtro de Actividades acto seguido. El ícono del bloque de jefes pasó de `--text-hint` a `--text-secondary`: daba 2,64 de contraste sobre la tarjeta clara, abajo del 3:1 de WCAG para gráficos; ahora da 6,05 / 8,07.
+
+**No toca la base de datos**: el schema de `Section` no cambió. Las 4 secciones de la escuela (Ciclo Básico, Electricidad, Mecánica, Construcciones) las carga el usuario a mano desde la pantalla.
 
 ### 2026-08-14 — Watchdog: por qué no se puede entrar al sitio
 
@@ -1664,6 +1946,8 @@ Nueva sección `/superadmin/backup`, solo accesible para `waltermedinilla@gmail.
 
 **Nivel 2 y 3 quedan pendientes** (no implementados a propósito, ver especificación original): backup automático por cron, retención con límite, subida a almacenamiento externo (S3/Backblaze/OneDrive), restore parcial (solo una colección), progreso en vivo del restore vía streaming (hoy es un solo request bloqueante con un log final).
 
+> Actualización: **la parte off-site del Nivel 3 se hizo el 2026-08-17**, aunque no contra S3 sino contra una PC del dueño por FTP sobre Tailscale — ver ese changelog. Sigue siendo manual (hay que apretar el botón): automatizarlo es el Nivel 2 y no está hecho.
+
 ### 2026-07-22 — Performance: `font-display: swap` en Material Symbols
 
 Lighthouse contra producción (`/courses`) reportó 97/100 en Performance, con una única mejora significativa: la fuente `Material Symbols Outlined` bloqueaba el render ~620 ms hasta descargar.
@@ -2251,6 +2535,8 @@ Faltaba la figura intermedia entre el directivo (ve toda la escuela) y el precep
 
 Dos piezas nuevas: la entidad **Sección** (`models/Section.js`, la crea el admin en `/admin/secciones`) y el rol **`jefe`**, de solo lectura, con panel propio en `/jefatura`.
 
+> **Actualizado el 2026-08-14**: el jefe dejó de ser de solo lectura *del todo*. Sigue sin poder tocar actividades, entregas ni notas, pero ahora **configura el contenido de sus propias secciones** desde `/admin/secciones`, servido por `routes/sections.js`. Ver la entrada del 2026-08-14 en el changelog.
+
 ### ⚠️ Tres cosas se llaman "sección" y no son lo mismo
 | Qué | Dónde | Significa |
 |---|---|---|
@@ -2668,9 +2954,11 @@ Por qué la segunda: el primer intento fue solo el latido y **no alcanzó** — 
 ### Correcciones / deuda técnica pendiente
 - 🔴 **Los 12 backups de seguridad de `backups/` (2,8 GB) no se pueden restaurar** (detectado 2026-08-08). `POST /preview` los rechaza con 400 porque no incluyen `roomsessions`/`roommessages`/`roompresences`, agregadas a `COLLECTIONS` después de que se generaran. Afecta a **todos** los `pre-restore-*.tar.gz`, del 2026-07-22 al 2026-08-03 — es decir, a las redes de seguridad que el propio `/restore` genera antes de pisar la base. Decisión de diseño pendiente: ¿el restore debería tolerar colecciones faltantes (restaurando las presentes, con aviso explícito en el preview) o mantenerse estricto? Hay argumento fuerte para tolerar: una colección ausente significa "no existía entonces", no "está corrupto".
 - **`backups/` no tiene retención ni UI**: crece sin límite (2,8 GB hoy) y no se ve desde ningún panel. Cada `/restore` le suma un tarball del tamaño del backup completo.
+- **El envío del backup por FTP sigue siendo manual** (desde 2026-08-17 existe `/superadmin/backup/ftp/enviar`, pero hay que apretar el botón). Automatizarlo por cron es el Nivel 2 del backup: reusar `buildBackupStaging()` + `enviarBackup()` desde un timer en vez de una ruta, con la salvedad de que el timer tiene que correr en un solo worker de PM2 (mismo patrón que el promotor de mantenimiento en `server.js`, vía `NODE_APP_INSTANCE`).
+- **Quedan directorios `classroom-backup-staging-*` huérfanos en `os.tmpdir()`** (2 del 2026-08-14 en la máquina local). No son peligrosos —contienen enlaces, no copias, así que borrarlos no toca `public/archivos`— pero son basura que se acumula. Falta averiguar por qué camino de `GET /download` se escapan del `limpiarStaging()`; el envío por FTP verificado el 2026-08-17 no dejó ninguno.
 - **Instalar `ghostscript` en el servidor de producción** para habilitar la compresión de PDFs del backup (315 MB de ahorro potencial). Sin él la feature degrada sola. Ver el changelog del 2026-08-08.
 - **Correr el backfill de imágenes en producción** (`optimize-existing-images.js`). El optimizador ya está activo para las subidas nuevas, pero los ~198 MB históricos siguen en disco. Requiere backup + modo mantenimiento porque actualiza URLs en la base. Ver el changelog de v1.0.7.
-- **`npm install` en el servidor antes de desplegar v1.0.7**: `sharp` pasó de `devDependencies` a `dependencies` y el webhook de deploy no corre `npm install`. Sin eso la app arranca igual (degradación prevista) pero no optimiza nada.
+- ~~**`npm install` en el servidor antes de desplegar v1.0.7**: `sharp` pasó de `devDependencies` a `dependencies` y el webhook de deploy no corre `npm install`.~~ **Obsoleto desde el 2026-07-29** (commit `2214c6f`): el webhook `POST /deploy` corre `npm install --omit=dev --no-audit --no-fund` entre el `git reset` y el `pm2 reload`, y **aborta sin recargar los workers si falla**, justamente para no dejarlos sin dependencias. O sea que toda dependencia nueva en `dependencies` se instala sola al pushear. Verificable en `deploy.log`.
 - Extender el optimizador a las **fotos en entregas de alumnos y a los adjuntos de actividades**. ⚠️ La estimación vieja de "hoy 0 MB, pero va a crecer" quedó obsoleta: medido el 2026-08-08 son **511 MB en entregas + 400 MB en adjuntos**, con 581 MB de imágenes sin optimizar entre las dos. Preset más conservador (2000 px, calidad 85) porque puede ser la foto de una hoja escrita que el docente necesita leer. El spec `entrega-pdf-no-se-toca` ya fija que los PDFs no se toquen. Ojo: esto es distinto de la compresión del backup (2026-08-08), que **no toca los archivos del servidor** — acá se trata de achicar el disco de verdad, y por eso necesita ventana de mantenimiento.
 - El spec `suggestions-student-sees-answer-and-badge` depende de `suggestions-superadmin-can-respond` pero no declara su mismo `requiresEnv`: si se corre el smoke sin credenciales de superadmin, falla en cascada en vez de saltearse.
 - **`POST /courses/create` no valida el rol del llamante**: cualquier usuario autenticado con escuela (incluido un alumno) puede crear una materia por POST directo y queda como `owner`, lo que por `isTeacher()` le habilita calificar y gestionar alumnos de esa materia. El botón está oculto en la vista para alumnos y docentes, pero esconder el botón no cierra el endpoint — mismo criterio que se aplicó al apagar "unirse por código". Ya se bloqueó explícitamente para `preceptor` y `jefe` (este último lo detectó el smoke al crear el rol, 2026-08-06); **falta el resto**. Convertirlo en lista blanca exige decidir antes si `directivo` y `soe` conservan la posibilidad: hoy la UI se las ofrece en `views/dashboard.ejs:37`.

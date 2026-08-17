@@ -23,6 +23,13 @@ const {
 const {
   analizarCarpetas, comprimirArbol, gsDisponible, sharpDisponible, TIPOS_COMPRIMIBLES,
 } = require('../services/backupCompressor');
+const {
+  normalizarDestino, leerDestino, leerPassword, tienePasswordGuardada,
+  puedeGuardarPassword, guardarDestino, olvidarDestino, DestinoInvalido, MODOS,
+} = require('../config/ftpDestino');
+const {
+  probarConexion, enviarBackup, limpiarParcial, mensajeDeError,
+} = require('../services/backupFtp');
 
 const School       = require('../models/School');
 const User         = require('../models/User');
@@ -377,8 +384,13 @@ router.get('/file-stats', async (req, res) => {
 
 // Traduce ?comprimir=imagenes,pdf a { imagenes: true, pdf: true }. Filtra contra la lista
 // blanca del servicio: lo que venga en la query nunca se usa como clave directa.
-function parseComprimir(query) {
-  const pedidos = String(query || '').split(',').map(s => s.trim()).filter(Boolean);
+//
+// Acepta también un array, porque el envío por FTP manda la opción en un body JSON
+// (["imagenes","pdf"]) y no en la query string. Es la misma decisión, tomada en dos
+// pantallas distintas: conviene que la valide un solo lugar.
+function parseComprimir(pedido) {
+  const pedidos = (Array.isArray(pedido) ? pedido : String(pedido || '').split(','))
+    .map(s => String(s).trim()).filter(Boolean);
   if (!pedidos.length) return null;
   const opciones = {};
   for (const id of TIPOS_COMPRIMIBLES) {
@@ -480,6 +492,290 @@ router.get('/download', async (req, res) => {
     } else {
       res.destroy(err);
     }
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Envío del backup por FTP a otra máquina (típicamente la PC del dueño, por Tailscale)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Existe porque bajar ~850 MB por el navegador a través del Funnel es la parte frágil del
+// backup: cualquier corte obliga a empezar de cero y el dueño se entera tarde. Empujando
+// el paquete directo por el túnel de Tailscale, la transferencia va de máquina a máquina y
+// esta pantalla solo mira el progreso.
+//
+// Recordatorio de la dirección de la flecha (ver services/backupFtp.js): este servidor es
+// el CLIENTE. La PC que recibe tiene que estar corriendo un servidor FTP.
+
+// Arma el destino efectivo mezclando lo que vino del formulario con lo guardado en disco.
+// Sirve a los dos botones: "Probar conexión" (datos tipeados, todavía sin guardar) y
+// "Enviar backup ahora" (formulario vacío, todo desde la configuración guardada).
+function resolverDestinoDeRequest(body = {}) {
+  const tipeoHost = body.host !== undefined && body.host !== null && String(body.host).trim() !== '';
+  const base = tipeoHost ? normalizarDestino(body) : leerDestino();
+
+  if (!base) {
+    throw new DestinoInvalido(
+      'Todavía no hay ningún destino FTP configurado. Completá los datos de la PC que va a recibir el backup.',
+    );
+  }
+
+  const tipeada = typeof body.password === 'string' ? body.password : '';
+  if (tipeada) return { ...base, password: tipeada };
+
+  // La contraseña guardada SOLO se reusa contra el mismo servidor para el que se guardó.
+  // Si el dueño cambió el host, el usuario o el puerto, está apuntando a otra máquina y
+  // mandarle igual la credencial de la anterior sería filtrarla por un error de tipeo.
+  const guardado = leerDestino();
+  const mismoServidor = guardado
+    && guardado.host === base.host
+    && guardado.puerto === base.puerto
+    && guardado.usuario === base.usuario;
+
+  if (!mismoServidor) {
+    throw new DestinoInvalido('Escribí la contraseña del servidor FTP (es un destino distinto al guardado).');
+  }
+
+  const { hay, password } = leerPassword();
+  if (!hay) {
+    throw new DestinoInvalido('Escribí la contraseña del servidor FTP (no hay ninguna guardada).');
+  }
+  if (password === null) {
+    throw new DestinoInvalido(
+      'La contraseña guardada no se puede descifrar. Suele pasar cuando cambió JWT_SECRET en el ' +
+      'servidor: escribila de nuevo y volvé a guardarla.',
+    );
+  }
+  return { ...base, password };
+}
+
+// GET /superadmin/backup/ftp/config — el destino guardado. La contraseña NUNCA vuelve al
+// navegador, ni cifrada: la pantalla solo necesita saber si hay una guardada o no.
+router.get('/ftp/config', (req, res) => {
+  res.json({
+    destino:              leerDestino(),
+    tienePassword:        tienePasswordGuardada(),
+    puedeGuardarPassword: puedeGuardarPassword(),
+    modos:                MODOS,
+  });
+});
+
+router.post('/ftp/config', (req, res) => {
+  try {
+    // Los tres casos que el formulario puede pedir, y por qué el tercero importa:
+    //   guardarPassword false             → borrar la guardada
+    //   guardarPassword true + campo lleno→ guardar esa
+    //   guardarPassword true + campo VACÍO→ no tocar nada
+    // El tercero es el que evita el accidente más probable: el navegador no rellena los
+    // campos password, así que guardar el destino después de cambiar solo la carpeta
+    // llegaría con el campo vacío y borraría la contraseña sin que nadie lo pidiera.
+    const opciones = {};
+    if (req.body.guardarPassword === false) opciones.password = null;
+    else if (req.body.guardarPassword === true && String(req.body.password || '')) {
+      opciones.password = String(req.body.password);
+    }
+
+    const destino = guardarDestino(req.body, opciones);
+
+    logAudit(req, 'system.backup_ftp_config', [], {
+      destino:  `${destino.host}:${destino.puerto}${destino.directorio}`,
+      usuario:  destino.usuario,
+      modo:     destino.modo,
+      contrasena_guardada: tienePasswordGuardada(),
+    });
+
+    res.json({ ok: true, destino, tienePassword: tienePasswordGuardada() });
+  } catch (err) {
+    if (err instanceof DestinoInvalido) return res.status(400).json({ error: err.message });
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'No se pudo guardar el destino FTP' });
+  }
+});
+
+router.delete('/ftp/config', (req, res) => {
+  olvidarDestino();
+  logAudit(req, 'system.backup_ftp_config', [], { olvidado: true });
+  res.json({ ok: true });
+});
+
+// Abrir conexiones salientes a un host arbitrario es la parte de esta feature con más
+// filo: aunque solo la alcanza el dueño, un limitador la deja lejos de poder usarse para
+// tantear puertos ajenos. 20 pruebas cada 10 minutos es holgado para una persona.
+const probarFtpLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas pruebas de conexión seguidas. Esperá unos minutos.' },
+});
+
+// POST /superadmin/backup/ftp/probar — verifica que se pueda LOGUEAR y ESCRIBIR.
+// Probar solo el login sería engañoso: IIS crea el sitio FTP en modo lectura por defecto,
+// y descubrirlo recién a los 800 MB transferidos sería la peor forma de enterarse.
+router.post('/ftp/probar', probarFtpLimiter, async (req, res) => {
+  let destino;
+  try {
+    destino = resolverDestinoDeRequest(req.body);
+  } catch (err) {
+    if (err instanceof DestinoInvalido) return res.status(400).json({ error: err.message });
+    logDeRuta(err, res);
+    return res.status(500).json({ error: 'No se pudo preparar la prueba' });
+  }
+
+  try {
+    const resultado = await probarConexion(destino);
+    res.json({ ok: true, host: destino.host, puerto: destino.puerto, ...resultado });
+  } catch (err) {
+    // 502 y no 400: la request estaba bien formada, lo que falló es la máquina del otro
+    // lado. El mensaje ya viene traducido a algo accionable (ver services/backupFtp.js).
+    logger.warn('backup FTP: falló la prueba de conexión', {
+      host: destino.host, puerto: destino.puerto, modo: destino.modo,
+      error: err.message, code: err.code,
+    });
+    res.status(502).json({ error: mensajeDeError(err, destino) });
+  }
+});
+
+// Tope bajo a propósito, mismo criterio que el de /restore: protege más contra el
+// doble-clic y el bug que contra el abuso. NO hay lock entre workers de PM2 y es
+// deliberado: dos envíos simultáneos son caros pero inofensivos (el nombre lleva
+// timestamp, no se pisan), mientras que un lock trabado por un proceso muerto dejaría al
+// dueño sin poder mandar el backup justo el día que lo necesita.
+const enviarFtpLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiados envíos por FTP en la última hora. Esperá un rato.' },
+});
+
+// POST /superadmin/backup/ftp/enviar — arma el backup y lo empuja al destino.
+//
+// Responde con un stream NDJSON (un evento JSON por línea) en vez de un JSON al final:
+// el envío puede durar una hora y el dueño necesita ver que avanza. Consecuencia a tener
+// presente: los headers salen ANTES de saber si va a funcionar, así que un fallo posterior
+// viaja como evento `fin` con ok:false y no como status HTTP. Todo lo que se puede validar
+// antes de ese punto se valida antes, y ESO sí sale como 400.
+router.post('/ftp/enviar', enviarFtpLimiter, async (req, res) => {
+  // Mismo motivo que en /download, multiplicado: acá el tiempo total es el del empaquetado
+  // MÁS el de la transferencia por un enlace hogareño.
+  req.setTimeout(0);
+  res.setTimeout(0);
+
+  let destino;
+  try {
+    destino = resolverDestinoDeRequest(req.body);
+  } catch (err) {
+    if (err instanceof DestinoInvalido) return res.status(400).json({ error: err.message });
+    logDeRuta(err, res);
+    return res.status(500).json({ error: 'No se pudo preparar el envío' });
+  }
+
+  const comprimir = parseComprimir(req.body.comprimir);
+
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Accel-Buffering', 'no'); // por si algún día hay un nginx adelante
+  res.flushHeaders();
+
+  const escribir = (evento) => {
+    if (res.writableEnded) return;
+    res.write(JSON.stringify(evento) + '\n');
+    // app.use(compression()) es global: sin este flush los eventos quedarían esperando en
+    // el buffer de zlib y el progreso llegaría todo junto al final, que es justo lo que
+    // esta ruta existe para evitar. `res.flush` lo agrega ese middleware; si algún día la
+    // respuesta deja de pasar por él, el guard hace que esto siga siendo válido.
+    if (typeof res.flush === 'function') res.flush();
+  };
+
+  const ac       = new AbortController();
+  const arranque = Date.now();
+  let stagingDir = null, latido = null, paquete = null, nombre = null, bytes = 0;
+
+  const limpiarStaging = () => {
+    clearInterval(latido);
+    if (!stagingDir) return;
+    const dir = stagingDir;
+    stagingDir = null; // idempotente: puede llamarse desde el catch y desde el finally
+    fs.rm(dir, { recursive: true, force: true }, () => {});
+  };
+
+  // El dueño cerró la pestaña o apretó "Cancelar": se corta el FTP y el empaquetado. Sin
+  // esto el servidor seguiría comprimiendo y subiendo cientos de MB que ya nadie espera.
+  res.on('close', () => {
+    if (res.writableEnded) return;
+    ac.abort();
+    if (paquete) paquete.destroy();
+  });
+
+  try {
+    escribir({ tipo: 'estado', mensaje: comprimir ? 'Armando y comprimiendo el backup…' : 'Armando el backup…' });
+
+    const built = await buildBackupStaging(res.locals.user.email, { comprimir });
+    stagingDir  = built.stagingDir;
+    nombre = comprimir
+      ? `classroom-backup-comprimido-${built.stamp}.tar.gz`
+      : `classroom-backup-${built.stamp}.tar.gz`;
+
+    // Log ANTES de transferir, mismo criterio que GET /download: el hecho auditable es que
+    // se generó un backup y que salió del servidor hacia otra máquina. Si la transferencia
+    // se corta a la mitad, esos bytes salieron igual y tienen que estar registrados.
+    logAudit(req, 'system.backup_ftp', [], {
+      archivo: nombre,
+      destino: `${destino.host}:${destino.puerto}${destino.directorio}`,
+      modo:    destino.modo,
+      ...(comprimir ? { comprimido: Object.keys(comprimir).join(', ') } : {}),
+    });
+
+    // Estimación para la barra de progreso: el .tar.gz pesa casi lo mismo que los archivos
+    // que mete adentro, porque son JPEG/PNG/PDF ya comprimidos y el gzip va en nivel 1.
+    const estimadoBytes = (built.manifest?.files?.archivos?.sizeBytes || 0)
+                        + (built.manifest?.files?.entregas?.sizeBytes || 0);
+
+    escribir({
+      tipo: 'inicio', archivo: nombre, host: destino.host, puerto: destino.puerto,
+      directorio: destino.directorio, estimadoBytes,
+    });
+
+    // Latido cada 2 s. No es cosmético: entre este servidor y el navegador hay un proxy
+    // (Tailscale Funnel) que corta las conexiones calladas, y con un enlace lento el
+    // contador de bytes puede tardar bastante en moverse.
+    latido = setInterval(() => escribir({ tipo: 'progreso', bytes, ms: Date.now() - arranque }), 2000);
+
+    // El paquete se streamea directo al socket FTP: nunca toca el disco del servidor.
+    paquete = tar.c(
+      { gzip: GZIP_LEVEL, cwd: built.stagingDir, follow: true },
+      ['manifest.json', 'db', 'files'],
+    );
+
+    const resultado = await enviarBackup({
+      destino, nombre, origen: paquete,
+      onProgress: (b) => { bytes = b; },
+      senal: ac.signal,
+    });
+
+    clearInterval(latido);
+    escribir({ tipo: 'fin', ok: true, bytes, remoto: resultado.remoto, ms: Date.now() - arranque });
+  } catch (err) {
+    clearInterval(latido);
+    const cancelado = ac.signal.aborted;
+
+    if (!cancelado) {
+      logger.error('backup FTP: falló el envío', {
+        host: destino.host, archivo: nombre, bytes, error: err.message, code: err.code,
+      });
+    }
+    escribir(cancelado
+      ? { tipo: 'fin', ok: false, cancelado: true, error: 'Envío cancelado', bytes }
+      : { tipo: 'fin', ok: false, error: mensajeDeError(err, destino), bytes });
+
+    // El .part que quedó del lado del destino se limpia en una conexión nueva, sin esperarlo:
+    // la respuesta ya terminó y que la limpieza falle no cambia nada para el dueño (el
+    // archivo se ve, dice ".part" y se borra a mano).
+    if (nombre && bytes > 0) limpiarParcial(destino, nombre).catch(() => {});
+  } finally {
+    limpiarStaging();
+    if (!res.writableEnded) res.end();
   }
 });
 

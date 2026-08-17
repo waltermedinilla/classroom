@@ -18,6 +18,9 @@ const { requireSuperAdmin }  = require('../middleware/superadmin');
 const { logAudit }           = require('../middleware/audit');
 const { messageSendLimiter } = require('../middleware/rate-limits');
 const { logDeRuta } = require('../middleware/route-log');
+// Guarda de forma del :id, en la primera línea de cada handler con parámetro.
+// Ver middleware/objectId.js y el issue conocido nº 10 de agente.md.
+const { idMalo } = require('../middleware/objectId');
 
 const {
   ROLES_VALIDOS, construirFiltroGrupo, hayAlgoElegido, resolverDestinatarios,
@@ -301,6 +304,7 @@ router.post('/', messageSendLimiter, async (req, res) => {
 /* ─── Detalle de un envío ───────────────────────────────────────────────────── */
 
 router.get('/:id', async (req, res) => {
+  if (idMalo(req, res, 'Mensaje no encontrado')) return;
   try {
     const mensaje = await Message.findOne({ _id: req.params.id, sender: req.userId }).lean();
     if (!mensaje) return res.status(404).send('Mensaje no encontrado');
@@ -355,6 +359,7 @@ router.get('/:id', async (req, res) => {
 /* ─── El superadmin sigue el hilo de UN destinatario ────────────────────────── */
 
 router.post('/:id/reply', async (req, res) => {
+  if (idMalo(req, res, 'Mensaje no encontrado')) return;
   try {
     const text = (req.body.text || '').trim();
     if (!text)                  return res.status(400).json({ error: 'La respuesta no puede estar vacía' });
@@ -393,6 +398,7 @@ router.post('/:id/reply', async (req, res) => {
 /* ─── Prender/apagar las respuestas de un envío ya hecho ────────────────────── */
 
 router.patch('/:id/replies', async (req, res) => {
+  if (idMalo(req, res, 'Mensaje no encontrado')) return;
   try {
     const allowReplies = req.body.allowReplies === true || req.body.allowReplies === 'true';
 
@@ -420,6 +426,7 @@ router.patch('/:id/replies', async (req, res) => {
 /* ─── Borrar un envío ───────────────────────────────────────────────────────── */
 
 router.delete('/:id', async (req, res) => {
+  if (idMalo(req, res, 'Mensaje no encontrado')) return;
   try {
     const mensaje = await Message.findOne({ _id: req.params.id, sender: req.userId });
     if (!mensaje) return res.status(404).json({ error: 'Mensaje no encontrado' });

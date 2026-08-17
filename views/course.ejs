@@ -743,6 +743,8 @@
     window.COURSE_COLOR2 = '<%= (course.header && course.header.color2) ? course.header.color2 : "" %>';
   </script>
   <script src="/js/devoluciones.js"></script>
+  <!-- Diagnóstico de subidas fallidas. Va ANTES de course.js, que lo usa en uploadSubFile(). -->
+  <script src="/js/subida-diagnostico.js"></script>
   <script src="/js/course.js"></script>
   <script src="/js/task-runner.js"></script>
   <% if (course.canManage(user)) { %>

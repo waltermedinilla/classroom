@@ -19,6 +19,11 @@ const ActivityTemplate   = require('../models/ActivityTemplate');
 const TemplateAssignment = require('../models/TemplateAssignment');
 const { computeAutoGrade } = require('../services/autoGrader');
 const { logDeRuta } = require('../middleware/route-log');
+// Guarda de forma del :id, en la primera línea de cada handler con parámetro. Ver
+// middleware/objectId.js y el issue conocido nº 10 de agente.md. Ojo con `como: 'json'`:
+// varios GET de este router son endpoints de fetch(), no vistas.
+const { idMalo } = require('../middleware/objectId');
+const { conErroresDeSubida } = require('../middleware/upload-errors');
 // Sala en vivo: SOLO para avisar en el chat cuando la actividad se creó desde la clase
 // (POST /create con fromRoom). Es la única parte de este router que sabe que las salas existen,
 // y está acotada a un bloque con su propio try/catch — ver specs/actividades-en-clase.spec.md.
@@ -35,6 +40,10 @@ const ENTREGAS_BASE = path.join(__dirname, '../archivos/entregas');
 
 // Extensiones permitidas para adjuntos del docente
 const EXT_ALLOWED     = ['.pdf', '.doc', '.docx', '.xls', '.xlsx'];
+// Tope de un adjunto del docente: holgado a propósito, son PDFs escolares escaneados. Una
+// sola constante para los dos multer que lo usan (crear la actividad y el pre-upload) y para
+// los mensajes de error, que antes repetían el número a mano.
+const ADJUNTO_MAX_MB  = 50;
 // Extensiones permitidas para entregas de alumnos (incluye imágenes y zip)
 const EXT_SUBMISSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png', '.gif', '.zip'];
 
@@ -92,11 +101,17 @@ const upload = multer({
     },
     filename: (req, file, cb) => cb(null, uniqueFilename(file.originalname)),
   }),
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB por archivo
+  limits: { fileSize: ADJUNTO_MAX_MB * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     cb(null, EXT_ALLOWED.includes(path.extname(file.originalname).toLowerCase()));
   },
 });
+// Ídem la entrega del alumno: sin esto, crear la actividad con un adjunto pasado de tamaño
+// salía como 500 después de haber subido los 50 MB. Ver middleware/upload-errors.js.
+const subirAdjuntosDeActividad = conErroresDeSubida(
+  upload.array('files', 10),
+  { maxMb: ADJUNTO_MAX_MB },
+);
 
 const SUBMISSION_MAX_SIZE = 20 * 1024 * 1024; // 20 MB por archivo
 
@@ -138,6 +153,7 @@ router.get('/new', requireAuth, async (req, res) => {
 // Si es alumno: solo actividades con availableFrom <= ahora; grades filtrado a su propia nota (myGrade)
 // Retorna: { activities: [...], isOwner: bool }
 router.get('/course/:courseId', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Curso no encontrado', { param: 'courseId', como: 'json' })) return;
   try {
     const course = await Course.findById(req.params.courseId);
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
@@ -279,7 +295,7 @@ router.get('/available-templates', requireAuth, async (req, res) => {
 
 // links es un JSON string de array: [{ url, name? }]
 // Retorna: { activity } con autor populado (201)
-router.post('/create', requireAuth, uploadLimiter, upload.array('files', 10), async (req, res) => {
+router.post('/create', requireAuth, uploadLimiter, subirAdjuntosDeActividad, async (req, res) => {
   try {
     const { courseId, title, description, dueDate, availableFrom, points, links, type, templateId, allowResubmission } = req.body;
 
@@ -420,7 +436,7 @@ const uploadSingle = multer({
     },
     filename: (req, file, cb) => cb(null, uniqueFilename(file.originalname)),
   }),
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB para PDFs escolares grandes
+  limits: { fileSize: ADJUNTO_MAX_MB * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     cb(null, EXT_ALLOWED.includes(path.extname(file.originalname).toLowerCase()));
   },
@@ -435,7 +451,7 @@ router.post('/upload-attachment', requireAuth, uploadLimiter, (req, res, next) =
   uploadSingle.single('file')(req, res, (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ error: 'El archivo es demasiado grande (máximo 50 MB)' });
+        return res.status(413).json({ error: `El archivo es demasiado grande (máximo ${ADJUNTO_MAX_MB} MB)` });
       }
       return res.status(400).json({ error: err.message || 'Error al procesar el archivo' });
     }
@@ -524,6 +540,7 @@ router.get('/my-pending', requireAuth, requireSection('app_pending'), async (req
 // Construye la lista cruzando course.students con activity.grades
 // Retorna: { activity, studentGrades: [{ _id, name, email, points }] }
 router.get('/:id/grades', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Actividad no encontrada', { como: 'json' })) return;
   try {
     const activity = await Activity.findById(req.params.id).populate('author', 'name');
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
@@ -564,6 +581,7 @@ router.get('/:id/grades', requireAuth, async (req, res) => {
 // sin calificar todavía. Si `points` no viene, la nota que ya estuviera cargada NO se toca
 // (mandar solo feedback nunca borra una nota existente).
 router.post('/:id/grade', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Actividad no encontrada')) return;
   try {
     const { studentId, points, feedback } = req.body;
     const activity = await Activity.findById(req.params.id);
@@ -638,6 +656,7 @@ router.post('/:id/grade', requireAuth, async (req, res) => {
 // 3. Borra archivos adjuntos del docente del disco (ARCHIVOS_BASE/{relPath})
 // 4. Borra el documento Activity de la BD
 router.delete('/:id', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Actividad no encontrada')) return;
   try {
     const activity = await Activity.findById(req.params.id);
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
@@ -700,6 +719,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
 // Se usa cuando el plazo venció y el docente quiere abrir/cerrar entregas tardías
 // Retorna: { allowLateSubmissions: bool }
 router.patch('/:id/toggle-late', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Actividad no encontrada')) return;
   try {
     const activity = await Activity.findById(req.params.id);
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
@@ -730,6 +750,7 @@ router.patch('/:id/toggle-late', requireAuth, async (req, res) => {
 // Body: { title, description?, dueDate?, availableFrom?, points?, type?, allowResubmission? }
 // Retorna: { activity }
 router.put('/:id', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Actividad no encontrada')) return;
   try {
     const { title, description, dueDate, availableFrom, points, type, allowResubmission } = req.body;
     const activity = await Activity.findById(req.params.id);
@@ -808,6 +829,8 @@ router.get('/submission-file/:filename', requireAuth, async (req, res) => {
 // Seguridad: solo devuelve el archivo si existe en {schoolId}/{actId}/{userId}/{filename},
 // el path bajo el propio dir del alumno — imposible ver archivos de otros pasando filenames.
 router.get('/:id/staged-file/:filename', requireAuth, async (req, res) => {
+  // `:filename` no se valida acá: no es un ObjectId. De ese lado protege el path.basename.
+  if (idMalo(req, res, 'Archivo no encontrado')) return;
   try {
     const { id: activityId, filename } = req.params;
     const userId   = res.locals.user._id.toString();
@@ -834,7 +857,12 @@ router.get('/:id/staged-file/:filename', requireAuth, async (req, res) => {
 // en el JSON del submit final (ver POST /:id/submit).
 // Body multipart: { file }
 // Retorna: { storagePath, name, filename, mime, size }
-router.post('/:id/upload-submission-file', requireAuth, uploadLimiter, (req, res, next) => {
+router.post('/:id/upload-submission-file', requireAuth, (req, res, next) => {
+  // La guarda va ANTES de multer a propósito: si el id no puede existir, no tiene sentido
+  // escribir el archivo en disco para después contestar 404 y dejarlo huérfano.
+  if (idMalo(req, res, 'Actividad no encontrada')) return;
+  next();
+}, uploadLimiter, (req, res, next) => {
   // Intercepta errores de multer para devolver JSON en español, como en /upload-attachment
   submissionUpload.single('file')(req, res, (err) => {
     if (err) {
@@ -899,13 +927,22 @@ router.post('/:id/upload-submission-file', requireAuth, uploadLimiter, (req, res
 // Si no hay archivos nuevos: mantiene los archivos anteriores, solo actualiza el texto.
 // Middleware: solo corre el parseo multipart si el request efectivamente lo es.
 // El body-parser JSON global (server.js) ya se encarga del flujo nuevo (application/json).
+// El envoltorio de errores es lo que evita que una entrega pasada de tamaño termine como
+// 500 "Error del servidor (ref: ...)". Es el peor lugar donde puede pasar: el alumno espera
+// la subida ENTERA y recibe un error de sistema que no explica nada. Ver
+// middleware/upload-errors.js.
+const subirEntrega = conErroresDeSubida(
+  submissionUpload.array('files', 10),
+  { maxMb: SUBMISSION_MAX_SIZE / 1024 / 1024 },
+);
 const conditionalMultipart = (req, res, next) => {
   const ct = req.headers['content-type'] || '';
-  if (ct.startsWith('multipart/form-data')) return submissionUpload.array('files', 10)(req, res, next);
+  if (ct.startsWith('multipart/form-data')) return subirEntrega(req, res, next);
   next();
 };
 
 router.post('/:id/submit', requireAuth, uploadLimiter, conditionalMultipart, async (req, res) => {
+  if (idMalo(req, res, 'Actividad no encontrada')) return;
   try {
     const activity = await Activity.findById(req.params.id);
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
@@ -1061,6 +1098,7 @@ router.post('/:id/submit', requireAuth, uploadLimiter, conditionalMultipart, asy
 // Genera y descarga un Excel con todas las calificaciones de la actividad (solo el docente owner)
 // Columnas: Alumno, DNI, Email, Nota, Máximo, Feedback, Fecha calificación
 router.get('/:id/export-grades', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Actividad no encontrada')) return;
   try {
     const activity = await Activity.findById(req.params.id);
     if (!activity) return res.status(404).send('Actividad no encontrada');
@@ -1119,6 +1157,7 @@ router.get('/:id/export-grades', requireAuth, async (req, res) => {
 // El alumno consulta su propia entrega para mostrar en el modal de detalle
 // Retorna: { submission } o { submission: null } si todavía no entregó
 router.get('/:id/my-submission', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Actividad no encontrada', { como: 'json' })) return;
   try {
     const submission = await Submission.findOne({
       activity: req.params.id,
@@ -1135,6 +1174,7 @@ router.get('/:id/my-submission', requireAuth, async (req, res) => {
 // El docente ve todas las entregas de una actividad con datos del alumno
 // Retorna: { submissions } array con student populado (name, email, dni)
 router.get('/:id/submissions', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Actividad no encontrada', { como: 'json' })) return;
   try {
     const activity = await Activity.findById(req.params.id);
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
@@ -1161,6 +1201,7 @@ router.get('/:id/submissions', requireAuth, async (req, res) => {
 // un GET no debe mutar, y así queda testeable por separado.
 // Retorna: { ok: true } siempre que no haya error real — el cliente no usa la respuesta.
 router.post('/:id/view', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Actividad no encontrada')) return;
   try {
     // Solo se registran alumnos. El docente/admin que entra a mirar su propia actividad no
     // debe inflar el contador "N vieron" — pero tampoco es un error: se ignora en silencio.
@@ -1197,6 +1238,7 @@ router.post('/:id/view', requireAuth, async (req, res) => {
 // El docente ve qué alumnos abrieron la actividad y cuándo
 // Retorna: { views } array con student populado (name, email) + firstViewedAt/lastViewedAt/viewCount
 router.get('/:id/views', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Actividad no encontrada', { como: 'json' })) return;
   try {
     const activity = await Activity.findById(req.params.id);
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });

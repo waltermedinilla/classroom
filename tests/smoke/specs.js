@@ -30,6 +30,15 @@ const COLECCIONES_V1 = {
   announcements: 1, suggestions: 0, divisions: 1, subjects: 5,
 };
 
+// Destino FTP que NO puede coincidir con ninguno guardado en la máquina donde corre el
+// smoke: el puerto 1 de localhost no tiene a nadie escuchando (ECONNREFUSED inmediato, sin
+// esperas de red) y el usuario es imposible. Lo segundo es lo que importa: la ruta solo
+// reusa la contraseña guardada si host+puerto+usuario coinciden, así que con este destino
+// los specs nunca llegan a disparar un envío real ni a pisar el ftp-destino.json del dueño.
+const FTP_INEXISTENTE = {
+  host: '127.0.0.1', puerto: 1, usuario: 'smoke-inexistente', modo: 'plano', directorio: '/',
+};
+
 // Arma un .tar.gz con pinta de backup real pero SOLO con el manifest adentro. Alcanza: el
 // preview a propósito no desempaqueta db/ ni files/ (serían cientos de MB), lee el manifest
 // y nada más. Así el fixture pesa unos bytes y no hay que commitear un binario en el repo.
@@ -438,17 +447,72 @@ const specs = [
     },
   },
   {
+    // Hasta el 2026-08-14 esta materia la creaba el propio docente por POST /courses/create.
+    // Desde que esa ruta es lista blanca y el docente quedó afuera (decisión del usuario: el
+    // docente no crea materias ni cursos), la da de alta el administrador y le asigna el
+    // titular en el mismo POST. El resto de la suite no cambia: la materia queda con
+    // `owner` = scopedTeacher, que es lo que necesitan los specs de más abajo.
     id: 'course-create',
-    title: 'El docente crea un curso',
+    title: 'El administrador crea una materia y le asigna el docente titular',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state, assert }) {
-      const res = await client.post('scopedTeacher', '/courses/create', {
-        body: { name: `Materia Smoke ${RUN_ID}`, divisionId: state.divisionId, room: '101' },
+      const res = await client.post('admin', '/admin/courses/create', {
+        body: {
+          name: `Materia Smoke ${RUN_ID}`, divisionId: state.divisionId,
+          teacherId: state.scopedTeacherId, room: '101',
+        },
         expectStatus: 201,
       });
       assert(res.json.course?.code?.length === 6, 'el curso debería tener un código de 6 caracteres');
+      assert(String(res.json.course.owner) === String(state.scopedTeacherId),
+        'el titular de la materia debería ser el docente, no el admin que la creó');
       state.courseId   = res.json.course._id;
       state.courseCode = res.json.course.code;
+    },
+  },
+  {
+    id: 'teacher-cannot-create-course',
+    title: 'El docente no puede crear materias por POST directo',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const nombre = `Materia del docente ${RUN_ID}`;
+      await client.post('scopedTeacher', '/courses/create', {
+        body: { name: nombre, divisionId: state.divisionId, room: '888' },
+        expectStatus: 403,
+      });
+      const listado = await client.get('admin', '/admin/courses?search=Materia+del+docente',
+        { expectStatus: 200 });
+      assert(!listado.text.includes(nombre), 'la materia no debería haberse creado');
+    },
+  },
+  {
+    // El agujero 🔴 que estaba abierto desde el 2026-07-30, y el contracara del spec de
+    // arriba: la misma ruta que el docente usa con todo derecho la aceptaba de CUALQUIERA
+    // con sesión. El botón "Crear clase" nunca estuvo para el alumno, pero eso es la vista.
+    // Y no es una materia de más: el que crea queda como `owner`, y desde ahí
+    // `Course.isTeacher()` lo habilita a calificar, publicar novedades y agregar o sacar
+    // alumnos de esa materia.
+    //
+    // Va acá y no junto a `preceptor-cannot-create-course` por una razón de la suite: para
+    // esa altura el jar de `scopedStudent` está vacío (lo vacía `cache-invalidation-on-disable`,
+    // ver la nota de `attendance-setup-actores`) y el POST daría 302 a /login en vez de 403,
+    // que es un verde falso — pasaría igual con el agujero abierto.
+    id: 'student-cannot-create-course',
+    title: 'El alumno no puede crear materias por POST directo (y no queda como owner)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const nombre = `Materia del alumno ${RUN_ID}`;
+      await client.post('scopedStudent', '/courses/create', {
+        body: { name: nombre, divisionId: state.divisionId, room: '999' },
+        expectStatus: 403,
+      });
+
+      // Que el 403 no sea lo único: la materia no tiene que existir. Si el rechazo llegara
+      // DESPUÉS del Course.create, el alumno seguiría siendo owner igual.
+      const listado = await client.get('admin', '/admin/courses?search=Materia+del+alumno',
+        { expectStatus: 200 });
+      assert(!listado.text.includes(nombre),
+        'la materia no debería haberse creado: el rechazo tiene que ir ANTES del Course.create');
     },
   },
   {
@@ -557,9 +621,12 @@ const specs = [
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state, assert }) {
       // Materia nueva en la MISMA división donde el alumno ya cursa: es el caso de uso real
-      // (el docente crea una materia después de que los alumnos ya estaban matriculados).
-      const nueva = await client.post('scopedTeacher', '/courses/create', {
-        body: { name: `Materia Codigo ${RUN_ID}`, divisionId: state.divisionId, room: '103' },
+      // (se da de alta una materia después de que los alumnos ya estaban matriculados).
+      const nueva = await client.post('admin', '/admin/courses/create', {
+        body: {
+          name: `Materia Codigo ${RUN_ID}`, divisionId: state.divisionId,
+          teacherId: state.scopedTeacherId, room: '103',
+        },
         expectStatus: 201,
       });
       state.joinCourseId = nueva.json.course._id;
@@ -615,8 +682,11 @@ const specs = [
       });
       state.joinOtherDivisionId = div.json.division._id;
 
-      const ajena = await client.post('scopedTeacher', '/courses/create', {
-        body: { name: `Materia Ajena ${RUN_ID}`, divisionId: state.joinOtherDivisionId, room: '104' },
+      const ajena = await client.post('admin', '/admin/courses/create', {
+        body: {
+          name: `Materia Ajena ${RUN_ID}`, divisionId: state.joinOtherDivisionId,
+          teacherId: state.scopedTeacherId, room: '104',
+        },
         expectStatus: 201,
       });
       state.joinOtherCourseId = ajena.json.course._id;
@@ -1657,8 +1727,11 @@ const specs = [
     title: 'Se crea una segunda materia en el mismo Curso (para probar matrícula parcial)',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state }) {
-      const res = await client.post('scopedTeacher', '/courses/create', {
-        body: { name: `Materia Smoke 2 ${RUN_ID}`, divisionId: state.divisionId, room: '102' },
+      const res = await client.post('admin', '/admin/courses/create', {
+        body: {
+          name: `Materia Smoke 2 ${RUN_ID}`, divisionId: state.divisionId,
+          teacherId: state.scopedTeacherId, room: '102',
+        },
         expectStatus: 201,
       });
       state.secondCourseId = res.json.course._id;
@@ -2553,6 +2626,406 @@ const specs = [
     },
   },
 
+  // ── La cuenta propia: lo que hace CUALQUIER rol con la suya ───────────────
+  // Cerrar sesión, cambiar la contraseña y editar el contacto son las tres cosas que los
+  // ocho roles hacen igual, y ninguna de las tres estaba en el smoke. El cambio de CORREO sí
+  // lo estaba (los specs email-change-*), que es lo que hacía fácil no notar el hueco.
+  {
+    id: 'cuenta-propia-setup',
+    title: 'Setup: una cuenta propia y descartable para probar sus ajustes',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // Cuenta propia del bloque en vez de reusar el alumno de prueba: estos specs cambian
+      // la contraseña y el contacto, y hacerlo sobre una cuenta que miran otros veinte specs
+      // convierte cualquier falla a mitad de camino en una cascada de fallas ajenas.
+      const email = `smoke.cuenta.${RUN_ID}@example.com`;
+      const dni   = dniSmoke(71);
+      const r = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke Cuenta ${RUN_ID}`, email, password: 'SmokeTest1234', role: 'student', dni },
+        expectStatus: 201,
+      });
+      state.cuentaId    = r.json.user._id;
+      state.cuentaEmail = email;
+      state.cuentaDni   = dni;
+    },
+  },
+  {
+    id: 'cuenta-propia-cambia-la-contrasena',
+    title: 'Cualquier usuario cambia su propia contraseña y la nueva es la que vale',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const vieja = 'SmokeTest1234';
+      const nueva = 'SmokeTest5678';
+
+      await client.post('pwUser', '/login', { body: { email: state.cuentaEmail, password: vieja }, expectStatus: 200 });
+      await client.post('pwUser', '/courses/profile/change-password', {
+        body: { currentPassword: vieja, newPassword: nueva }, expectStatus: 200,
+      });
+
+      // Las DOS mitades: la vieja tiene que dejar de servir y la nueva tiene que entrar. Sin
+      // la primera, un handler que contestara ok sin guardar nada pasaría el test igual.
+      await client.post('pwCheck', '/login', { body: { email: state.cuentaEmail, password: vieja }, expectStatus: 400 });
+      await client.post('pwCheck', '/login', { body: { email: state.cuentaEmail, password: nueva }, expectStatus: 200 });
+
+      // Y se la devuelve, que los specs de abajo asumen la de siempre.
+      await client.post('pwUser', '/courses/profile/change-password', {
+        body: { currentPassword: nueva, newPassword: vieja }, expectStatus: 200,
+      });
+      await client.post('pwCheck', '/login', { body: { email: state.cuentaEmail, password: vieja }, expectStatus: 200 });
+    },
+  },
+  {
+    id: 'cuenta-propia-contrasena-valida-los-datos',
+    title: 'Contraseña actual equivocada, campos vacíos o contraseña corta se rechazan con 400',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // El resguardo que importa es el primero: una sesión abierta en una compu compartida
+      // no puede cambiar la contraseña sin saber la actual.
+      const r = await client.post('pwUser', '/courses/profile/change-password', {
+        body: { currentPassword: 'LaQueNoEs9999', newPassword: 'OtraCosa1234' }, expectStatus: 400,
+      });
+      assert(/actual/i.test(r.json?.error || ''), `debería decir que la actual no coincide; dijo ${JSON.stringify(r.json)}`);
+
+      await client.post('pwUser', '/courses/profile/change-password', { body: { newPassword: 'OtraCosa1234' }, expectStatus: 400 });
+      await client.post('pwUser', '/courses/profile/change-password', {
+        body: { currentPassword: 'SmokeTest1234', newPassword: '123' }, expectStatus: 400,
+      });
+    },
+  },
+  {
+    id: 'cuenta-propia-edita-el-contacto',
+    title: 'El usuario guarda su contacto y se guarda el handle limpio, no el link entero',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // Lo que se prueba no es que guarde, sino que NORMALICE: la ruta guarda el handle y
+      // arma el link al mostrarlo. Si alguna vez guardara la URL entera, el perfil quedaría
+      // con links tipo instagram.com/instagram.com/pepe y nadie lo notaría hasta verlo.
+      const r = await client.patch('pwUser', '/courses/profile/contact', {
+        body: { phone: '11 2233-4455', instagram: 'https://instagram.com/smoke.test', facebook: '' },
+        expectStatus: 200,
+      });
+      assert(r.json.instagram === 'smoke.test',
+        `debería guardar el handle pelado, guardó ${JSON.stringify(r.json.instagram)}`);
+      assert(r.json.facebook === null, 'un campo vacío debería borrarse');
+
+      await client.patch('pwUser', '/courses/profile/contact', {
+        body: { phone: '', instagram: '', facebook: '' }, expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'cuenta-propia-cierra-sesion',
+    title: 'Cerrar sesión invalida la cookie de verdad, no solo en la pantalla',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // POST /logout nunca había pasado por el smoke, y es de las poquísimas rutas que los
+      // ocho roles usan todos los días. Lo que se verifica es que la sesión quede muerta:
+      // la ruta borra las cookies, así que después de esto el mismo actor —con el mismo
+      // cookie jar— tiene que comportarse como un anónimo.
+      await client.post('logoutUser', '/login', { body: { email: state.cuentaEmail, password: 'SmokeTest1234' }, expectStatus: 200 });
+      await client.get('logoutUser', '/courses', { expectStatus: 200 });
+
+      await client.post('logoutUser', '/logout', { expectStatus: 200 });
+
+      const despues = await client.get('logoutUser', '/courses');
+      assert(despues.status === 302, `después de cerrar sesión /courses debería redirigir, dio ${despues.status}`);
+      assert((despues.headers.get('location') || '').includes('/login'),
+        `debería mandar al login, mandó a ${despues.headers.get('location')}`);
+    },
+  },
+  {
+    id: 'register-lookup-encuentra-por-dni',
+    title: 'El buscador por DNI del registro encuentra la cuenta y valida la entrada',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Es una ruta SIN autenticación: la usa quien no sabe con qué correo entrar. Por eso
+      // importa verificar también qué devuelve de más — solo nombre, correo y DNI.
+      const r = await client.get(null, `/register/lookup?dni=${state.cuentaDni}`, { expectStatus: 200 });
+      assert(Array.isArray(r.json?.users) && r.json.users.length >= 1, `debería encontrar la cuenta; devolvió ${JSON.stringify(r.json)}`);
+      const campos = Object.keys(r.json.users[0]).filter(k => k !== '_id');
+      assert(campos.every(k => ['name', 'email', 'dni'].includes(k)),
+        `una ruta sin login no debería devolver ${campos.join(', ')}`);
+
+      await client.get(null, '/register/lookup?dni=123',        { expectStatus: 400 });
+      await client.get(null, '/register/lookup?dni=99999999999', { expectStatus: 404 });
+    },
+  },
+  {
+    id: 'cuenta-propia-cleanup',
+    title: 'Limpieza: borra la cuenta de los ajustes propios',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      if (state.cuentaId) {
+        await client.post('admin', `/admin/users/${state.cuentaId}/delete`, { expectStatus: [200, 204] });
+      }
+    },
+  },
+
+  // ── Diagnóstico de subidas fallidas ───────────────────────────────────────
+  // El navegador le cuenta al servidor lo que el servidor NO puede ver: una subida que se
+  // cortó en camino no deja línea en el access log, porque nunca llegó. Lo que se prueba
+  // acá es la propiedad que hace útil todo el mecanismo — que el código que ve el usuario
+  // en pantalla alcance para encontrar el reporte entero en el log.
+  {
+    id: 'diagnostico-subida-queda-en-el-log',
+    title: 'Un reporte de subida fallida se puede encontrar después por su código',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const fs   = require('fs');
+      const path = require('path');
+      const codigo = 'SUB-' + RUN_ID.toUpperCase().replace(/[ILO]/g, 'X').slice(-6).padStart(6, 'Z');
+
+      await client.post('admin', '/diagnostico/subida', {
+        body: {
+          codigo,
+          ruta:     '/activities/xxx/upload-submission-file',
+          motivo:   'red',
+          archivo:  { nombre: 'consigna.pdf', bytes: 3145728, mime: 'application/pdf' },
+          enviados: 1048576,
+          ms:       12000,
+          conexion: '3g',
+          pantalla: '/courses/xxx',
+        },
+        expectStatus: 200,
+      });
+
+      // winston escribe a archivo de forma asíncrona: se espera un poco antes de leer.
+      const log = path.join(__dirname, '../../logs/combined.log');
+      let linea = null;
+      for (let i = 0; i < 20 && !linea; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        const txt = fs.readFileSync(log, 'utf8');
+        const idx = txt.lastIndexOf(codigo);
+        if (idx !== -1) {
+          const desde = txt.lastIndexOf('\n', idx) + 1;
+          const hasta = txt.indexOf('\n', idx);
+          try { linea = JSON.parse(txt.slice(desde, hasta === -1 ? undefined : hasta)); } catch {}
+        }
+      }
+      assert(linea, `el reporte ${codigo} debería quedar en combined.log`);
+      assert(linea.evento === 'subida_fallida', `debería marcarse con evento subida_fallida, tiene ${linea.evento}`);
+
+      // El porcentaje lo calcula el SERVIDOR, no el cliente: es el primer número que se mira
+      // y no puede depender de que el navegador lo haya hecho bien.
+      assert(linea.porcentaje === 33, `1 MB de 3 MB deberían ser 33%, dice ${linea.porcentaje}`);
+      // Y quién lo mandó sale de la sesión, no del body — que es lo único de todo el reporte
+      // en lo que se puede confiar.
+      assert(String(linea.usuario).includes('@'), `debería registrar al usuario de la sesión, dice ${linea.usuario}`);
+      assert(linea.rol, 'debería registrar el rol');
+      assert(linea.archivo?.nombre === 'consigna.pdf', 'debería registrar el archivo');
+    },
+  },
+  {
+    id: 'diagnostico-subida-no-se-le-puede-inundar-el-log',
+    title: 'El reporte se valida y se recorta: no se puede escribir cualquier cosa en el log',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const fs   = require('fs');
+      const path = require('path');
+
+      // Un código con otra forma se rechaza: sin eso, esto es un endpoint que escribe en el
+      // log lo que le manden.
+      await client.post('admin', '/diagnostico/subida', { body: { codigo: 'cualquier cosa' }, expectStatus: 400 });
+      await client.post('admin', '/diagnostico/subida', { body: {}, expectStatus: 400 });
+
+      // Y los textos se recortan. El log es la herramienta que se usa cuando algo se rompe
+      // de verdad: si desde el navegador se pueden escribir megabytes, cualquiera puede
+      // taparlo de basura y volverlo inservible justo cuando hace falta.
+      const codigo = 'SUB-ZZ' + String(Date.now()).slice(-4);
+      await client.post('admin', '/diagnostico/subida', {
+        body: {
+          codigo,
+          motivo:    'inventado',                    // fuera de la lista conocida
+          respuesta: 'A'.repeat(50000),
+          archivo:   { nombre: 'B'.repeat(5000), bytes: 'no es un número' },
+          status:    99999,
+          ms:        -1,
+        },
+        expectStatus: 200,
+      });
+
+      const log = path.join(__dirname, '../../logs/combined.log');
+      let linea = null;
+      for (let i = 0; i < 20 && !linea; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        const txt = fs.readFileSync(log, 'utf8');
+        const idx = txt.lastIndexOf(codigo);
+        if (idx !== -1) {
+          const desde = txt.lastIndexOf('\n', idx) + 1;
+          const hasta = txt.indexOf('\n', idx);
+          try { linea = JSON.parse(txt.slice(desde, hasta === -1 ? undefined : hasta)); } catch {}
+        }
+      }
+      assert(linea, 'el reporte debería registrarse igual, pero saneado');
+      assert(linea.respuesta.length <= 300, `la respuesta debería recortarse a 300, quedó en ${linea.respuesta.length}`);
+      assert(linea.archivo.nombre.length <= 200, `el nombre debería recortarse a 200, quedó en ${linea.archivo.nombre.length}`);
+      assert(linea.motivo === 'desconocido', `un motivo fuera de la lista debería quedar como desconocido, quedó ${linea.motivo}`);
+      assert(linea.archivo.bytes === undefined, 'un tamaño que no es número no debería registrarse');
+      assert(linea.status === 599, `el status debería toparse en 599, quedó ${linea.status}`);
+      assert(linea.ms === undefined, 'un tiempo negativo no debería registrarse');
+    },
+  },
+  {
+    id: 'diagnostico-subida-exige-sesion',
+    title: 'El reporte de subida no lo puede mandar cualquiera desde afuera',
+    async run({ client, assert }) {
+      // Sin sesión no se acepta: el valor del registro es saber QUIÉN lo sufrió, y un
+      // endpoint de escritura al log abierto a internet es un regalo.
+      const r = await client.post(null, '/diagnostico/subida', { body: { codigo: 'SUB-ABC123' } });
+      assert([302, 401, 403].includes(r.status), `debería rechazar al anónimo, dio ${r.status}`);
+    },
+  },
+
+  // ── El ciclo de un tema, de punta a punta ─────────────────────────────────
+  // Cuatro rutas que nunca habían corrido (offer, config, revoke del superadmin y respond
+  // del admin) y que además son la ÚNICA función del sistema que cruza los dos paneles: el
+  // superadmin ofrece, el admin de la escuela acepta. Probar cada ruta por separado no
+  // habría servido de mucho — lo que puede romperse acá es el pasamanos.
+  //
+  // Todos dejan la escuela como la encontraron: el último spec revoca, y revocar borra el
+  // tema del documento. Por eso se elige un slug que el usuario no usa a mano.
+  {
+    id: 'tema-superadmin-lo-ofrece',
+    title: 'El superadmin ofrece un tema a la escuela y le queda en estado "offered"',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state, assert }) {
+      // Login propio del actor acá: este bloque corre ANTES del spec "superadmin-login",
+      // que está mucho más abajo en el archivo. Mismo motivo (y mismo patrón) que en
+      // email-change-protected-account-blocked.
+      await client.post('superadmin', '/login', {
+        body: { email: env.SMOKE_SUPERADMIN_EMAIL, password: env.SMOKE_SUPERADMIN_PASSWORD },
+        expectStatus: 200,
+      });
+
+      // La escuela sale del propio admin logueado, no de una constante: el smoke corre
+      // contra el mirror local de cada uno.
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const admin = await mongo.db().collection('users').findOne({ email: env.SMOKE_ADMIN_EMAIL.toLowerCase() });
+        assert(admin?.school, 'el admin de prueba debería tener escuela');
+        state.temaSchoolId = String(admin.school);
+
+        // Si el tema ya estaba en la escuela, este spec lo pisaría y el revoke final se lo
+        // borraría al usuario. Se elige uno que no esté.
+        const escuela = await mongo.db().collection('schools').findOne({ _id: new ObjectId(state.temaSchoolId) });
+        const usados  = new Set((escuela.themes || []).map(t => t.slug));
+        state.temaSlug = ['carnaval', 'primavera', 'halloween'].find(s => !usados.has(s));
+        assert(state.temaSlug, 'la escuela ya tiene todos los temas candidatos: elegir otro para el test');
+      } finally { await mongo.close(); }
+
+      await client.post('superadmin', '/superadmin/themes/offer', {
+        body: { schoolId: state.temaSchoolId, slug: state.temaSlug }, expectStatus: 200,
+      });
+
+      const pantalla = await client.get('admin', '/admin/theme', { expectStatus: 200 });
+      assert((pantalla.text || '').includes(state.temaSlug),
+        `la pantalla de Tema del admin debería mostrar el tema ofrecido (${state.temaSlug})`);
+    },
+  },
+  {
+    id: 'tema-rechaza-un-slug-que-no-existe',
+    title: 'Ofrecer un tema que no está en el catálogo se rechaza con 400',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.post('superadmin', '/superadmin/themes/offer', {
+        body: { schoolId: state.temaSchoolId, slug: 'tema-inventado' }, expectStatus: 400,
+      });
+    },
+  },
+  {
+    id: 'tema-el-admin-lo-acepta',
+    title: 'El admin acepta el tema ofrecido y queda en "accepted"',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state, assert }) {
+      await client.post('admin', '/admin/theme/respond', {
+        body: { slug: state.temaSlug, action: 'accept' }, expectStatus: 200,
+      });
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const escuela = await mongo.db().collection('schools').findOne({ _id: new ObjectId(state.temaSchoolId) });
+        const t = (escuela.themes || []).find(x => x.slug === state.temaSlug);
+        assert(t?.status === 'accepted', `el tema debería quedar accepted, quedó ${t?.status}`);
+      } finally { await mongo.close(); }
+    },
+  },
+  {
+    id: 'tema-el-admin-no-toca-otra-escuela',
+    title: 'El admin solo responde por SU escuela',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state, assert }) {
+      // La ruta filtra por res.locals.user.school y no acepta un schoolId del body. Se
+      // verifica mandándoselo igual: si algún día alguien lo lee del body, esto lo caza.
+      assert(state.temaSlug, 'falta el tema del setup');
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const otra = await mongo.db().collection('schools').findOne({ _id: { $ne: new ObjectId(state.temaSchoolId) } });
+        if (!otra) return; // mirror con una sola escuela: no hay nada que verificar
+        const antes = JSON.stringify(otra.themes || []);
+
+        await client.post('admin', '/admin/theme/respond', {
+          body: { slug: state.temaSlug, action: 'reject', schoolId: String(otra._id) }, expectStatus: 200,
+        });
+
+        const despues = await mongo.db().collection('schools').findOne({ _id: otra._id });
+        assert(JSON.stringify(despues.themes || []) === antes,
+          'responder con el schoolId de otra escuela en el body no debería tocarla');
+      } finally { await mongo.close(); }
+    },
+  },
+  {
+    id: 'tema-superadmin-lo-configura',
+    title: 'El superadmin cambia la configuración de un tema ya aceptado',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state, assert }) {
+      await client.post('superadmin', '/superadmin/themes/config', {
+        body: { schoolId: state.temaSchoolId, slug: state.temaSlug, startDate: '2030-01-01', endDate: '2030-01-31' },
+        expectStatus: 200,
+      });
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const escuela = await mongo.db().collection('schools').findOne({ _id: new ObjectId(state.temaSchoolId) });
+        const t = (escuela.themes || []).find(x => x.slug === state.temaSlug);
+        assert(String(t.startDate).startsWith('2030-01-01') || new Date(t.startDate).getUTCFullYear() === 2030,
+          `debería haber guardado la fecha de inicio, guardó ${t.startDate}`);
+        assert(t.status === 'accepted', 'configurar no debería cambiarle el estado');
+      } finally { await mongo.close(); }
+
+      // Y sobre un tema que la escuela no tiene, 404.
+      await client.post('superadmin', '/superadmin/themes/config', {
+        body: { schoolId: state.temaSchoolId, slug: 'dia-bandera-que-no-tiene' }, expectStatus: 404,
+      });
+    },
+  },
+  {
+    id: 'tema-superadmin-lo-revoca',
+    title: 'Revocar saca el tema de la escuela y deja todo como estaba',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state, assert }) {
+      await client.post('superadmin', '/superadmin/themes/revoke', {
+        body: { schoolId: state.temaSchoolId, slug: state.temaSlug }, expectStatus: 200,
+      });
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const escuela = await mongo.db().collection('schools').findOne({ _id: new ObjectId(state.temaSchoolId) });
+        assert(!(escuela.themes || []).some(x => x.slug === state.temaSlug),
+          'el tema revocado debería haber desaparecido de la escuela');
+      } finally { await mongo.close(); }
+    },
+  },
+
   // ── Regresión: invalidación de cache al deshabilitar un usuario ──────────
   {
     id: 'cache-invalidation-on-disable',
@@ -2849,6 +3322,579 @@ const specs = [
       await client.get('superadmin', '/superadmin/suggestions?page=999', { expectStatus: 200 });
     },
   },
+  // ── Acciones masivas del superadmin ───────────────────────────────────────
+  // Estas dos rutas nunca habían pasado por el smoke, y era justo ahí donde el sistema
+  // tenía la única mutación que escribía sin validar: `updateMany` NO corre los
+  // validadores del schema salvo que se le pida (`runValidators`), y las vías de a uno sí
+  // lo hacen. O sea que la misma operación aceptaba por lote exactamente lo que rechazaba
+  // de a uno — y con `role`, lo que se escribía era un valor fuera del enum.
+  {
+    id: 'bulk-setup-usuario',
+    title: 'Setup: un usuario descartable para las acciones masivas',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const email = `smoke.bulk.${RUN_ID}@example.com`;
+      const r = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke Bulk ${RUN_ID}`, email, password: 'SmokeTest1234', role: 'student', dni: dniSmoke(70) },
+        expectStatus: 201,
+      });
+      state.bulkUserId    = r.json.user._id;
+      state.bulkUserEmail = email;
+      state.bulkSchoolId  = r.json.user.school;
+      assert(state.bulkSchoolId, 'el alta por el panel de admin debería dejar al usuario con la escuela del admin');
+    },
+  },
+  {
+    id: 'bulk-role-rechaza-rol-invalido',
+    title: 'Cambiar roles en lote a un valor fuera del enum se rechaza con 400 y no toca la base',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env, assert }) {
+      // Verificado en rojo: sin la validación, esto contesta 200 {"ok":true,"updated":1} y
+      // deja `role: "DIRECTOR_SUPREMO"` escrito en la base. No es escalada de privilegios
+      // —ningún middleware reconoce ese rol, así que el usuario queda con los permisos
+      // mínimos— pero TAPIA la cuenta: cualquier ruta que haga `.save()` sobre ese
+      // documento revalida el enum y explota. En concreto, el dueño de la cuenta deja de
+      // poder cambiar su propia contraseña (500), y no hay nada en la UI que lo explique.
+      const r = await client.post('superadmin', '/superadmin/users/bulk-role', {
+        body: { userIds: [state.bulkUserId], role: 'DIRECTOR_SUPREMO' },
+        expectStatus: 400,
+      });
+      assert(/rol/i.test(r.json?.error || ''), `el error debería nombrar el rol; fue ${JSON.stringify(r.json)}`);
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const u = await mongo.db().collection('users').findOne({ _id: new ObjectId(state.bulkUserId) });
+        assert(u.role === 'student', `el rol en la base debería seguir siendo student, es "${u.role}"`);
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'bulk-role-invalido-no-tapia-la-cuenta',
+    title: 'Tras el rechazo, el dueño de la cuenta sigue pudiendo cambiar su contraseña',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Es la consecuencia REAL del bug, y por eso se verifica acá y no en el spec de
+      // arriba: un rol fuera del enum no se nota hasta que alguien toca el documento con
+      // `.save()`, y entonces falla algo que no tiene nada que ver con roles.
+      const PASS = 'SmokeTest1234';
+      await client.post('bulkUser', '/login', { body: { email: state.bulkUserEmail, password: PASS }, expectStatus: 200 });
+      const cambio = await client.post('bulkUser', '/courses/profile/change-password', {
+        body: { currentPassword: PASS, newPassword: PASS + 'X' },
+        expectStatus: 200,
+      });
+      assert(cambio.json?.ok, 'debería poder cambiar su contraseña');
+      // Se la devuelve, que los specs de más abajo no saben de esto.
+      await client.post('bulkUser', '/courses/profile/change-password', {
+        body: { currentPassword: PASS + 'X', newPassword: PASS }, expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'bulk-role-cambia-el-rol-de-verdad',
+    title: 'Cambiar roles en lote con un rol válido sí funciona',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env, assert }) {
+      // El camino feliz también estaba sin cubrir: al agregar la validación hay que
+      // asegurarse de no haber cerrado la puerta de más.
+      await client.post('superadmin', '/superadmin/users/bulk-role', {
+        body: { userIds: [state.bulkUserId], role: 'teacher' }, expectStatus: 200,
+      });
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const u = await mongo.db().collection('users').findOne({ _id: new ObjectId(state.bulkUserId) });
+        assert(u.role === 'teacher', `el rol debería haber pasado a teacher, es "${u.role}"`);
+      } finally {
+        await mongo.close();
+      }
+      // Se lo deja como estaba: los specs de limpieza lo borran igual, pero un docente
+      // suelto en la escuela confunde si algo falla antes de llegar ahí.
+      await client.post('superadmin', '/superadmin/users/bulk-role', {
+        body: { userIds: [state.bulkUserId], role: 'student' }, expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'bulk-role-valida-la-lista',
+    title: 'El lote sin usuarios, sin rol o solo con uno mismo se rechaza con 400',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.post('superadmin', '/superadmin/users/bulk-role', { body: { userIds: [], role: 'teacher' }, expectStatus: 400 });
+      await client.post('superadmin', '/superadmin/users/bulk-role', { body: { userIds: [state.bulkUserId] },   expectStatus: 400 });
+    },
+  },
+  {
+    id: 'role-de-a-uno-rechaza-con-400',
+    title: 'Un rol inválido de a uno devuelve 400, no 500',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // La vía de a uno SÍ rechazaba el rol inválido (tiene runValidators: true), pero el
+      // ValidationError caía en el catch genérico y salía como 500 "Error del servidor":
+      // un error de datos del que pide, contado como una falla del servidor. Ensucia el
+      // error.log —que es donde se mira cuando algo se rompe de verdad— y no le dice nada
+      // al que está del otro lado.
+      const r = await client.post('superadmin', `/superadmin/users/${state.bulkUserId}/role`, {
+        body: { role: 'DIRECTOR_SUPREMO' }, expectStatus: 400,
+      });
+      assert(/rol/i.test(r.json?.error || ''), `el error debería nombrar el rol; fue ${JSON.stringify(r.json)}`);
+    },
+  },
+  {
+    id: 'role-de-a-uno-del-admin-rechaza-con-400',
+    title: 'Lo mismo desde el panel de admin: rol inválido = 400',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Misma ruta, otro router: /admin/users/:id/role tenía el mismo catch genérico.
+      const r = await client.post('admin', `/admin/users/${state.bulkUserId}/role`, {
+        body: { role: 'DIRECTOR_SUPREMO' }, expectStatus: 400,
+      });
+      assert(/rol/i.test(r.json?.error || ''), `el error debería nombrar el rol; fue ${JSON.stringify(r.json)}`);
+    },
+  },
+  {
+    id: 'bulk-school-rechaza-escuela-inexistente',
+    title: 'Asignar en lote una escuela que no existe se rechaza y no deja usuarios huérfanos',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env, assert }) {
+      // Verificado en rojo: contestaba 200 {"ok":true,"updated":1} y dejaba al usuario
+      // apuntando a un ObjectId que no es ninguna escuela. Es la misma clase de referencia
+      // colgada que en agosto tiró abajo /admin/courses con un 500 (Course.owner apuntando
+      // a un usuario borrado): no rompe nada el día que se hace, rompe meses después en
+      // una pantalla que no tiene nada que ver.
+      const { MongoClient, ObjectId } = require('mongodb');
+      const fantasma = String(new ObjectId());
+      await client.post('superadmin', '/superadmin/users/bulk-school', {
+        body: { userIds: [state.bulkUserId], schoolId: fantasma }, expectStatus: 404,
+      });
+
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const u = await mongo.db().collection('users').findOne({ _id: new ObjectId(state.bulkUserId) });
+        assert(String(u.school) === String(state.bulkSchoolId),
+          `el usuario debería seguir en su escuela, quedó en ${u.school}`);
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'school-de-a-uno-rechaza-escuela-inexistente',
+    title: 'Lo mismo de a uno: una escuela inexistente devuelve 404',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const { ObjectId } = require('mongodb');
+      await client.post('superadmin', `/superadmin/users/${state.bulkUserId}/school`, {
+        body: { schoolId: String(new ObjectId()) }, expectStatus: 404,
+      });
+    },
+  },
+  {
+    id: 'bulk-school-asigna-y-desasigna',
+    title: 'Asignar en lote una escuela real y desasignarla sí funciona',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env, assert }) {
+      const { MongoClient, ObjectId } = require('mongodb');
+      const leerEscuela = async () => {
+        const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+        try {
+          await mongo.connect();
+          const u = await mongo.db().collection('users').findOne({ _id: new ObjectId(state.bulkUserId) });
+          return u.school;
+        } finally { await mongo.close(); }
+      };
+
+      // schoolId "" es el caso documentado de "sacarle la escuela": tiene que seguir
+      // pasando, es lo que distingue "no existe" de "ninguna".
+      await client.post('superadmin', '/superadmin/users/bulk-school', {
+        body: { userIds: [state.bulkUserId], schoolId: '' }, expectStatus: 200,
+      });
+      assert((await leerEscuela()) === null, 'schoolId vacío debería dejar al usuario sin escuela');
+
+      await client.post('superadmin', '/superadmin/users/bulk-school', {
+        body: { userIds: [state.bulkUserId], schoolId: state.bulkSchoolId }, expectStatus: 200,
+      });
+      assert(String(await leerEscuela()) === String(state.bulkSchoolId), 'debería haber vuelto a su escuela');
+    },
+  },
+  {
+    id: 'bulk-cleanup-usuario',
+    title: 'Limpieza: borra el usuario de las acciones masivas',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      if (state.bulkUserId) {
+        await client.post('admin', `/admin/users/${state.bulkUserId}/delete`, { expectStatus: [200, 204] });
+      }
+    },
+  },
+
+  // ── Altas y pantallas que nunca habían corrido ────────────────────────────
+  // El resto de la zona ciega: escuelas, el alta del superadmin, el catálogo de materias,
+  // las plantillas de importación y tres GET que el frontend llama por su cuenta. Ninguna
+  // es sofisticada; el valor está en que ahora existen y cualquier cambio las despierta.
+  {
+    id: 'superadmin-crea-dos-escuelas',
+    title: 'Se pueden crear DOS escuelas seguidas (la plataforma es multiescuela)',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // Verificado en rojo: la SEGUNDA escuela que se crea en una base falla con
+      // 400 "Ya existe una escuela con ese nombre" — y el nombre no tiene nada que ver.
+      //
+      // El culpable es el índice `{ inviteToken: 1 }, { unique: true, sparse: true }` de
+      // models/School.js contra el `default: null` del mismo campo. `sparse` saltea los
+      // documentos donde el campo NO ESTÁ; uno que vale `null` sí está y sí se indexa. Como
+      // toda escuela nace con `inviteToken: null`, la segunda choca con la primera. El
+      // manejador del error 11000 de la ruta traduce cualquier duplicado a "ese nombre", que
+      // es justo el lugar equivocado donde mirar.
+      //
+      // Por eso el test crea DOS y no una: con una sola, esto pasa siempre (no hay con qué
+      // chocar) y el bug queda invisible. Es lo que lo mantuvo escondido — en la base de
+      // producción hay una sola escuela, así que el botón "Nueva escuela" nunca funcionó y
+      // nadie lo supo.
+      await client.get('superadmin', '/superadmin/schools/create', { expectStatus: 200 });
+
+      const creadas = [];
+      try {
+        for (const sufijo of ['A', 'B']) {
+          const nombre = `Escuela Smoke ${RUN_ID} ${sufijo}`;
+          const r = await client.post('superadmin', '/superadmin/schools/create', {
+            body: { name: nombre, description: 'creada por el smoke', color: '#0d7377' },
+            expectStatus: 201,
+          });
+          creadas.push(r.json.school._id);
+          assert(r.json.school.slug, 'el slug lo genera el hook pre-validate del model: debería venir');
+        }
+
+        // Se abre el perfil: es la pantalla que rompía en producción cuando algún dato
+        // quedaba colgado, así que el alta y la apertura van juntas en el test.
+        await client.get('superadmin', `/superadmin/schools/${creadas[0]}`, { expectStatus: 200 });
+
+        // Y el nombre repetido DE VERDAD sigue dando 400 (índice único sobre `name`).
+        await client.post('superadmin', '/superadmin/schools/create', {
+          body: { name: `Escuela Smoke ${RUN_ID} A` }, expectStatus: 400,
+        });
+        // Sin nombre, la validación del schema también es 400.
+        await client.post('superadmin', '/superadmin/schools/create', { body: { description: 'sin nombre' }, expectStatus: 400 });
+      } finally {
+        for (const id of creadas) {
+          await client.post('superadmin', `/superadmin/schools/${id}/delete`, { expectStatus: [200, 204] });
+        }
+      }
+    },
+  },
+  {
+    id: 'superadmin-enlace-de-invitacion-va-y-viene',
+    title: 'Generar y revocar el enlace de invitación no deja la escuela sin poder convivir con otra',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // La otra mitad del mismo bug: revocar volvía a escribir `inviteToken: null`, así que
+      // una escuela que alguna vez tuvo enlace y lo perdió volvía a ocupar el casillero del
+      // índice y bloqueaba a la siguiente. Se prueba el ciclo completo sobre dos escuelas
+      // porque el choque solo existe DE A DOS.
+      const creadas = [];
+      try {
+        for (const sufijo of ['C', 'D']) {
+          const r = await client.post('superadmin', '/superadmin/schools/create', {
+            body: { name: `Escuela Invite ${RUN_ID} ${sufijo}`, color: '#0d7377' }, expectStatus: 201,
+          });
+          creadas.push(r.json.school._id);
+        }
+
+        // Genera enlace en las dos: dos tokens distintos conviven sin problema.
+        const urls = [];
+        for (const id of creadas) {
+          const r = await client.post('superadmin', `/superadmin/schools/${id}/invite`, { expectStatus: 200 });
+          assert(/\/register\/invite\/[a-f0-9]{48}$/.test(r.json?.inviteUrl || ''),
+            `debería devolver el enlace de invitación; devolvió ${JSON.stringify(r.json)}`);
+          urls.push(r.json.inviteUrl);
+        }
+        assert(urls[0] !== urls[1], 'cada escuela debería tener su propio token');
+
+        // El enlace abre el registro por invitación (ruta pública, sin sesión) y la pantalla
+        // muestra de qué escuela es.
+        const token = urls[0].split('/').pop();
+        const vivo = await client.get(null, `/register/invite/${token}`, { expectStatus: 200 });
+        assert((vivo.text || '').includes(`Escuela Invite ${RUN_ID} C`),
+          'la pantalla de invitación debería decir a qué escuela invita');
+
+        // Se revocan los dos. Es acá donde se reintroducía el choque.
+        for (const id of creadas) {
+          await client.post('superadmin', `/superadmin/schools/${id}/revoke-invite`, { expectStatus: 200 });
+        }
+
+        // El enlace viejo deja de servir. El GET contesta 200 A PROPÓSITO: la misma vista
+        // pinta la pantalla de "enlace inválido" (routes/auth.js pasa school:null), así que
+        // lo que hay que verificar es el CONTENIDO, no el código. El que sí corta con un
+        // error es el POST, que es el que crearía la cuenta.
+        const muerto = await client.get(null, `/register/invite/${token}`, { expectStatus: 200 });
+        assert((muerto.text || '').includes('Enlace inválido'),
+          'el enlace revocado debería mostrar la pantalla de enlace inválido');
+        assert(!(muerto.text || '').includes(`Escuela Invite ${RUN_ID} C`),
+          'y no debería seguir nombrando a la escuela');
+
+        const alta = await client.post(null, `/register/invite/${token}`, {
+          body: { name: 'Colado', email: `colado.${RUN_ID}@example.com`, password: 'SmokeTest1234', role: 'student', dni: dniSmoke(73) },
+          expectStatus: 400,
+        });
+        assert(/revocad|no es válido/i.test(alta.json?.error || ''),
+          `el alta por un enlace revocado debería explicarlo; dijo ${JSON.stringify(alta.json)}`);
+
+        // La prueba de fuego: con las dos revocadas, todavía se puede crear una tercera.
+        const tercera = await client.post('superadmin', '/superadmin/schools/create', {
+          body: { name: `Escuela Invite ${RUN_ID} E`, color: '#0d7377' }, expectStatus: 201,
+        });
+        creadas.push(tercera.json.school._id);
+      } finally {
+        for (const id of creadas) {
+          await client.post('superadmin', `/superadmin/schools/${id}/delete`, { expectStatus: [200, 204] });
+        }
+      }
+    },
+  },
+  {
+    id: 'superadmin-crea-usuario-exige-dni',
+    title: 'El alta del superadmin exige DNI y deja la cuenta sin escuela',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const email = `smoke.sacreate.${RUN_ID}@example.com`;
+
+      // El DNI es obligatorio en TODA alta desde 2026-07-30, y esta ruta es la que más fácil
+      // se olvida porque es la única fuera del panel de administración.
+      await client.post('superadmin', '/superadmin/users/create', {
+        body: { name: 'Smoke SA Create', email, password: 'SmokeTest1234', role: 'teacher' },
+        expectStatus: 400,
+      });
+
+      const r = await client.post('superadmin', '/superadmin/users/create', {
+        body: { name: 'Smoke SA Create', email, password: 'SmokeTest1234', role: 'teacher', dni: dniSmoke(72) },
+        expectStatus: 201,
+      });
+      try {
+        // Documentado en el backlog como trampa: el superadmin no tiene escuela, así que la
+        // cuenta nace con school:null y queda fuera de los paneles por escuela. No es un bug
+        // —es lo que hace la ruta— pero es exactamente el tipo de cosa que un test tiene que
+        // fijar, para que si algún día cambia, cambie a propósito.
+        assert(r.json.user.school == null,
+          `el alta del superadmin deja la cuenta sin escuela; vino school=${r.json.user.school}`);
+      } finally {
+        await client.post('superadmin', `/admin/users/${r.json.user._id}/delete`, { expectStatus: [200, 204] });
+      }
+    },
+  },
+  {
+    id: 'admin-crea-materia-en-el-catalogo',
+    title: 'El admin da de alta una materia del catálogo y el nombre repetido se rechaza',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      await client.get('admin', '/admin/subjects/create', { expectStatus: 200 });
+
+      const nombre = `Materia Catálogo ${RUN_ID}`;
+      const r = await client.post('admin', '/admin/subjects/create', {
+        body: { name: nombre, description: 'del smoke', color: '#795548' }, expectStatus: 201,
+      });
+      const creadas = [r.json.subject._id];
+      try {
+        // Un color fuera de la paleta del modelo sí se rechaza.
+        await client.post('admin', '/admin/subjects/create', {
+          body: { name: `${nombre} bis`, color: '#123456' }, expectStatus: 400,
+        });
+
+        // ⚠️ El nombre repetido NO se rechaza, y el test lo fija así a propósito.
+        // `routes/admin.js` tiene el manejador del error 11000 ("Ya existe una materia con
+        // ese nombre"), pero `subjects` no tiene ningún índice único que lo dispare: el
+        // único índice de la colección es `_id_`. O sea que ese catch es código muerto.
+        //
+        // NO se arregla acá porque el arreglo es un índice nuevo en la base de PRODUCCIÓN, y
+        // eso se avisa antes. Queda anotado en el backlog. Importa más de lo que parece:
+        // la relación Subject↔Course se resuelve por el TEXTO del nombre (deuda nº 16 del
+        // backlog), así que dos materias homónimas en la misma escuela hacen que el detalle
+        // de materia muestre cursos de la otra, sin ningún error a la vista.
+        const repetida = await client.post('admin', '/admin/subjects/create', {
+          body: { name: nombre }, expectStatus: 201,
+        });
+        creadas.push(repetida.json.subject._id);
+      } finally {
+        for (const id of creadas) {
+          await client.post('admin', `/admin/subjects/${id}/delete`, { expectStatus: [200, 204] });
+        }
+      }
+    },
+  },
+  {
+    id: 'import-plantilla-se-descarga',
+    title: 'Las dos plantillas de importación se descargan como Excel de verdad',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // Se mira el Content-Disposition y que pese algo: una plantilla que se genera mal
+      // suele salir con 200 y cero bytes, y así el admin baja un archivo que Excel no abre.
+      for (const [actor, ruta] of [['admin', '/admin/import/template'], ['superadmin', '/superadmin/import/template']]) {
+        const r = await client.get(actor, ruta, { expectStatus: 200 });
+        assert(/\.xlsx/.test(r.headers.get('content-disposition') || ''),
+          `${ruta} debería ofrecer un .xlsx; mandó ${r.headers.get('content-disposition')}`);
+        assert((r.byteLength || 0) > 1000, `${ruta} devolvió ${r.byteLength} bytes: la plantilla salió vacía`);
+      }
+    },
+  },
+  {
+    id: 'courses-divisions-lista-las-de-la-escuela',
+    title: 'El selector de cursos devuelve las divisiones de la escuela del usuario',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const r = await client.get('admin', '/courses/divisions', { expectStatus: 200 });
+      assert(Array.isArray(r.json?.divisions), `debería devolver { divisions: [] }; devolvió ${JSON.stringify(r.json).slice(0, 80)}`);
+      if (state.divisionName) {
+        assert(r.json.divisions.some(d => d.name === state.divisionName),
+          'la división de prueba debería estar en la lista');
+      }
+    },
+  },
+  {
+    id: 'available-templates-responde-siempre',
+    title: 'El selector de plantillas del docente contesta una lista, con el flag prendido o apagado',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // El contrato de esta ruta es "siempre una lista": con TASK_TEMPLATES_TEACHER_ENABLED
+      // apagado devuelve [] en vez de un error, justamente para que el frontend pueda
+      // llamarla sin preguntar por el flag. Si algún día devolviera 404, el formulario de
+      // crear actividad rompería en una escuela que no usa plantillas.
+      assert(state.courseId, 'falta el curso de prueba');
+      const r = await client.get('scopedTeacher', `/activities/available-templates?courseId=${state.courseId}`, { expectStatus: 200 });
+      assert(Array.isArray(r.json?.templates), `debería devolver { templates: [] }; devolvió ${JSON.stringify(r.json).slice(0, 80)}`);
+
+      // Sin courseId es 400 solo con el flag prendido; con el flag apagado la ruta corta
+      // antes y devuelve la lista vacía. Las dos son respuestas válidas: lo que no puede
+      // pasar es un 500.
+      const sinCurso = await client.get('scopedTeacher', '/activities/available-templates');
+      assert([200, 400].includes(sinCurso.status), `sin courseId debería ser 200 o 400, fue ${sinCurso.status}`);
+    },
+  },
+  {
+    id: 'upload-attachment-sube-y-respeta-permisos',
+    title: 'El docente pre-sube un PDF y un ajeno no puede pre-subir a su materia',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // El camino feliz de la pre-subida (la que usa /activities/new) nunca había corrido.
+      // Es la ruta por la que entra CADA adjunto de actividad del sistema.
+      assert(state.courseId, 'falta el curso de prueba');
+      const pdf = Buffer.concat([
+        Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n'),
+        Buffer.alloc(64 * 1024, 0x25), // '%' = comentario: sigue siendo un PDF válido
+      ]);
+
+      const fd = new FormData();
+      fd.append('file', new Blob([pdf], { type: 'application/pdf' }), 'consigna.pdf');
+      const r = await client.post('scopedTeacher', `/activities/upload-attachment?courseId=${state.courseId}`, {
+        form: fd, expectStatus: 200, timeoutMs: 30000,
+      });
+      assert(/^\/archivos\/.+\.pdf$/.test(r.json?.url || ''), `debería devolver la URL del archivo; devolvió ${JSON.stringify(r.json)}`);
+      assert(r.json.name === 'consigna.pdf', `debería conservar el nombre original; devolvió ${r.json.name}`);
+
+      // El alumno de la materia tampoco puede: la ruta pide canManage, no matrícula.
+      // Relogin por el mismo motivo que en submit-archivo-demasiado-grande-da-413: el spec
+      // de invalidación de cache le dejó el jar vacío, y un 302 al login haría pasar este
+      // chequeo por la razón equivocada (un anónimo tampoco entra, pero eso no prueba nada).
+      await client.post('scopedStudent', '/login', {
+        body: { email: state.scopedStudentEmail, password: 'SmokeTest1234' }, expectStatus: 200,
+      });
+      const fd2 = new FormData();
+      fd2.append('file', new Blob([pdf], { type: 'application/pdf' }), 'colada.pdf');
+      await client.post('scopedStudent', `/activities/upload-attachment?courseId=${state.courseId}`, {
+        form: fd2, expectStatus: 403, timeoutMs: 30000,
+      });
+
+      // Y un tipo de archivo fuera de la lista se rechaza con 400 explicando cuáles valen.
+      const fd3 = new FormData();
+      fd3.append('file', new Blob([Buffer.from('x')], { type: 'text/plain' }), 'notas.txt');
+      const malo = await client.post('scopedTeacher', `/activities/upload-attachment?courseId=${state.courseId}`, {
+        form: fd3, expectStatus: 400, timeoutMs: 30000,
+      });
+      assert(/PDF/i.test(malo.json?.error || ''), `debería decir qué formatos acepta; dijo ${JSON.stringify(malo.json)}`);
+    },
+  },
+  // ── Subidas: un error del usuario no es un error del servidor ─────────────
+  // multer corta la subida ANTES del handler (archivo muy grande, tipo no permitido) y para
+  // eso lanza un error. Las rutas que no lo interceptan lo dejan llegar al manejador global,
+  // que contesta 500 "Error del servidor (ref: ...)": el que sube se queda sin saber qué
+  // hizo mal, y el error.log —que es donde se mira cuando algo se rompe DE VERDAD— se llena
+  // de fallas que no son fallas. El patrón correcto ya existía en cuatro rutas
+  // (subirImagen, conArchivo, upload-attachment, el pre-upload de entregas); estas eran las
+  // que habían quedado afuera, y ninguna estaba en el smoke.
+  {
+    id: 'import-rechaza-archivo-que-no-es-excel',
+    title: 'Subir un .csv al importador devuelve 400 explicando el formato, no 500',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // Confundir el .csv del padrón con el .xlsx es EL error de dedo de esta pantalla.
+      for (const [actor, ruta] of [['admin', '/admin/import/upload'], ['superadmin', '/superadmin/import/upload']]) {
+        const fd = new FormData();
+        fd.append('file', new Blob([Buffer.from('col1,col2\n1,2\n')], { type: 'text/csv' }), 'padron.csv');
+        const r = await client.post(actor, ruta, { form: fd, expectStatus: 400, timeoutMs: 30000 });
+        assert(/xls/i.test(r.json?.error || ''),
+          `${ruta} debería decir qué formato espera; dijo ${JSON.stringify(r.json)}`);
+      }
+    },
+  },
+  {
+    id: 'import-rechaza-excel-demasiado-grande',
+    title: 'Un Excel que se pasa del tope devuelve 413 diciendo el tope, no 500',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const fd = new FormData();
+      fd.append('file', new Blob([Buffer.alloc(16 * 1024 * 1024, 0x41)]), 'enorme.xlsx');
+      const r = await client.post('admin', '/admin/import/upload', { form: fd, expectStatus: 413, timeoutMs: 60000 });
+      assert(/15 MB/.test(r.json?.error || ''),
+        `el error debería nombrar el tope; dijo ${JSON.stringify(r.json)}`);
+    },
+  },
+  {
+    id: 'submit-archivo-demasiado-grande-da-413',
+    title: 'Una entrega que se pasa del tope devuelve 413, no "Error del servidor"',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Es el caso que peor se ve: el alumno adjunta algo grande, espera la subida entera y
+      // al final recibe un error genérico con una referencia de soporte. multer corta antes
+      // que el handler, así que este 413 llega aunque la entrega estuviera cerrada por otro
+      // motivo (plazo vencido, reenvío no permitido) — el tamaño se evalúa primero.
+      assert(state.activityId, 'falta la actividad de prueba');
+      // Relogin: 'cache-invalidation-on-disable' corre antes que este spec y deja al alumno
+      // SIN cookie (deshabilitarlo hace que el middleware la borre; la cuenta se rehabilita
+      // pero la sesión no vuelve sola). Sin esto, todo lo que haga este actor de acá en
+      // adelante es un 302 al login, que se lee como una falla del endpoint y no lo es.
+      await client.post('scopedStudent', '/login', {
+        body: { email: state.scopedStudentEmail, password: 'SmokeTest1234' }, expectStatus: 200,
+      });
+
+      const fd = new FormData();
+      fd.append('files', new Blob([Buffer.alloc(21 * 1024 * 1024, 0x41)], { type: 'application/pdf' }), 'pesada.pdf');
+      const r = await client.post('scopedStudent', `/activities/${state.activityId}/submit`, {
+        form: fd, expectStatus: 413, timeoutMs: 60000,
+      });
+      assert(/20 MB/.test(r.json?.error || ''),
+        `el error debería nombrar el tope; dijo ${JSON.stringify(r.json)}`);
+    },
+  },
+  {
+    id: 'activity-create-archivo-demasiado-grande-da-413',
+    title: 'Crear una actividad con un adjunto pasado de tope devuelve 413, no 500',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      assert(state.courseId, 'falta el curso de prueba');
+      const fd = new FormData();
+      fd.append('courseId', state.courseId);
+      fd.append('title', `Actividad pesada ${RUN_ID}`);
+      fd.append('files', new Blob([Buffer.alloc(51 * 1024 * 1024, 0x41)], { type: 'application/pdf' }), 'gigante.pdf');
+      const r = await client.post('teacher', '/activities/create', {
+        form: fd, expectStatus: 413, timeoutMs: 120000,
+      });
+      assert(/50 MB/.test(r.json?.error || ''),
+        `el error debería nombrar el tope; dijo ${JSON.stringify(r.json)}`);
+    },
+  },
   {
     id: 'superadmin-monitor-disk',
     title: 'El monitor reporta el uso de disco y el desglose de lo almacenado',
@@ -2900,6 +3946,12 @@ const specs = [
       await client.get('admin', '/superadmin/backup', { expectStatus: [403, 302] });
       await client.get('admin', '/superadmin/backup/download', { expectStatus: [403, 302] });
       await client.get('admin', '/superadmin/backup/file-stats', { expectStatus: [403, 302] });
+      // El envío por FTP saca una copia COMPLETA de la base fuera del servidor, a un destino
+      // que elige quien llama. Es la ruta más sensible de toda la pantalla: si alguna vez se
+      // montara fuera del router protegido, sería una exfiltración con un solo POST.
+      await client.get('admin', '/superadmin/backup/ftp/config', { expectStatus: [403, 302] });
+      await client.post('admin', '/superadmin/backup/ftp/enviar', { body: {}, expectStatus: [403, 302] });
+      await client.post('admin', '/superadmin/backup/ftp/probar', { body: {}, expectStatus: [403, 302] });
     },
   },
   {
@@ -3034,6 +4086,85 @@ const specs = [
       const res = await client.post('superadmin', '/superadmin/backup/preview', { form: fd, expectStatus: 400 });
       assert(/users/.test(res.json?.error || ''),
         `el error debería nombrar la colección faltante, dijo: ${res.json?.error}`);
+    },
+  },
+
+  // ── Envío del backup por FTP ──────────────────────────────────────────────
+  // Estos specs NUNCA guardan un destino ni disparan un envío real, a propósito: correrían
+  // contra el ftp-destino.json de la máquina de desarrollo y le pisarían al dueño el destino
+  // que tenga configurado (la contraseña no se puede releer para dejarla como estaba). Por
+  // eso todos usan un usuario que no puede coincidir con ninguno guardado — así el chequeo
+  // de "es otro destino, escribí la contraseña" corta ANTES de tocar nada.
+  //
+  // La transferencia en sí se prueba en tests/unit/backupFtp.test.js, contra un servidor FTP
+  // de verdad levantado por el propio test.
+  {
+    id: 'backup-ftp-config-shape',
+    title: 'El destino FTP guardado se puede consultar sin que la contraseña vuelva al navegador',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('superadmin', '/superadmin/backup/ftp/config', { expectStatus: 200 });
+
+      assert(typeof res.json.tienePassword === 'boolean', 'falta el flag tienePassword');
+      assert(typeof res.json.puedeGuardarPassword === 'boolean', 'falta el flag puedeGuardarPassword');
+      assert(Array.isArray(res.json.modos), 'falta la lista de modos de conexión');
+
+      // Lo único que no puede pasar nunca: que la contraseña del FTP del dueño viaje al
+      // navegador, ni en claro ni cifrada.
+      const crudo = JSON.stringify(res.json);
+      assert(!/passwordCifrada/.test(crudo), 'se filtró la contraseña cifrada al navegador');
+      assert(!res.json.destino || !('password' in res.json.destino), 'se filtró la contraseña al navegador');
+    },
+  },
+  {
+    id: 'backup-ftp-config-rejects-invalid-host',
+    title: 'Guardar un destino FTP inválido devuelve 400 con un mensaje entendible',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // Falla en la validación, o sea ANTES de escribir el archivo: no pisa el destino real.
+      const res = await client.post('superadmin', '/superadmin/backup/ftp/config', {
+        body: { host: 'no es un host', usuario: 'x', modo: 'plano' }, expectStatus: 400,
+      });
+      assert(/no parece una IP/i.test(res.json?.error || ''),
+        `el error debería explicar qué está mal, dijo: ${res.json?.error}`);
+    },
+  },
+  {
+    id: 'backup-ftp-probar-traduce-el-error-de-conexion',
+    title: 'Probar un destino FTP que no existe devuelve 502 con una explicación accionable',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // Puerto 1 en localhost: nadie escucha ahí, así que el ECONNREFUSED es inmediato y el
+      // spec no queda esperando un timeout de red.
+      const res = await client.post('superadmin', '/superadmin/backup/ftp/probar', {
+        body: { ...FTP_INEXISTENTE, password: 'da-igual' }, expectStatus: 502,
+      });
+
+      const error = res.json?.error || '';
+      // 502 y no 400: la request estaba bien, lo que falló es la máquina del otro lado.
+      assert(/servidor FTP/i.test(error), `el error debería hablar del servidor FTP, dijo: ${error}`);
+      // Devolver "connect ECONNREFUSED 127.0.0.1:1" obligaría al dueño a googlearlo. La
+      // traducción es la mitad del valor de esta pantalla.
+      assert(!/ECONNREFUSED/.test(error), `se filtró el error crudo de Node: ${error}`);
+    },
+  },
+  {
+    id: 'backup-ftp-enviar-exige-contrasena-antes-de-empezar',
+    title: 'Enviar a un destino sin contraseña falla con 400 y no arranca ninguna transferencia',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // La ruta responde en streaming (NDJSON), así que los headers salen antes de saber si
+      // va a funcionar. Todo lo que se pueda detectar ANTES tiene que salir como status HTTP
+      // de verdad: si esto degradara a 200 + evento de error, un fallo de configuración
+      // pasaría por "envío iniciado" y encima habría armado el .tar.gz al pedo.
+      const res = await client.post('superadmin', '/superadmin/backup/ftp/enviar', {
+        body: FTP_INEXISTENTE, expectStatus: 400,
+      });
+
+      assert(/contraseña/i.test(res.json?.error || ''),
+        `el error debería pedir la contraseña, dijo: ${res.json?.error}`);
+      // Que la respuesta sea JSON y no el stream es parte de lo que se está fijando acá.
+      assert(res.json && !res.json.tipo, 'debería ser un error JSON, no un evento del stream');
     },
   },
 
@@ -4755,16 +5886,134 @@ const specs = [
       await client.get('jefe', `/jefatura/docentes/${state.scopedStudentId}`, { expectStatus: 403 });
     },
   },
+
+  // ── El jefe configura el contenido de sus secciones (/admin/secciones) ────────────────
+  // La pantalla es la MISMA que usa el admin, servida por routes/sections.js, que se monta
+  // aparte de /admin justamente para poder dejar entrar a este rol sin abrirle el panel.
+  // Lo que se prueba acá es dónde está la línea: puede tocar el contenido de LAS SUYAS, y
+  // nada más que eso.
+  {
+    id: 'jefatura-secciones-ve-solo-las-suyas',
+    title: 'En /admin/secciones ve su sección y NO las del resto de la escuela',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const ajena = await client.post('admin', '/admin/secciones/create', {
+        body: { name: `Sección Ajena ${RUN_ID}`, divisionIds: [state.jefDivOut], courseIds: [], headIds: [] },
+        expectStatus: 201,
+      });
+      state.seccionAjenaId = ajena.json.seccion._id;
+
+      const res = await client.get('jefe', '/admin/secciones', { expectStatus: 200 });
+      assert(res.text.includes(`Sección Smoke ${RUN_ID}`), 'debería listar la sección que tiene a cargo');
+      assert(!res.text.includes(`Sección Ajena ${RUN_ID}`),
+        'NO debería listar una sección de la que no es jefe — el nombre y el contenido tampoco son suyos');
+      assert(!res.text.includes('Nueva Sección'), 'no debería ofrecerle crear secciones');
+    },
+  },
+  {
+    id: 'jefatura-secciones-no-abre-una-ajena',
+    title: 'El formulario de una sección ajena devuelve 403 aunque se escriba la URL',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // Misma barrera que /jefatura/actividades/:id: que no aparezca en la grilla no impide
+      // escribir el id a mano. Si esto pasara, el POST de abajo también, y el jefe se
+      // quedaría con el alcance de otro.
+      await client.get('jefe', `/admin/secciones/${state.seccionAjenaId}/edit`, { expectStatus: 403 });
+      await client.post('jefe', `/admin/secciones/${state.seccionAjenaId}/edit`, {
+        body: { name: `Sección Ajena ${RUN_ID}`, divisionIds: [], courseIds: [], headIds: [] },
+        expectStatus: 403,
+      });
+    },
+  },
+  {
+    id: 'jefatura-secciones-no-crea-ni-borra',
+    title: 'No puede crear secciones nuevas ni borrar la suya',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // Crear sería otorgarse un alcance desde cero; borrar dejaría sin alcance también a
+      // los otros jefes que compartan la sección. Las dos siguen siendo del admin.
+      await client.get('jefe', '/admin/secciones/create', { expectStatus: 403 });
+      await client.post('jefe', '/admin/secciones/create', {
+        body: { name: `Sección Propia ${RUN_ID}`, divisionIds: [state.jefDivOut], courseIds: [], headIds: [] },
+        expectStatus: 403,
+      });
+      await client.post('jefe', `/admin/secciones/${state.seccionId}/delete`, { expectStatus: 403 });
+    },
+  },
+  {
+    id: 'jefatura-secciones-configura-la-suya',
+    title: 'Agrega un curso a su sección y el alcance cambia en el request siguiente',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // El corazón de la feature: lo que el jefe elige acá es lo que ve en Actividades.
+      // Antes de esto, la actividad de jefDivOut le daba 403 (spec de arriba).
+      await client.get('jefe', `/admin/secciones/${state.seccionId}/edit`, { expectStatus: 200 });
+
+      await client.post('jefe', `/admin/secciones/${state.seccionId}/edit`, {
+        body: {
+          name: `Sección Smoke ${RUN_ID}`,
+          divisionIds: [state.jefDivIn, state.jefDivOut], courseIds: [], headIds: [],
+        },
+        expectStatus: 200,
+      });
+
+      const res = await client.get('jefe', '/jefatura', { expectStatus: 200 });
+      assert(res.text.includes(`Actividad FUERA ${RUN_ID}`),
+        'el curso que acaba de sumar debería entrar al alcance sin esperar a que expire ningún cache');
+
+      // Y se deshace, para que los specs de abajo vean el escenario original.
+      await client.post('jefe', `/admin/secciones/${state.seccionId}/edit`, {
+        body: {
+          name: `Sección Smoke ${RUN_ID}`,
+          divisionIds: [state.jefDivIn], courseIds: [], headIds: [],
+        },
+        expectStatus: 200,
+      });
+      await client.get('jefe', `/jefatura/actividades/${state.jefActOut}`, { expectStatus: 403 });
+    },
+  },
+  {
+    id: 'jefatura-secciones-no-cambia-los-jefes',
+    title: 'Guardar sin jefes en el body no lo deja fuera de su propia sección',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // El formulario manda `headIds` siempre; para el jefe el servidor NO lo mira y conserva
+      // los que ya estaban. Si lo mirara, este POST —que es el que sale de su propia
+      // pantalla, donde la lista de jefes es de solo lectura— lo expulsaría de su sección.
+      await client.post('jefe', `/admin/secciones/${state.seccionId}/edit`, {
+        body: {
+          name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [],
+          headIds: [state.scopedTeacherId],   // ni siquiera tiene el rol jefe
+        },
+        expectStatus: 200,
+      });
+
+      const res = await client.get('jefe', '/admin/secciones', { expectStatus: 200 });
+      assert(res.text.includes(`Sección Smoke ${RUN_ID}`),
+        'debería seguir siendo jefe de su sección después de guardar');
+      assert(res.text.includes(jefe.name), 'debería seguir figurando él como jefe');
+      assert(!res.text.includes(teacher.name),
+        'no debería haber podido meter a otro usuario como jefe de la sección');
+    },
+  },
+
   {
     id: 'jefatura-no-entra-a-otros-paneles',
     title: 'No entra a Administración, Directivo ni Preceptoría, y no puede crear materias',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state }) {
-      await client.get('jefe', '/admin/users', { expectStatus: 403 });
-      await client.get('jefe', '/directivo',   { expectStatus: 403 });
-      await client.get('jefe', '/preceptor',   { expectStatus: 403 });
-      await client.get('jefe', '/admin/secciones', { expectStatus: 403 });
-      // Es un rol de SOLO LECTURA: no debe poder escribir por ninguna ruta de otro panel.
+      await client.get('jefe', '/admin/users',     { expectStatus: 403 });
+      await client.get('jefe', '/admin/divisions', { expectStatus: 403 });
+      await client.get('jefe', '/admin/courses',   { expectStatus: 403 });
+      await client.get('jefe', '/admin/import',    { expectStatus: 403 });
+      await client.get('jefe', '/admin/audit',     { expectStatus: 403 });
+      await client.get('jefe', '/directivo',       { expectStatus: 403 });
+      await client.get('jefe', '/preceptor',       { expectStatus: 403 });
+      // /admin/secciones es la ÚNICA excepción, y da 200 a propósito: la sirve
+      // routes/sections.js, montado aparte justamente para que el `requireAdmin` que cubre
+      // todo routes/admin.js —y que las líneas de arriba comprueban— se quede intacto.
+      await client.get('jefe', '/admin/secciones', { expectStatus: 200 });
+      // Fuera de sus propias secciones sigue sin poder escribir nada por ninguna ruta.
       await client.post('jefe', '/courses/create', {
         body: { name: `No debería crearse ${RUN_ID}`, divisionId: state.jefDivIn },
         expectStatus: 403,
@@ -4789,12 +6038,222 @@ const specs = [
         `el rol jefe no debe ser auto-asignable, quedó como ${res.json.user.role}`);
     },
   },
+
+  // Issue conocido nº 10 de agente.md. Un `:id` que no tiene forma de ObjectId hace lanzar
+  // CastError a findById, y de ahí salen DOS síntomas según cómo esté escrito el handler:
+  // con try/catch cae en el catch genérico y da 500; SIN try/catch —los GET de admin.js— el
+  // rechazo no lo captura nadie (Express 4) y el request queda COLGADO para siempre, con un
+  // unhandledRejection en el log y el navegador esperando. Por eso todos los pedidos de acá
+  // llevan `timeoutMs`: sin él, la ruta colgada no falla el spec, cuelga el corredor.
+  //
+  // Las rutas de escritura se prueban igual que las de lectura: la guarda contesta ANTES de
+  // tocar la base, así que ningún POST de esta lista puede modificar nada.
+  {
+    id: 'objectid-invalido-da-404',
+    title: 'Un :id con forma inválida da 404 en todos los routers (y no cuelga)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert, state }) {
+      // 'new' es el caso real que lo destapó: GET /admin/users/new no existe (la buena es
+      // /users/create) y caía en /users/:id. Los otros dos cubren las formas vecinas —
+      // 24 caracteres que no son hex, y un id de 23.
+      const malos = ['new', 'no-es-un-id', 'zzzzzzzzzzzzzzzzzzzzzzzz', '6a7472072ab622c54757700'];
+
+      const rutas = [
+        // routes/directivo.js — las 4 que ya estaban documentadas.
+        // Van con el actor 'admin' y no con 'directivo' a propósito: requireDirectivo acepta
+        // directivo, admin y superadmin, y el directivo del smoke ya lo borró su propia
+        // limpieza mucho antes de llegar acá (su cookie da 302 a /login, que es lo correcto).
+        // Atarse a ese fixture haría que este spec dependiera de dónde está puesto.
+        ['admin', 'GET',  id => `/directivo/courses/${id}`],
+        ['admin', 'GET',  id => `/directivo/students/${id}`],
+        ['admin', 'GET',  id => `/directivo/teachers/${id}`],
+        ['admin', 'GET',  id => `/directivo/divisions/${id}`],
+
+        // routes/admin.js
+        ['admin', 'GET',  id => `/admin/users/${id}`],
+        ['admin', 'POST', id => `/admin/users/${id}/divisions`],
+        ['admin', 'POST', id => `/admin/users/${id}/courses`],
+        ['admin', 'POST', id => `/admin/users/${id}/role`],
+        ['admin', 'POST', id => `/admin/users/${id}/toggle-active`],
+        ['admin', 'POST', id => `/admin/users/${id}/reset-password`],
+        ['admin', 'POST', id => `/admin/users/${id}/delete`],
+        ['admin', 'POST', id => `/admin/users/${id}/impersonate`],
+        ['admin', 'GET',  id => `/admin/courses/${id}/edit`],
+        ['admin', 'POST', id => `/admin/courses/${id}/edit`],
+        ['admin', 'POST', id => `/admin/courses/${id}/assign-teacher`],
+        ['admin', 'POST', id => `/admin/courses/${id}/co-teachers`],
+        ['admin', 'POST', id => `/admin/courses/${id}/delete`],
+        ['admin', 'GET',  id => `/admin/divisions/${id}/edit`],
+        ['admin', 'POST', id => `/admin/divisions/${id}/edit`],
+        ['admin', 'POST', id => `/admin/divisions/${id}/delete`],
+        ['admin', 'GET',  id => `/admin/subjects/${id}`],
+        ['admin', 'GET',  id => `/admin/subjects/${id}/edit`],
+        ['admin', 'POST', id => `/admin/subjects/${id}/edit`],
+        ['admin', 'POST', id => `/admin/subjects/${id}/delete`],
+
+        // routes/superadmin.js
+        ['superadmin', 'GET',    id => `/superadmin/schools/${id}`],
+        ['superadmin', 'GET',    id => `/superadmin/schools/${id}/edit`],
+        ['superadmin', 'POST',   id => `/superadmin/schools/${id}/edit`],
+        ['superadmin', 'POST',   id => `/superadmin/schools/${id}/delete`],
+        ['superadmin', 'POST',   id => `/superadmin/schools/${id}/invite`],
+        ['superadmin', 'POST',   id => `/superadmin/schools/${id}/revoke-invite`],
+        ['superadmin', 'POST',   id => `/superadmin/users/${id}/school`],
+        ['superadmin', 'POST',   id => `/superadmin/users/${id}/role`],
+        ['superadmin', 'POST',   id => `/superadmin/suggestions/${id}/reviewed`],
+        ['superadmin', 'POST',   id => `/superadmin/suggestions/${id}/respond`],
+        ['superadmin', 'DELETE', id => `/superadmin/suggestions/${id}`],
+
+        // routes/sections.js — arregladas el 2026-08-14, van acá para que no se pierda la guarda
+        ['admin', 'GET',  id => `/admin/secciones/${id}/edit`],
+        ['admin', 'POST', id => `/admin/secciones/${id}/edit`],
+        ['admin', 'POST', id => `/admin/secciones/${id}/delete`],
+
+        // routes/activities.js — con el docente, que es quien las usa. `requireAuth` alcanza:
+        // la guarda contesta antes de cualquier chequeo de permiso.
+        ['scopedTeacher', 'GET',    id => `/activities/course/${id}`],
+        ['scopedTeacher', 'GET',    id => `/activities/${id}/grades`],
+        ['scopedTeacher', 'POST',   id => `/activities/${id}/grade`],
+        ['scopedTeacher', 'DELETE', id => `/activities/${id}`],
+        ['scopedTeacher', 'PATCH',  id => `/activities/${id}/toggle-late`],
+        ['scopedTeacher', 'PUT',    id => `/activities/${id}`],
+        ['scopedTeacher', 'GET',    id => `/activities/${id}/staged-file/prueba.pdf`],
+        ['scopedTeacher', 'POST',   id => `/activities/${id}/upload-submission-file`],
+        ['scopedTeacher', 'POST',   id => `/activities/${id}/submit`],
+        ['scopedTeacher', 'GET',    id => `/activities/${id}/export-grades`],
+        ['scopedTeacher', 'GET',    id => `/activities/${id}/my-submission`],
+        ['scopedTeacher', 'GET',    id => `/activities/${id}/submissions`],
+        ['scopedTeacher', 'POST',   id => `/activities/${id}/view`],
+        ['scopedTeacher', 'GET',    id => `/activities/${id}/views`],
+
+        // routes/courses.js
+        ['scopedTeacher', 'GET',  id => `/courses/${id}`],
+        ['scopedTeacher', 'POST', id => `/courses/${id}/add-student`],
+        ['scopedTeacher', 'GET',  id => `/courses/${id}/gradebook`],
+        ['scopedTeacher', 'GET',  id => `/courses/${id}/export-students`],
+        ['scopedTeacher', 'GET',  id => `/courses/${id}/data`],
+        ['scopedTeacher', 'POST', id => `/courses/${id}/customize`],
+
+        // routes/announcements.js
+        ['scopedTeacher', 'GET',  id => `/announcements/course/${id}`],
+        ['scopedTeacher', 'POST', id => `/announcements/${id}/comment`],
+        ['scopedTeacher', 'PUT',  id => `/announcements/${id}`],
+        ['scopedTeacher', 'POST', id => `/announcements/${id}/delete`],
+
+        // routes/tasks.js — si TASK_TEMPLATES_ENABLED='false' el router ni se monta y la URL
+        // cae en el catch-all de /superadmin, que también da 404. El spec vale igual.
+        // 'new' queda excluido acá y solo acá: `/superadmin/tasks/new` ES una ruta real (el
+        // formulario de alta, routes/tasks.js:103) definida antes de `/:id`, así que
+        // contesta 200 con todo derecho. Lo mismo vale para `/activities/new`.
+        ['superadmin', 'GET',    id => `/superadmin/tasks/${id}`, ['new']],
+        ['superadmin', 'GET',    id => `/superadmin/tasks/${id}/edit`],
+        ['superadmin', 'GET',    id => `/superadmin/tasks/${id}/preview`],
+        ['superadmin', 'POST',   id => `/superadmin/tasks/${id}/preview-grade`],
+        ['superadmin', 'PUT',    id => `/superadmin/tasks/${id}`],
+        ['superadmin', 'POST',   id => `/superadmin/tasks/${id}/publish`],
+        ['superadmin', 'POST',   id => `/superadmin/tasks/${id}/archive`],
+        ['superadmin', 'POST',   id => `/superadmin/tasks/${id}/offer`],
+        ['superadmin', 'POST',   id => `/superadmin/tasks/${id}/revoke`],
+        ['superadmin', 'DELETE', id => `/superadmin/tasks/${id}`],
+
+        // routes/preceptor.js — con el admin por el mismo motivo que las de /directivo:
+        // requirePreceptor acepta preceptor, directivo, admin y superadmin, y el preceptor
+        // del smoke ya lo borró su propia limpieza antes de llegar acá.
+        ['admin', 'GET',  id => `/preceptor/divisions/${id}`],
+        ['admin', 'POST', id => `/preceptor/divisions/${id}/students`],
+        ['admin', 'GET',  id => `/preceptor/students/${id}`],
+        ['admin', 'POST', id => `/preceptor/students/${id}/edit`],
+        ['admin', 'POST', id => `/preceptor/students/${id}/unenroll`],
+        ['admin', 'POST', id => `/preceptor/students/${id}/move`],
+        ['admin', 'POST', id => `/preceptor/students/${id}/toggle-active`],
+        ['admin', 'GET',  id => `/preceptor/actividades/${id}/dia/2026-08-14`],
+
+        // routes/messages.js y routes/messagesInbox.js — con MESSAGES_ENABLED='false' el
+        // router contesta 404 igual, así que el spec no depende del flag.
+        ['superadmin',    'GET',    id => `/superadmin/messages/${id}`],
+        ['superadmin',    'POST',   id => `/superadmin/messages/${id}/reply`],
+        ['superadmin',    'PATCH',  id => `/superadmin/messages/${id}/replies`],
+        ['superadmin',    'DELETE', id => `/superadmin/messages/${id}`],
+        ['scopedStudent', 'POST',   id => `/messages/mine/${id}/read`],
+        ['scopedStudent', 'POST',   id => `/messages/mine/${id}/reply`],
+
+        // routes/suggestions.js
+        ['scopedStudent', 'POST', id => `/suggestions/mine/${id}/reply`],
+        ['scopedStudent', 'POST', id => `/suggestions/mine/${id}/read`],
+
+        // Las de abajo YA validaban antes de esta tanda (rooms por el router.use de
+        // cargarSala, asistencia por cargarDivision/cargarToma, jefatura inline). Van igual:
+        // el spec es la red que evita que se pierdan.
+        ['scopedTeacher', 'GET', id => `/courses/${id}/sala`],
+        ['scopedTeacher', 'GET', id => `/courses/${id}/sala/poll`],
+        ['admin',         'GET', id => `/preceptor/asistencia/${id}`],
+        ['admin',         'GET', id => `/preceptor/asistencia/toma/${id}/poll`],
+        ['jefe',          'GET', id => `/jefatura/actividades/${id}`],
+        ['jefe',          'GET', id => `/jefatura/docentes/${id}`],
+        // El botón "Dar asistencia" del alumno. Vive en el SEGUNDO router de
+        // routes/attendance.js (`alumnoRouter`, montado en /asistencia), que es justamente
+        // el que se saltea cualquier auditoría que busque rutas por `^router.`.
+        // Se prueba con UN solo id malo: detrás hay un limiter de 10 cada 5 minutos por
+        // usuario y el alumno del smoke ya gastó parte de su cupo en los specs de asistencia.
+        ['scopedStudent', 'POST', id => `/asistencia/${id}/presente`,
+          ['new', 'zzzzzzzzzzzzzzzzzzzzzzzz', '6a7472072ab622c54757700']],
+      ];
+
+      // Rutas con DOS parámetros: tienen que dar 404 tanto si el malo es el primero como si
+      // es el segundo. Validar solo el primero las dejaba rotas por el segundo.
+      const bueno = '6a7472072ab622c547577001';
+      const dosParams = [
+        ['admin',         'POST',   `/admin/courses/${bueno}/co-teachers/no-es-un-id/delete`],
+        ['admin',         'POST',   `/admin/courses/no-es-un-id/co-teachers/${bueno}/delete`],
+        ['scopedTeacher', 'DELETE', `/courses/${bueno}/students/no-es-un-id`],
+        ['scopedTeacher', 'DELETE', `/courses/no-es-un-id/students/${bueno}`],
+        ['scopedTeacher', 'POST',   `/courses/${bueno}/students/no-es-un-id/toggle-active`],
+        ['scopedTeacher', 'POST',   `/courses/no-es-un-id/students/${bueno}/toggle-active`],
+        // La sala ya validaba :mid y :uid por su cuenta; quedan cubiertos para que no se
+        // pierdan. Van con el curso REAL del smoke: con uno inexistente cortaría antes
+        // `cargarSala` con su propio 404 y estas dos no probarían nada.
+        ['scopedTeacher', 'DELETE', `/courses/${state.courseId}/sala/mensajes/no-es-un-id`],
+        ['scopedTeacher', 'POST',   `/courses/${state.courseId}/sala/silenciar/no-es-un-id`],
+      ];
+
+      const fallas = [];
+      // `excluidos` son los ids que en ESA ruta no son inválidos porque hay un segmento
+      // literal con ese nombre definido antes del `/:id`.
+      for (const [actor, metodo, armar, excluidos = []] of rutas) {
+        for (const malo of malos) {
+          if (excluidos.includes(malo)) continue;
+          const ruta = armar(malo);
+          try {
+            // fetch rechaza un GET con body, así que el cuerpo vacío va solo donde corresponde.
+            const res = await client.request(actor, metodo, ruta,
+              { ...(metodo === 'GET' ? {} : { body: {} }), timeoutMs: 5000 });
+            if (res.status !== 404) fallas.push(`${metodo} ${ruta} → ${res.status}`);
+          } catch (err) {
+            fallas.push(err.message);
+          }
+        }
+      }
+      for (const [actor, metodo, ruta] of dosParams) {
+        try {
+          const res = await client.request(actor, metodo, ruta, { body: {}, timeoutMs: 5000 });
+          if (res.status !== 404) fallas.push(`${metodo} ${ruta} → ${res.status}`);
+        } catch (err) {
+          fallas.push(err.message);
+        }
+      }
+
+      assert(fallas.length === 0,
+        `${fallas.length} ruta(s) no dieron 404 con un id inválido:\n      ` + fallas.join('\n      '));
+    },
+  },
   {
     id: 'cleanup-jefatura',
     title: 'Limpieza: borra la sección, el jefe, las materias y las divisiones del escenario',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state }) {
-      if (state.seccionId) await client.post('admin', `/admin/secciones/${state.seccionId}/delete`, { expectStatus: 200 });
+      for (const id of [state.seccionId, state.seccionAjenaId]) {
+        if (id) await client.post('admin', `/admin/secciones/${id}/delete`, { expectStatus: 200 });
+      }
       // Las materias van antes que las divisiones: una división con materias adentro no se
       // puede borrar. Y el docente titular tampoco, mientras siga a cargo de estas materias.
       for (const id of [state.jefCourseIn, state.jefCourseOut, state.jefCourseNueva]) {

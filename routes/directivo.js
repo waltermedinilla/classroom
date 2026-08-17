@@ -16,6 +16,9 @@ const { inicioVentanaSerie, etiquetasMeses, mesCorto } = require('../services/se
 // Salas en vivo: el mismo service que alimenta la sala y el panel de preceptoría.
 const liveRoom = require('../services/liveRoom');
 const { logDeRuta } = require('../middleware/route-log');
+// Guarda de forma del :id. Sin ella un id que no es ObjectId sale como 500 en vez de 404
+// (o deja el request colgado, en los handlers sin try/catch). Ver middleware/objectId.js.
+const { idMalo } = require('../middleware/objectId');
 
 const router = express.Router();
 router.use(requireAuth, requireDirectivo, sectionGuard('directivo'));
@@ -218,6 +221,7 @@ router.get('/courses', async (req, res) => {
 // y lista de alumnos con su tasa de entrega individual.
 router.get('/courses/:id', async (req, res) => {
   const school = res.locals.user.school;
+  if (idMalo(req, res, 'Curso no encontrado')) return;
   try {
     const course = await Course.findById(req.params.id)
       .populate('owner',    'name email active')
@@ -530,6 +534,7 @@ router.get('/students', async (req, res) => {
 /* ─── M4 · Perfil read-only de alumno ────────────────────────────────────── */
 router.get('/students/:id', async (req, res) => {
   const school = res.locals.user.school;
+  if (idMalo(req, res, 'Alumno no encontrado')) return;
   try {
     const student = await User.findById(req.params.id).select('_id name email dni active role school createdAt phone instagram facebook bio interests futureGoal');
     if (!student) return res.status(404).send('Alumno no encontrado');
@@ -821,6 +826,7 @@ router.get('/teachers', async (req, res) => {
 /* ─── M4 · Perfil read-only de docente ───────────────────────────────────── */
 router.get('/teachers/:id', async (req, res) => {
   const school = res.locals.user.school;
+  if (idMalo(req, res, 'Docente no encontrado')) return;
   try {
     const teacher = await User.findById(req.params.id).select('_id name email active role school createdAt phone instagram facebook bio interests futureGoal');
     if (!teacher) return res.status(404).send('Docente no encontrado');
@@ -1036,6 +1042,7 @@ router.get('/divisions', async (req, res) => {
 // y ~35 alumnos; paginar ahí sería ruido).
 router.get('/divisions/:id', async (req, res) => {
   const school = res.locals.user.school;
+  if (idMalo(req, res, 'División no encontrada')) return;
   try {
     const detalle = await getDivisionDetail(req.params.id);
     if (!detalle) return res.status(404).send('División no encontrada');

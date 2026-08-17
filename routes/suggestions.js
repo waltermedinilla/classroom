@@ -3,6 +3,9 @@ const Suggestion = require('../models/Suggestion');
 const { requireAuth } = require('../middleware/auth');
 const { logAudit }    = require('../middleware/audit');
 const { logDeRuta } = require('../middleware/route-log');
+// Guarda de forma del :id, en la primera línea de cada handler con parámetro.
+// Ver middleware/objectId.js y el issue conocido nº 10 de agente.md.
+const { idMalo } = require('../middleware/objectId');
 const { hilo, esperaAlEquipo, puedeResponderElUsuario, cuantosMensajes, MAX_MENSAJES } =
   require('../services/suggestionThread');
 
@@ -68,6 +71,7 @@ router.get('/mine', requireAuth, async (req, res) => {
 // entra por default a "Pendientes". Sin esto, una respuesta sobre un hilo ya respondido se
 // quedaría archivada en "Respondidas" y nadie la vería.
 router.post('/mine/:id/reply', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Sugerencia no encontrada')) return;
   try {
     const { text } = req.body;
     if (!text || !text.trim()) {
@@ -111,6 +115,7 @@ router.post('/mine/:id/reply', requireAuth, async (req, res) => {
 // POST /suggestions/mine/:id/read — el usuario marca una respuesta como leída
 // (se dispara al abrir el modal). Solo puede tocar SUS propias sugerencias.
 router.post('/mine/:id/read', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Sugerencia no encontrada')) return;
   try {
     const s = await Suggestion.findOne({ _id: req.params.id, user: req.userId }).select('readByUser');
     if (!s) return res.status(404).json({ error: 'Sugerencia no encontrada' });

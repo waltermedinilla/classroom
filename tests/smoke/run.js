@@ -29,13 +29,40 @@ if (!isLocal(BASE_URL) && process.env.SMOKE_ALLOW_REMOTE !== 'true') {
   process.exit(1);
 }
 
+// --only=<regex>: corre solo los specs cuyo id matchee. Es SOLO para desarrollo — la suite
+// entera tarda unos diez minutos y esperar eso para ver si un spec nuevo quedó en verde no
+// escala. Es una expresión regular y no un substring para poder pedir un grupo que no
+// comparte prefijo: --only='bulk|de-a-uno'.
+//
+// ⚠️ Cada spec puede depender del `state` que dejaron los anteriores (ids de curso, de
+// usuario, códigos). Un filtro que corte esa cadena hace fallar specs que en la corrida
+// completa pasan: eso NO es una regresión, es el filtro. Antes de dar algo por bueno, la
+// corrida que vale es la de siempre, sin flags.
+const soloArg = process.argv.find(a => a.startsWith('--only='));
+let SOLO = null;
+if (soloArg) {
+  const patron = soloArg.slice('--only='.length);
+  try { SOLO = new RegExp(patron); }
+  catch (e) { console.error(`\n--only=${patron} no es una expresión regular válida: ${e.message}\n`); process.exit(1); }
+}
+
+// Los dos logins que casi todo spec da por hechos. Se cuelan siempre en una corrida
+// filtrada: sin ellos los actores 'admin' y 'superadmin' no tienen cookie y absolutamente
+// todo devuelve 302 al login, que es un modo de fallar que no le enseña nada a nadie.
+const BOOTSTRAP = ['admin-login', 'superadmin-login'];
+
 async function main() {
   console.log(`\nSmoke test (run ${RUN_ID}) → ${BASE_URL}\n`);
+  if (SOLO) {
+    console.log(`⚠️  --only=${SOLO}: corrida PARCIAL, los specs dependen entre sí.`);
+    console.log('   Para validar de verdad, corré la suite completa sin el flag.\n');
+  }
   const client = new SmokeClient(BASE_URL);
   const state = {};
   const results = [];
 
   for (const spec of specs) {
+    if (SOLO && !SOLO.test(spec.id) && !BOOTSTRAP.includes(spec.id)) continue;
     const missingEnv = (spec.requiresEnv || []).filter(k => !process.env[k]);
     if (missingEnv.length) {
       results.push({ ...spec, status: 'SKIP', detail: `falta ${missingEnv.join(', ')}` });

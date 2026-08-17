@@ -28,6 +28,9 @@
       </p>
     </div>
 
+    <!-- Diagnóstico de subidas fallidas. Va ANTES del partial: su script lo usa al compartir
+         una imagen o un archivo en la sala. En course.ejs se incluye junto a course.js. -->
+    <script src="/js/subida-diagnostico.js"></script>
     <%- include('../partials/live-room') %>
   </main>
 </body>

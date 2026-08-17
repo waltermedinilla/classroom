@@ -31,7 +31,10 @@ const { cursosDisponibles, automatricular } = require('../services/selfEnroll');
 const { JOIN_BY_CODE_ACTIVO, unirPorCodigo } = require('../services/joinByCode');
 // Tope de materias por alumno: a partir de ahí el panel no le ofrece sumar más.
 const { MAX_MATERIAS_ALUMNO } = require('../services/enrollment');
-const { logDeRuta } = require('../middleware/route-log');
+const { logDeRuta, logRechazo } = require('../middleware/route-log');
+// Guarda de forma del :id, en la primera línea de cada handler con parámetro.
+// Ver middleware/objectId.js y el issue conocido nº 10 de agente.md.
+const { idMalo } = require('../middleware/objectId');
 
 const router = express.Router();
 
@@ -193,21 +196,33 @@ router.post('/self-enroll', requireAuth, async (req, res) => {
   }
 });
 
+// Quién puede crear una materia por esta ruta. Es una lista BLANCA, y eso es lo que
+// importa: antes era una lista negra de dos roles, así que todo lo que no estuviera
+// nombrado entraba — incluido el alumno. Crear una materia deja al que la crea como
+// `owner`, y `Course.isTeacher()` le da a partir de ahí calificar, publicar novedades y
+// agregar o sacar alumnos de esa materia. Un alumno con eso deja de ser alumno.
+//
+// Con la lista blanca, un rol nuevo en el enum de models/User.js queda denegado hasta que
+// alguien lo agregue acá a propósito (fail-closed, mismo criterio que el alcance del
+// preceptor). Los que quedan afuera y por qué:
+//   student   — la escalada de privilegios de arriba.
+//   teacher   — decisión del usuario (2026-08-14): **el docente no crea materias ni cursos**.
+//               Las da de alta el administrador desde /admin/courses/create, que además le
+//               pide el titular. La vista ya lo decía desde el 2026-07-25 (dashboard.ejs
+//               nunca le mostró el botón "Crear clase"); lo que faltaba era que el endpoint
+//               la acompañara. Los cursos (Division) ya los tenía cerrados: /admin/divisions
+//               entero está detrás de requireAdmin.
+//   preceptor — administra materias desde /preceptor, no las dicta.
+//   jefe      — su rol es de SOLO LECTURA; ser owner lo rompería.
+const ROLES_QUE_CREAN_MATERIAS = ['superadmin', 'admin', 'directivo', 'soe'];
+
 // POST /courses/create — Crea una nueva materia dentro de una división
 router.post('/create', requireAuth, async (req, res) => {
   try {
     const { name, divisionId, room } = req.body;
-    // Ni el preceptor ni el jefe de sección dictan materias: las administran o las miran
-    // desde su panel. Sin este chequeo podrían crear una materia y quedar como owner, lo
-    // que por isTeacher() les habilitaría calificar y gestionar alumnos de esa materia —
-    // en el caso del jefe, además, rompería la propiedad de que su rol es de SOLO LECTURA.
-    // Lo detectó el smoke `jefatura-no-entra-a-otros-paneles`.
-    //
-    // NOTA: esta ruta sigue sin validar el rol para el resto de los usuarios — un alumno
-    // logueado puede hacer el mismo POST. Es un agujero preexistente (está en el backlog):
-    // convertir esto en una lista blanca exige decidir antes si directivo y SOE conservan
-    // la posibilidad, que hoy la UI les ofrece.
-    if (['preceptor', 'jefe'].includes(res.locals.user?.role)) {
+    if (!ROLES_QUE_CREAN_MATERIAS.includes(res.locals.user?.role)) {
+      logRechazo(res, 403, 'rol sin permiso para crear materias',
+        { rol: res.locals.user?.role || null });
       return res.status(403).json({ error: 'Tu rol no puede crear materias' });
     }
     const school = res.locals.user?.school;
@@ -547,6 +562,7 @@ router.patch('/profile/about', requireAuth, async (req, res) => {
 
 // GET /courses/:id
 router.get('/:id', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada')) return;
   try {
     const course = await Course.findById(req.params.id)
       .populate('owner', 'name email')
@@ -613,6 +629,7 @@ router.get('/:id', requireAuth, async (req, res) => {
 
 // POST /courses/:id/add-student
 router.post('/:id/add-student', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada')) return;
   try {
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
@@ -652,6 +669,8 @@ router.post('/:id/add-student', requireAuth, async (req, res) => {
 
 // DELETE /courses/:id/students/:studentId
 router.delete('/:id/students/:studentId', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada')) return;
+  if (idMalo(req, res, 'Alumno no encontrado', { param: 'studentId' })) return;
   try {
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
@@ -691,6 +710,8 @@ router.delete('/:id/students/:studentId', requireAuth, async (req, res) => {
 
 // POST /courses/:id/students/:studentId/toggle-active
 router.post('/:id/students/:studentId/toggle-active', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada')) return;
+  if (idMalo(req, res, 'Alumno no encontrado', { param: 'studentId' })) return;
   try {
     const course = await Course.findById(req.params.id);
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
@@ -714,6 +735,7 @@ router.post('/:id/students/:studentId/toggle-active', requireAuth, async (req, r
 
 // GET /courses/:id/gradebook
 router.get('/:id/gradebook', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada', { como: 'json' })) return;
   try {
     const course = await Course.findById(req.params.id).populate('students', 'name email');
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
@@ -739,6 +761,7 @@ router.get('/:id/gradebook', requireAuth, async (req, res) => {
 
 // GET /courses/:id/export-students
 router.get('/:id/export-students', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada')) return;
   try {
     const course = await Course.findById(req.params.id).populate('students', 'name email dni active');
     if (!course) return res.status(404).send('Curso no encontrado');
@@ -771,6 +794,7 @@ router.get('/:id/export-students', requireAuth, async (req, res) => {
 
 // GET /courses/:id/data
 router.get('/:id/data', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Materia no encontrada', { como: 'json' })) return;
   try {
     const course = await Course.findById(req.params.id)
       .populate('owner', 'name email')
@@ -793,6 +817,7 @@ router.get('/:id/data', requireAuth, async (req, res) => {
 // con lo cual el agujero está cerrado por diseño. Este middleware queda igual: validar
 // antes de leer 8 MB de multipart sigue siendo lo correcto, y es defensa en profundidad.
 router.post('/:id/customize', requireAuth, async (req, res, next) => {
+  if (idMalo(req, res, 'Materia no encontrada')) return;
   try {
     // select incluye coTeachers: si solo trajéramos 'owner', isTeacher() no podría ver a
     // los co-docentes (this.coTeachers vendría undefined) y los rechazaría por error.

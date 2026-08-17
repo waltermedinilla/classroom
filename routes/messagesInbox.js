@@ -15,6 +15,9 @@ const { requireAuth }         = require('../middleware/auth');
 const { logAudit }            = require('../middleware/audit');
 const { messageReplyLimiter } = require('../middleware/rate-limits');
 const { logDeRuta } = require('../middleware/route-log');
+// Guarda de forma del :id, en la primera línea de cada handler con parámetro.
+// Ver middleware/objectId.js y el issue conocido nº 10 de agente.md.
+const { idMalo } = require('../middleware/objectId');
 
 const { hilo, esperaAlDestinatario, puedeResponderElUsuario, cuantosMensajes, MAX_MENSAJES } =
   require('../services/messageThread');
@@ -75,6 +78,7 @@ router.get('/mine', async (req, res) => {
 
 // POST /messages/mine/:recipientId/read — se dispara al abrir el modal, fire-and-forget.
 router.post('/mine/:recipientId/read', async (req, res) => {
+  if (idMalo(req, res, 'Mensaje no encontrado', { param: 'recipientId' })) return;
   try {
     const rec = await MessageRecipient.findOne({
       _id: req.params.recipientId, user: req.userId,
@@ -104,7 +108,12 @@ router.post('/mine/:recipientId/read', async (req, res) => {
 // A diferencia de las sugerencias, acá puede contestar de entrada: el mensaje inicial ya es
 // del equipo, así que siempre hay algo a lo que responder. La única puerta es el toggle que
 // eligió el remitente.
-router.post('/mine/:recipientId/reply', messageReplyLimiter, async (req, res) => {
+router.post('/mine/:recipientId/reply', (req, res, next) => {
+  // Antes del limitador a propósito: un id que ni siquiera puede existir no debería gastarle
+  // al usuario una de sus 10 respuestas por ventana.
+  if (idMalo(req, res, 'Mensaje no encontrado', { param: 'recipientId' })) return;
+  next();
+}, messageReplyLimiter, async (req, res) => {
   try {
     const text = (req.body.text || '').trim();
     if (!text)                   return res.status(400).json({ error: 'La respuesta no puede estar vacía' });

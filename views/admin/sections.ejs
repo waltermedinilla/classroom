@@ -31,22 +31,35 @@
   <%- include('../partials/header') %>
 
   <main class="main-content main-content-ancho">
-    <%- include('../partials/admin-nav', { activePage: 'sections' }) %>
+    <%# Esta pantalla la comparten dos paneles: el admin la ve como una solapa más de /admin
+        y el Jefe de Sección como una solapa de /jefatura. Cambia el nav, no la pantalla. %>
+    <% if (puedeAdministrar) { %>
+      <%- include('../partials/admin-nav', { activePage: 'sections' }) %>
+    <% } else { %>
+      <%- include('../partials/jefatura-nav', { activePage: 'secciones' }) %>
+    <% } %>
 
     <div class="dashboard-topbar">
       <div>
         <h2>Secciones</h2>
         <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
-          <%= secciones.length %> sección<%= secciones.length !== 1 ? 'es' : '' %> —
-          cada una es el alcance de sus Jefes de Sección: pueden ver las actividades de esas materias.
+          <% if (puedeAdministrar) { %>
+            <%= secciones.length %> sección<%= secciones.length !== 1 ? 'es' : '' %> —
+            cada una es el alcance de sus Jefes de Sección: pueden ver las actividades de esas materias.
+          <% } else { %>
+            <%= secciones.length %> sección<%= secciones.length !== 1 ? 'es' : '' %> a tu cargo —
+            elegí qué cursos completos y qué materias sueltas abarca cada una. Eso es lo que vas a ver en Actividades.
+          <% } %>
         </p>
       </div>
+      <% if (puedeAdministrar) { %>
       <div class="dashboard-actions">
         <a href="/admin/secciones/create" class="btn btn-primary">
           <span class="material-symbols-outlined">add</span>
           Nueva Sección
         </a>
       </div>
+      <% } %>
     </div>
 
     <div class="filter-bar">
@@ -65,13 +78,23 @@
     <% if (secciones.length === 0) { %>
       <div class="empty-state">
         <div class="empty-icon"><span class="material-symbols-outlined">groups</span></div>
-        <p><%= search ? 'No se encontraron secciones con ese nombre' : 'Todavía no hay secciones creadas' %></p>
-        <% if (!search) { %>
+        <% if (search) { %>
+          <p>No se encontraron secciones con ese nombre</p>
+        <% } else if (puedeAdministrar) { %>
+          <p>Todavía no hay secciones creadas</p>
           <p style="font-size:13px;color:var(--text-hint);max-width:520px;margin:8px auto 0">
             Una sección junta cursos completos y materias sueltas bajo un nombre. Quien la tenga a cargo
             ve las actividades que publican los docentes de esas materias, sin poder modificar nada.
           </p>
           <a href="/admin/secciones/create" class="btn btn-primary" style="margin-top:20px">Crear la primera sección</a>
+        <% } else { %>
+          <%# Fail-closed, igual que jefatura/no-scope: sin sección no se ve nada, y el jefe no
+              se puede crear una solo. Lo único útil que se le puede decir es a quién pedirla. %>
+          <p>Todavía no tenés ninguna sección a cargo</p>
+          <p style="font-size:13px;color:var(--text-hint);max-width:520px;margin:8px auto 0">
+            Las secciones las crea el administrador de la escuela y te asigna a las que vas a tener a cargo.
+            Una vez que aparezca acá, vos elegís qué cursos y qué materias abarca.
+          </p>
         <% } %>
       </div>
     <% } else { %>
@@ -139,8 +162,12 @@
               <div style="display:flex;gap:8px">
                 <a href="/admin/secciones/<%= s._id %>/edit" class="btn btn-outline" style="padding:6px 12px;font-size:13px">
                   <span class="material-symbols-outlined" style="font-size:16px">edit</span>
-                  Editar
+                  <%= puedeAdministrar ? 'Editar' : 'Configurar' %>
                 </a>
+                <%# Borrar es solo del admin: la sección puede estar compartida con otros jefes
+                    y borrarla los dejaría a todos sin alcance. El botón se esconde acá y el
+                    POST lo rechaza igual en routes/sections.js. %>
+                <% if (puedeAdministrar) { %>
                 <%# data-* y no onclick: el nombre lo escribe el admin y por acá pasaría a un
                     string de JS. Con el atributo, EJS lo escapa como cualquier otro texto. %>
                 <button class="btn btn-outline btn-borrar-seccion" style="padding:6px 12px;font-size:13px;color:#ea4335;border-color:#ea4335"
@@ -148,6 +175,7 @@
                   <span class="material-symbols-outlined" style="font-size:16px">delete</span>
                   Eliminar
                 </button>
+                <% } %>
               </div>
             </td>
           </tr>
