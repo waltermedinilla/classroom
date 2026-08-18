@@ -27,7 +27,7 @@
         <h2><%= subject.name %></h2>
         <p class="subject-profile-desc"><%= subject.description || 'Sin descripción' %></p>
         <p class="subject-profile-date">
-          Creada el <%= new Date(subject.createdAt).toLocaleDateString('es-ES', { day:'numeric', month:'long', year:'numeric' }) %>
+          Creada el <%= fmt.diaMesLargo(subject.createdAt) %>
         </p>
       </div>
       <div class="subject-profile-actions">

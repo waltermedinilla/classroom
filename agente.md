@@ -387,6 +387,91 @@ que deja usuarios de prueba sin borrar). Espaciar las corridas o limpiar a mano.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-18 — Toda la plataforma pasa a la hora de la escuela (y un reloj en el header)
+
+El servidor de producción corre en **UTC** y la escuela está en UTC−3. Cada vista que
+formateaba una fecha por su cuenta con `toLocaleDateString` mostraba, en producción,
+**tres horas de más**: vencimientos, entregas, calificaciones y auditoría. Y la otra mitad
+del problema estaba del lado del navegador — las máquinas del aula tienen cualquier zona
+configurada, así que el mismo vencimiento se veía distinto en cada pantalla.
+
+La sala en vivo ya lo había resuelto para sí misma el 2026-08-07. Esta pasada extiende esa
+solución al resto de la aplicación: **76 llamadas en 33 archivos**, medidas, no estimadas.
+
+#### Un solo dueño de la hora, dos caras
+
+`services/liveRoom.js` sigue siendo el único que construye `Intl.DateTimeFormat`. Se le
+sumaron las 7 formas que las vistas venían armando a mano (`diaMes`, `diaMesAnio`,
+`diaMesHora`, `diaMesAnioHora`, `diaMesLargo`, `diaMesLargoHora`, `horaSegundos`) y el
+objeto `fmt` completo se publica en `res.locals` desde `server.js`: **toda** vista lo tiene
+sin que ninguna ruta se acuerde de pasarlo.
+
+Para el navegador se agregó **`public/js/fecha.js`**, gemelo exacto de `fmt` con la misma
+API y los mismos textos. La zona no se decide ahí: llega en `window.SCHOOL_TZ` desde
+`partials/footer.ejs`, que la toma de `fmt.TZ`. Un test compara las 12 funciones una por una
+y falla si servidor y navegador imprimen distinto.
+
+| Antes | Ahora |
+|---|---|
+| `<%= a.dueDate.toLocaleDateString('es-AR', {…}) %>` | `<%= fmt.diaMesAnio(a.dueDate) %>` |
+| `new Date(act.dueDate).toLocaleDateString('es-ES', {…})` | `Fecha.diaMesHora(act.dueDate)` |
+
+**61 fechas convertidas.** Las **9 restantes no se tocaron y no son un olvido**:
+`total.toLocaleString('es-AR')` formatea un **número** con separadores de miles (`1.234`), no
+una fecha. Es la trampa del barrido y por eso la regla del test mira el receptor, no el nombre
+del método. Los 3 usos con `timeZone: 'UTC'` explícito tampoco se tocan: son fechas
+`YYYY-MM-DD` sin instante, donde la zona correcta *es* UTC.
+
+#### Dos bugs que el barrido destapó y no se hubieran visto hasta producción
+
+- **`fmt` no existe dentro de `routes/` ni de `services/`.** `res.locals` llega a las vistas,
+  no al código de servidor. Quedaron `fmt.fechaCorta(...)` en `routes/activities.js` (el CSV
+  de notas) y en `services/dbFixes.js`: `ReferenceError` en cuanto alguien pisara esa línea.
+  El del CSV está entre las **45 rutas sin test**, así que no lo hubiera visto ninguna suite.
+  Hay un test estático nuevo que lo prohíbe.
+- **`footer.ejs` usaba `Fecha.*` antes de cargar `fecha.js`.** El pie lo incluyen todas las
+  vistas: habría reventado el menú de usuario en **todas** las páginas. La carga se movió
+  arriba de todo y hay un test de orden.
+
+#### El reloj de la escuela
+
+Pedido del usuario: *"que aparezca la hora y la fecha, aunque sea chica, para que todos puedan
+referenciarse en ese horario"*. Va en el centro del header, debajo del nombre de la escuela.
+
+**La hora la pone el servidor, no el equipo.** El HTML trae `data-epoch` con el instante del
+render y el JS solo le suma el tiempo transcurrido, medido con **`performance.now()`** — que
+es monótono, así que una sincronización NTP a mitad de clase no corre el reloj (verificado en
+el navegador simulando un salto de 3 horas). Una máquina del aula con la hora mal configurada
+igual muestra la hora oficial, que es todo el punto de tener un reloj común. Ya sale escrito
+del servidor, así que se ve bien aunque el JS no llegue a correr, y el DOM se toca solo cuando
+cambia el minuto.
+
+En 375 px la fecha se oculta y queda solo la hora (el centro del header comparte ~127 px con
+el nombre de la escuela); la fecha completa sigue en el `title`. Medido: sin desborde.
+
+#### De paso: el superadmin no veía el nombre de la escuela
+
+Bug preexistente que el reloj hizo evidente. El header envolvía el nombre en
+`<% if (school) { %>`, y el **superadmin es el único usuario con `school: null`** — administra
+la plataforma, no una escuela. Resultado: el rol que más mira el header era el único sin
+nombre. Se sacó la condición; el texto es fijo a propósito (es el nombre de la plataforma, no
+el de la escuela en la base, que es "Escuela 4118 San José"). Para el resto de los roles no
+cambia nada. Fijado por el spec `superadmin-header-nombre-y-reloj`, que además comprueba que
+el reloj traiga `data-epoch` reciente — o sea, que la hora la siga poniendo el servidor.
+
+#### Tests
+
+`tests/unit/zonaHoraria.test.js`, **9 casos**, cada uno verificado fallando sin su arreglo:
+la regla del barrido, el instante UTC que tiene que dar 14:05 y no 17:05, la entrega de las
+23:30 que no puede cambiar de día, la paridad servidor/navegador, la fecha nula que da `''`,
+`fmt` en `res.locals`, el orden de carga en el pie, y los dos estáticos de alcance.
+
+Suites: **366 unitarios · 328 smoke · roles sin hallazgos · 17 de imágenes**.
+
+> ⚠️ **Nota de entorno**: `npm run test:unit` corre un proceso por archivo y en la máquina de
+> desarrollo se queda sin RAM (`ERR_OSSL_CRYPTO_MALLOC_FAILURE`, que parece una regresión y no
+> lo es). Correr `node --test --test-concurrency=1 tests/unit/*.test.js`.
+
 ### 2026-08-17 — Móvil, tercera pasada: directivo (y cinco páginas donde el menú no abría)
 
 Continuación de la revisión rol por rol, midiendo posiciones reales a 375 px. El panel del
@@ -3195,18 +3280,18 @@ Pedido del usuario: *"me gusta la manera que manejaste el calendario en el rol d
 ## Plan de Futuras Actualizaciones (Roadmap)
 
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`).
-> **Sincronizado con el backlog el 2026-08-17.** Suites de referencia a esa fecha: **328 smoke ·
-> 357 unitarios · matriz de roles sin hallazgos** (actualizado con "Actividades Diarias"). Lo que
-> se resuelve se saca de acá: si un renglón dice "pendiente", es porque lo sigue estando.
+> **Sincronizado con el backlog el 2026-08-18.** Suites de referencia a esa fecha: **328 smoke ·
+> 366 unitarios · 17 de imágenes · matriz de roles sin hallazgos**. Lo que se resuelve se saca
+> de acá: si un renglón dice "pendiente", es porque lo sigue estando.
 
 ### 🔴 Investigaciones abiertas
-- **Producción no carga a la mañana** (desde 2026-08-14). Descartados con evidencia: workers, memoria, Mongo, `EADDRINUSE` y rate limit. Hipótesis viva: el **Tailscale Funnel**, único camino de entrada y ya responsable de tres caídas con el mismo síntoma. Hay dos sondas midiendo (una local por cron, una externa) y `tools/watchdog.sh` mide las 6 capas. Falta leer los resultados y cerrar el caso; si confirma el Funnel, la conversación siguiente es servir la escuela por Caddy con dominio propio.
+- ~~**Producción no carga a la mañana**~~ **CERRADA el 2026-08-18: es el Tailscale Funnel.** El watchdog midió la semana del 11 al 17/08 y **todas** las fallas de la franja 6-11 son de capa 5/6 (`dns-funnel` o `funnel`): *"la aplicación está sana, pero el nombre público no resuelve desde internet"*. Adentro el servidor contesta en 1 ms con load 0,00 y 2,5 GB de 15 usados. Fallas por hora: 06:00 → 17/180 · 07:00 → 7 · 08:00 → 7 · 09:00 → 4 · 10:00 → 1 · 11:00 → 14. Son cortes intermitentes de 1-2 minutos, no una caída sostenida, lo que explica el *"después se normaliza"*. **El código no tiene nada que ver.** El parche conocido es `tailscale funnel reset && tailscale funnel --bg 3000`; el arreglo de fondo es **sacar el Funnel del camino**: la máquina ya corre `server-caddy-1` para otro proyecto, así que servir la escuela por un dominio propio detrás de Caddy es una opción concreta, no un rediseño. **Esa es la conversación siguiente.**
 - **Docentes reportan error al subir PDFs de ~3 MB** ("antes andaba"). Local no reproduce (1/3/5/10/25 MB dan 200 en <400 ms) y los topes nunca cambiaron, así que es de producción. Desde el 2026-08-15 hay con qué diagnosticarlo: pedir el código `SUB-XXXXXX` del cartel y correr `node tools/ver-subida.js <código>`. Falta el caso real.
 
 ### Mantenimiento de producción — código listo, falta ejecutar
-- **Correr el backfill de imágenes** (`optimize-existing-images.js`): ~198 MB históricos sin comprimir. ⚠️ Toca la base (reescribe URLs), va con backup + modo mantenimiento. Verificar primero que `sharp` esté instalado en el server. Ver el changelog de v1.0.7.
+- **Correr el backfill de imágenes** (`optimize-existing-images.js`): ~198 MB históricos sin comprimir. ⚠️ Toca la base (reescribe URLs), va con backup + modo mantenimiento. Ver el changelog de v1.0.7. ✅ **`sharp` ya está instalado en el servidor** (verificado el 2026-08-18): el único paso que falta es correr el backfill.
 - **Activar PostHog**: el código está completo y en modo no-op. Falta crear el proyecto en Cloud EU, cargar `POSTHOG_KEY` en el `.env` de producción y `pm2 reload --update-env`. Ver la sección "Analítica de producto".
-- **Instalar `ghostscript` en el servidor** para habilitar la compresión de PDFs del backup (315 MB de ahorro potencial). Sin él la feature degrada sola. Ver el changelog del 2026-08-08.
+- ~~**Instalar `ghostscript` en el servidor**~~ ✅ **HECHO** — verificado el 2026-08-18: `gs` está en `/usr/bin/gs`, así que la compresión de PDFs del backup ya está habilitada (315 MB de ahorro potencial). Falta usarla una vez y medir el ahorro real.
 - **Reflejar en producción la consolidación de materias duplicadas**: las 62 fusiones se aplicaron solo contra el espejo local. La vía acordada es backup local → restore en producción, y exige auditar de nuevo antes (comparar un backup fresco de producción contra el local, colección por colección).
 
 ### Cambios que tocan la BD de producción — avisar antes
@@ -3215,7 +3300,7 @@ Pedido del usuario: *"me gusta la manera que manejaste el calendario en el rol d
 - **Índice `{ course: 1, createdAt: -1 }` en `activities`**: no se agregó a propósito (el `{course:1, availableFrom:1}` cubre el prefijo). Es el candidato si el calendario del mes se nota lento con uso real.
 
 ### Correcciones / deuda técnica pendiente
-- **Fechas sin zona horaria fija fuera de la sala en vivo** (~40 lugares). La sala se arregló el 2026-08-07 con `TZ` fija en el servidor, pero el resto de la app sigue formateando con `toLocaleDateString`/`toLocaleTimeString`: unas en el navegador (zona del equipo del aula) y otras en el servidor sin zona (producción corre en UTC → **3 horas de más** en vencimientos, entregas y auditoría). Lo natural es exponer el `fmt` de `services/liveRoom.js` en `res.locals` y barrer las vistas. Es ancho y de bajo riesgo, pero toca muchas pantallas a la vez: **preguntar antes de encararlo**.
+- ~~**Fechas sin zona horaria fija fuera de la sala en vivo**~~ ✅ **RESUELTO el 2026-08-18** — barrido completo: 61 fechas migradas a `fmt` (servidor) y `Fecha` (navegador), fijado por `tests/unit/zonaHoraria.test.js`. Ver el changelog. Lo único que sigue formateando por su cuenta son **9 usos de `toLocaleString` sobre números** (separadores de miles), que no tienen nada que ver con la zona horaria.
 - **`generalLimiter` cuenta por IP, no por usuario** (`server.js`): la escuela entera sale por una sola IP pública (NAT). Se subió el cupo a 12000/15min el 2026-08-13 como parche; la mejora de fondo es adelantar `cookieParser` y verificar el JWT en el `keyGenerator`, como ya hacen los limiters de `middleware/rate-limits.js`. Ojo: el techo efectivo es ~2x por los 2 workers, cada uno con su `MemoryStore`.
 - **Escribir `specs/sala-adjuntos.spec.md` y modularizar `routes/rooms.js`** (~700 líneas, mezcla la sala con toda la mecánica de adjuntos). Pedido explícito del usuario al implementarlos derecho. Lo natural es sacar el almacenamiento a `services/roomAttachments.js`; `arreglarNombre()` está duplicado a propósito con `routes/activities.js` y ahí es candidato a unificarse.
 - **`backups/` no tiene retención ni UI**: crece sin límite (2,8 GB hoy) y no se ve desde ningún panel. Cada `/restore` le suma un tarball del tamaño del backup completo.
@@ -3227,7 +3312,7 @@ Pedido del usuario: *"me gusta la manera que manejaste el calendario en el rol d
 - **No se puede BORRAR una nota ya puesta** desde la UI: se puede vaciar la devolución, pero no la nota. Con `points` opcional (2026-08-13) ahora sería fácil de agregar.
 - **XSS de baja severidad preexistente**: `renderTeacherDetail` interpola `sg.feedback` y `act.description` sin escapar. Es contenido del propio docente visto por él, pero el feedback ahora lo escribe más gente.
 - **Etapa 2 de permisos por rol**: las pestañas de adentro de la materia (Novedades, Actividades, Calificaciones, Mis notas, Personas) son tabs client-side sin URL propia, así que ocultarlas no bloquearía nada. Cumplir "oculta y bloquea" ahí exige `requireSection` endpoint por endpoint más un `panel:'course'` en `config/sections.js`. Es lo único que le daría a **Docente** y **Alumno** algo real que configurar. Descartado para la v1 por decisión del usuario.
-- **Revisión de UI móvil**: hechos alumno, docente y preceptor (2026-08-17). Faltan **jefe, directivo, admin y superadmin** — el header y el menú lateral ya quedaron resueltos para todos, pero no las vistas propias de cada rol.
+- ~~**Revisión de UI móvil**~~ ✅ **COMPLETA el 2026-08-17**: los 7 roles con panel propio (alumno, docente, preceptor, directivo, jefe, admin, superadmin); `soe` no tiene panel. Lo que queda es **no reintroducir** los 8 patrones documentados en la memoria del proyecto, fijados por `tests/unit/movil.test.js`.
 - **Limpieza de archivos huérfanos** cuando se cancela el creador full-page sin guardar (los adjuntos ya subidos quedan en disco).
 - **Relación `Subject` ↔ `Course` por texto** (frágil ante renombrados). Migrar a ObjectId ref.
 - **Eliminación de escuela sin cascada** (`POST /superadmin/schools/:id/delete` deja usuarios/cursos huérfanos).

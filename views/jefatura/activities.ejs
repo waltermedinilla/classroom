@@ -127,7 +127,7 @@
                 <td style="color:var(--text-secondary)"><%= a.docente %></td>
                 <td style="color:var(--text-secondary);white-space:nowrap">
                   <% if (a.dueDate) { %>
-                    <%= new Date(a.dueDate).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' }) %>
+                    <%= fmt.diaMes(a.dueDate) %>
                   <% } else { %>
                     <span style="color:var(--text-hint)">Sin fecha</span>
                   <% } %>

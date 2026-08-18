@@ -109,7 +109,7 @@
                 <td style="text-transform:capitalize"><%= a.type %></td>
                 <td>
                   <% if (a.dueDate) { %>
-                    <%= new Date(a.dueDate).toLocaleDateString('es-AR', { day:'2-digit', month:'short', year:'numeric' }) %>
+                    <%= fmt.diaMesAnio(a.dueDate) %>
                   <% } else { %>
                     <span style="color:var(--text-hint)">Sin fecha</span>
                   <% } %>

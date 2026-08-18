@@ -8,6 +8,11 @@
 // El proyecto no usa librerías de charting: el monitor ya dibuja sus sparklines con
 // <polyline> a mano y esto extiende ese vocabulario.
 
+// Las fechas de las etiquetas se formatean con la zona de la escuela, nunca con la del equipo
+// (ver tests/unit/zonaHoraria.test.js). En el navegador `Fecha` la deja public/js/fecha.js,
+// que partials/footer carga antes que este archivo; bajo node --test se require() el mismo.
+var Fecha = (typeof window !== 'undefined') ? window.Fecha : require('./fecha.js');
+
 /**
  * Rellena con ceros los buckets que no tienen muestra, entre `desde` y `hasta`.
  *
@@ -104,8 +109,8 @@ function etiquetasEjeX(serie, rango) {
   // hour12:false — es-AR devuelve "12:59 a. m." por defecto, que en un eje de monitoreo se
   // lee peor que "00:59" y encima ocupa el doble.
   const formatea = (fecha) => soloDia
-    ? new Date(fecha).toLocaleDateString('es-AR', { day: 'numeric', month: 'short' })
-    : new Date(fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
+    ? Fecha.diaMes(fecha)
+    : Fecha.hora(fecha);
 
   const cuantas = Math.min(4, lista.length);
   const marcas  = [];

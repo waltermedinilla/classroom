@@ -112,7 +112,7 @@
           <% if (teacher.active === false) { %><span class="badge badge-red" style="margin-left:8px">Deshabilitado</span><% } %>
         </div>
         <div class="profile-meta">
-          Alta: <%= new Date(teacher.createdAt).toLocaleDateString('es-AR', {day:'numeric', month:'long', year:'numeric'}) %>
+          Alta: <%= fmt.diaMesLargo(teacher.createdAt) %>
         </div>
         <%- include('../partials/contact-info', { person: teacher }) %>
         <%- include('../partials/about-info', { person: teacher }) %>
@@ -245,7 +245,7 @@
                 <td style="color:var(--text-secondary)"><%= a.courseName %></td>
                 <td style="color:var(--text-secondary)">
                   <% if (a.dueDate) { %>
-                    <%= new Date(a.dueDate).toLocaleDateString('es-AR', {day:'2-digit', month:'short'}) %>
+                    <%= fmt.diaMes(a.dueDate) %>
                   <% } else { %>
                     <span style="color:var(--text-hint)">Sin fecha</span>
                   <% } %>

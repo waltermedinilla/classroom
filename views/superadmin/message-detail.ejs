@@ -52,7 +52,7 @@
       <% } %>
       <div style="font-size:14px;color:var(--text);white-space:pre-wrap"><%= mensaje.body %></div>
       <div style="font-size:12px;color:var(--text-hint);margin-top:12px;display:flex;flex-wrap:wrap;gap:12px;align-items:center">
-        <span><%= new Date(mensaje.createdAt).toLocaleDateString('es-AR', { day:'numeric', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit' }) %></span>
+        <span><%= fmt.diaMesLargoHora(mensaje.createdAt) %></span>
         <span>·</span>
         <span><%= audienciaTexto %></span>
       </div>
@@ -130,7 +130,7 @@
                   <% if (d.readAt) { %>
                     <span class="pill" style="background:#e6f4ea;color:#137333">Leído</span>
                     <div style="font-size:11px;color:var(--text-hint);margin-top:3px">
-                      <%= new Date(d.readAt).toLocaleDateString('es-AR', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) %>
+                      <%= fmt.diaMesHora(d.readAt) %>
                     </div>
                   <% } else { %>
                     <span class="pill" style="background:#fff3e0;color:#ea8600">Sin leer</span>
@@ -142,7 +142,7 @@
                         <div class="thread-msg <%= m.from === 'staff' ? 'de-equipo' : 'de-usuario' %>">
                           <div class="thread-meta">
                             <%= m.from === 'staff' ? 'Vos' : (d.user?.name || 'El destinatario') %>
-                            <%= m.at ? '· ' + new Date(m.at).toLocaleDateString('es-AR', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) : '' %>
+                            <%= m.at ? '· ' + fmt.diaMesHora(m.at) : '' %>
                             <%= m.editedAt ? '· editada' : '' %>
                           </div>
                           <div class="thread-text"><%= m.text %></div>

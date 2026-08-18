@@ -86,7 +86,7 @@
           <% } %>
         </div>
         <div class="profile-meta">
-          Alta: <%= new Date(student.createdAt).toLocaleDateString('es-AR', {day:'numeric', month:'long', year:'numeric'}) %>
+          Alta: <%= fmt.diaMesLargo(student.createdAt) %>
         </div>
         <%- include('../partials/contact-info', { person: student }) %>
         <%- include('../partials/about-info', { person: student }) %>
@@ -158,12 +158,12 @@
                 <td><%= e.activityTitle %></td>
                 <td style="color:var(--text-secondary)"><%= e.courseName %></td>
                 <td>
-                  <%= new Date(e.submittedAt).toLocaleDateString('es-AR', {day:'2-digit', month:'short'}) %>
+                  <%= fmt.diaMes(e.submittedAt) %>
                   <% if (e.late) { %><span class="badge badge-yellow" style="margin-left:4px">Tardía</span><% } %>
                 </td>
                 <td style="color:var(--text-secondary)">
                   <% if (e.dueDate) { %>
-                    <%= new Date(e.dueDate).toLocaleDateString('es-AR', {day:'2-digit', month:'short'}) %>
+                    <%= fmt.diaMes(e.dueDate) %>
                   <% } else { %>
                     <span style="color:var(--text-hint)">Sin fecha</span>
                   <% } %>

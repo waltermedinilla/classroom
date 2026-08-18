@@ -136,7 +136,15 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
   box-shadow: var(--shadow-sm); z-index: 100;
 }
 .header-left { display: flex; align-items: center; gap: 8px; }
-.header-center { display: flex; justify-content: center; min-width: 0; padding: 0 12px; }
+.header-center { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; min-width: 0; padding: 0 12px; }
+/* Reloj de la escuela. tabular-nums evita que el ancho baile con cada minuto y empuje al
+   resto del header. El separador se oculta en movil junto con la fecha. */
+.header-clock {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 12px; color: var(--text-hint); white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.header-clock-time { font-weight: 500; }
 .header-school-name {
   font-size: 16px; font-weight: 500; color: var(--text); opacity: 0.75;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 35vw;
@@ -2493,6 +2501,10 @@ table.acciones-fijas, table.nombre-fijo { overflow: clip; }
   .user-role { display: none; }
   .header-logo { padding: 4px; gap: 0; }
   .header-center { padding: 0 8px; }
+  /* A 375 px el centro comparte ~130 px con el nombre de la escuela: entra la hora, no la
+     fecha. La fecha completa sigue disponible en el title del reloj. */
+  .header-clock { font-size: 11px; }
+  .header-clock-date, .header-clock-sep { display: none; }
   .header-school-name { max-width: none; font-size: 14px; }
 }
 

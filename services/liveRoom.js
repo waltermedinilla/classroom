@@ -143,6 +143,18 @@ const F_LARGA  = opts({ weekday: 'long', day: 'numeric', month: 'long', year: 'n
 const F_CORTA  = opts({ day: '2-digit', month: '2-digit', year: 'numeric' });
 const F_FECHAH = opts({ day: '2-digit', month: '2-digit', year: 'numeric',
                         hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+// Las formas que usaban las vistas cuando cada una llamaba a toLocaleDateString por su cuenta.
+// Se agregan aca, y no en cada .ejs, por la misma razon que las de arriba: un segundo
+// Intl.DateTimeFormat en otro archivo es como vuelve el bug de las tres horas de mas.
+const F_HORA_S = opts({ hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+const F_DM     = opts({ day: 'numeric', month: 'short' });
+const F_DMA    = opts({ day: 'numeric', month: 'short', year: 'numeric' });
+const F_DMH    = opts({ day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const F_DMAH   = opts({ day: 'numeric', month: 'short', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const F_DML    = opts({ day: 'numeric', month: 'long', year: 'numeric' });
+const F_DMLH   = opts({ day: 'numeric', month: 'long', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
 // Día escolar 'YYYY-MM-DD' en la zona de la escuela. A diferencia de los de arriba, este no
 // es un texto de pantalla: es la CLAVE con la que se archiva la asistencia
@@ -174,10 +186,19 @@ const fechaDia   = (d) => formatear(F_DIA, d);     // jueves, 6 de agosto
 const fechaLarga = (d) => formatear(F_LARGA, d);   // jueves, 6 de agosto de 2026
 const fechaCorta = (d) => formatear(F_CORTA, d);   // 06/08/2026
 const fechaHora  = (d) => formatear(F_FECHAH, d);  // 06/08/2026, 14:05:00
+const horaSegundos    = (d) => formatear(F_HORA_S, d); // 14:05:00
+const diaMes          = (d) => formatear(F_DM, d);     // 6 sept
+const diaMesAnio      = (d) => formatear(F_DMA, d);    // 6 sept 2026
+const diaMesHora      = (d) => formatear(F_DMH, d);    // 6 sept, 14:05
+const diaMesAnioHora  = (d) => formatear(F_DMAH, d);   // 6 sept 2026, 14:05
+const diaMesLargo     = (d) => formatear(F_DML, d);    // 6 de agosto de 2026
+const diaMesLargoHora = (d) => formatear(F_DMLH, d);   // 6 de agosto de 2026, 14:05
 
 // Se pasa entero a las vistas como `fmt` (ver routes/rooms.js): así ninguna plantilla vuelve a
 // llamar a toLocaleTimeString por su cuenta.
-const fmt = { TZ, hora, fechaDia, fechaLarga, fechaCorta, fechaHora };
+const fmt = { TZ, hora, fechaDia, fechaLarga, fechaCorta, fechaHora,
+              horaSegundos, diaMes, diaMesAnio, diaMesHora, diaMesAnioHora,
+              diaMesLargo, diaMesLargoHora };
 
 // Etiqueta que acompaña al círculo de quien no es alumno.
 const ROLE_LABELS = {
@@ -738,6 +759,7 @@ module.exports = {
   EXT_ARCHIVOS, MAX_ARCHIVO_BYTES, UPLOADS_PER_10MIN, SALAS_BASE,
   // hora (zona fija de la escuela)
   fmt, hora, fechaDia, fechaLarga, fechaCorta, fechaHora, diaEscolar,
+  horaSegundos, diaMes, diaMesAnio, diaMesHora, diaMesAnioHora, diaMesLargo, diaMesLargoHora,
   // puras
   isOnline, presenceSummary, shouldAutoClose, horaDeCierre, gestorEnLinea, sanitizeText,
   minutosPresente, initial, pesoLegible, etiquetaExt, textoAdjunto,

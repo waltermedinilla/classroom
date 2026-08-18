@@ -46,6 +46,8 @@
 // arreglo se limita a repetirlo sobre los cursos elegidos sin deducir nada.
 
 const mongoose     = require('mongoose');
+// Fechas con la zona de la escuela: services/liveRoom.js es el unico duenio de la hora.
+const live         = require('./liveRoom');
 const { v4: uuidv4 } = require('uuid');
 const User         = require('../models/User');
 const Course       = require('../models/Course');
@@ -385,7 +387,7 @@ function presentarGruposAlumnos(grupos) {
             `${c.notas} nota(s)`,
             `en ${c.materiasEn} de ${g.materias.length} materia(s) del curso`,
             c.u.lastSeen
-              ? 'último acceso ' + new Date(c.u.lastSeen).toLocaleDateString('es-AR')
+              ? 'último acceso ' + live.fechaCorta(c.u.lastSeen)
               : 'nunca se conectó',
             c.otrosCursos.length ? 'también cursa en ' + c.otrosCursos.join(', ') : null,
           ].filter(Boolean).join(' · '),
@@ -544,7 +546,7 @@ function presentarGruposDocentes(grupos) {
         `${c.actividades} actividad(es)`,
         `${c.novedades} novedad(es)`,
         c.ultimoAcceso
-          ? 'último acceso ' + new Date(c.ultimoAcceso).toLocaleDateString('es-AR')
+          ? 'último acceso ' + live.fechaCorta(c.ultimoAcceso)
           : 'nunca se conectó',
       ].join(' · '),
       chips: [

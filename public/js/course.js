@@ -305,11 +305,11 @@ document.querySelectorAll('.tab').forEach(tab => {
 /* ─── Stream: Novedades ─── */
 // Formatea fecha de forma corta: "15 may 2025, 10:30"
 function fmtShort(d) {
-  return new Date(d).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return Fecha.diaMesAnioHora(d);
 }
 // Formatea fecha de forma larga: "15 de mayo de 2025, 10:30"
 function fmtLong(d) {
-  return new Date(d).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return Fecha.diaMesLargoHora(d);
 }
 
 // Construye el HTML de un comentario en una novedad
@@ -514,7 +514,7 @@ function buildActivityStreamEl(act) {
     </div>
     <div class="stream-item-body">
       <div class="stream-item-text"><strong>${act.author.name}</strong> publicó una nueva tarea: ${act.title}</div>
-      <div class="stream-item-date">${new Date(act.createdAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}</div>
+      <div class="stream-item-date">${Fecha.diaMes(act.createdAt)}</div>
     </div>
     <button class="icon-btn" title="Más opciones" onclick="event.stopPropagation()">
       <span class="material-symbols-outlined">more_vert</span>
@@ -869,8 +869,8 @@ function addActivityTabCard(act) {
   const isOverdue = act.dueDate && new Date(act.dueDate) < now;
 
   const dateText = act.dueDate
-    ? 'Entrega: ' + new Date(act.dueDate).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
-    : 'Publicado: ' + new Date(act.createdAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+    ? 'Entrega: ' + Fecha.diaMesHora(act.dueDate)
+    : 'Publicado: ' + Fecha.diaMes(act.createdAt);
 
   // Chip de estado del plazo: muestra si vencida y si las tardías están abilitadas
   const overdueChip = isOverdue
@@ -969,11 +969,11 @@ function addStudentActivityCard(act) {
 
   let dateText = '', dateClass = '';
   if (act.dueDate) {
-    const dueFmt = new Date(act.dueDate).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const dueFmt = Fecha.diaMesHora(act.dueDate);
     dateText  = (isOverdue ? 'Venció: ' : 'Entrega: ') + dueFmt;
     dateClass = isOverdue ? ' date-overdue' : ''; // Clase CSS que pone el texto en rojo
   } else {
-    dateText = 'Publicado: ' + new Date(act.createdAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+    dateText = 'Publicado: ' + Fecha.diaMes(act.createdAt);
   }
 
   const tc        = typeConfig(act.type);
@@ -1216,7 +1216,7 @@ async function saveEditActivity() {
   if (row) {
     const isOverdue = act.dueDate && new Date(act.dueDate) < new Date();
     const dateText  = act.dueDate
-      ? 'Entrega: ' + new Date(act.dueDate).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+      ? 'Entrega: ' + Fecha.diaMesHora(act.dueDate)
       : row.querySelector('.act-item-date').textContent;
     // firstChild porque el elemento contiene el título + posiblemente el chip de vencido
     row.querySelector('.act-item-title').firstChild.textContent = act.title + ' ';
@@ -1332,7 +1332,7 @@ function renderGradebook({ activities, students, gradeMap }, container) {
 
   function fmtDue(d) {
     if (!d) return 'Sin fecha';
-    return new Date(d).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+    return Fecha.diaMes(d);
   }
 
   // Encabezados de columnas: una por actividad

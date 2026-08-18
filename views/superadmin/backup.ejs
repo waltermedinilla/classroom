@@ -340,7 +340,7 @@
         const date = new Date(info.date);
         // El tamaño solo lo saben los backups viejos: desde que la descarga la maneja el
         // navegador (y no un blob en memoria) la página nunca ve cuántos bytes bajaron.
-        el.textContent = `Último backup generado desde este navegador: ${date.toLocaleString('es-AR')}`
+        el.textContent = `Último backup generado desde este navegador: ${Fecha.fechaHora(date)}`
           + (info.size ? ` (${formatBytes(info.size)})` : '');
         el.style.display = 'block';
       } catch {}
@@ -826,7 +826,7 @@
       area.innerHTML = `
         <div style="margin-top:16px;padding:16px;background:var(--bg);border-radius:var(--radius)">
           <div style="font-size:13px;margin-bottom:10px">
-            <strong>Fecha del backup:</strong> ${date.toLocaleString('es-AR')} ·
+            <strong>Fecha del backup:</strong> ${Fecha.fechaHora(date)} ·
             <strong>Generado por:</strong> ${manifest.generatedBy || '—'}
           </div>
           <table class="diff-table">
@@ -846,7 +846,7 @@
             <strong style="color:#c5221f">🔴 Confirmación requerida</strong>
             <div class="confirm-checks" style="margin-top:10px">
               <label><input type="checkbox" class="confirm-check"> Entiendo que esto reemplaza TODA la base de datos actual</label>
-              <label><input type="checkbox" class="confirm-check"> Entiendo que se pierden los cambios posteriores a ${date.toLocaleString('es-AR')}</label>
+              <label><input type="checkbox" class="confirm-check"> Entiendo que se pierden los cambios posteriores a ${Fecha.fechaHora(date)}</label>
               <label><input type="checkbox" class="confirm-check"> Entiendo que la app puede tardar unos segundos en volver a responder normalmente</label>
               ${willEmpty.length ? `<label><input type="checkbox" class="confirm-check"> Entiendo que se van a vaciar: ${willEmpty.join(', ')}</label>` : ''}
             </div>
@@ -990,7 +990,7 @@
 
       const espera = a.pending
         ? `<div style="font-size:12px;margin-top:6px">Esperando hace <strong>${a.pending.waitedMinutes} min</strong>${
-             a.pending.deadline ? ' · se activa igual a las ' + new Date(a.pending.deadline).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : ''}</div>`
+             a.pending.deadline ? ' · se activa igual a las ' + Fecha.hora(a.pending.deadline) : ''}</div>`
         : '';
 
       box.innerHTML = `
@@ -1036,7 +1036,7 @@
             <div>
               <strong>El sitio está EN MANTENIMIENTO ahora mismo.</strong> Todos los usuarios (excepto vos) ven la
               página de aviso en vez de la app.<br>
-              <span style="font-size:12px">Activado ${date.toLocaleString('es-AR')} por ${esc(state.activatedBy)} ${origen}</span><br>
+              <span style="font-size:12px">Activado ${Fecha.fechaHora(date)} por ${esc(state.activatedBy)} ${origen}</span><br>
               <span style="font-size:12px">Mensaje mostrado: "${esc(state.message)}"${state.eta ? ' · ETA: ' + esc(state.eta) : ''}</span>
             </div>
           </div>
@@ -1056,7 +1056,7 @@
               <strong>Mantenimiento EN ESPERA.</strong> No se expulsó a nadie: los que ya estaban adentro
               siguen trabajando y no entra nadie nuevo. Apenas la plataforma quede vacía, el mantenimiento
               se activa solo (se controla cada 30 segundos).<br>
-              <span style="font-size:12px">Programado ${date.toLocaleString('es-AR')} por ${esc(pending.requestedBy)} ·
+              <span style="font-size:12px">Programado ${Fecha.fechaHora(date)} por ${esc(pending.requestedBy)} ·
               inactividad ${pending.idleMinutes} min ·
               ${pending.maxWaitMinutes ? 'se activa igual tras ' + pending.maxWaitMinutes + ' min de espera' : 'sin tope de espera'}</span><br>
               <span style="font-size:12px">Mensaje: "${esc(pending.message)}"${pending.eta ? ' · ETA: ' + esc(pending.eta) : ''}${

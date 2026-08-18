@@ -64,7 +64,7 @@
                     Tardía
                   </span>
                   <div class="pending-due-date" style="color:var(--danger)">
-                    Venció <%= new Date(act.dueDate).toLocaleDateString('es-ES', { day:'numeric', month:'short' }) %>
+                    Venció <%= fmt.diaMes(act.dueDate) %>
                   </div>
                 <% } else if (isDueToday) { %>
                   <span class="pending-due-badge due-today">
@@ -72,14 +72,14 @@
                     Hoy
                   </span>
                   <div class="pending-due-date" style="color:var(--warning)">
-                    <%= new Date(act.dueDate).toLocaleTimeString('es-ES', { hour:'2-digit', minute:'2-digit' }) %>
+                    <%= fmt.hora(act.dueDate) %>
                   </div>
                 <% } else { %>
                   <div class="pending-due-date">
-                    <%= new Date(act.dueDate).toLocaleDateString('es-ES', { day:'numeric', month:'short' }) %>
+                    <%= fmt.diaMes(act.dueDate) %>
                   </div>
                   <div class="pending-due-date" style="font-size:12px;color:var(--text-hint)">
-                    <%= new Date(act.dueDate).toLocaleTimeString('es-ES', { hour:'2-digit', minute:'2-digit' }) %>
+                    <%= fmt.hora(act.dueDate) %>
                   </div>
                 <% } %>
               <% } else { %>

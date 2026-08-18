@@ -29,6 +29,44 @@
     </div>
   </div>
 
+  <%# Zona horaria de la escuela para el JS del navegador. Va antes que cualquier otro
+      script porque public/js/fecha.js la lee al cargarse. El valor sale de fmt.TZ
+      (services/liveRoom.js), que es el unico duenio de la hora en todo el proyecto:
+      asi el navegador imprime exactamente lo mismo que el servidor. %>
+  <script>window.SCHOOL_TZ = <%- JSON.stringify(locals.fmt ? locals.fmt.TZ : "America/Argentina/Buenos_Aires") %>;</script>
+  <script src="/js/fecha.js"></script>
+  <script>
+    // Reloj de la escuela en el header. La hora base la pone el SERVIDOR al renderizar
+    // (data-epoch); del reloj local se usa unicamente lo TRANSCURRIDO desde que cargo la
+    // pagina. Asi una maquina del aula con la hora mal configurada igual muestra la hora
+    // oficial, que es todo el punto de tener un reloj comun.
+    (function () {
+      var caja = document.getElementById('headerClock');
+      if (!caja || !window.Fecha) return;
+      var base = Number(caja.getAttribute('data-epoch'));
+      if (!base) return;
+      // performance.now() y no Date.now(): es monotono. Si el equipo sincroniza la hora por
+      // NTP a mitad de clase, Date.now() pega un salto y el reloj quedaria corrido hasta
+      // recargar la pagina; performance.now() mide tiempo transcurrido de verdad.
+      var reloj   = (window.performance && performance.now) ? function () { return performance.now(); }
+                                                            : function () { return Date.now(); };
+      var desde   = reloj();
+      var elHora  = document.getElementById('headerClockTime');
+      var elDia   = document.getElementById('headerClockDate');
+      var ultima  = '';
+      function tick() {
+        var ahora = new Date(base + (reloj() - desde));
+        var h = Fecha.hora(ahora);
+        if (h === ultima) return;      // el DOM solo se toca cuando cambia el minuto
+        ultima = h;
+        if (elHora) elHora.textContent = h;
+        if (elDia)  elDia.textContent  = Fecha.diaMes(ahora);
+        caja.title = 'Hora de la escuela - ' + Fecha.fechaLarga(ahora);
+      }
+      tick();
+      setInterval(tick, 1000);
+    })();
+  </script>
   <script>
     document.getElementById('suggestionText').addEventListener('input', function () {
       document.getElementById('suggestCount').textContent = this.value.length + ' / 1000';
@@ -196,11 +234,11 @@
     }
 
     function fechaCorta(v) {
-      return v ? new Date(v).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+      return v ? Fecha.diaMesAnio(v) : '';
     }
 
     function fechaLarga(v) {
-      return v ? new Date(v).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+      return v ? Fecha.diaMesAnioHora(v) : '';
     }
 
     function renderInbox(items) {
@@ -309,7 +347,7 @@
     function renderSugerencia(s) {
       return (function (s) {
         var st    = INBOX_STATUS[s.status] || INBOX_STATUS.pending;
-        var date  = new Date(s.createdAt).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' });
+        var date  = Fecha.diaMesAnio(s.createdAt);
         // El hilo viene armado del server (services/suggestionThread.js). El primer mensaje
         // es la sugerencia y se muestra arriba; el resto es la conversación.
         var hilo  = s.hilo || [{ from: 'user', text: s.text, at: s.createdAt }];
@@ -318,7 +356,7 @@
         var conversacion = resto.map(function (m) {
           var esEquipo = m.from === 'staff';
           var fecha = m.at
-            ? new Date(m.at).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+            ? Fecha.diaMesAnioHora(m.at)
             : '';
           return '' +
             '<div style="margin-top:8px;padding:11px 14px;background:var(--bg);border-radius:8px;border-left:3px solid ' + (esEquipo ? '#1a73e8' : '#fbbc04') + '">' +

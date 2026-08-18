@@ -93,7 +93,7 @@
                         <%= s.school.name %>
                       </span>
                     <% } %>
-                    <span><%= new Date(s.createdAt).toLocaleDateString('es-ES', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) %></span>
+                    <span><%= fmt.diaMesAnioHora(s.createdAt) %></span>
                   </div>
                 </div>
               </div>
@@ -136,7 +136,7 @@
                     <span style="display:flex;align-items:center;gap:4px">
                       <span class="material-symbols-outlined" style="font-size:14px"><%= esEquipo ? 'reply' : (i === 0 ? 'lightbulb' : 'forum') %></span>
                       <%= esEquipo ? 'Tu respuesta' : (i === 0 ? 'Sugerencia' : 'Respondió ' + (s.user?.name || 'el usuario')) %><%
-                        %><% if (m.at) { %> · <%= new Date(m.at).toLocaleDateString('es-ES', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) %><% } %><%
+                        %><% if (m.at) { %> · <%= fmt.diaMesAnioHora(m.at) %><% } %><%
                         %><% if (m.editedAt) { %> · editada<% } %>
                     </span>
                     <%# Solo se edita lo ÚLTIMO que escribió el equipo: corregir un mensaje del

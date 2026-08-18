@@ -213,7 +213,23 @@ const _activeTheme = (function() {
     </a>
   </div>
   <div class="header-center">
-    <% if (school) { %><span class="header-school-name">San José - Conecta</span><% } %>
+    <%# El nombre va SIEMPRE, sin condicionar por `school`. El superadmin es el único usuario
+        con `school: null` (administra la plataforma, no una escuela), y esa condición lo dejaba
+        sin nombre en el header — el rol que más lo mira. El texto es fijo a propósito: es el
+        nombre de la plataforma, no el de la escuela en la base ("Escuela 4118 San José"). %>
+    <span class="header-school-name">San José - Conecta</span>
+    <%# Hora oficial de la escuela, para que todos se refieran al mismo reloj.
+        El instante lo pone el SERVIDOR (data-epoch): una máquina del aula con el reloj
+        atrasado igual muestra la hora correcta. El JS del footer solo le suma el tiempo
+        transcurrido desde que cargó la página. Ya sale escrita del servidor, así que se
+        ve bien incluso si el JS no llega a correr. %>
+    <span class="header-clock" id="headerClock"
+          data-epoch="<%= Date.now() %>"
+          title="Hora de la escuela — <%= fmt.fechaLarga(new Date()) %>">
+      <span class="header-clock-date" id="headerClockDate"><%= fmt.diaMes(new Date()) %></span>
+      <span class="header-clock-sep" aria-hidden="true">·</span>
+      <span class="header-clock-time" id="headerClockTime"><%= fmt.hora(new Date()) %></span>
+    </span>
   </div>
   <div class="header-right">
     <% if (typeof user !== 'undefined' && user) { %>

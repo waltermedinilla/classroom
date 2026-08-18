@@ -115,9 +115,9 @@
               <span class="tt-chip"><span class="material-symbols-outlined">quiz</span> <%= (t.questions || []).length %> pregunta<%= (t.questions || []).length === 1 ? '' : 's' %></span>
               <span class="tt-chip"><span class="material-symbols-outlined">stars</span> <%= t.defaultPoints %> pts</span>
               <% if (a.respondedAt) { %>
-                <span class="tt-chip"><span class="material-symbols-outlined">event_available</span> Respondida el <%= new Date(a.respondedAt).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' }) %></span>
+                <span class="tt-chip"><span class="material-symbols-outlined">event_available</span> Respondida el <%= fmt.diaMesAnio(a.respondedAt) %></span>
               <% } else { %>
-                <span class="tt-chip"><span class="material-symbols-outlined">schedule</span> Ofrecida el <%= new Date(a.createdAt).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' }) %></span>
+                <span class="tt-chip"><span class="material-symbols-outlined">schedule</span> Ofrecida el <%= fmt.diaMesAnio(a.createdAt) %></span>
               <% } %>
             </div>
           </div>

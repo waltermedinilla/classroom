@@ -21,6 +21,9 @@ const {
 } = require('./services/maintenanceWindow');
 const { logAudit } = require('./middleware/audit');
 const rateLimitStats = require('./services/rateLimitStats');
+// Zona horaria de la escuela: services/liveRoom.js es el UNICO duenio de la hora (ver el
+// comentario de su bloque TZ). Se importa aca solo para publicarlo en res.locals.
+const { fmt: schoolFmt } = require('./services/liveRoom');
 const School     = require('./models/School');
 const Suggestion = require('./models/Suggestion');
 const MessageRecipient   = require('./models/MessageRecipient');
@@ -405,6 +408,12 @@ app.use((req, res, next) => {
     student:    'Alumno',
   };
   res.locals.appVersion = APP_VERSION;
+  // Formateador de fechas con la zona de la escuela, disponible en TODAS las vistas.
+  // El servidor de produccion corre en UTC: sin esto, cada .ejs que llamaba a
+  // toLocaleDateString por su cuenta imprimia tres horas de mas en vencimientos,
+  // entregas y auditoria. Una sola fuente de hora para servidor y navegador
+  // (la mitad del navegador la cubre public/js/fecha.js, alimentado por el mismo TZ).
+  res.locals.fmt = schoolFmt;
   // Diccionarios de intereses del perfil (config/interests.js). Van en locals globales
   // para que partials/about-info.ejs funcione desde cualquier vista sin que cada ruta
   // tenga que acordarse de pasarlos — es un include que se usa en varios paneles.

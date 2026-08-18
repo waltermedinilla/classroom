@@ -88,7 +88,7 @@
             <%= school.name %>
           </p>
         <% } %>
-        <p class="profile-date">Miembro desde <%= new Date(user.createdAt).toLocaleDateString('es-ES', { day:'numeric', month:'long', year:'numeric' }) %></p>
+        <p class="profile-date">Miembro desde <%= fmt.diaMesLargo(user.createdAt) %></p>
       </div>
       <div class="profile-actions">
         <% if (user.email !== systemOwnerEmail) { %>

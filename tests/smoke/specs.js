@@ -3298,6 +3298,27 @@ const specs = [
     },
   },
   {
+    // El superadmin es el ÚNICO usuario con `school: null` (administra la plataforma, no una
+    // escuela). El header condicionaba el nombre a `if (school)`, así que era justo el rol que
+    // se quedaba sin él. Se prueba con el superadmin porque cualquier otro rol pasa igual.
+    id: 'superadmin-header-nombre-y-reloj',
+    title: 'El superadmin ve el nombre de la escuela y el reloj en el header',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const page = await client.get('superadmin', '/superadmin', { expectStatus: 200 });
+      const html = page.text || '';
+      assert(html.includes('header-school-name'),
+        'el header debería mostrar el nombre aunque el usuario no tenga escuela');
+      assert(html.includes('id="headerClock"'), 'el header debería traer el reloj de la escuela');
+      // La hora la pone el SERVIDOR: sin data-epoch el reloj quedaría a merced del reloj del
+      // equipo, que es exactamente lo que la feature evita.
+      const epoch = Number((html.match(/data-epoch="(\d+)"/) || [])[1]);
+      assert(epoch > 0, 'el reloj debería traer data-epoch con la hora del servidor');
+      assert(Math.abs(Date.now() - epoch) < 5 * 60 * 1000,
+        `data-epoch debería ser de recién, vino ${new Date(epoch).toISOString()}`);
+    },
+  },
+  {
     id: 'superadmin-users-link-to-profile',
     title: 'El listado de usuarios del superadmin lleva al perfil, y ahí puede suplantar',
     requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],

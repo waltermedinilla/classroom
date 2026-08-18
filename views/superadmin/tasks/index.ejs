@@ -102,7 +102,7 @@
               <div class="template-row-meta">
                 <span><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle">quiz</span> <%= t.questions.length %> pregunta<%= t.questions.length === 1 ? '' : 's' %></span>
                 <span><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle">stars</span> <%= t.defaultPoints %> pts</span>
-                <span><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle">schedule</span> <%= new Date(t.updatedAt).toLocaleDateString('es-AR', { day:'numeric', month:'short', year:'numeric' }) %></span>
+                <span><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle">schedule</span> <%= fmt.diaMesAnio(t.updatedAt) %></span>
               </div>
             </div>
             <div class="template-row-actions">

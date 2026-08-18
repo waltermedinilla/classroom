@@ -270,7 +270,7 @@
               <tr>
                 <td><%= e.activityTitle %></td>
                 <td><%= e.courseName %></td>
-                <td><%= e.dueDate ? new Date(e.dueDate).toLocaleDateString('es-AR') : '—' %></td>
+                <td><%= e.dueDate ? fmt.fechaCorta(e.dueDate) : '—' %></td>
                 <td style="text-align:center">
                   <% if (!e.submitted) { %>
                     <span class="badge badge-red">Sin entregar</span>

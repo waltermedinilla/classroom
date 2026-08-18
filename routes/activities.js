@@ -1126,7 +1126,7 @@ router.get('/:id/export-grades', requireAuth, async (req, res) => {
         'Nota':                g?.points != null ? g.points : '',
         'Máximo':              maxPts,
         'Feedback docente':    g?.feedback || '',
-        'Fecha calificación':  g?.gradedAt ? new Date(g.gradedAt).toLocaleDateString('es-ES') : '',
+        'Fecha calificación':  g?.gradedAt ? live.fechaCorta(g.gradedAt) : '',
       };
     });
 

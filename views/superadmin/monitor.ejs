@@ -588,7 +588,7 @@
         const r = data.resumen || {};
         setText('m-rl-429', (r.bloqueadasTotal || 0).toLocaleString('es-AR'));
         setText('m-rl-429-sub', r.ultimoBloqueo
-          ? 'último: ' + new Date(r.ultimoBloqueo).toLocaleString('es-AR')
+          ? 'último: ' + Fecha.fechaHora(r.ultimoBloqueo)
           : 'ninguno en ' + RL_ETIQUETA[data.rango]);
         setText('m-rl-429-label', 'Bloqueos 429 (' + RL_ETIQUETA[data.rango] + ')');
         setText('m-rl-pico-label', 'Pico de consumo en ' + RL_ETIQUETA[data.rango]);
@@ -745,7 +745,7 @@
 
         // Timestamp
         const ts = new Date(data.timestamp);
-        setText('lastUpdated', ts.toLocaleTimeString('es-AR'));
+        setText('lastUpdated', Fecha.horaSegundos(ts));
 
         document.getElementById('statusDot').style.background = '#34a853';
       } catch {

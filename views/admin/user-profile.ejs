@@ -46,7 +46,7 @@
         <% if (target.dni) { %><p style="font-family:monospace;font-size:13px;color:var(--text-secondary);margin-bottom:2px">DNI: <%= target.dni %></p><% } %>
         <p class="profile-email"><%= target.email %></p>
         <span class="role-badge role-<%= target.role %>" style="font-size:14px;padding:6px 16px"><%= roleNames[target.role] || target.role %></span>
-        <p class="profile-date">Registrado el <%= new Date(target.createdAt).toLocaleDateString('es-ES', { day:'numeric', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit' }) %></p>
+        <p class="profile-date">Registrado el <%= fmt.diaMesLargoHora(target.createdAt) %></p>
         <% const totalStudents = createdCourses.reduce((sum, c) => sum + c.students.length, 0); %>
         <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap">
           <div style="display:inline-flex;align-items:center;gap:6px;padding:5px 14px;background:var(--surface-variant,#f1f3f4);border-radius:20px;font-size:13px;color:var(--text)">

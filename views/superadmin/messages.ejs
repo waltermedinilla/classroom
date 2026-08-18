@@ -181,7 +181,7 @@
                   </div>
                 </a>
                 <div class="envio-meta">
-                  <span><%= new Date(m.createdAt).toLocaleDateString('es-AR', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) %></span>
+                  <span><%= fmt.diaMesAnioHora(m.createdAt) %></span>
                   <span>·</span>
                   <span><%= m.audienciaTexto %></span>
                 </div>

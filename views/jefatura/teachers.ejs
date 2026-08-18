@@ -96,7 +96,7 @@
                 </td>
                 <td style="color:var(--text-secondary);white-space:nowrap">
                   <% if (d.ultima) { %>
-                    <%= new Date(d.ultima).toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' }) %>
+                    <%= fmt.diaMesAnio(d.ultima) %>
                   <% } else { %>
                     <span style="color:var(--text-hint)">Nunca publicó</span>
                   <% } %>

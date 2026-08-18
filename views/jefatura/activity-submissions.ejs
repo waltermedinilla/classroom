@@ -39,7 +39,7 @@
         <% if (actividad.points !== null && actividad.points !== undefined) { %> · Puntaje: <%= actividad.points %><% } %>
         ·
         <% if (vence) { %>
-          Vencía el <%= vence.toLocaleDateString('es-AR', { day: 'numeric', month: 'long', year: 'numeric' }) %>
+          Vencía el <%= fmt.diaMesLargo(vence) %>
         <% } else { %>
           Sin fecha de entrega
         <% } %>
@@ -109,8 +109,8 @@
                 </td>
                 <td style="color:var(--text-secondary);white-space:nowrap">
                   <% if (f.cuando) { %>
-                    <%= f.cuando.toLocaleDateString('es-AR', { day: '2-digit', month: 'short' }) %>
-                    <span style="color:var(--text-hint)"><%= f.cuando.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) %></span>
+                    <%= fmt.diaMes(f.cuando) %>
+                    <span style="color:var(--text-hint)"><%= fmt.hora(f.cuando) %></span>
                   <% } else { %>
                     <span style="color:var(--text-hint)">—</span>
                   <% } %>

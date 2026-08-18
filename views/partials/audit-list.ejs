@@ -195,8 +195,8 @@ function buildAuditUrl(overrides) {
     <% entries.forEach(e => {
       const a = actions[e.action] || { label: e.action, icon: 'radio_button_checked', color: '#5f6368' };
       const dt = new Date(e.timestamp);
-      const dateStr = dt.toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' });
-      const timeStr = dt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+      const dateStr = fmt.diaMesAnio(dt);
+      const timeStr = fmt.hora(dt);
     %>
     <div class="audit-row">
       <div class="audit-icon" style="color:<%= a.color %>">
