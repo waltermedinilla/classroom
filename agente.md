@@ -467,7 +467,31 @@ Sus 5 vistas (`/jefatura`, el detalle de una actividad, docentes, la ficha de un
 Todo lo demás de jefatura ya estaba bien: cero desbordes inalcanzables y ningún control por
 debajo de 30 px en las 5 vistas.
 
-**Pendiente**: quedan **admin y superadmin**.
+#### Administración, en la misma pasada
+
+19 pantallas (usuarios, materias, cursos, catálogo, importación, tema, plantillas, tareas,
+auditoría, secciones y sus formularios). **Tres recortaban contenido sin dejar scroll**:
+
+- **`/admin/divisions`**: la tabla medía 464 px sin `.users-table-card`. Exactamente el mismo
+  caso que `/admin/secciones` — dos pantallas del mismo panel a las que se les olvidó el mismo
+  envoltorio.
+- **`/admin/import`**: las tres tarjetas que explican los tipos de importación son un grid de
+  `1fr 1fr 1fr` fijo; la tercera arrancaba en x=347 sobre 375 y se perdía contra el borde. En
+  móvil se apilan (necesitó una clase: el estilo estaba en el atributo).
+- **`/admin/audit`**: los parámetros de cada evento se imprimen como JSON crudo, y un token de
+  400 px sin espacios no corta por más `white-space: normal` que tenga. `overflow-wrap: anywhere`.
+
+Y un defecto de formulario que se repite en todo el panel: **dentro de `.input-group`, un
+`<input>` mide 48 px y un `<select>` 15**, porque el select trae `padding:0` en el atributo
+style. Los formularios de materia son casi todos selects, así que tocar el borde de la caja no
+abría nada. También subieron los botones de acción de cada fila (29 px, con el padding chico
+puesto inline para no engordar la tabla) y "quitar suplente" (26 px).
+
+Después del arreglo: **19 vistas, cero contenido inalcanzable y cero controles por debajo de
+30 px**, salvo un enlace de 16 px que va dentro de una frase ("asignale ese rol desde
+Usuarios") y que se deja como está a propósito: es prosa, no un control.
+
+**Pendiente**: queda **superadmin**.
 
 #### Anotado, sin tocar
 

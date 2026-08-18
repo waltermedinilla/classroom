@@ -49,6 +49,10 @@
         <% } %>
       </div>
     <% } else { %>
+      <%# Igual que /admin/users y /admin/secciones: `.users-table-card` es quien lleva el
+          overflow-x en móvil. Sin él la tabla (464 px) se recorta contra los 375 de la
+          pantalla y la columna Acciones queda inalcanzable. %>
+      <div class="users-table-card">
       <table class="users-table acciones-fijas">
         <thead>
           <tr>
@@ -92,6 +96,7 @@
           <% }) %>
         </tbody>
       </table>
+      </div>
     <% } %>
   </main>
 

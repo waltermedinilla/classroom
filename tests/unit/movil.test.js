@@ -37,6 +37,14 @@
 //      la columna Acciones —el único acceso a configurar la sección, que es lo único que el
 //      jefe puede hacer ahí— no existía desde un teléfono.
 //
+// ── Admin ─────────────────────────────────────────────────────────────────────
+//  11. Tres pantallas recortaban contenido sin dejar scroll: la tabla de /admin/divisions
+//      (464 px, sin envoltorio), las tres tarjetas de /admin/import (grid de 3 columnas
+//      fijas, la tercera arrancaba en x=347) y los parámetros JSON de /admin/audit (un
+//      token de 400 px sin espacios no corta solo).
+//  12. Dentro de `.input-group`, un <input> mide 48 px y un <select> 15: el select trae
+//      `padding:0` en el atributo style. Los formularios de materia son casi todos selects.
+//
 // ── Preceptor ─────────────────────────────────────────────────────────────────
 //   6. El calendario de "Actividades del día" usaba `repeat(7, 1fr)`. Un track `1fr` no
 //      baja de su contenido, así que los 7 días sumaban 351 px en una tarjeta de 315 y la
@@ -62,6 +70,8 @@ const toma   = fs.readFileSync(path.join(raiz, 'views/preceptor/asistencia-toma.
 const tarjetas = fs.readFileSync(path.join(raiz, 'views/partials/live-cards.ejs'), 'utf8');
 const tablero  = fs.readFileSync(path.join(raiz, 'views/directivo/dashboard.ejs'), 'utf8');
 const secciones = fs.readFileSync(path.join(raiz, 'views/admin/sections.ejs'), 'utf8');
+const divisiones = fs.readFileSync(path.join(raiz, 'views/admin/divisions.ejs'), 'utf8');
+const importar   = fs.readFileSync(path.join(raiz, 'views/admin/import.ejs'), 'utf8');
 
 // Devuelve el cuerpo de los @media (max-width: 900px) concatenados, que es el breakpoint
 // que el archivo ya venía usando para móvil. Contar llaves en vez de usar un regex vago:
@@ -322,4 +332,33 @@ test('el nombre del docente en jefatura también se toca en toda la celda', () =
   const regla = movil.match(/\.main-content td > a\.name-link[^}]*}/s)[0];
   assert.match(regla, /a\.fila-link/,
     'jefatura llama fila-link al mismo enlace; sin esto queda en 18 px');
+});
+
+// ── 12. Panel de administración ─────────────────────────────────────────────
+
+test('la tabla de divisiones va envuelta en la tarjeta que scrollea', () => {
+  const i = divisiones.indexOf('<table class="users-table');
+  assert.ok(i > -1, 'cambió el marcado de la tabla de divisiones');
+  assert.match(divisiones.slice(Math.max(0, i - 400), i), /<div class="users-table-card">/,
+    'sin el envoltorio la tabla se recorta y la columna Acciones no se alcanza');
+});
+
+test('las tarjetas de tipos de importación se apilan en pantalla chica', () => {
+  assert.match(importar, /class="import-intro"/,
+    'la grilla necesita una clase: con el estilo en el atributo no hay dónde colgar la regla');
+  assert.match(movil, /\.import-intro\s*{[^}]*grid-template-columns:\s*1fr/s);
+});
+
+test('los parámetros de la auditoría cortan aunque sean un JSON sin espacios', () => {
+  assert.match(movil, /\.audit-meta\s*{[^}]*overflow-wrap:\s*anywhere/s);
+});
+
+test('los desplegables de los formularios tienen alto tocable', () => {
+  // `.input-group select` trae padding:0 inline: sin min-height queda en 15 px.
+  assert.match(movil, /\.input-group select\s*{[^}]*min-height:\s*38px/s);
+});
+
+test('los botones de acción de cada fila llegan al mínimo cómodo', () => {
+  assert.match(movil, /\.main-content td \.btn\s*{[^}]*min-height:\s*32px/s);
+  assert.match(movil, /\.btn-assign-teacher\s*{[^}]*min-height:\s*32px/s);
 });

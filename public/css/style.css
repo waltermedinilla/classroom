@@ -2664,3 +2664,34 @@ table.acciones-fijas, table.nombre-fijo { overflow: clip; }
     margin: -6px 0 -6px -8px;
   }
 }
+
+/* ─── Panel de administración en móvil ──────────────────────────────────────
+   Cuarta pasada del recorrido rol por rol (2026-08-17), 19 pantallas a 375 px. */
+@media (max-width: 900px) {
+  /* Las tres tarjetas que explican los tipos de importación son un grid de 3 columnas
+     fijas: la tercera arrancaba en x=347 y se perdía contra el borde. Apiladas se leen
+     igual y son texto, no datos que convenga comparar al costado. */
+  .import-intro { grid-template-columns: 1fr !important; }
+
+  /* La auditoría imprime los parámetros crudos de cada evento, que suelen ser un JSON con
+     ids: un token de 400 px sin espacios no corta por más `white-space:normal` que tenga, y
+     el resto del renglón se iba de pantalla. */
+  .audit-meta { overflow-wrap: anywhere; }
+
+  /* Dentro de `.input-group`, un <input> mide 48 px y un <select> 15: el select viene con
+     `padding:0` en el atributo style, así que su caja quedaba en 25 px contra los 51 del
+     campo de al lado. Tocar el borde de la caja no abre nada. (En escritorio se ven igual
+     de despareja, pero eso es otra pasada.) */
+  .input-group select { min-height: 38px; }
+
+  /* Reasignar docente desde el listado de materias: 19 px. Es el único acceso al modal que
+     arregla una materia sin titular. */
+  .btn-assign-teacher { min-height: 32px; min-width: 32px; }
+
+  /* Los botones de acción de cada fila llevan `padding:4px 10px` en el atributo style para no
+     engordar la tabla, y quedan en 29 px. `min-height` no compite con ese inline —es otra
+     propiedad— así que los levanta sin tocar el padding ni el alto de la fila. */
+  .main-content td .btn { min-height: 32px; }
+  /* "Quitar suplente" del formulario de materia: 26 px. */
+  .btn-remove-coteacher { min-height: 32px; min-width: 32px; }
+}
