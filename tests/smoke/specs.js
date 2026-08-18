@@ -6950,32 +6950,43 @@ const specs = [
         const sesiones = mongo.db().collection('roomsessions');
         const sid = new ObjectId(state.salaSessionId);
 
-        // Se la envejece: último ping un minuto más allá del límite. Nadie adentro.
-        const fin = new Date(Date.now() - (AUTO_CLOSE_MS + 60 * 1000));
-        await sesiones.updateOne({ _id: sid }, { $set: { lastActivityAt: fin } });
+        // Se la envejece como una clase de verdad que terminó: abierta hace rato y último
+        // ping un minuto más allá del límite, con nadie adentro. `openedAt` se mueve TAMBIÉN,
+        // y no es un detalle decorativo: con la apertura en el futuro de la última actividad
+        // el cierre se fecha en `openedAt` (horaDeCierre no permite duración negativa), que
+        // es una sesión que no puede existir.
+        const { openedAt: apertura } = await sesiones.findOne({ _id: sid });
+        const fin   = new Date(Date.now() - (AUTO_CLOSE_MS + 60 * 1000));
+        const abrio = new Date(fin.getTime() - 40 * 60 * 1000);
+        await sesiones.updateOne({ _id: sid }, { $set: { openedAt: abrio, lastActivityAt: fin } });
 
-        const panel = await client.get('salaDirectivo', '/directivo/en-vivo/poll', {
-          expectStatus: 200, headers: { Accept: 'application/json' },
-        });
-        assert(!panel.json.salas.some(s => s.courseId === state.courseId),
-          'una sala sin actividad más allá del límite no puede seguir listada como clase en vivo');
+        try {
+          const panel = await client.get('salaDirectivo', '/directivo/en-vivo/poll', {
+            expectStatus: 200, headers: { Accept: 'application/json' },
+          });
+          assert(!panel.json.salas.some(s => s.courseId === state.courseId),
+            'una sala sin actividad más allá del límite no puede seguir listada como clase en vivo');
 
-        const doc = await sesiones.findOne({ _id: sid });
-        assert(doc.closedAt, 'el panel tendría que haberla cerrado, no solo esconderla');
-        assert(doc.autoClosed === true, 'tiene que quedar marcada como cierre automático');
-        // La hora que se guarda es la de la última señal de vida, no la del barrido: si no,
-        // el pie "Cerradas hoy" se llena de clases de la semana pasada.
-        assert(Math.abs(new Date(doc.closedAt) - fin) < 1000,
-          `el cierre debería fecharse en la última actividad (${fin.toISOString()}), ` +
-          `quedó en ${new Date(doc.closedAt).toISOString()}`);
-
-        // Se devuelve el escenario como estaba: los specs de abajo siguen con ESTA sesión
-        // abierta y con su transcripción intacta.
-        await sesiones.updateOne({ _id: sid }, {
-          $set: { closedAt: null, closedBy: null, autoClosed: false, lastActivityAt: new Date() },
-        });
-        await mongo.db().collection('roommessages')
-          .deleteMany({ session: sid, kind: 'system', text: /cerró automáticamente/ });
+          const doc = await sesiones.findOne({ _id: sid });
+          assert(doc.closedAt, 'el panel tendría que haberla cerrado, no solo esconderla');
+          assert(doc.autoClosed === true, 'tiene que quedar marcada como cierre automático');
+          // La hora que se guarda es la de la última señal de vida, no la del barrido: si no,
+          // el pie "Cerradas hoy" se llena de clases de la semana pasada.
+          assert(Math.abs(new Date(doc.closedAt) - fin) < 1000,
+            `el cierre debería fecharse en la última actividad (${fin.toISOString()}), ` +
+            `quedó en ${new Date(doc.closedAt).toISOString()}`);
+        } finally {
+          // El escenario vuelve como estaba PASE LO QUE PASE: los specs de abajo siguen con
+          // ESTA sesión abierta y con su transcripción intacta. En el `finally` porque un
+          // assert que falla acá no puede además llevarse puestos a los que vienen después
+          // —así fue como un fallo se convirtió en dos—.
+          await sesiones.updateOne({ _id: sid }, {
+            $set: { openedAt: apertura, closedAt: null, closedBy: null, autoClosed: false,
+                    lastActivityAt: new Date() },
+          });
+          await mongo.db().collection('roommessages')
+            .deleteMany({ session: sid, kind: 'system', text: /cerró automáticamente/ });
+        }
 
         // La docente vuelve a la sala y pollea: la tarjeta tiene que reflejarlo.
         await client.get('scopedTeacher', `/courses/${state.courseId}/sala/poll`, {
