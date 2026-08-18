@@ -98,6 +98,11 @@
         <% } %>
       </div>
     <% } else { %>
+      <%# El .users-table-card no es solo la tarjeta: en móvil es quien lleva el
+          overflow-x:auto. Sin él la tabla medía 512 px dentro de 375 y el body la RECORTABA,
+          así que la columna Acciones —el único acceso a configurar la sección— no existía
+          desde un teléfono. Es el mismo envoltorio que usa /admin/users. %>
+      <div class="users-table-card">
       <table class="users-table acciones-fijas">
         <thead>
           <tr>
@@ -182,6 +187,7 @@
           <% }) %>
         </tbody>
       </table>
+      </div>
     <% } %>
   </main>
 

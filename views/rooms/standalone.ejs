@@ -21,7 +21,7 @@
   <main class="main-content">
     <div style="max-width:900px;margin:0 auto 16px">
       <h2 style="margin:0 0 4px"><%= course.name %></h2>
-      <p style="margin:0;color:#5f6368;font-size:14px">
+      <p style="margin:0;color:var(--text-secondary);font-size:14px">
         <%= course.division?.name || '' %>
         <% if (course.owner?.name) { %> · <%= course.owner.name %><% } %>
         <% if (course.room) { %> · <%= course.room %><% } %>
@@ -33,5 +33,9 @@
     <script src="/js/subida-diagnostico.js"></script>
     <%- include('../partials/live-room') %>
   </main>
+
+  <%# Sin el footer, los botones del header de esta página (menú lateral, salir, tema)
+      quedan sin sus funciones. Ver views/directivo/en-vivo.ejs. %>
+  <%- include('../partials/footer') %>
 </body>
 </html>

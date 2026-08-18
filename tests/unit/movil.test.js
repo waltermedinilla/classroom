@@ -21,6 +21,22 @@
 //      desbordaba: se comprimía hasta ser inservible, que en la práctica es lo mismo.
 //   5. La barra de escribir de la sala en vivo daba 19 px de alto y los botones 24×24.
 //
+// ── Directivo ─────────────────────────────────────────────────────────────────
+//   7. Las dos vistas de "En vivo" y las tres de la sala NO incluían partials/footer, que
+//      es donde viven toggleDrawer(), logout() y el tema. En esas cinco páginas el botón de
+//      hamburguesa no abría nada: desde un teléfono no había navegación NI salida de sesión,
+//      solo el botón "atrás" del navegador. Tampoco se aplicaba el tema guardado.
+//   8. Al arreglar lo anterior, esas páginas vieron el modo oscuro por primera vez y quedaron
+//      con tarjetas blancas fijas: el texto claro sobre fondo blanco daba 1,07:1.
+//   9. Los buscadores de Docentes y Divisiones medían 25 px de alto, y el nombre de cada fila
+//      —único acceso a la ficha— 17 px dentro de una celda tres veces más alta.
+//
+// ── Jefe de sección ───────────────────────────────────────────────────────────
+//  10. En /admin/secciones la tabla medía 512 px dentro de 375 y NO estaba envuelta en
+//      `.users-table-card`, que es quien lleva el overflow-x en móvil. El body la recortaba:
+//      la columna Acciones —el único acceso a configurar la sección, que es lo único que el
+//      jefe puede hacer ahí— no existía desde un teléfono.
+//
 // ── Preceptor ─────────────────────────────────────────────────────────────────
 //   6. El calendario de "Actividades del día" usaba `repeat(7, 1fr)`. Un track `1fr` no
 //      baja de su contenido, así que los 7 días sumaban 351 px en una tarjeta de 315 y la
@@ -43,6 +59,9 @@ const css    = fs.readFileSync(path.join(raiz, 'public/css/style.css'), 'utf8');
 const sala   = fs.readFileSync(path.join(raiz, 'views/partials/live-room.ejs'), 'utf8');
 const calend = fs.readFileSync(path.join(raiz, 'views/preceptor/actividades.ejs'), 'utf8');
 const toma   = fs.readFileSync(path.join(raiz, 'views/preceptor/asistencia-toma.ejs'), 'utf8');
+const tarjetas = fs.readFileSync(path.join(raiz, 'views/partials/live-cards.ejs'), 'utf8');
+const tablero  = fs.readFileSync(path.join(raiz, 'views/directivo/dashboard.ejs'), 'utf8');
+const secciones = fs.readFileSync(path.join(raiz, 'views/admin/sections.ejs'), 'utf8');
 
 // Devuelve el cuerpo de los @media (max-width: 900px) concatenados, que es el breakpoint
 // que el archivo ya venía usando para móvil. Contar llaves en vez de usar un regex vago:
@@ -216,4 +235,91 @@ test('las reglas de móvil viven solo dentro del breakpoint', () => {
   assert.doesNotMatch(fuera, /\.profile-header\s*{[^}]*flex-direction:\s*column/);
   assert.doesNotMatch(fuera, /\.grade-table thead\s*{\s*display:\s*none/,
     'ocultar la cabecera en escritorio dejaría la tabla sin encabezados');
+});
+
+
+// ── 9. Panel directivo y sala: el footer no es opcional ─────────────────────
+//
+// Es la regla que evita que vuelva a pasar: cualquier vista con header necesita el footer,
+// porque los botones del header llaman a funciones que el footer define. Un test por vista
+// no serviría — el que se olvida es siempre el archivo nuevo.
+
+test('toda vista con encabezado incluye también el pie', () => {
+  const vistas = [];
+  (function recorrer(dir) {
+    for (const entrada of fs.readdirSync(dir, { withFileTypes: true })) {
+      const completo = path.join(dir, entrada.name);
+      if (entrada.isDirectory()) recorrer(completo);
+      else if (entrada.name.endsWith('.ejs')) vistas.push(completo);
+    }
+  })(path.join(raiz, 'views'));
+
+  const huerfanas = vistas.filter((v) => {
+    const t = fs.readFileSync(v, 'utf8');
+    return /include\(['"][^'"]*partials\/header['"]/.test(t)
+        && !/include\(['"][^'"]*partials\/footer['"]/.test(t);
+  }).map((v) => path.relative(raiz, v).split(path.sep).join("/"));
+
+  assert.deepStrictEqual(huerfanas, [],
+    'sin el pie, el botón de hamburguesa de esas páginas no abre nada y no hay forma de ' +
+    'salir de la sesión desde un teléfono: ' + huerfanas.join(', '));
+});
+
+test('las tarjetas de clases en vivo siguen al tema en vez de ser blancas fijas', () => {
+  assert.match(tarjetas, /\.lc-card\s*{[^}]*background:\s*var\(--surface\)/,
+    'con #fff fijo, en modo oscuro el texto claro cae sobre fondo blanco (1,07:1)');
+  assert.match(tarjetas, /\[data-theme="dark"\]\s*\.lc-vivo/,
+    'las pastillas de color necesitan su variante oscura o quedan como carteles encendidos');
+});
+
+test('la sala en vivo sigue al tema, incluido el cartel de observación', () => {
+  assert.match(sala, /\.lr-card\s*{[^}]*background:\s*var\(--surface\)/);
+  assert.match(sala, /\.lr-obs\s*{/,
+    'el cartel violeta tenía el color en el atributo style: sin clase no hay dónde colgar la ' +
+    'variante oscura');
+  assert.match(sala, /\[data-theme="dark"\]\s*\.lr-obs\s*{/);
+});
+
+// ── 10. Controles del panel directivo ───────────────────────────────────────
+
+test('los filtros de los listados tienen alto cómodo en móvil', () => {
+  assert.match(movil, /\.filters-bar input[^}]*min-height:\s*40px/s,
+    'el buscador de Docentes y Divisiones medía 25 px');
+});
+
+test('el nombre de cada fila se toca en toda la celda, sin cambiar el alto de la tabla', () => {
+  const regla = movil.match(/\.main-content td > a\.name-link[^}]*}/s);
+  assert.ok(regla, 'falta la regla que agranda el área tocable del nombre');
+  assert.match(regla[0], /padding:\s*9px 0/);
+  assert.match(regla[0], /margin:\s*-9px 0/,
+    'sin el margen negativo la tabla crece de alto en cada fila');
+});
+
+test('el enlace de volver de las fichas del directivo tiene área tocable', () => {
+  assert.match(movil, /\.back-link\s*{[^}]*padding:\s*6px 8px/s);
+});
+
+test('los botones de actualizaciones del panel directivo llevan la clase .btn', () => {
+  // Con `class="btn-outline"` a secas heredan el color pero no el padding: 27 y 24 px.
+  assert.match(tablero, /id="updates-open-btn"/);
+  const abrir = tablero.match(/<button[^>]*id="updates-open-btn"[^>]*>/)[0];
+  const cerrar = tablero.match(/<button[^>]*id="updates-close"[^>]*>/)[0];
+  assert.match(abrir, /class="btn btn-outline"/);
+  assert.match(cerrar, /class="btn btn-primary"/);
+});
+
+// ── 11. Jefatura ────────────────────────────────────────────────────────────
+
+test('la tabla de secciones va envuelta en la tarjeta que scrollea', () => {
+  // `.users-table-card` es quien lleva overflow-x:auto en móvil (y el radio de la tarjeta).
+  const i = secciones.indexOf('<table class="users-table');
+  assert.ok(i > -1, 'cambió el marcado de la tabla de secciones');
+  assert.match(secciones.slice(Math.max(0, i - 400), i), /<div class="users-table-card">/,
+    'sin el envoltorio, la columna Acciones queda recortada y es inalcanzable en un teléfono');
+});
+
+test('el nombre del docente en jefatura también se toca en toda la celda', () => {
+  const regla = movil.match(/\.main-content td > a\.name-link[^}]*}/s)[0];
+  assert.match(regla, /a\.fila-link/,
+    'jefatura llama fila-link al mismo enlace; sin esto queda en 18 px');
 });

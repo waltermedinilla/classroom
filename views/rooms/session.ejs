@@ -20,7 +20,7 @@
       <h2 style="margin:8px 0 4px">
         <%= fmt.fechaLarga(sesion.openedAt) %>
       </h2>
-      <p style="margin:0 0 16px;color:#5f6368;font-size:14px">
+      <p style="margin:0 0 16px;color:var(--text-secondary);font-size:14px">
         <%= course.name %> · <%= course.division?.name || '' %> ·
         <%= fmt.hora(sesion.openedAt) %>
         <% if (sesion.closedAt) { %>
@@ -42,23 +42,23 @@
       <div style="display:grid;grid-template-columns:1fr 280px;gap:16px;align-items:start">
 
         <!-- Conversación -->
-        <div style="background:#fff;border:1px solid #dadce0;border-radius:12px;padding:16px;min-width:0">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;min-width:0">
           <h3 style="margin:0 0 12px;font-size:16px">Conversación</h3>
 
           <% if (purgada) { %>
             <%# La asistencia de esta clase sigue estando (a la derecha): lo único que se
                 purgó a los 3 meses son los mensajes. Decirlo explícitamente evita que la
                 pantalla parezca rota. %>
-            <div style="background:#f8f9fa;border:1px solid #dadce0;border-radius:8px;padding:16px;color:#5f6368;font-size:14px">
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;color:var(--text-secondary);font-size:14px">
               La conversación de esta clase ya no está disponible: los mensajes se conservan
               3 meses. El registro de asistencia sí se conserva y está acá al lado.
             </div>
           <% } else if (!mensajes.length) { %>
-            <p style="color:#5f6368;font-size:14px">No se escribió ningún mensaje en esta clase.</p>
+            <p style="color:var(--text-secondary);font-size:14px">No se escribió ningún mensaje en esta clase.</p>
           <% } else { %>
             <% mensajes.forEach(function (m) { %>
               <% if (m.kind === 'system') { %>
-                <div style="text-align:center;font-size:12px;color:#80868b;margin:10px 0">
+                <div style="text-align:center;font-size:12px;color:var(--text-hint);margin:10px 0">
                   <%= m.text %> · <%= fmt.hora(m.createdAt) %>
                   <%# El aviso de una actividad sigue llevando a la actividad meses después: es
                       media razón para volver a abrir una clase vieja. Mismo botón que en el chat
@@ -79,7 +79,7 @@
               <% } else { %>
                 <% const esAdjunto = m.kind === 'image' || m.kind === 'file'; %>
                 <div style="margin-bottom:12px">
-                  <div style="font-size:12px;color:#5f6368">
+                  <div style="font-size:12px;color:var(--text-secondary)">
                     <%= m.authorName || '—' %> ·
                     <%= fmt.hora(m.createdAt) %>
                   </div>
@@ -93,36 +93,36 @@
                     <% const url = `/courses/${course._id}/sala/archivos/${m._id}`; %>
                     <% if (m.kind === 'image') { %>
                       <a href="<%= url %>" target="_blank" rel="noopener"
-                         style="display:block;max-width:300px;border:1px solid #dadce0;border-radius:12px;overflow:hidden">
+                         style="display:block;max-width:300px;border:1px solid var(--border);border-radius:12px;overflow:hidden">
                         <img src="<%= url %>" alt="<%= m.attachment?.name || '' %>" loading="lazy"
-                             style="display:block;width:100%;max-height:220px;object-fit:cover;background:#f1f3f4">
-                        <span style="display:flex;gap:6px;padding:7px 10px;font-size:12px;color:#5f6368;
-                                     border-top:1px solid #f1f3f4">
+                             style="display:block;width:100%;max-height:220px;object-fit:cover;background:var(--bg)">
+                        <span style="display:flex;gap:6px;padding:7px 10px;font-size:12px;color:var(--text-secondary);
+                                     border-top:1px solid var(--border)">
                           <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
                             <%= m.attachment?.name || 'imagen' %></span>
-                          <span style="flex:none;color:#80868b">· <%= pesoLegible(m.attachment?.bytes) %></span>
+                          <span style="flex:none;color:var(--text-hint)">· <%= pesoLegible(m.attachment?.bytes) %></span>
                         </span>
                       </a>
                     <% } else { %>
                       <a href="<%= url %>" target="_blank" rel="noopener"
                          style="display:flex;align-items:center;gap:10px;max-width:300px;padding:10px 12px;
-                                border:1px solid #dadce0;border-radius:12px;text-decoration:none;color:inherit">
+                                border:1px solid var(--border);border-radius:12px;text-decoration:none;color:inherit">
                         <span style="flex:none;width:40px;height:40px;border-radius:8px;background:#1a73e8;
                                      color:#fff;display:flex;align-items:center;justify-content:center;
                                      font-size:10px;font-weight:600"><%= etiquetaExt(m.attachment?.ext) %></span>
                         <span style="min-width:0">
-                          <span style="display:block;font-size:13px;color:#202124;overflow:hidden;
+                          <span style="display:block;font-size:13px;color:var(--text);overflow:hidden;
                                        text-overflow:ellipsis;white-space:nowrap"><%= m.attachment?.name || 'archivo' %></span>
-                          <span style="display:block;font-size:11px;color:#5f6368">
+                          <span style="display:block;font-size:11px;color:var(--text-secondary)">
                             <%= etiquetaExt(m.attachment?.ext) %> · <%= pesoLegible(m.attachment?.bytes) %></span>
                         </span>
                       </a>
                     <% } %>
                   <% } else { %>
-                    <div style="background:<%= m.deletedAt ? '#f8f9fa' : '#f1f3f4' %>;padding:8px 12px;
+                    <div style="background:var(--bg);padding:8px 12px;
                                 border-radius:12px;border-top-left-radius:2px;font-size:14px;
                                 white-space:pre-wrap;word-break:break-word;
-                                <%= m.deletedAt ? 'font-style:italic;color:#80868b' : '' %>">
+                                <%= m.deletedAt ? 'font-style:italic;color:var(--text-hint)' : '' %>">
                       <% if (m.deletedAt) { %>
                         <%= m.kind === 'image' ? 'Imagen eliminada'
                             : (m.kind === 'file' ? 'Archivo eliminado' : 'Mensaje eliminado') %>
@@ -136,14 +136,14 @@
         </div>
 
         <!-- Asistencia -->
-        <div style="background:#fff;border:1px solid #dadce0;border-radius:12px;padding:16px">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px">
           <h3 style="margin:0 0 4px;font-size:16px">Asistencia</h3>
-          <p style="margin:0 0 12px;color:#5f6368;font-size:13px">
+          <p style="margin:0 0 12px;color:var(--text-secondary);font-size:13px">
             <%= presentes %> de <%= asistencia.length %> se conectaron
           </p>
           <% asistencia.forEach(function (a) { %>
             <div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;
-                        border-bottom:1px solid #f1f3f4;font-size:13px">
+                        border-bottom:1px solid var(--border);font-size:13px">
               <span style="<%= a.presente ? '' : 'color:#9aa0a6' %>"><%= a.nombre %></span>
               <span style="white-space:nowrap;color:<%= a.presente ? '#137333' : '#9aa0a6' %>">
                 <%= a.presente ? '~' + a.minutos + ' min' : 'ausente' %>
@@ -154,5 +154,9 @@
       </div>
     </div>
   </main>
+
+  <%# Sin el footer, los botones del header de esta página (menú lateral, salir, tema)
+      quedan sin sus funciones. Ver views/directivo/en-vivo.ejs. %>
+  <%- include('../partials/footer') %>
 </body>
 </html>

@@ -7,45 +7,55 @@
 %>
 <style>
   .lc-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:12px; }
-  .lc-card { background:#fff; border:1px solid #dadce0; border-radius:12px; padding:14px 16px;
+  .lc-card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px;
              display:flex; flex-direction:column; text-decoration:none; color:inherit; }
-  .lc-card:hover { border-color:#1a73e8; }
+  .lc-card:hover { border-color:var(--primary); }
   .lc-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
   .lc-vivo { font-size:11px; background:#e6f4ea; color:#137333; padding:3px 9px; border-radius:12px; }
   /* Sala abierta pero sin la docente conectada: la clase puede haber terminado hace un rato y
      la sala todavía no vencer. Ámbar, no verde: no es un error, es "mirá esto". */
   .lc-vivo.sindoc { background:#fef7e0; color:#b06000; }
-  .lc-div { font-size:12px; color:#5f6368; }
+  .lc-div { font-size:12px; color:var(--text-secondary); }
   .lc-materia { font-size:15px; font-weight:500; margin-bottom:2px; }
-  .lc-docente { font-size:13px; color:#5f6368; margin-bottom:12px; }
+  .lc-docente { font-size:13px; color:var(--text-secondary); margin-bottom:12px; }
   .lc-bolas { display:flex; align-items:center; margin-bottom:10px; }
   .lc-bola { width:26px; height:26px; border-radius:50%; color:#fff; display:flex; align-items:center;
-             justify-content:center; font-size:11px; box-shadow:0 0 0 2px #fff; }
+             justify-content:center; font-size:11px; box-shadow:0 0 0 2px var(--surface); }
   .lc-bola + .lc-bola { margin-left:-8px; }
-  .lc-pres { font-size:13px; color:#5f6368; margin-left:10px; }
+  .lc-pres { font-size:13px; color:var(--text-secondary); margin-left:10px; }
   .lc-pres.bajo { color:#b06000; }
   .lc-pie { display:flex; justify-content:space-between; align-items:center; gap:8px;
-            border-top:1px solid #f1f3f4; padding-top:10px; margin-top:auto; }
-  .lc-meta { font-size:12px; color:#80868b; }
-  .lc-entrar { font-size:13px; color:#1a73e8; white-space:nowrap; }
-  .lc-chip { font-size:12px; background:#f8f9fa; border:1px solid #dadce0; border-radius:8px;
-             padding:6px 12px; color:#5f6368; text-decoration:none; display:inline-block; }
+            border-top:1px solid var(--border); padding-top:10px; margin-top:auto; }
+  /* Era #80868b fijo: contra el fondo claro daba 3,2:1 y contra el oscuro, nada. La variable
+     secundaria se lee en los dos (6:1 y 8:1) y es el mismo gris que usa el resto del panel. */
+  .lc-meta { font-size:12px; color:var(--text-secondary); }
+  .lc-entrar { font-size:13px; color:var(--primary); white-space:nowrap; }
+  .lc-chip { font-size:12px; background:var(--bg); border:1px solid var(--border); border-radius:8px;
+             padding:6px 12px; color:var(--text-secondary); text-decoration:none; display:inline-block; }
+
+  /* Las pastillas de color son pares fondo+texto cerrados, así que se leen solas — pero
+     puestas sobre una tarjeta oscura quedaban como un cartel de neón, y el ámbar de "pocos
+     presentes" caía a 3,5:1 sobre la superficie oscura. Estas tres las bajan de tono sin
+     tocar el modo claro. Medidas: 5,9:1 el verde, 7:1 el ámbar. */
+  [data-theme="dark"] .lc-vivo        { background:#12321f; color:#7fd39b; }
+  [data-theme="dark"] .lc-vivo.sindoc { background:#3a2c10; color:#f0b45f; }
+  [data-theme="dark"] .lc-pres.bajo   { color:#e8a33d; }
 </style>
 
 <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;flex-wrap:wrap;gap:8px">
   <h2 style="margin:0;font-size:20px">Clases en vivo</h2>
-  <span style="font-size:13px;color:#5f6368" id="lcEstado">
+  <span style="font-size:13px;color:var(--text-secondary)" id="lcEstado">
     <%= salas.length %> <%= salas.length === 1 ? 'sala abierta' : 'salas abiertas' %>
   </span>
 </div>
 
 <% if (ingreso === 'observacion') { %>
-  <p style="font-size:13px;color:#5f6368;margin:0 0 14px">
+  <p style="font-size:13px;color:var(--text-secondary);margin:0 0 14px">
     Al entrar mirás sin aparecer en la sala: ni la docente ni los alumnos ven que estás.
     Queda registrado en la auditoría, y desde adentro podés presentarte si querés participar.
   </p>
 <% } else { %>
-  <p style="font-size:13px;color:#5f6368;margin:0 0 14px">
+  <p style="font-size:13px;color:var(--text-secondary);margin:0 0 14px">
     Al entrar, el curso ve que estás en la sala y podés escribir.
   </p>
 <% } %>
@@ -57,7 +67,7 @@
     <div class="empty-icon"><span class="material-symbols-outlined">sensors_off</span></div>
     <p>No hay ninguna clase en vivo en este momento.</p>
     <% if (typeof scopeAll !== 'undefined' && scopeAll === false) { %>
-      <p style="font-size:13px;color:#5f6368">Solo se muestran las divisiones que tenés a cargo.</p>
+      <p style="font-size:13px;color:var(--text-secondary)">Solo se muestran las divisiones que tenés a cargo.</p>
     <% } %>
   </div>
 </div>
@@ -135,7 +145,7 @@
 
     const cerradas = datos.cerradasHoy || [];
     document.getElementById('lcCerradas').innerHTML = cerradas.length
-      ? '<div style="font-size:14px;font-weight:500;color:#5f6368;margin-bottom:8px">Cerradas hoy</div>' +
+      ? '<div style="font-size:14px;font-weight:500;color:var(--text-secondary);margin-bottom:8px">Cerradas hoy</div>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
         cerradas.map(c =>
           '<a class="lc-chip" href="/courses/' + c.courseId + '/sala/clases/' + c.sessionId + '">' +

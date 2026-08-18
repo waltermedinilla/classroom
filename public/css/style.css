@@ -2625,3 +2625,42 @@ table.acciones-fijas, table.nombre-fijo { overflow: clip; }
      tocable, así que esto es legibilidad, no alcance. */
   .main-content input[type="checkbox"] { width: 18px; height: 18px; }
 }
+
+/* ─── Panel directivo en móvil ──────────────────────────────────────────────
+   Recorrido rol por rol a 375 px (2026-08-17). A diferencia del alumno, acá NADA
+   quedaba fuera de alcance: las siete tablas del panel ya viven en contenedores
+   con scroll horizontal y columna anclada, que es el patrón correcto para datos.
+   Lo que fallaba era el tamaño de lo que hay que tocar. */
+@media (max-width: 900px) {
+  /* Las barras de filtro de Docentes y Divisiones dejaban el buscador en 25 px de
+     alto: es un <input> sin estilos propios, contra los 37 px del de Materias, que
+     sí los tiene. Se empareja para arriba, en la barra entera y no vista por vista. */
+  .filters-bar input,
+  .filters-bar select,
+  .filters-bar button { min-height: 40px; }
+
+  /* El nombre de la fila es el ÚNICO acceso a la ficha de un alumno, un docente,
+     una división o una materia, y medía 17 px de alto: la celda que lo rodea es
+     tres veces más grande pero no es clickeable. El padding lo estira hasta la
+     celda entera y el margen negativo lo devuelve, así que la tabla no cambia de
+     alto ni una fila. */
+  .main-content td > a.name-link,
+  .main-content td > a.course-name-link,
+  /* Jefatura llama `fila-link` a lo mismo: el nombre del docente en su listado. */
+  .main-content td > a.fila-link,
+  /* En Promedios el enlace a la materia no tiene clase; `:not([class])` lo agarra sin
+     tocar los enlaces que SÍ son botones dentro de una celda. */
+  .grades-table td > a:not([class]) {
+    display: block;
+    padding: 9px 0;
+    margin: -9px 0;
+  }
+
+  /* "Volver" de las fichas de detalle: 21 px. Se estira hacia la izquierda con un
+     margen negativo para no correr el texto de su lugar. */
+  .back-link {
+    display: inline-block;
+    padding: 6px 8px;
+    margin: -6px 0 -6px -8px;
+  }
+}

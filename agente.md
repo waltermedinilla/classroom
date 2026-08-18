@@ -387,6 +387,95 @@ que deja usuarios de prueba sin borrar). Espaciar las corridas o limpiar a mano.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-17 — Móvil, tercera pasada: directivo (y cinco páginas donde el menú no abría)
+
+Continuación de la revisión rol por rol, midiendo posiciones reales a 375 px. El panel del
+directivo son 11 vistas. La sorpresa es que el problema grande **no era de móvil**.
+
+#### Cinco páginas sin `partials/footer`
+
+`views/directivo/en-vivo.ejs`, `views/preceptor/en-vivo.ejs` y las tres de la sala
+(`views/rooms/clases|session|standalone.ejs`) nunca incluyeron el pie. Y el pie no es
+decorativo: ahí viven `toggleDrawer()`, `logout()`, `toggleDarkMode()`, `openInboxModal()`, el
+tema guardado, el FAB de sugerencias y `nav-responsive.js`.
+
+Medido en esas páginas: **todas esas funciones daban `undefined`**. El botón de hamburguesa no
+abría nada, así que desde un teléfono no había navegación **ni forma de salir de la sesión** —
+solo el botón "atrás" del navegador—; en escritorio, el menú del usuario tampoco respondía. Y
+como el nav de sección no se colapsaba, las solapas quedaban en una tira de 2455 px que hay que
+barrer a ciegas.
+
+El arreglo es incluir el pie en las cinco. El test que lo fija es genérico y no vista por vista:
+*toda vista que incluya el header tiene que incluir el footer* — el que se olvida siempre es el
+archivo nuevo.
+
+#### Consecuencia: esas páginas vieron el modo oscuro por primera vez
+
+Al aplicarse el tema, quedaron con las superficies blancas fijas que tenían: el nombre de la
+materia en la tarjeta daba **1,07:1** contra su fondo. Se pasaron a variables las tarjetas de
+"clases en vivo" (`partials/live-cards.ejs`) y **toda la sala** (`partials/live-room.ejs`, 30
+colores fijos, más las tres vistas de `rooms/`). Las pastillas de color —el aviso de
+supervisión, "en vivo", "sin docente", el cartel violeta de observación— llevan variante oscura
+propia, porque son pares fondo+texto que se leen solos pero encendidos sobre una página oscura.
+
+⚠️ Esto **ya estaba roto en producción** para docentes y alumnos en modo oscuro: la solapa "En
+vivo" de una materia se renderiza dentro de `course.ejs`, que sí carga el pie. Nadie lo había
+reportado.
+
+Medido después, sobre fondo claro / oscuro: materia 16,1 / 12,8 · docente 6,1 / 8,1 · cartel de
+observación 11,5 / 10,5 · aviso 7,9 / 9,6.
+
+#### Lo que sí era de móvil
+
+| Qué | Antes | Ahora |
+|---|---|---|
+| Buscador de Docentes y Divisiones | 25 px de alto | 40 px |
+| Nombre de la fila (único acceso a cada ficha) | 17 px | 39-63 px, sin cambiar el alto de la tabla |
+| Enlace "volver" de las fichas | 21 px | 33 px |
+| "Ver actualizaciones" y "Entendido" del panel | 27 y 24 px | 42 px |
+
+El truco del nombre es padding + margen negativo del mismo valor: el enlace se estira hasta
+ocupar la celda entera y la tabla no crece ni un píxel (verificado fila por fila, con y sin la
+regla). Los dos botones del panel tenían `class="btn-outline"` sin `btn`: heredaban el color
+pero no el padding.
+
+#### Lo que NO hizo falta tocar
+
+Las siete tablas del panel ya viven en contenedores con scroll horizontal y columna anclada:
+**nada quedaba fuera de alcance**, que era el patrón que rompía las vistas del alumno. Se
+verificó explícitamente buscando desbordes sin ancestro scrolleable en las 11 vistas: cero.
+
+#### Verificación
+
+11 vistas a 375 px, cero desbordes inalcanzables, cero controles por debajo de 30 px (salvo la
+barra de suplantación, 29 px, que solo ve un superadmin suplantando). `tests/unit/movil.test.js`
+pasó de 18 a 25 casos; los dos representativos se verificaron en rojo. Suites: 333 unitarios.
+
+#### Jefe de sección, en la misma pasada
+
+Sus 5 vistas (`/jefatura`, el detalle de una actividad, docentes, la ficha de un docente y
+`/admin/secciones`) dieron un caso serio y uno menor:
+
+- En **`/admin/secciones` la tabla medía 512 px dentro de 375 sin envoltorio scrolleable**, así
+  que el body la recortaba y la columna **Acciones** —el único acceso a configurar la sección,
+  que es lo único que el jefe puede hacer ahí— no existía desde un teléfono. Le faltaba el
+  `.users-table-card` que usa `/admin/users`: esa clase no es solo la tarjeta, es quien lleva
+  el `overflow-x: auto` en móvil. **Esto también le pasaba al admin**, que comparte la pantalla.
+- El nombre del docente en su listado (`fila-link`) medía 18 px; entró en la misma regla del
+  nombre de fila del directivo.
+
+Todo lo demás de jefatura ya estaba bien: cero desbordes inalcanzables y ningún control por
+debajo de 30 px en las 5 vistas.
+
+**Pendiente**: quedan **admin y superadmin**.
+
+#### Anotado, sin tocar
+
+En la lista de presentes de la sala, los ausentes se pintan con `opacity:.45` **más** un gris
+claro fijo: sobre fondo claro el nombre queda en ~1,5:1 efectivo. Es una decisión de diseño
+(atenuar al ausente), no un bug de layout, así que queda para que la decida el usuario.
+
+
 ### 2026-08-17 — El panel de dirección mostraba clases que habían terminado hacía días
 
 **Reclamo**: "en la solapa de 'en vivo' en el rol de director aparecen muchas clases que ya deberían estar cerradas, porque los docentes no están en vivo".

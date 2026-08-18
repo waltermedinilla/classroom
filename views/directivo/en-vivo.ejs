@@ -18,5 +18,10 @@
     <%- include('../partials/directivo-nav', { activePage: 'envivo' }) %>
     <%- include('../partials/live-cards') %>
   </main>
+
+  <%# El footer no es decorativo: define toggleDrawer(), logout(), el tema y carga
+      nav-responsive.js. Sin él, TODOS los botones del header de esta página quedan muertos.
+      Faltaba desde que se creó el panel. %>
+  <%- include('../partials/footer') %>
 </body>
 </html>
