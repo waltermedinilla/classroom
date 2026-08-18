@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Actividades Diarias — Panel Directivo</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* Todo en variables de tema, sin un solo color fijo salvo los dos badges de estado (que
+       tienen su par claro/oscuro más abajo): las tarjetas con fondo blanco duro fueron el bug
+       8 del recorrido móvil — texto claro sobre blanco, 1,07:1 de contraste en modo oscuro. */
+    .ad-filtros {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+      margin-bottom: 12px;
+    }
+    .ad-filtros input, .ad-filtros select {
+      padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px;
+      font-size: 14px; background: var(--surface); color: var(--text-primary);
+      /* 44 px de alto: los buscadores de Docentes y Divisiones medían 25 y eran imposibles de
+         tocar con el dedo (bug 9 del recorrido móvil). */
+      min-height: 44px;
+    }
+    .ad-filtros label {
+      font-size: 12px; color: var(--text-secondary); margin-right: -4px;
+    }
+    /* Los atajos son links, no botones del form: cambian el rango sin depender de lo que haya
+       quedado escrito en desde/hasta. */
+    .ad-atajos { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .ad-atajo {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 8px 14px; min-height: 44px; box-sizing: border-box;
+      border: 1px solid var(--border); border-radius: 999px;
+      background: var(--surface); color: var(--text-secondary);
+      font-size: 13px; font-weight: 600; text-decoration: none;
+    }
+    .ad-atajo:hover { background: var(--bg); }
+    .ad-atajo.activo {
+      background: var(--primary); border-color: var(--primary); color: #fff;
+    }
+    .ad-atajo .material-symbols-outlined { font-size: 18px; }
+
+    .ad-resumen {
+      display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: baseline;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 12px 16px; margin-bottom: 12px;
+    }
+    .ad-dato { font-size: 13px; color: var(--text-secondary); }
+    .ad-dato strong { font-size: 18px; color: var(--text-primary); margin-right: 4px; }
+    .ad-dato.pend strong { color: #c5221f; }
+    .ad-dato.ok   strong { color: #137333; }
+    .ad-rango { font-size: 12px; color: var(--text-hint); }
+
+    .ad-aviso {
+      display: flex; align-items: flex-start; gap: 8px;
+      background: var(--bg); border: 1px solid var(--border); border-left: 3px solid #ea8600;
+      border-radius: var(--radius); padding: 10px 14px; margin-bottom: 12px;
+      font-size: 13px; color: var(--text-secondary);
+    }
+    .ad-aviso .material-symbols-outlined { font-size: 18px; color: #ea8600; flex-shrink: 0; }
+
+    .ad-table {
+      width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+      /* Esta tabla tiene el encabezado y el hover en var(--bg), no en var(--surface): hay que
+         pisarle las variables a `.nombre-fijo` o la primera columna queda de otro color al
+         scrollear. Mismo criterio que .courses-table. */
+      --celda-fija-bg-head: var(--bg); --celda-fija-bg-hover: var(--bg);
+    }
+    .ad-table th, .ad-table td {
+      padding: 12px 14px; text-align: left; font-size: 14px;
+      border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    .ad-table th {
+      background: var(--bg); font-weight: 600; font-size: 12px;
+      text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary);
+    }
+    .ad-table tr:last-child td { border-bottom: none; }
+    .ad-table tr:hover td { background: var(--bg); }
+    .ad-table td.materia { font-weight: 500; color: var(--text-primary); white-space: normal; }
+
+    .badge-pill {
+      display: inline-block; padding: 3px 10px; border-radius: 10px;
+      font-size: 11px; font-weight: 600; letter-spacing: .3px;
+    }
+    .badge-ok   { background: #e6f4ea; color: #137333; }
+    .badge-warn { background: #fce8e6; color: #c5221f; }
+    /* Los dos badges son los únicos colores fijos de la hoja, así que necesitan su par oscuro:
+       #e6f4ea sobre el fondo oscuro del panel es una mancha que encandila. */
+    [data-theme="dark"] .badge-ok   { background: #17372a; color: #7ee2a8; }
+    [data-theme="dark"] .badge-warn { background: #3d1f1d; color: #f6a9a3; }
+
+    .warn-inline {
+      display: inline-flex; align-items: center; gap: 3px;
+      color: #ea8600; font-size: 12px; margin-left: 6px;
+    }
+    .empty-state {
+      text-align: center; padding: 60px 20px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      color: var(--text-secondary);
+    }
+    @media (max-width: 600px) {
+      .ad-filtros input, .ad-filtros select { flex: 1 1 100%; }
+    }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/directivo-nav', { activePage: 'actividades-diarias' }) %>
+
+    <%
+      // Fechas en UTC a propósito: `desde`/`hasta` son fechas de calendario armadas como
+      // YYYY-MM-DD, no instantes. Formatearlas en la zona del navegador las correría un día,
+      // y el título diría un rango distinto del que se consultó.
+      const fmtLarga = (d) => new Date(d + 'T00:00:00Z')
+        .toLocaleDateString('es-AR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+      const fmtCorta = (d) => new Date(d + 'T00:00:00Z')
+        .toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', timeZone: 'UTC' });
+      // Los atajos conservan el resto de los filtros; solo cambian el rango.
+      const conPreset = (p) => {
+        const q = new URLSearchParams({ preset: p, campo });
+        if (divisionFilter) q.set('division', divisionFilter);
+        if (estado)         q.set('estado', estado);
+        return '?' + q.toString();
+      };
+      // Con el rango en un solo día, la columna de fecha repetiría la del encabezado: se muestra
+      // completa igual porque no hay nada que comparar. En un rango, va corta (dd/mm) para que
+      // la vista de un vistazo sea "cuándo dentro del período", no "qué año".
+      const unDia = desde === hasta;
+    %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Actividades Diarias</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Qué materias tienen actividad cargada en el período y cuáles no
+        </p>
+      </div>
+    </div>
+
+    <div class="ad-atajos">
+      <a href="<%= conPreset('hoy') %>" class="ad-atajo <%= preset === 'hoy' ? 'activo' : '' %>">
+        <span class="material-symbols-outlined">today</span>
+        Día de hoy
+      </a>
+      <a href="<%= conPreset('semana') %>" class="ad-atajo <%= preset === 'semana' ? 'activo' : '' %>">
+        <span class="material-symbols-outlined">date_range</span>
+        Semanal
+      </a>
+    </div>
+
+    <form method="GET" class="ad-filtros">
+      <label for="adDesde">Desde</label>
+      <input type="date" id="adDesde" name="desde" value="<%= desde %>">
+      <label for="adHasta">Hasta</label>
+      <input type="date" id="adHasta" name="hasta" value="<%= hasta %>">
+
+      <select name="campo" aria-label="Qué fecha se mide">
+        <option value="creacion" <%= campo === 'creacion' ? 'selected' : '' %>>Por fecha de creación</option>
+        <option value="entrega"  <%= campo === 'entrega'  ? 'selected' : '' %>>Por fecha de entrega</option>
+      </select>
+
+      <select name="division" aria-label="Curso">
+        <option value="">Todos los cursos</option>
+        <% divisions.forEach(d => { %>
+          <option value="<%= d._id %>" <%= divisionFilter === d._id.toString() ? 'selected' : '' %>><%= d.name %></option>
+        <% }) %>
+      </select>
+
+      <select name="estado" aria-label="Estado">
+        <option value=""          <%= estado === ''          ? 'selected' : '' %>>Todos los estados</option>
+        <option value="pendiente" <%= estado === 'pendiente' ? 'selected' : '' %>>Solo pendientes</option>
+        <option value="entregado" <%= estado === 'entregado' ? 'selected' : '' %>>Solo con actividad</option>
+      </select>
+
+      <button type="submit" class="btn btn-outline">
+        <span class="material-symbols-outlined">filter_alt</span>
+        Aplicar
+      </button>
+    </form>
+
+    <div class="ad-resumen">
+      <span class="ad-dato"><strong><%= resumen.total %></strong>materia<%= resumen.total === 1 ? '' : 's' %> en total</span>
+      <span class="ad-dato ok"><strong><%= resumen.entregadas %></strong>con actividad</span>
+      <span class="ad-dato pend"><strong><%= resumen.pendientes %></strong>pendiente<%= resumen.pendientes === 1 ? '' : 's' %></span>
+      <span class="ad-rango">
+        <% if (unDia) { %>
+          <%= fmtLarga(desde) %>
+        <% } else { %>
+          Del <%= fmtLarga(desde) %> al <%= fmtLarga(hasta) %>
+        <% } %>
+        · <%= campo === 'entrega' ? 'por fecha de entrega' : 'por fecha de creación' %>
+      </span>
+    </div>
+
+    <% if (campo === 'entrega') { %>
+      <div class="ad-aviso">
+        <span class="material-symbols-outlined">info</span>
+        <span>
+          Las actividades <strong>sin fecha límite</strong> no se cuentan en este modo. Un docente
+          puede figurar con actividad por fecha de creación y pendiente por fecha de entrega.
+        </span>
+      </div>
+    <% } %>
+
+    <div style="font-size:12px;color:var(--text-hint);margin-bottom:8px">
+      <% if (visibles === 0) { %>
+        Sin resultados
+      <% } else { %>
+        Mostrando <%= (page - 1) * limit + 1 %>–<%= Math.min(page * limit, visibles) %> de <strong><%= visibles %></strong>
+        <%= estado === 'pendiente' ? 'pendientes' : estado === 'entregado' ? 'con actividad' : 'materias' %>
+      <% } %>
+    </div>
+
+    <% if (!filas.length) { %>
+      <div class="empty-state">
+        <span class="material-symbols-outlined" style="font-size:36px;color:var(--text-hint)">search_off</span>
+        <% if (resumen.total === 0) { %>
+          <p>No hay materias cargadas<%= divisionFilter ? ' en este curso' : ' en la escuela' %>.</p>
+        <% } else { %>
+          <p>Ninguna materia coincide con los filtros.</p>
+        <% } %>
+      </div>
+    <% } else { %>
+      <div style="overflow-x:auto">
+        <table class="ad-table nombre-fijo">
+          <thead>
+            <tr>
+              <th>Curso</th>
+              <th>Materia</th>
+              <th>Docente</th>
+              <th>Estado</th>
+              <th style="text-align:center">Actividades</th>
+              <th><%= campo === 'entrega' ? 'Último vencimiento' : 'Última carga' %></th>
+            </tr>
+          </thead>
+          <tbody>
+            <% filas.forEach(f => { %>
+              <tr>
+                <td><%= f.division || '—' %></td>
+                <td class="materia"><%= f.materia %></td>
+                <td>
+                  <%= f.docente || 'Sin docente' %>
+                  <% if (!f.docenteActivo) { %>
+                    <span class="warn-inline" title="Docente deshabilitado">
+                      <span class="material-symbols-outlined" style="font-size:14px">warning</span>
+                      Deshabilitado
+                    </span>
+                  <% } %>
+                </td>
+                <td>
+                  <% if (f.actividades > 0) { %>
+                    <span class="badge-pill badge-ok">Entregado</span>
+                  <% } else { %>
+                    <span class="badge-pill badge-warn">Pendiente</span>
+                  <% } %>
+                </td>
+                <td style="text-align:center"><%= f.actividades %></td>
+                <td>
+                  <% if (f.ultima) { %>
+                    <%= unDia ? fmtLarga(f.ultima) : fmtCorta(f.ultima) %>
+                  <% } else { %>
+                    <span style="color:var(--text-hint)">—</span>
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <%- include('../partials/pagination') %>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

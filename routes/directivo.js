@@ -15,6 +15,10 @@ const { getDivisionDetail } = require('../services/divisionDetail');
 const { inicioVentanaSerie, etiquetasMeses, mesCorto } = require('../services/serieMensual');
 // Salas en vivo: el mismo service que alimenta la sala y el panel de preceptoría.
 const liveRoom = require('../services/liveRoom');
+// Qué materias dejaron actividad y cuándo. El mismo service que usa el calendario del preceptor:
+// la regla de qué cuenta como actividad tiene que ser una sola. Ver
+// specs/directivo-actividades-diarias.spec.md.
+const actDia = require('../services/actividadesDelDia');
 const { logDeRuta } = require('../middleware/route-log');
 // Guarda de forma del :id. Sin ella un id que no es ObjectId sale como 500 en vez de 404
 // (o deja el request colgado, en los handlers sin try/catch). Ver middleware/objectId.js.
@@ -1109,6 +1113,83 @@ router.get('/en-vivo/poll', async (req, res) => {
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+/* ─── Actividades Diarias ────────────────────────────────────────────────── */
+// Qué materias dejaron actividad en un rango y cuáles no, en toda la escuela.
+// Ver specs/directivo-actividades-diarias.spec.md.
+//
+// TODOS los filtros llegan por query string, o sea sucios. El criterio es uniforme y a propósito:
+// lo que no se entiende NO rompe ni devuelve error — cae al default. Son filtros de una pantalla
+// de consulta, no recursos pedidos: un `estado=xyz` tiene que mostrar todo, no un 400.
+// La única excepción sería un id que se use para buscar un recurso puntual, y acá no hay ninguno.
+router.get('/actividades-diarias', async (req, res) => {
+  const school = res.locals.user.school;
+  if (!school) return res.render('directivo/no-school');
+
+  const LIMIT = 25;
+  const page  = Math.max(1, parseInt(req.query.page) || 1);
+
+  // El preset pisa a desde/hasta: si el usuario tocó "Hoy" o "Semanal", eso es lo que quiso,
+  // por más que en la URL hayan quedado las fechas de la consulta anterior.
+  const preset = ['hoy', 'semana'].includes(req.query.preset) ? req.query.preset : '';
+  const rango  = preset === 'semana' ? actDia.rangoDeSemana()
+               : preset === 'hoy'    ? actDia.rangoDeHoy()
+               : actDia.rangoValido(req.query.desde, req.query.hasta)
+                 ? { desde: req.query.desde, hasta: req.query.hasta }
+                 : actDia.rangoDeHoy();
+
+  const campo  = actDia.campoValido(req.query.campo) ? req.query.campo : 'creacion';
+  const estado = ['entregado', 'pendiente'].includes(req.query.estado) ? req.query.estado : '';
+  // Un id mal formado se ignora y se muestran todas las divisiones. No va por `idMalo` (que
+  // devuelve 404 y mira `req.params`): acá el id no identifica el recurso que se pide, es un
+  // filtro más, y un filtro que no se entiende no filtra.
+  const divisionId = mongoose.isValidObjectId(req.query.division) ? String(req.query.division) : '';
+
+  try {
+    const [filas, divisions] = await Promise.all([
+      actDia.rangoDeEscuela({ school, ...rango, campo, divisionId }),
+      Division.find({ school }).sort({ name: 1 }).select('_id name').lean(),
+    ]);
+
+    // Los totales salen del set COMPLETO, antes del filtro de estado. Recalcularlos sobre lo
+    // filtrado haría que "Solo pendientes" muestre siempre "0 con actividad", que es la lectura
+    // exactamente opuesta a la que la línea tiene que dar.
+    const entregadas = filas.filter(f => f.actividades > 0).length;
+    const resumen    = { total: filas.length, entregadas, pendientes: filas.length - entregadas };
+
+    const visibles = estado === 'entregado' ? filas.filter(f => f.actividades > 0)
+                   : estado === 'pendiente' ? filas.filter(f => f.actividades === 0)
+                   : filas;
+
+    // Paginación en JS sobre la lista ya ordenada, igual que /directivo/courses. El clamp de
+    // safePage evita el "Mostrando 626–30" cuando se pide una página que no existe.
+    const totalPages = Math.max(1, Math.ceil(visibles.length / LIMIT));
+    const safePage   = Math.min(page, totalPages);
+    const pageStart  = (safePage - 1) * LIMIT;
+
+    res.render('directivo/actividades-diarias', {
+      filas: visibles.slice(pageStart, pageStart + LIMIT),
+      divisions,
+      desde: rango.desde, hasta: rango.hasta,
+      campo, estado, preset,
+      divisionFilter: divisionId,
+      resumen,
+      visibles: visibles.length,
+      page: safePage, totalPages, limit: LIMIT,
+      // Sin `preset`: los links de paginación llevan el rango YA RESUELTO. Si arrastraran
+      // "semana", pasar de página un lunes a las 23:59 podría resolver a otra semana.
+      queryParams: {
+        desde: rango.desde, hasta: rango.hasta, campo,
+        ...(divisionId && { division: divisionId }),
+        ...(estado && { estado }),
+      },
+      activePage: 'actividades-diarias',
+    });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
   }
 });
 

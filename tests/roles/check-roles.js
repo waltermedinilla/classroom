@@ -260,6 +260,7 @@ async function main() {
         { rol: 'preceptor', key: 'preceptor_envivo',  path: '/preceptor/en-vivo' },
         { rol: 'preceptor', key: 'preceptor_asistencia', path: '/preceptor/asistencia' },
         { rol: 'preceptor', key: 'preceptor_actividades', path: '/preceptor/actividades' },
+        { rol: 'directivo', key: 'directivo_actividades', path: '/directivo/actividades-diarias' },
       ];
       for (const caso of casos) {
         const a = actores[caso.rol].actor;

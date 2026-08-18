@@ -3168,12 +3168,36 @@ Por qué la segunda: el primer intento fue solo el latido y **no alcanzó** — 
 
 **Tests**: 4 unitarios nuevos en `tests/unit/liveRoom.test.js` (42/42). Van ahí y no al smoke porque dependen del paso del tiempo: hay que poder inyectar el `now` en vez de esperar 90 segundos por request.
 
+## Solapa "Actividades Diarias" del directivo (2026-08-17)
+
+Pedido del usuario: *"me gusta la manera que manejaste el calendario en el rol de preceptor, quiero una nueva solapa en el rol de directivo"*. Dirección no tenía forma de responder **quién cargó actividad y quién no** en un período: el calendario del preceptor contesta otra pregunta —un curso, un mes, día por día— y hay que entrar división por división para armarse el panorama.
+
+**Qué es**: `/directivo/actividades-diarias`. Una fila por curso × materia con todas las materias de la escuela, filtro de fechas desde/hasta, atajos **Día de hoy** y **Semanal**, y cada fila marcada **Entregado** o **Pendiente**.
+
+**Las decisiones que le dan forma**, todas cerradas con el usuario antes de escribir código (ver `specs/directivo-actividades-diarias.spec.md`):
+
+- **"Entregado" mide al DOCENTE, no al alumno**: que haya cargado al menos una actividad en el rango. La tasa de entrega de los alumnos ya vive en `/directivo/courses` y son dos preguntas distintas.
+- **La fecha es elegible**: por *creación* (`createdAt`, "¿el docente dejó trabajo?") o por *entrega* (`dueDate`, "¿qué le vence al alumno?"). En modo entrega las actividades **sin fecha límite no cuentan** —`dueDate` es nullable— así que un mismo docente puede figurar Entregado en un modo y Pendiente en el otro. La pantalla lo avisa en vez de dejar que se lea como un error.
+- **"Semanal" es lunes a viernes**, la semana escolar. El fin de semana no tiene actividad que mirar.
+- **El denominador son TODAS las materias del alcance**, tengan o no actividad: entregadas + pendientes = total, siempre. Contar solo las que cargaron algo convertiría la pantalla en la lista de los que sí cumplieron, que es justo la mitad que no se busca.
+- **Los totales de arriba se calculan sobre el set completo**, antes del filtro de estado. Recalcularlos sobre lo filtrado haría que "Solo pendientes" muestre siempre "0 con actividad".
+
+**Dónde vive el código**: la lógica se agregó a `services/actividadesDelDia.js`, el mismo service del calendario del preceptor, en vez de un archivo nuevo. La regla de qué cuenta como actividad tiene que ser **una sola**: dos copias es cómo las dos pantallas empiezan a contestar distinto sobre el mismo hecho. Lo que cambia entre pantallas va como parámetro (`campo`), no como copia. El día lo sigue decidiendo `live.diaEscolar` — ni un `Intl.DateTimeFormat` nuevo, que es como vuelve el bug de las tres horas.
+
+**Sin cambios en la base**: ni campo, ni colección, ni migración, ni índice. La solapa se registra en `config/sections.js` y es **configurable desde `/superadmin/roles`** (denegarla da 403 en la ruta, no solo la esconde del menú).
+
+**Todos los filtros llegan sucios y ninguno rompe**: un rango dado vuelta, `desde=ayer`, un `campo` inventado o un id de división mal formado caen al default en vez de devolver error. Son filtros de una pantalla de consulta, no recursos pedidos. Hay un tope de 366 días para que un rango escrito a mano en la URL no cuelgue el aggregate.
+
+**Verificado contra el espejo local** (579 materias, 40 divisiones, 672 actividades): del 1/6 al 17/8 la pantalla da 311 con actividad y 268 pendientes, y un conteo independiente hecho a mano contra la base da exactamente lo mismo.
+
+**Tests**: 32 unitarios nuevos en `tests/unit/actividadesDelDia.test.js` (el del domingo se verificó rompiendo `rangoDeSemana` a propósito: `dow - 1` manda al lunes de la semana *siguiente* y el test lo caza), un spec de smoke con los filtros y los rangos inválidos, y la solapa sumada a la lista de toggles de la matriz de roles.
+
 ## Plan de Futuras Actualizaciones (Roadmap)
 
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`).
-> **Sincronizado con el backlog el 2026-08-17.** Suites de referencia a esa fecha: **327 smoke ·
-> 325 unitarios · matriz de roles sin hallazgos**. Lo que se resuelve se saca de acá: si un
-> renglón dice "pendiente", es porque lo sigue estando.
+> **Sincronizado con el backlog el 2026-08-17.** Suites de referencia a esa fecha: **328 smoke ·
+> 357 unitarios · matriz de roles sin hallazgos** (actualizado con "Actividades Diarias"). Lo que
+> se resuelve se saca de acá: si un renglón dice "pendiente", es porque lo sigue estando.
 
 ### 🔴 Investigaciones abiertas
 - **Producción no carga a la mañana** (desde 2026-08-14). Descartados con evidencia: workers, memoria, Mongo, `EADDRINUSE` y rate limit. Hipótesis viva: el **Tailscale Funnel**, único camino de entrada y ya responsable de tres caídas con el mismo síntoma. Hay dos sondas midiendo (una local por cron, una externa) y `tools/watchdog.sh` mide las 6 capas. Falta leer los resultados y cerrar el caso; si confirma el Funnel, la conversación siguiente es servir la escuela por Caddy con dominio propio.

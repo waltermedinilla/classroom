@@ -12,6 +12,7 @@ const assert = require('node:assert');
 
 const {
   mesValido, diaValido, mesAnterior, mesSiguiente, nombreDelMes, grillaDelMes,
+  rangoValido, rangoDeHoy, rangoDeSemana, campoValido, CAMPOS,
 } = require('../../services/actividadesDelDia');
 
 // Aplana la grilla a los números de día, en orden, salteando el relleno.
@@ -82,4 +83,99 @@ test('grillaDelMes: la clave del día es la que usa el resumen del mes', () => {
   const ultima = grillaDelMes('2026-08').flat().filter(Boolean).pop();
   assert.equal(ultima.numero, 31);
   assert.equal(ultima.dia, '2026-08-31');
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Solapa "Actividades Diarias" del directivo (specs/directivo-actividades-diarias.spec.md).
+// Misma regla de fondo, pero por RANGO y sobre toda la escuela. Acá va solo lo puro; el cruce
+// materias × actividades se prueba por HTTP en tests/smoke/specs.js.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── El rango que llega por la URL ────────────────────────────────────────────
+// Estos dos strings se interpolan en el $match de Mongo. Si pasa basura, el aggregate se arma
+// con Invalid Date y la pantalla queda en blanco sin decir por qué.
+
+test('rangoValido acepta un rango bien formado', () => {
+  assert.equal(rangoValido('2026-08-01', '2026-08-31'), true);
+  assert.equal(rangoValido('2026-08-17', '2026-08-17'), true, 'un solo día es un rango válido');
+});
+
+test('rangoValido rechaza el rango dado vuelta', () => {
+  // El caso real: el usuario toca las dos fechas en cualquier orden. Sin esto, el $match no
+  // matchea nada y la pantalla muestra TODO como pendiente — que se lee como "nadie cargó nada".
+  assert.equal(rangoValido('2026-08-31', '2026-08-01'), false);
+});
+
+test('rangoValido rechaza lo que no es una fecha', () => {
+  assert.equal(rangoValido('ayer', 'hoy'), false);
+  assert.equal(rangoValido(null, '2026-08-01'), false);
+  assert.equal(rangoValido('2026-08-01', undefined), false);
+  assert.equal(rangoValido('2026-13-01', '2026-13-02'), false, 'no existe el mes 13');
+  assert.equal(rangoValido('2026-08', '2026-09'), false, 'YYYY-MM no alcanza');
+});
+
+test('rangoValido pone un techo al tamaño del rango', () => {
+  // No es una regla de negocio, es un fusible: "desde 2015 hasta hoy" escrito a mano en la URL
+  // no tiene por qué colgar la pantalla de nadie.
+  assert.equal(rangoValido('2026-01-01', '2027-01-02'), true,  '366 días es el tope, entra');
+  assert.equal(rangoValido('2026-01-01', '2027-01-03'), false, '367 días ya no');
+  assert.equal(rangoValido('2015-01-01', '2026-08-17'), false);
+});
+
+// ── Los atajos de rango ──────────────────────────────────────────────────────
+
+test('rangoDeSemana devuelve lunes a viernes', () => {
+  // 2026-08-17 es lunes. La semana escolar termina el viernes: el fin de semana no tiene
+  // actividad que mirar y solo ensucia el rango.
+  assert.deepEqual(rangoDeSemana('2026-08-17'), { desde: '2026-08-17', hasta: '2026-08-21' });
+  assert.deepEqual(rangoDeSemana('2026-08-19'), { desde: '2026-08-17', hasta: '2026-08-21' }, 'miércoles');
+  assert.deepEqual(rangoDeSemana('2026-08-21'), { desde: '2026-08-17', hasta: '2026-08-21' }, 'viernes');
+});
+
+test('rangoDeSemana: el domingo NO salta a la semana siguiente', () => {
+  // Es el caso que rompe la resta hecha a ojo: getUTCDay() devuelve 0 el domingo, y restarle
+  // 0 - 1 manda al lunes de la semana que VIENE. Un directivo que abre la solapa un domingo
+  // tiene que ver la semana que pasó, no una semana vacía que todavía no empezó.
+  assert.deepEqual(rangoDeSemana('2026-08-16'), { desde: '2026-08-10', hasta: '2026-08-14' });
+});
+
+test('rangoDeSemana: el sábado sigue siendo la semana que termina', () => {
+  assert.deepEqual(rangoDeSemana('2026-08-22'), { desde: '2026-08-17', hasta: '2026-08-21' });
+});
+
+test('rangoDeSemana cruza el mes y el año', () => {
+  // Miércoles 2026-09-02: el lunes quedó en agosto.
+  assert.deepEqual(rangoDeSemana('2026-09-02'), { desde: '2026-08-31', hasta: '2026-09-04' });
+  // Viernes 2027-01-01: el lunes quedó en 2026.
+  assert.deepEqual(rangoDeSemana('2027-01-01'), { desde: '2026-12-28', hasta: '2027-01-01' });
+});
+
+test('rangoDeHoy devuelve el mismo día en las dos puntas', () => {
+  const r = rangoDeHoy();
+  assert.equal(r.desde, r.hasta);
+  assert.equal(diaValido(r.desde), true, 'y tiene que ser un día que el $match entienda');
+});
+
+// ── Qué fecha de la actividad se mide ────────────────────────────────────────
+
+test('campoValido acepta los dos modos y nada más', () => {
+  assert.equal(campoValido('creacion'), true);
+  assert.equal(campoValido('entrega'),  true);
+  assert.equal(campoValido('createdAt'), false, 'la llave es la del catálogo, no el campo de Mongo');
+  assert.equal(campoValido(''), false);
+  assert.equal(campoValido(undefined), false);
+});
+
+test('campoValido no se come lo heredado de Object.prototype', () => {
+  // CAMPOS[campo] se interpola como NOMBRE DE CAMPO en el $match y en el $dateToString, y la
+  // llave llega de la query string. Con un `in` o un truthy check en vez de hasOwn, un
+  // ?campo=constructor pasaría la validación y armaría el pipeline con basura.
+  assert.equal(campoValido('__proto__'), false);
+  assert.equal(campoValido('constructor'), false);
+  assert.equal(campoValido('toString'), false);
+});
+
+test('CAMPOS mapea a los campos reales de Activity', () => {
+  assert.equal(CAMPOS.creacion, 'createdAt');
+  assert.equal(CAMPOS.entrega,  'dueDate');
 });

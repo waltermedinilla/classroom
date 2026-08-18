@@ -3127,6 +3127,55 @@ const specs = [
     },
   },
   {
+    // specs/directivo-actividades-diarias.spec.md — CA-02 a CA-06, CA-08, CA-11 y CA-13.
+    // Para cuando corre este spec, la materia de smoke ya tiene actividades creadas HOY (las
+    // dejó 'teacher-creates-activity'), así que el rango de hoy tiene que darla como Entregado.
+    id: 'directivo-actividades-diarias',
+    title: 'El directivo ve qué materias tienen actividad cargada y cuáles no',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const hoy = diaEscolar();
+      const url = (q) => `/directivo/actividades-diarias${q ? '?' + q : ''}`;
+
+      // Sin un solo parámetro tiene que abrir en HOY: es la pantalla de entrada de la solapa.
+      const inicio = await client.get('directivo', url(), { expectStatus: 200 });
+      assert(inicio.text.includes('Actividades Diarias'), 'debería abrir la solapa');
+      assert(inicio.text.includes(`value="${hoy}"`),
+        `sin parámetros debería abrir en el día de hoy (${hoy})`);
+
+      // Acotado a la división de smoke, la materia de smoke tiene actividad de hoy.
+      const conDatos = await client.get('directivo',
+        url(`desde=${hoy}&hasta=${hoy}&division=${state.divisionId}`), { expectStatus: 200 });
+      assert(conDatos.text.includes('Materia Smoke'),
+        'la materia de smoke debería estar listada en su división');
+      assert(conDatos.text.includes('Entregado'),
+        'con actividad cargada hoy, alguna materia debería figurar como Entregado');
+
+      // El filtro de estado acota de verdad: pidiendo solo pendientes, la materia que SÍ tiene
+      // actividad de hoy no puede seguir apareciendo.
+      const pendientes = await client.get('directivo',
+        url(`desde=${hoy}&hasta=${hoy}&division=${state.divisionId}&estado=pendiente`), { expectStatus: 200 });
+      assert(!pendientes.text.includes('Materia Smoke'),
+        'la materia con actividad de hoy no debería salir en "Solo pendientes"');
+
+      // Cambiar a fecha de entrega cambia la pregunta, y la pantalla lo avisa: las actividades
+      // sin dueDate no cuentan (RN-03), así que un docente puede figurar distinto en cada modo.
+      const porEntrega = await client.get('directivo',
+        url(`desde=${hoy}&hasta=${hoy}&division=${state.divisionId}&campo=entrega`), { expectStatus: 200 });
+      assert(porEntrega.text.includes('sin fecha límite'),
+        'el modo "por fecha de entrega" debería avisar que las actividades sin vencimiento no cuentan');
+
+      // Un rango dado vuelta o escrito a mano no rompe: cae en hoy (CA-13). Es lo que separa
+      // "la pantalla se defiende" de un 500 por un parámetro de URL.
+      const dadoVuelta = await client.get('directivo',
+        url('desde=2026-12-31&hasta=2026-01-01'), { expectStatus: 200 });
+      assert(dadoVuelta.text.includes(`value="${hoy}"`), 'un rango dado vuelta debería caer en hoy');
+      await client.get('directivo', url('desde=ayer&hasta=manana'),          { expectStatus: 200 });
+      await client.get('directivo', url('desde=2015-01-01&hasta=2026-12-31'), { expectStatus: 200 });
+      await client.get('directivo', url('campo=constructor&estado=xyz&division=no-es-un-id'), { expectStatus: 200 });
+    },
+  },
+  {
     id: 'directivo-students',
     title: 'El directivo ve el listado de alumnos con chips de filtro (M2)',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
@@ -7052,15 +7101,19 @@ const specs = [
   },
   {
     id: 'envivo-section-can-be-denied',
-    title: 'El superadmin puede apagar la solapa "En vivo" de cada panel',
+    title: 'El superadmin puede apagar las solapas configurables de cada panel',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
     async run({ client, state }) {
       // preceptor_envivo es la PRIMERA solapa configurable del panel de preceptoría (la otra,
       // el dashboard, va locked por ser el destino del redirect de "/"). Este spec verifica
       // que apagarla devuelve 403 en la ruta y no solo la esconde del menú.
+      // 'directivo_actividades' viaja en esta misma lista y no en un spec aparte porque el
+      // actor salaDirectivo recién existe a esta altura del run: los specs del panel directivo
+      // que corren antes (~3100) usan el actor 'directivo', que no está en rolesSchoolId.
       const casos = [
         { rol: 'directivo', key: 'directivo_envivo', actor: 'salaDirectivo', url: '/directivo/en-vivo' },
         { rol: 'preceptor', key: 'preceptor_envivo', actor: 'salaPreceptor', url: '/preceptor/en-vivo' },
+        { rol: 'directivo', key: 'directivo_actividades', actor: 'salaDirectivo', url: '/directivo/actividades-diarias' },
       ];
       for (const c of casos) {
         const toggle = (enabled) => client.post('superadmin', '/superadmin/roles/toggle', {
@@ -7076,8 +7129,8 @@ const specs = [
           await toggle(true);
         }
       }
-      await client.get('salaDirectivo', '/directivo/en-vivo', { expectStatus: 200 });
-      await client.get('salaPreceptor', '/preceptor/en-vivo', { expectStatus: 200 });
+      // Y quedan repuestas: si el finally falló, los specs de abajo arrancarían bloqueados.
+      for (const c of casos) await client.get(c.actor, c.url, { expectStatus: 200 });
     },
   },
   {

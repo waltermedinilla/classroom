@@ -69,6 +69,11 @@ const SECTIONS = [
   // una clase en curso es una capacidad institucionalmente sensible y no toda escuela va a
   // querer dársela a dirección.
   { key: 'directivo_envivo',    panel: 'directivo', label: 'En vivo',    icon: 'sensors',   path: '/directivo/en-vivo',   roles: ['directivo', 'admin', 'superadmin'] },
+  // Qué materias dejaron actividad en un rango de fechas y cuáles no. Es la hermana institucional
+  // de 'preceptor_actividades': misma regla, pero sobre toda la escuela y por rango en vez de un
+  // mes por división. Configurable por el mismo motivo que aquella: es seguimiento de la
+  // producción docente, y quién puede mirarlo cambia de escuela en escuela.
+  { key: 'directivo_actividades', panel: 'directivo', label: 'Actividades Diarias', icon: 'event_note', path: '/directivo/actividades-diarias', roles: ['directivo', 'admin', 'superadmin'] },
 
   // ── Panel Preceptoría (base: middleware/preceptor.js ROLES_CON_ACCESO) ─────
   // Es la única solapa del panel: deshabilitarla equivale a borrarle el rol a alguien,

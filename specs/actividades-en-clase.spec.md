@@ -66,13 +66,24 @@ Ninguna colección nueva. Un solo campo nuevo, opcional (`RoomMessage.activity`)
 
 ### `services/actividadesDelDia.js` (nuevo)
 
-- `mesDeDivision(divisionId, mes)` → `{ mes, dias: [{ dia, materias, actividades }], totalMaterias }`
+- `mesDeDivision(divisionId, mes)` → `{ mes, totalMaterias, porDia: { 'YYYY-MM-DD': { materias, actividades } } }`
 - `diaDeDivision(divisionId, dia)` → `{ dia, totalMaterias, subieron: [...], noSubieron: [...] }`
+
+`porDia` es un **objeto indexado por fecha**, no un array: la vista lo consulta celda por celda
+al pintar la grilla, y un array la obligaría a buscar en cada una. (Esta línea decía
+`dias: [{ dia, materias, actividades }]` hasta el 2026-08-17; era la spec la que había quedado
+vieja, no el código.)
 
 Las dos toman la zona horaria de `services/liveRoom.js` (`TZ`, `diaEscolar`, `hora`). **No se
 instancia un segundo `Intl.DateTimeFormat` en este archivo**: la zona de la escuela tiene un solo
 dueño, y un segundo formateador en otro lado es exactamente cómo volvió el bug de las tres horas
 de más (ver el comentario de `TZ` en `liveRoom.js`).
+
+> **Desde el 2026-08-17 este archivo también sirve al panel Directivo.** La solapa
+> "Actividades Diarias" (`specs/directivo-actividades-diarias.spec.md`) reusa la misma regla
+> RN-05 sobre un rango de fechas y toda la escuela, en vez de un mes y una división. La regla de
+> qué cuenta como actividad tiene que seguir siendo **una sola** acá adentro: si alguna de las dos
+> pantallas necesita una variante, va como parámetro, no como copia.
 
 ### `config/sections.js` — entrada nueva
 

@@ -13,6 +13,14 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["-e", "process.env.PORT='3001';process.env.NODE_ENV='development';require('./server.js')"],
       "port": 3001
+    },
+    {
+      "//": "Igual que classroom-verify pero SIN el puerto clavado, para cuando 3001 ya está ocupado por otra sesión. El puerto lo pone el harness en la variable PORT: dotenv no pisa lo que ya está en el entorno (`.env` tiene PORT=3000), así que server.js toma el asignado.",
+      "name": "classroom-verify-libre",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["-e", "process.env.NODE_ENV='development';require('./server.js')"],
+      "port": 3002,
+      "autoPort": true
     }
   ]
 }

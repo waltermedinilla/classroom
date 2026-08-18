@@ -1,6 +1,13 @@
-// "Actividades del día" de preceptoría: qué materias de un curso dejaron actividad cada día.
+// Qué materias dejaron actividad y cuándo. Dos pantallas se apoyan acá:
 //
-// Ver specs/actividades-en-clase.spec.md.
+//   - "Actividades del día" (preceptor): un mes, una división, día por día.
+//     Ver specs/actividades-en-clase.spec.md.
+//   - "Actividades Diarias" (directivo): un rango de fechas, toda la escuela, entregado/pendiente.
+//     Ver specs/directivo-actividades-diarias.spec.md.
+//
+// La regla de qué cuenta como actividad es UNA SOLA y vive acá. Si una de las dos pantallas
+// necesita una variante, va como parámetro (como `campo`, más abajo), nunca como copia en otro
+// archivo: dos copias es cómo las dos pantallas empiezan a contestar distinto sobre el mismo hecho.
 //
 // Qué cuenta como "la materia subió actividad ese día" (RN-05): que exista al menos un Activity
 // de esa materia con `createdAt` en ese día escolar. NO se mira availableFrom ni dueDate — la
@@ -29,8 +36,58 @@ const DIA_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const mesValido = (m) => typeof m === 'string' && MES_RE.test(m);
 const diaValido = (d) => typeof d === 'string' && DIA_RE.test(d);
 
+// Qué fecha de la actividad se mira. La del directivo lo elige por pantalla: "creación" contesta
+// "¿el docente cargó trabajo?" y "entrega" contesta "¿qué le vence al alumno?". El calendario del
+// preceptor no usa esto: siempre es createdAt (RN-05 de su spec).
+//
+// OJO: estos valores se interpolan como NOMBRE DE CAMPO en el $match y en el $dateToString, y la
+// llave llega de la query string. Todo lo que entre tiene que pasar por campoValido primero.
+const CAMPOS = { creacion: 'createdAt', entrega: 'dueDate' };
+const campoValido = (c) => typeof c === 'string' && Object.hasOwn(CAMPOS, c);
+
+// Tope del rango pedible. No es una regla de negocio, es un fusible: el aggregate se banca un año
+// sin despeinarse, pero "desde 2015 hasta hoy" escrito a mano en la URL no tiene por qué colgar
+// la pantalla de nadie.
+const RANGO_MAX_DIAS = 366;
+
+const MS_DIA = 24 * 60 * 60 * 1000;
+const aUTC   = (dia) => { const [y, m, d] = dia.split('-').map(Number); return Date.UTC(y, m - 1, d); };
+const aDia   = (ms)  => new Date(ms).toISOString().slice(0, 10);
+
+// Días de diferencia entre dos fechas de calendario. En UTC puro: no son instantes reales, son
+// casilleros de almanaque, y el horario de verano no tiene nada que opinar acá.
+const diasEntre = (desde, hasta) => Math.round((aUTC(hasta) - aUTC(desde)) / MS_DIA);
+
+// Un rango sirve si las dos puntas son fechas de verdad, no está dado vuelta y no es absurdo.
+// La comparación de strings YYYY-MM-DD alcanza: es orden lexicográfico = orden cronológico.
+function rangoValido(desde, hasta) {
+  if (!diaValido(desde) || !diaValido(hasta)) return false;
+  if (desde > hasta) return false;
+  return diasEntre(desde, hasta) <= RANGO_MAX_DIAS;
+}
+
 // El mes en curso, en la zona de la escuela.
 const mesActual = () => live.diaEscolar().slice(0, 7);
+
+// El día de hoy, de punta a punta. Es el rango con el que abre la solapa del directivo.
+function rangoDeHoy() {
+  const hoy = live.diaEscolar();
+  return { desde: hoy, hasta: hoy };
+}
+
+// La semana ESCOLAR: lunes a viernes de la semana en curso. No es la semana calendario —
+// el fin de semana no tiene actividad que mirar y ensucia el rango.
+//
+// El caso que rompe una resta hecha a ojo es el DOMINGO: getUTCDay() lo devuelve 0, y restarle
+// 0 - 1 lo mandaría al lunes de la semana SIGUIENTE. Un directivo que abre la solapa un domingo
+// tiene que ver la semana que pasó, no una vacía.
+function rangoDeSemana(hoy = live.diaEscolar()) {
+  const ms  = aUTC(hoy);
+  const dow = new Date(ms).getUTCDay();          // 0 = domingo … 6 = sábado
+  const alLunes = (dow === 0 ? 6 : dow - 1);     // cuántos días atrás quedó el lunes
+  const lunes = ms - alLunes * MS_DIA;
+  return { desde: aDia(lunes), hasta: aDia(lunes + 4 * MS_DIA) };
+}
 
 // Aritmética de calendario pura: sin zonas horarias de por medio. Qué día de la semana cae el
 // 1° de agosto de 2026 no depende de dónde esté parado el servidor.
@@ -89,6 +146,13 @@ const ventanaDelDia = (dia) => {
   const [y, m, d] = dia.split('-').map(Number);
   return ventana(y, m - 1, d - 1, y, m - 1, d + 2);
 };
+
+// Ídem para un rango arbitrario: un día de más en cada punta. Lo que sobra lo descarta después el
+// $match sobre el día ya bucketeado con timezone.
+const ventanaDeRango = (desde, hasta) => ({
+  $gte: new Date(aUTC(desde) - MS_DIA),
+  $lt:  new Date(aUTC(hasta) + 2 * MS_DIA),
+});
 
 // Las materias del curso, ordenadas por nombre, con su docente titular.
 // Es el DENOMINADOR de toda la pantalla: "5 de 9 materias" sale de acá.
@@ -170,9 +234,78 @@ async function diaDeDivision(divisionId, dia) {
   return salida;
 }
 
+// ── Solapa "Actividades Diarias" del directivo ───────────────────────────────
+// Ver specs/directivo-actividades-diarias.spec.md.
+//
+// La diferencia con lo de arriba no es solo el rango: acá el universo es TODA LA ESCUELA, no una
+// división. El $in pasa de ~10 materias a potencialmente cientos. Se apoya en el prefijo `course`
+// de los índices que ya existen ({course,availableFrom} y {course,dueDate}); no se agrega ninguno
+// porque construir un índice es un cambio en la base de producción.
+
+// Las materias del alcance, con su curso y su docente titular. Es el DENOMINADOR: una materia sin
+// una sola actividad TIENE que aparecer igual, porque es exactamente la que dirección busca.
+async function materiasDeEscuela(school, divisionId) {
+  const filtro = { school: oid(school) };
+  if (divisionId) filtro.division = oid(divisionId);
+
+  return Course.find(filtro)
+    .select('name division owner')
+    .populate('division', 'name')
+    .populate('owner', 'name active')
+    .lean();
+}
+
+// Una fila por materia, con cuántas actividades tuvo en el rango y cuándo fue la última.
+// `campo` elige contra qué fecha se mide: 'creacion' (createdAt) o 'entrega' (dueDate).
+//
+// Con campo='entrega', las actividades sin fecha límite (dueDate: null, que es el default del
+// schema) no matchean ninguna ventana y no cuentan. Es la respuesta correcta a "¿qué vence esta
+// semana?", pero hace que un mismo docente pueda figurar Entregado en creación y Pendiente en
+// entrega — por eso la vista lo avisa (RN-03).
+async function rangoDeEscuela({ school, desde, hasta, campo = 'creacion', divisionId = null }) {
+  const campoDb  = CAMPOS[campoValido(campo) ? campo : 'creacion'];
+  const materias = await materiasDeEscuela(school, divisionId);
+  if (!materias.length) return [];
+
+  const filas = await Activity.aggregate([
+    { $match: { course: { $in: materias.map(m => m._id) }, [campoDb]: ventanaDeRango(desde, hasta) } },
+    // Mismo truco de dos $group que mesDeDivision: el primero lleva cada actividad a su día en la
+    // zona de la escuela, y recién ahí se puede recortar el rango exacto. Sin este paso habría que
+    // calcular a mano el desfasaje de la zona —y su cambio por horario de verano— para armar el
+    // $match, que es justo lo que no queremos hacer.
+    { $group: {
+        _id: {
+          curso: '$course',
+          dia:   { $dateToString: { format: '%Y-%m-%d', date: `$${campoDb}`, timezone: live.TZ } },
+        },
+        n: { $sum: 1 },
+    } },
+    { $match: { '_id.dia': { $gte: desde, $lte: hasta } } },   // el recorte fino, extremos incluidos
+    { $group: { _id: '$_id.curso', actividades: { $sum: '$n' }, ultima: { $max: '$_id.dia' } } },
+  ]);
+
+  const porCurso = new Map(filas.map(f => [String(f._id), f]));
+
+  return materias.map(m => {
+    const f = porCurso.get(String(m._id));
+    return {
+      courseId:      String(m._id),
+      materia:       m.name,
+      divisionId:    m.division ? String(m.division._id) : '',
+      division:      m.division?.name || '',
+      docente:       m.owner?.name || '',
+      docenteActivo: m.owner ? m.owner.active !== false : true,
+      actividades:   f ? f.actividades : 0,
+      ultima:        f ? f.ultima : null,
+    };
+  }).sort((a, b) => a.division.localeCompare(b.division, 'es') || a.materia.localeCompare(b.materia, 'es'));
+}
+
 module.exports = {
   // puras
   mesValido, diaValido, mesActual, mesAnterior, mesSiguiente, nombreDelMes, grillaDelMes,
+  CAMPOS, campoValido, rangoValido, rangoDeHoy, rangoDeSemana, RANGO_MAX_DIAS,
   // con base
   materiasDeDivision, mesDeDivision, diaDeDivision,
+  materiasDeEscuela, rangoDeEscuela,
 };
