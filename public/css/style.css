@@ -2695,3 +2695,42 @@ table.acciones-fijas, table.nombre-fijo { overflow: clip; }
   /* "Quitar suplente" del formulario de materia: 26 px. */
   .btn-remove-coteacher { min-height: 32px; min-width: 32px; }
 }
+
+/* ─── Panel del superadministrador en móvil ─────────────────────────────────
+   Última pasada del recorrido rol por rol (2026-08-17), 17 pantallas a 375 px. */
+@media (max-width: 900px) {
+  /* Filas de acciones con `flex-shrink: 0`: no encogen, así que su propio `flex-wrap` nunca
+     llega a actuar y la fila se acomoda a su ancho natural —489 px en la ficha de la escuela—
+     empujando los botones fuera de pantalla. Eliminar la escuela quedaba en x=537. Dándoles el
+     renglón completo, el wrap que ya tenían hace el resto. */
+  .sp-actions,
+  .sug-acciones { flex-shrink: 1; flex-wrap: wrap; width: 100%; }
+
+  /* Muchos botones del panel traen `padding:4px 12px` y `font-size:12px` en el atributo style
+     para entrar en una fila apretada, y quedan entre 21 y 29 px. `min-height` los levanta sin
+     pelearse con ese inline (es otra propiedad) ni cambiar su ancho. */
+  .main-content .btn { min-height: 32px; }
+  .main-content select { min-height: 34px; }
+
+  /* Botones propios de estas pantallas, con su tamaño en su propio CSS. `.am-mini` ("Todos" /
+     "Ninguno" del alta masiva de materias) medía 15 px. */
+  .am-mini,
+  .am-quitar,
+  .rl-rango,
+  .bulk-bar-apply { min-height: 32px; }
+
+  /* La barra de acciones masivas es `position: fixed` y vive FUERA de .main-content, así que
+     la regla de arriba no la alcanza. Sus desplegables median 28 px. */
+  .bulk-bar-group select { min-height: 32px; }
+
+  /* La fila de cada usuario en la ficha de la escuela: el correo y la pastilla del rol van en
+     una fila con `margin-left:auto` y sin wrap, así que con un correo largo la pastilla —que
+     es el dato— terminaba fuera de pantalla. Que baje de renglón cuando no entre. */
+  /* Y la fila entera tiene que poder envolver: si no, el bloque del correo y el rol se va
+     empujado hacia afuera por el nombre, y su propio wrap no llega a actuar nunca. */
+  .sp-user-row  { flex-wrap: wrap; }
+  .sp-user-meta { flex-wrap: wrap; justify-content: flex-end; }
+
+  /* El nombre de la escuela en su tarjeta es el enlace para entrar y medía 19 px. */
+  .subject-card-name a { display: inline-block; padding: 6px 0; margin: -6px 0; }
+}

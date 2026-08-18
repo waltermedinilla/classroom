@@ -491,7 +491,35 @@ Después del arreglo: **19 vistas, cero contenido inalcanzable y cero controles 
 30 px**, salvo un enlace de 16 px que va dentro de una frase ("asignale ese rol desde
 Usuarios") y que se deja como está a propósito: es prosa, no un control.
 
-**Pendiente**: queda **superadmin**.
+#### Superadministración: el último rol
+
+17 pantallas. Dos formas nuevas de perder contenido, las dos por la misma causa de fondo —un
+contenedor que **no puede encoger**, así que su propio `flex-wrap` nunca llega a actuar—:
+
+- **Filas de acciones con `flex-shrink: 0`**. En la ficha de la escuela la fila medía 489 px y
+  "Eliminar escuela" quedaba en x=537, fuera de una pantalla de 375. Mismo caso en la fila de
+  acciones de cada sugerencia. Dándoles el renglón completo, el wrap que ya tenían alcanza.
+- **`.sp-resumen-grid` colapsaba a `1fr`** en móvil — pero `1fr` no baja de min-content, así
+  que la columna se quedaba en 405 px dentro de 347 y la grilla de roles se salía. Va
+  `minmax(0, 1fr)`: **es el tercer lugar del proyecto donde aparece este mismo error** (el
+  calendario de preceptoría fue el primero).
+- La fila de cada usuario en la ficha de la escuela no envolvía, así que el correo empujaba la
+  pastilla del rol fuera de pantalla.
+- Y `/superadmin/import` tenía **la misma grilla de 3 columnas fijas** que la de admin: ahora
+  comparten la clase `.import-intro`.
+
+Los botones del panel iban de 21 a 29 px (padding chico en el atributo `style` para entrar en
+filas apretadas): se levantaron con `min-height` en `.main-content .btn`, que no compite con
+ese inline. Aparte quedaron los que viven **fuera** de `.main-content`: los desplegables de la
+barra de acciones masivas, que es `position: fixed`.
+
+Resultado: **17 vistas, cero contenido inalcanzable y cero controles por debajo de 30 px.**
+
+#### La revisión rol por rol quedó completa
+
+Los 8 roles (alumno, docente, preceptor, directivo, jefe, admin, superadmin, y `soe`, que no
+tiene panel propio) están revisados a 375 px. `tests/unit/movil.test.js` quedó en **37 casos**
+y es la red que impide que vuelva cualquiera de estos patrones.
 
 #### Anotado, sin tocar
 

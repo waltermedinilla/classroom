@@ -113,7 +113,10 @@
       gap: 20px;
       align-items: start;
     }
-    @media (max-width: 900px) { .sp-resumen-grid { grid-template-columns: 1fr; } }
+    <%# `1fr` a secas no baja del contenido (su mínimo es min-content), así que la columna
+        se quedaba en 405 px dentro de un contenedor de 347 y la grilla de roles se salía de
+        pantalla. Es el mismo caso del calendario de preceptoría: va minmax(0, 1fr). %>
+    @media (max-width: 900px) { .sp-resumen-grid { grid-template-columns: minmax(0, 1fr); } }
 
     .sp-role-grid {
       display: grid;

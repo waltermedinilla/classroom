@@ -45,6 +45,16 @@
 //  12. Dentro de `.input-group`, un <input> mide 48 px y un <select> 15: el select trae
 //      `padding:0` en el atributo style. Los formularios de materia son casi todos selects.
 //
+// ── Superadmin ────────────────────────────────────────────────────────────────
+//  13. Filas de acciones con `flex-shrink: 0`: no encogen, así que su propio `flex-wrap` no
+//      llega a actuar y la fila se acomoda a su ancho natural. En la ficha de la escuela eran
+//      489 px: "Eliminar escuela" quedaba en x=537, fuera de una pantalla de 375.
+//  14. `.sp-resumen-grid` colapsaba a `1fr` en móvil, pero `1fr` no baja de min-content: la
+//      columna se quedaba en 405 px dentro de 347 y la grilla de roles se salía. Va
+//      minmax(0, 1fr), igual que el calendario de preceptoría.
+//  15. Botones de 21 a 29 px por todo el panel (padding chico en el atributo style) y los
+//      desplegables de la barra de acciones masivas, que vive fuera de .main-content.
+//
 // ── Preceptor ─────────────────────────────────────────────────────────────────
 //   6. El calendario de "Actividades del día" usaba `repeat(7, 1fr)`. Un track `1fr` no
 //      baja de su contenido, así que los 7 días sumaban 351 px en una tarjeta de 315 y la
@@ -72,6 +82,9 @@ const tablero  = fs.readFileSync(path.join(raiz, 'views/directivo/dashboard.ejs'
 const secciones = fs.readFileSync(path.join(raiz, 'views/admin/sections.ejs'), 'utf8');
 const divisiones = fs.readFileSync(path.join(raiz, 'views/admin/divisions.ejs'), 'utf8');
 const importar   = fs.readFileSync(path.join(raiz, 'views/admin/import.ejs'), 'utf8');
+const escuela    = fs.readFileSync(path.join(raiz, 'views/superadmin/school-profile.ejs'), 'utf8');
+const importarSA = fs.readFileSync(path.join(raiz, 'views/superadmin/import.ejs'), 'utf8');
+const sugerencias = fs.readFileSync(path.join(raiz, 'views/superadmin/suggestions.ejs'), 'utf8');
 
 // Devuelve el cuerpo de los @media (max-width: 900px) concatenados, que es el breakpoint
 // que el archivo ya venía usando para móvil. Contar llaves en vez de usar un regex vago:
@@ -361,4 +374,38 @@ test('los desplegables de los formularios tienen alto tocable', () => {
 test('los botones de acción de cada fila llegan al mínimo cómodo', () => {
   assert.match(movil, /\.main-content td \.btn\s*{[^}]*min-height:\s*32px/s);
   assert.match(movil, /\.btn-assign-teacher\s*{[^}]*min-height:\s*32px/s);
+});
+
+// ── 13. Panel del superadministrador ────────────────────────────────────────
+
+test('las filas de acciones pueden encoger y envolver en pantalla chica', () => {
+  const regla = movil.match(/\.sp-actions,\s*\.sug-acciones\s*{[^}]*}/s);
+  assert.ok(regla, 'falta la regla que libera las filas de acciones');
+  assert.match(regla[0], /flex-shrink:\s*1/,
+    'con flex-shrink:0 la fila no encoge y su propio wrap nunca actúa');
+  assert.match(regla[0], /flex-wrap:\s*wrap/);
+  assert.match(sugerencias, /class="sug-acciones"/,
+    'la fila de acciones de sugerencias necesita la clase: su estilo está en el atributo');
+});
+
+test('el resumen de la escuela usa minmax(0, 1fr) y no 1fr a secas', () => {
+  assert.match(escuela, /\.sp-resumen-grid\s*{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/,
+    '`1fr` no baja de min-content: la columna quedaba en 405 px dentro de 347');
+});
+
+test('la ficha de la escuela deja bajar de renglón el rol de cada usuario', () => {
+  assert.match(movil, /\.sp-user-row\s*{[^}]*flex-wrap:\s*wrap/s,
+    'sin esto el bloque del correo y el rol se va empujado fuera de pantalla');
+});
+
+test('los botones y desplegables del panel llegan al mínimo cómodo', () => {
+  assert.match(movil, /\.main-content \.btn\s*{[^}]*min-height:\s*32px/s);
+  assert.match(movil, /\.main-content select\s*{[^}]*min-height:\s*34px/s);
+  // La barra de acciones masivas es position:fixed y NO cuelga de .main-content.
+  assert.match(movil, /\.bulk-bar-group select\s*{[^}]*min-height:\s*32px/s);
+});
+
+test('las dos pantallas de importación comparten la misma clase de grilla', () => {
+  assert.match(importarSA, /class="import-intro"/,
+    'la de superadmin tenía el mismo grid de 3 columnas fijas que la de admin');
 });
