@@ -67,6 +67,28 @@ const roomUploadLimiter = rateLimit({
   message:         { error: 'Esperá unos minutos antes de subir más archivos.' },
 });
 
+// El mismo límite, para un ALUMNO que comparte una foto en la sala: 5 cada 10 minutos.
+//
+// Va aparte y no como un `max` calculado adentro del limiter de arriba porque son dos cupos
+// distintos que no se pisan: express-rate-limit lleva un contador por instancia, así que la
+// docente sigue teniendo sus 20 aunque medio curso haya gastado los suyos.
+//
+// El número (decisión del usuario, 2026-08-19) sale de para qué se abrió esto: mostrar la
+// hoja de la carpeta o el ejercicio resuelto. Cinco alcanzan de sobra, y son las que separan
+// eso de una clase de 30 chicos descubriendo que pueden llenar el chat de fotos —que no es un
+// ataque, es lo que pasa un miércoles cualquiera.
+//
+// Por USUARIO, igual que sus hermanos: la escuela sale por una sola IP NAT y un límite por IP
+// haría que el primer curso del día dejara sin subir a todos los demás.
+const roomStudentImageLimiter = rateLimit({
+  windowMs:        10 * 60 * 1000,
+  max:             5,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator:    (req) => req.userId || ipKeyGenerator(req.ip),
+  message:         { error: 'Esperá unos minutos antes de subir más imágenes.' },
+});
+
 // Envío de mensajes del superadmin: 20 por hora POR USUARIO.
 //
 // Un solo envío puede crear cientos de documentos (uno por destinatario), así que el límite
@@ -117,6 +139,6 @@ const attendanceCheckinLimiter = rateLimit({
 });
 
 module.exports = {
-  uploadLimiter, roomMessageLimiter, roomUploadLimiter, messageSendLimiter,
-  messageReplyLimiter, attendanceCheckinLimiter,
+  uploadLimiter, roomMessageLimiter, roomUploadLimiter, roomStudentImageLimiter,
+  messageSendLimiter, messageReplyLimiter, attendanceCheckinLimiter,
 };

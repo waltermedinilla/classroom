@@ -1,0 +1,103 @@
+<%# Estilos compartidos por las cuatro pantallas de /soe. Una sola vez, como en
+    partials/jefatura-styles.ejs: nacieron juntas y tienen que verse iguales.
+
+    Móvil: las tablas van SIEMPRE adentro de .tabla-scroll (overflow-x propio) y las grillas
+    colapsan a una columna en <700px. Son dos de los patrones de la revisión móvil que no
+    hay que reintroducir. %>
+<style>
+  .soe-lectura {
+    display: flex; gap: 10px; align-items: flex-start;
+    background: var(--primary-light); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 10px 14px; margin-bottom: 16px; font-size: 13px; line-height: 1.5;
+  }
+  .soe-lectura .material-symbols-outlined { font-size: 20px; color: var(--primary); flex-shrink: 0; }
+
+  .soe-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .soe-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px;
+  }
+  .soe-card .n { font-size: 26px; font-weight: 700; line-height: 1.1; }
+  .soe-card .t { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  .soe-card.alerta { border-color: #ea4335; }
+  .soe-card.alerta .n { color: #ea4335; }
+
+  .soe-panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px; margin-bottom: 18px;
+  }
+  .soe-panel > h3 {
+    margin: 0 0 14px; font-size: 14px; text-transform: uppercase;
+    letter-spacing: .4px; color: var(--text-secondary);
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  .tabla-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .soe-tabla { width: 100%; border-collapse: collapse; min-width: 520px; }
+  .soe-tabla th, .soe-tabla td {
+    padding: 10px 12px; text-align: left; font-size: 13.5px;
+    border-bottom: 1px solid var(--border); vertical-align: top;
+  }
+  .soe-tabla th {
+    background: var(--bg); font-weight: 600; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary); white-space: nowrap;
+  }
+  .soe-tabla tr:last-child td { border-bottom: none; }
+  .soe-tabla a { color: var(--text); text-decoration: none; font-weight: 500; }
+  .soe-tabla a:hover { color: var(--primary); text-decoration: underline; }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 9px; border-radius: 11px; font-size: 11px;
+    font-weight: 600; letter-spacing: .2px; white-space: nowrap;
+  }
+  .chip .punto { width: 7px; height: 7px; border-radius: 50%; }
+  .chip-neutro { background: var(--bg); color: var(--text-secondary); border: 1px solid var(--border); }
+  .chip-alerta { background: #fce8e6; color: #c5221f; }
+  .chip-ok     { background: #e6f4ea; color: #137333; }
+  .chip-aviso  { background: #fef4e5; color: #b06000; }
+
+  .soe-form { display: grid; gap: 12px; }
+  .soe-form label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; }
+  .soe-form input[type=text], .soe-form input[type=date], .soe-form select, .soe-form textarea {
+    width: 100%; padding: 9px 12px; border: 1px solid var(--border);
+    border-radius: var(--radius-sm); font-size: 14px; font-family: inherit;
+    background: var(--surface); color: var(--text); box-sizing: border-box;
+  }
+  .soe-form textarea { min-height: 84px; resize: vertical; line-height: 1.5; }
+  .soe-form .fila { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+  .soe-form .ayuda { font-size: 11.5px; color: var(--text-hint); margin-top: 3px; line-height: 1.45; }
+
+  /* La línea de tiempo del seguimiento */
+  .linea { list-style: none; margin: 0; padding: 0; }
+  .linea li { display: flex; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+  .linea li:last-child { border-bottom: none; }
+  .linea .icono {
+    width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg); border: 1px solid var(--border);
+  }
+  .linea .icono .material-symbols-outlined { font-size: 18px; color: var(--text-secondary); }
+  .linea .cuerpo { flex: 1; min-width: 0; }
+  .linea .meta { font-size: 11.5px; color: var(--text-hint); margin-top: 4px; }
+  .linea .texto { font-size: 14px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+
+  .deriv { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 12px; }
+  .deriv.atencion { border-color: #ea4335; background: #fce8e610; }
+  .deriv h4 { margin: 0 0 4px; font-size: 15px; }
+  .deriv .devolucion {
+    border-left: 3px solid var(--primary); padding: 8px 12px; margin-top: 10px;
+    background: var(--bg); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    font-size: 13.5px; line-height: 1.5; white-space: pre-wrap;
+  }
+
+  .vacio { text-align: center; padding: 34px 16px; color: var(--text-hint); font-size: 14px; }
+  .vacio .material-symbols-outlined { font-size: 40px; display: block; margin-bottom: 8px; }
+
+  @media (max-width: 700px) {
+    .soe-panel { padding: 14px; }
+    .soe-cards { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+    .soe-card .n { font-size: 22px; }
+  }
+</style>

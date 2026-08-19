@@ -84,6 +84,25 @@
                     <%= fmt.hora(m.createdAt) %>
                   </div>
 
+                  <%# La cita, si este mensaje le contestaba a alguien. La transcripción es lo
+                      que se lee cuando hay que reconstruir un episodio meses después, y ahí una
+                      clase entera de "sí", "dale", "yo tampoco" sin saber a qué contestaba cada
+                      uno no reconstruye nada.
+                      Un mensaje borrado no muestra su cita (misma regla que el chat en vivo), y
+                      una cita cuyo original se borró después dice "Mensaje eliminado" — el
+                      snapshot lo apaga live.apagarCitasDe(). %>
+                  <% if (m.reply?.to && !m.deletedAt) { %>
+                    <div style="border-left:3px solid #1a73e8;background:var(--bg);border-radius:0 6px 6px 0;
+                                padding:4px 8px;margin:3px 0;font-size:12px;max-width:300px">
+                      <span style="color:#1a73e8;font-weight:600"><%= m.reply.autor || '—' %></span>
+                      <span style="display:block;color:var(--text-secondary);overflow:hidden;
+                                   text-overflow:ellipsis;white-space:nowrap;
+                                   <%= m.reply.borrado ? 'font-style:italic' : '' %>">
+                        <%= m.reply.borrado ? 'Mensaje eliminado' : (m.reply.extracto || '') %>
+                      </span>
+                    </div>
+                  <% } %>
+
                   <%# Los adjuntos se siguen viendo desde la transcripción: media razón para
                       compartir el material de la clase es poder volver a buscarlo después.
                       La URL es la misma ruta autenticada que usa el chat en vivo, así que el

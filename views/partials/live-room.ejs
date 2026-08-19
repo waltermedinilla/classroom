@@ -10,7 +10,24 @@
   actividad" (usa su modal) y el botón "Ver actividad" de los avisos (abre su solapa).
 %>
 <style>
-  .lr-wrap { max-width: 900px; margin: 0 auto; }
+  <%# --lr-tenue es el gris de los textos secundarios del chat: la hora, el pie de las cards,
+      los avisos del sistema, el "Mensaje eliminado" y los botones "responder" y "borrar".
+
+      Existe como variable PROPIA de la sala porque var(--text-hint) no llega al 4,5:1 que pide
+      WCAG AA para texto normal, y en el chat lo peor que le toca no es decorativo: son esos dos
+      botones, que son CONTROLES de 11 px.
+      Medido en el navegador el 2026-08-19, con --text-hint:
+        · oscuro (#72777e sobre la tarjeta #1e2124): 3,52:1 — alcanza para un ícono, no para texto.
+        · claro  (#9aa0a6 sobre el blanco #ffffff):  2,64:1 — todavía peor, y venía así desde
+          siempre. Se encontró midiendo el arreglo del modo oscuro: el reclamo era por el oscuro,
+          pero el tema claro estaba peor en estos elementos y nadie lo había mirado.
+      Con los valores de acá: 5,1:1 en claro y 6,0:1 en oscuro, sobre los dos fondos que usa la
+      sala (la tarjeta y el fondo de las burbujas).
+
+      La variable vive acá y no en :root a propósito: es un arreglo de esta pantalla, no un
+      cambio de la paleta de la app —que la usan otras 30 vistas y no se tocan desde acá. %>
+  .lr-wrap { max-width: 900px; margin: 0 auto; --lr-tenue: #6a6f75; }
+  [data-theme="dark"] .lr-wrap { --lr-tenue: #9aa0a6; }
   .lr-aviso { background:#fef7e0; border:1px solid #fdd663; border-radius:8px; padding:10px 14px;
               font-size:13px; color:#5f4b00; margin-bottom:14px; }
   .lr-aviso small { display:block; margin-top:3px; opacity:.8; }
@@ -36,13 +53,16 @@
   .lr-msg-meta { font-size:12px; color:var(--text-secondary); margin-bottom:3px; }
   .lr-burbuja { background:var(--bg); padding:8px 12px; border-radius:12px; border-top-left-radius:2px;
                 font-size:14px; white-space:pre-wrap; word-break:break-word; }
-  .lr-msg.mio .lr-burbuja { background:#e8f0fe; }
-  .lr-burbuja.borrado { font-style:italic; color:var(--text-hint); background:var(--bg); }
-  .lr-sistema { text-align:center; font-size:12px; color:var(--text-hint); margin:10px 0; }
+  <%# El color va DECLARADO aunque en tema claro sea el mismo que se heredaba: un fondo fijo
+      con el texto heredado es exactamente el bug del modo oscuro (ver el bloque de abajo).
+      Una pastilla de color se lee sola o no se lee. %>
+  .lr-msg.mio .lr-burbuja { background:#e8f0fe; color:#202124; }
+  .lr-burbuja.borrado { font-style:italic; color:var(--lr-tenue); background:var(--bg); }
+  .lr-sistema { text-align:center; font-size:12px; color:var(--lr-tenue); margin:10px 0; }
   .lr-react { margin-top:4px; display:flex; gap:5px; flex-wrap:wrap; }
   .lr-react button { font-size:12px; background:var(--surface); border:1px solid var(--border); border-radius:12px;
                      padding:2px 8px; cursor:pointer; }
-  .lr-react button.mia { background:#e8f0fe; border-color:#1a73e8; }
+  .lr-react button.mia { background:#e8f0fe; border-color:#1a73e8; color:#202124; }
   .lr-composer { display:flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:8px; padding:6px 10px; }
   <%# min-width:0 es obligatorio, no cosmético: un <input> trae un ancho intrínseco de ~20
       caracteres y `flex:1` NO lo achica por debajo de eso. Con los dos botones de adjuntar
@@ -50,9 +70,49 @@
       fuera de la tarjeta. %>
   .lr-composer input { flex:1; min-width:0; border:none; outline:none; font-size:14px; font-family:inherit; background:transparent; }
   .lr-emojis { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
-  .lr-emojis button { font-size:18px; background:none; border:none; cursor:pointer; line-height:1; padding:2px; }
+  <%# `color` explícito: un <button> sin color declarado NO hereda el de la página, toma el
+      `buttontext` del navegador (negro). Con la mayoría de estos glifos no se nota porque son
+      emoji a color, pero los que el sistema dibuje en monocromo (✅, ❓ en algunas fuentes)
+      quedaban negros sobre la tarjeta oscura. %>
+  .lr-emojis button { font-size:18px; background:none; border:none; cursor:pointer; line-height:1;
+                      padding:2px; color:var(--text); }
+  #lrEnviar .material-symbols-outlined { color:#1a73e8; }
   .lr-vacio { text-align:center; color:var(--text-secondary); padding:28px 12px; }
-  .lr-borrar { background:none; border:none; cursor:pointer; color:var(--text-hint); font-size:11px; padding:0; }
+  .lr-borrar { background:none; border:none; cursor:pointer; color:var(--lr-tenue); font-size:11px; padding:0; }
+
+  /* ── Responder a un mensaje ────────────────────────────────────────────────
+     La cita adentro de la burbuja, como en WhatsApp: barrita de color al costado, nombre de
+     a quién se le contesta y un pedazo de lo que dijo.
+
+     Es un <button> y no un <div> con onclick porque lleva a algún lado (al mensaje original):
+     se llega con el teclado y se anuncia como control. `text-align:left` y el reset de fondo
+     son para deshacer el aspecto de botón del navegador, que si no la pinta centrada y gris. */
+  .lr-cita { display:block; width:100%; text-align:left; cursor:pointer; font:inherit;
+             border:none; border-left:3px solid #1a73e8; border-radius:6px 0 0 6px;
+             background:rgba(26,115,232,.08); padding:4px 8px; margin-bottom:4px; }
+  .lr-cita-autor { display:block; font-size:11px; font-weight:600; color:#174ea6; }
+  .lr-cita-txt   { display:block; font-size:12px; color:var(--text-secondary);
+                   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lr-cita.eliminada { border-left-color:var(--lr-tenue); background:var(--bg); cursor:default; }
+  .lr-cita.eliminada .lr-cita-txt { font-style:italic; }
+
+  /* El mensaje al que llevó una cita, resaltado un segundo. Sin esto, el chat salta a otra
+     parte de la conversación y no queda claro cuál de los mensajes de esa altura era. */
+  .lr-msg.destacado .lr-burbuja,
+  .lr-msg.destacado .lr-card-adj { box-shadow:0 0 0 2px #fbbc04; transition:box-shadow .3s; }
+
+  /* La barra de "estás contestándole a…", arriba del cuadro de escribir. Ocupa el lugar donde
+     va a aparecer la respuesta: es la confirmación de que el próximo mensaje sale citado. */
+  .lr-respondiendo { display:none; align-items:center; gap:8px; padding:6px 10px; margin-bottom:6px;
+                     border-left:3px solid #1a73e8; border-radius:6px 8px 8px 6px;
+                     background:rgba(26,115,232,.08); font-size:12px; }
+  .lr-respondiendo.activa { display:flex; }
+  .lr-respondiendo .txt { min-width:0; flex:1; }
+  .lr-respondiendo .nom { display:block; font-weight:600; color:#174ea6; }
+  .lr-respondiendo .prev { display:block; color:var(--text-secondary);
+                           overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lr-respondiendo .x { flex:none; background:none; border:none; cursor:pointer;
+                        color:var(--text-secondary); font-size:20px; line-height:1; padding:0 4px; }
 
   /* ── Adjuntos ──────────────────────────────────────────────────────────────
      La card es un bloque propio y NO una burbuja: un archivo compartido por la docente
@@ -70,7 +130,7 @@
   .lr-pie { display:flex; align-items:center; gap:6px; padding:7px 10px; font-size:12px;
             color:var(--text-secondary); border-top:1px solid var(--border); }
   .lr-pie .nom { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .lr-pie .peso { flex:none; color:var(--text-hint); }
+  .lr-pie .peso { flex:none; color:var(--lr-tenue); }
 
   /* Archivo: sin preview, la extensión ES la información. */
   .lr-file { display:flex; align-items:center; gap:10px; padding:10px 12px; text-decoration:none;
@@ -86,7 +146,7 @@
 
   /* Adjunto ya eliminado por la docente: queda el hueco, no el contenido. */
   .lr-adj-borrado { border:1px dashed var(--border); border-radius:12px; padding:10px 12px;
-                    font-size:13px; font-style:italic; color:var(--text-hint); max-width:340px; }
+                    font-size:13px; font-style:italic; color:var(--lr-tenue); max-width:340px; }
 
   /* Lightbox de la imagen. Sin librería: es un div y una tecla Escape. */
   .lr-lupa { position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:9999;
@@ -146,6 +206,43 @@
   [data-theme="dark"] .lr-btn-act,
   [data-theme="dark"] .lr-ver-act  { background:#12233d; color:#9dc2f5; border-color:#3d6ba8; }
 
+  /* ── EL bug que reportó el usuario (2026-08-19): en modo oscuro no se leía el chat ──────
+     Las dos reglas de abajo eran pastillas celestes con el color de texto SIN declarar, así
+     que heredaban var(--text) — que en oscuro es #e3e5e8, casi blanco. Blanco sobre #e8f0fe
+     da **1,10:1**: no es "poco contraste", es texto invisible. Y le tocaba justo a lo que
+     cada uno escribe: sus propios mensajes y sus propias reacciones.
+
+     Por qué se coló: el resto de la sala pasó a seguir al tema por variable el 2026-08-17, y
+     estas dos quedaron con el hex de cuando la sala era una pantalla clara de punta a punta.
+     La lección, ahora bajo test (tests/unit/salaChat.test.js): un fondo en hex obliga a
+     declarar SU color de texto, en los dos temas. Heredar var(--text) sobre un fondo fijo es
+     el bug, no el olvido de la variante oscura.
+     Medido: 12,6:1 la burbuja propia, 8,5:1 la reacción propia. */
+  [data-theme="dark"] .lr-msg.mio .lr-burbuja { background:#12233d; color:#dbe7f8; }
+  [data-theme="dark"] .lr-react button.mia    { background:#12233d; color:#9dc2f5; border-color:#3d6ba8; }
+
+  /* Las pastillas de reacción SIN tocar: fondo var(--surface) sobre una tarjeta que también es
+     var(--surface), separadas solo por un borde que en oscuro da 1,3:1 contra su propio fondo.
+     No es un problema de texto sino de que el control no se ve como control. Se bajan al color
+     del fondo de la página, que en oscuro es más oscuro que la tarjeta, y ahí sí se leen. */
+  [data-theme="dark"] .lr-react button { background:var(--bg); border-color:#3c4043; }
+
+  /* Mismo caso para el cuadro de escribir: el borde de --border sobre --surface casi no se ve,
+     y es el control más importante de la pantalla. */
+  [data-theme="dark"] .lr-composer { border-color:#3c4043; }
+
+  /* El avión de enviar, en #1a73e8 sobre la tarjeta oscura, da 3,52:1: pasa como ícono pero
+     queda apagado justo en el botón que más se toca. El azul claro del modo oscuro da 7,5:1. */
+  [data-theme="dark"] #lrEnviar .material-symbols-outlined { color:#8ab4f8; }
+
+  /* La cita y la barra de responder nacen con sus dos variantes, que es el punto de todo lo de
+     arriba. El fondo translúcido ya acompaña al tema; lo que hay que declarar es el nombre,
+     que en claro va en #174ea6 (6,3:1) y en oscuro se aclara (6,8:1). Los dos números están */
+  [data-theme="dark"] .lr-cita,
+  [data-theme="dark"] .lr-respondiendo      { background:rgba(138,180,248,.12); }
+  [data-theme="dark"] .lr-cita-autor,
+  [data-theme="dark"] .lr-respondiendo .nom { color:#9dc2f5; }
+
   @media (max-width: 600px) {
     .lr-chat { height:300px; }
     .lr-persona { width:50px; }
@@ -202,6 +299,11 @@
         <% if (esGestor) { %>
           <button class="btn btn-primary"  id="lrAbrir"  style="display:none">Abrir sala</button>
           <button class="btn btn-outline"  id="lrModo"   style="display:none"></button>
+          <%# El interruptor de las fotos de los alumnos. Aparte del de la palabra a pedido del
+              usuario: cuando las fotos se van de tema hay que poder cortarlas SIN callar a la
+              clase, que era lo único que se podía hacer antes. El rótulo lo escribe
+              pintarEstado() con el estado real de la sesión. %>
+          <button class="btn btn-outline"  id="lrFotos"  style="display:none"></button>
           <button class="btn btn-outline"  id="lrCerrar" style="display:none">Cerrar sala</button>
           <%# Dejar la consigna sin salir de la clase. Abre el modal de creación que la materia YA
               tiene (#activityModal de views/course.ejs) — no hay un formulario aparte.
@@ -231,23 +333,46 @@
     </div>
 
     <div id="lrComposerBox" style="display:none;margin-top:12px">
+      <%# "Le estás contestando a…". Va ARRIBA del cuadro de escribir y no adentro: en un
+          celular, el cuadro ya comparte los 360 px con dos botones de adjuntar y el de enviar
+          (ver el bloque móvil del CSS), y meterle la cita adentro lo dejaba sin lugar para
+          escribir. Arranca oculta; el JS la enciende con la clase `activa`. %>
+      <div class="lr-respondiendo" id="lrRespondiendo">
+        <span class="material-symbols-outlined" style="font-size:16px;color:#1a73e8">reply</span>
+        <span class="txt">
+          <span class="nom" id="lrRespNom"></span>
+          <span class="prev" id="lrRespPrev"></span>
+        </span>
+        <button type="button" class="x" id="lrRespX" aria-label="Cancelar la respuesta">&times;</button>
+      </div>
       <div class="lr-composer">
-        <%# Compartir archivos es SOLO de quien gestiona la materia: los inputs ni siquiera se
-            renderizan para el resto. El servidor lo vuelve a chequear igual (routes/rooms.js),
-            porque esconder un botón no es un permiso. %>
-        <% if (esGestor) { %>
+        <%# Quién ve qué botón:
+            — IMAGEN: la docente y los alumnos del curso (desde el 2026-08-19). Preceptoría y
+              dirección entran a mirar la clase, no a dejar material en ella, así que para
+              ellos el input ni se renderiza.
+            — ARCHIVO: solo quien gestiona la materia. El alumno comparte fotos, no documentos.
+            Esto es lo que se VE. El permiso real lo chequea el servidor en cada POST
+            (exigirPermisoDeImagen en routes/rooms.js): esconder un botón no es un permiso, y
+            además el botón de la imagen se prende y se apaga solo con el interruptor de la
+            docente — de eso se encarga pintarEstado(), no el EJS. %>
+        <% if (esGestor || esAlumno) { %>
           <button type="button" class="lr-adj-btn" id="lrBtnImagen" title="Compartir una imagen" aria-label="Compartir una imagen">
             <span class="material-symbols-outlined">image</span>
           </button>
+          <input type="file" id="lrFileImagen" accept="image/*" style="display:none">
+        <% } %>
+        <% if (esGestor) { %>
           <button type="button" class="lr-adj-btn" id="lrBtnArchivo" title="Compartir un archivo" aria-label="Compartir un archivo">
             <span class="material-symbols-outlined">attach_file</span>
           </button>
-          <input type="file" id="lrFileImagen" accept="image/*" style="display:none">
           <input type="file" id="lrFileArchivo" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.csv,.txt,.zip" style="display:none">
         <% } %>
         <input type="text" id="lrTexto" maxlength="500" placeholder="Escribí un mensaje…" autocomplete="off">
+        <%# El color del avión va en el CSS y NO en un style= acá. Estaba inline, y un estilo
+            inline le gana a cualquier hoja: la variante oscura existía y no se aplicaba nunca.
+            Medido en el navegador: seguía dando 3,59:1 con la regla oscura ya escrita. %>
         <button class="lr-borrar" id="lrEnviar" aria-label="Enviar">
-          <span class="material-symbols-outlined" style="color:#1a73e8">send</span>
+          <span class="material-symbols-outlined">send</span>
         </button>
       </div>
       <div class="lr-emojis">
@@ -313,6 +438,18 @@
   let timer     = null;
   const vistos  = new Set();
 
+  // ¿Puedo escribir ahora? Lo dice el servidor en cada poll; acá se guarda porque los
+  // mensajes se pintan después de pintarEstado() y necesitan saber si mostrar "responder".
+  let puedoEscribir = !!SALA.puedoEscribir;
+
+  // A qué mensaje le estoy contestando en este momento, o null. Es TODO el estado que tiene
+  // la respuesta: se limpia al enviar y al cancelar.
+  let respondiendoA = null;
+
+  // id → { autor, resumen } de cada mensaje pintado. Es lo que llena la barra de respuesta sin
+  // volver a pedirle nada al servidor: el mensaje al que se le contesta ya está en pantalla.
+  const RESUMENES = new Map();
+
   // Pedido de repintado completo para el próximo poll.
   //
   // Borrar un mensaje o reaccionar cambia algo que YA está pintado, así que hay que volver a
@@ -374,16 +511,28 @@
       } else {
         div.className = 'lr-msg' + (m.esMio ? ' mio' : '');
         div.dataset.id = m.id;
+        // Lo que necesita la barra de "le estás contestando a…" si alguien toca responder en
+        // ESTE mensaje. Se guarda al pintar y no se vuelve a pedir: el resumen ya está armado.
+        RESUMENES.set(m.id, { autor: m.autor, resumen: resumenDe(m) });
         div.innerHTML =
           '<div class="lr-msg-bola" style="background:' + color(m.autor) + '">' +
             esc((m.autor || '—').charAt(0).toUpperCase()) +
           '</div>' +
           '<div style="min-width:0">' +
             '<div class="lr-msg-meta">' + esc(m.autor) + ' · ' + esc(m.hora) +
-              (GESTOR && !m.borrado
+              // Quién puede borrar QUÉ lo decide el servidor y viene en el mensaje: desde que
+              // el autor borra lo suyo con la sala abierta (RN-B1), la regla ya no es "soy la
+              // docente" y repetirla acá era garantizar que las dos copias se separaran.
+              (m.puedoBorrar
                 ? ' · <button class="lr-borrar" data-borrar="' + m.id + '">borrar</button>'
                 : '') +
+              // Responder lo puede hacer cualquiera que pueda escribir, y a nada que ya no
+              // esté (un mensaje borrado no tiene a quién contestarle).
+              (puedoEscribir && !m.borrado
+                ? ' · <button class="lr-borrar" data-responder="' + m.id + '">responder</button>'
+                : '') +
             '</div>' +
+            citaHTML(m) +
             cuerpo(m) +
             '<div class="lr-react" data-react="' + m.id + '">' + reacciones(m) + '</div>' +
           '</div>';
@@ -405,6 +554,67 @@
     return '<a class="lr-ver-act" href="' + esc(m.actividad.url) + '"' +
              ' data-actividad="' + esc(m.actividad.id) + '">' +
              '<span class="material-symbols-outlined">assignment</span>Ver actividad</a>';
+  }
+
+  // ── Responder a un mensaje ─────────────────────────────────────────────────
+
+  // Cómo se nombra un mensaje cuando hay que mostrarlo EN CHICO (la barra de respuesta). Un
+  // adjunto no tiene texto: su contenido es el archivo, así que se lo nombra por lo que es.
+  // Mismo criterio que citaDeMensaje() en el servidor — el que arma la cita que se guarda.
+  function resumenDe(m) {
+    if (m.kind === 'image') return '📷 Imagen';
+    if (m.kind === 'file')  return '📎 ' + ((m.adjunto && m.adjunto.nombre) || 'Archivo');
+    return m.texto || '';
+  }
+
+  // La cita adentro de la burbuja. El texto lo mandó el servidor ya recortado (y ya vacío si
+  // el original se borró después), así que acá no se decide nada: se pinta.
+  //
+  // Es un <button> con el id del original: tocarlo lleva hasta él. Cuando el original ya no
+  // está —lo borraron, o quedó fuera de los últimos 100 mensajes que trae el poll— la cita se
+  // sigue leyendo pero no lleva a ninguna parte.
+  function citaHTML(m) {
+    const r = m.respuesta;
+    if (!r) return '';
+    return '<button type="button" class="lr-cita' + (r.borrado ? ' eliminada' : '') + '"' +
+             (r.borrado ? '' : ' data-ir="' + esc(r.id) + '"') + '>' +
+             '<span class="lr-cita-autor">' + esc(r.autor) + '</span>' +
+             '<span class="lr-cita-txt">' + esc(r.extracto) + '</span>' +
+           '</button>';
+  }
+
+  function mostrarRespuesta() {
+    const barra = $('lrRespondiendo');
+    if (!respondiendoA) { barra.classList.remove('activa'); return; }
+    $('lrRespNom').textContent  = respondiendoA.autor || '—';
+    $('lrRespPrev').textContent = respondiendoA.resumen || '';
+    barra.classList.add('activa');
+  }
+
+  function responderA(id) {
+    const datos = RESUMENES.get(id);
+    if (!datos) return;
+    respondiendoA = { id, autor: datos.autor, resumen: datos.resumen };
+    mostrarRespuesta();
+    $('lrTexto').focus();
+  }
+
+  function cancelarRespuesta() {
+    respondiendoA = null;
+    mostrarRespuesta();
+  }
+
+  // Lleva la conversación hasta el mensaje citado y lo marca un segundo.
+  //
+  // Sin el resaltado, el chat salta a otra altura y no queda claro cuál de los mensajes que
+  // quedaron a la vista era el que se estaba buscando. Y si el mensaje ya no está en pantalla
+  // (quedó fuera de los últimos 100), no pasa nada: es preferible a llevar a otro lado.
+  function irAMensaje(id) {
+    const el = $('lrChat').querySelector('[data-id="' + id.replace(/"/g, '') + '"]');
+    if (!el) return;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el.classList.add('destacado');
+    setTimeout(() => el.classList.remove('destacado'), 1600);
   }
 
   // ── Cuerpo del mensaje: burbuja de texto o card de adjunto ─────────────────
@@ -491,6 +701,14 @@
       modoBtn.style.display = abierta ? '' : 'none';
       modoBtn.textContent = s.settings && s.settings.studentsCanWrite
         ? 'Solo yo escribo' : 'Habilitar la palabra';
+
+      // El rótulo dice lo que va a PASAR si se lo toca, igual que su vecino de la palabra.
+      // `!== false` y no `=== true`: una sala que ya estaba abierta cuando se desplegó esta
+      // feature no tiene el campo, y esa clase se comporta como todas (permitido).
+      const fotosBtn = $('lrFotos');
+      fotosBtn.style.display = abierta ? '' : 'none';
+      const fotosOn = !s.settings || s.settings.studentsCanShareImages !== false;
+      fotosBtn.textContent = fotosOn ? 'Sin fotos de alumnos' : 'Permitir fotos';
       // Solo con la sala ABIERTA: la actividad se crea "desde la clase", y con la sala cerrada
       // no hay clase a la que avisarle. Para el resto de los casos está el botón + de la materia.
       const actBtn = $('lrActividad');
@@ -498,7 +716,19 @@
     }
 
     const puedo = s.puedoEscribir;
+    puedoEscribir = !!puedo;
     $('lrComposerBox').style.display = puedo ? '' : 'none';
+
+    // El botón de la cámara se prende y se apaga con el estado que manda el servidor, que es
+    // EL MISMO cálculo que autoriza el POST (RN-A6). Dos consecuencias buscadas: cuando la
+    // docente apaga el interruptor, a los alumnos se les va el botón en el poll siguiente sin
+    // recargar; y el botón nunca queda ofreciendo algo que el servidor va a rechazar.
+    const btnImg = $('lrBtnImagen');
+    if (btnImg) btnImg.style.display = s.puedoCompartirImagen ? '' : 'none';
+
+    // Si me quedé sin poder escribir (me silenciaron, se cerró la sala), la respuesta pendiente
+    // se cancela: la barra quedaría flotando arriba de un cuadro de escribir que ya no está.
+    if (!puedo && respondiendoA) cancelarRespuesta();
     const mudo = $('lrMudo');
     if (!puedo && abierta) {
       mudo.style.display = '';
@@ -613,14 +843,23 @@
     const texto = input.value.trim();
     if (!texto) return;
     input.value = '';
-    const r = await post(BASE + '/mensajes', { text: texto });
+    // La cita se suelta ACÁ, antes de que salga el pedido: si se limpiara al volver la
+    // respuesta, un segundo mensaje escrito rápido saldría citando lo mismo sin querer.
+    const replyTo = respondiendoA ? respondiendoA.id : null;
+    cancelarRespuesta();
+    const r = await post(BASE + '/mensajes', { text: texto, replyTo });
     if (r.status === 429) { alert('Esperá un momento antes de escribir de nuevo.'); return; }
     if (!r.ok) { const e = await r.json().catch(() => ({})); alert(e.error || 'No se pudo enviar.'); return; }
     pollear();
   }
 
   $('lrEnviar').addEventListener('click', enviar);
-  $('lrTexto').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); enviar(); } });
+  $('lrTexto').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); enviar(); return; }
+    // Escape suelta la respuesta pendiente, que es donde la mano ya está.
+    if (e.key === 'Escape' && respondiendoA) { e.preventDefault(); cancelarRespuesta(); }
+  });
+  $('lrRespX').addEventListener('click', cancelarRespuesta);
 
   document.querySelectorAll('.lr-emoji-btn').forEach(b => {
     b.addEventListener('click', () => {
@@ -666,31 +905,76 @@
     const provisoria = cardSubiendo(file.name);
     botonesAdjunto(false);
 
-    const fd = new FormData();
-    fd.append(tipo === 'imagen' ? 'imagen' : 'archivo', file);
+    // Igual que en enviar(): la cita se suelta antes de que arranque el pedido. Acá importa
+    // todavía más, porque una subida con reintentos puede tardar un minuto entero y en el medio
+    // la persona sigue usando el chat.
+    const replyTo = respondiendoA ? respondiendoA.id : null;
+    cancelarRespuesta();
 
+    // ⚠️ TODO lo de SubidaDiag vive DENTRO de esta función, nunca en el nivel de arriba del
+    // IIFE. En views/course.ejs este partial se incluye ANTES de que cargue
+    // /js/subida-diagnostico.js, así que una referencia arriba andaría en la sala suelta
+    // (rooms/standalone.ejs, que sí lo carga primero) y tiraría ReferenceError en la solapa
+    // "En vivo" de la materia — un bug que aparece en UNA sola de las dos vistas.
+    //
     // progresoMedible:false porque acá se sube con fetch, que no informa progreso de subida.
     // Sin ese aviso el reporte diría "se envió 0 de N MB" y mandaría a buscar el problema a
     // la red aunque la red haya andado perfecto. Ver public/js/subida-diagnostico.js.
     const ruta = BASE + '/adjuntos/' + tipo;
     const seg  = SubidaDiag.seguir(ruta, file, { progresoMedible: false });
+    const meta = (t) => {
+      const m = provisoria.querySelector('.lr-file-meta');
+      if (m) m.textContent = t;
+    };
 
     try {
-      const r = await fetch(ruta, {
-        method: 'POST', body: fd, headers: { Accept: 'application/json' },
-      });
-      if (!r.ok) {
-        // El cuerpo se lee UNA vez y se reusa para las dos cosas (el mensaje y el reporte):
-        // una Response no se puede leer dos veces.
-        const cuerpo = await r.text().catch(() => '');
-        alert(SubidaDiag.mensaje(SubidaDiag.fallar(seg, SubidaDiag.desdeRespuesta(r, cuerpo), 'http')));
-        return;
+      // Reintento automático: producción está detrás de un Funnel con cortes intermitentes
+      // de 1-2 minutos y la subida se rinde en un segundo. Ver public/js/subida-diagnostico.js.
+      for (;;) {
+        SubidaDiag.nuevoIntento(seg);
+
+        // El FormData se rearma en cada intento; `file` sigue vivo en el closure aunque el
+        // input se haya vaciado al principio de la función.
+        const fd = new FormData();
+        fd.append(tipo === 'imagen' ? 'imagen' : 'archivo', file);
+        // La cita viaja como un campo más del formulario: mostrar la carpeta contestándole a
+        // la consigna es justamente para lo que se abrió esto (RN-C5). Va DENTRO del bucle
+        // porque el FormData se rearma en cada reintento.
+        if (replyTo) fd.append('replyTo', replyTo);
+
+        let motivo = 'red', comoXhr = null;
+        try {
+          const r = await fetch(ruta, {
+            method: 'POST', body: fd, headers: { Accept: 'application/json' },
+          });
+          if (r.ok) {
+            // Se ESPERA el poll antes de sacar la card provisoria (lo hace el finally): si
+            // no, hay un parpadeo en el que la card ya no está y la real todavía no llegó.
+            await pollear();
+            return;
+          }
+          // El cuerpo se lee UNA vez y se reusa para las dos cosas (el mensaje y el reporte):
+          // una Response no se puede leer dos veces.
+          const cuerpo = await r.text().catch(() => '');
+          motivo  = 'http';
+          comoXhr = SubidaDiag.desdeRespuesta(r, cuerpo);
+        } catch (e) { /* no hubo respuesta de nadie: `motivo` queda en 'red' */ }
+
+        const espera = SubidaDiag.reintentable({
+          motivo,
+          status: comoXhr ? comoXhr.status : 0,
+          cuerpo: comoXhr ? comoXhr.responseText : '',
+        }) ? SubidaDiag.esperaDe(seg.intentos) : null;
+
+        if (espera === null) {
+          alert(SubidaDiag.mensaje(SubidaDiag.fallar(seg, comoXhr, motivo)));
+          return;
+        }
+
+        await new Promise((listo) => SubidaDiag.esperar(espera,
+          (s) => meta('Se cortó, reintento en ' + s + ' s…'), listo));
+        meta('Reintentando (' + (seg.intentos + 1) + ' de 4)…');
       }
-      // Se ESPERA el poll antes de sacar la card provisoria: si no, hay un parpadeo en el que
-      // la card ya no está y la real todavía no llegó.
-      await pollear();
-    } catch (e) {
-      alert(SubidaDiag.mensaje(SubidaDiag.fallar(seg, null, 'red')));
     } finally {
       provisoria.remove();
       botonesAdjunto(true);
@@ -704,11 +988,17 @@
     });
   }
 
-  // Solo existen para quien gestiona la materia: para el resto, el EJS ni los renderizó.
+  // Los dos botones se cablean POR SEPARADO, y no juntos adentro de un solo `if`, porque
+  // desde el 2026-08-19 ya no van siempre de a dos: el alumno tiene el de la imagen y no el
+  // del archivo. Con el `if ($('lrBtnImagen'))` de antes envolviendo a los cuatro, la primera
+  // línea del alumno andaba y la segunda tiraba TypeError sobre null — dejando además sin
+  // cablear los dos `change` de abajo, o sea el botón de la cámara muerto para todo el curso.
   if ($('lrBtnImagen')) {
     $('lrBtnImagen').addEventListener('click', () => $('lrFileImagen').click());
+    $('lrFileImagen').addEventListener('change', (e) => subirAdjunto('imagen', e.target));
+  }
+  if ($('lrBtnArchivo')) {
     $('lrBtnArchivo').addEventListener('click', () => $('lrFileArchivo').click());
-    $('lrFileImagen').addEventListener('change',  (e) => subirAdjunto('imagen',  e.target));
     $('lrFileArchivo').addEventListener('change', (e) => subirAdjunto('archivo', e.target));
   }
 
@@ -762,10 +1052,23 @@
       return;
     }
 
+    // "responder": no manda nada al servidor, solo arma la barra de arriba del cuadro de
+    // escribir. El mensaje sale citado recién cuando se lo envía.
+    const responder = e.target.closest('[data-responder]');
+    if (responder) { responderA(responder.dataset.responder); return; }
+
+    // Tocar una cita lleva hasta el mensaje original.
+    const ir = e.target.closest('[data-ir]');
+    if (ir) { irAMensaje(ir.dataset.ir); return; }
+
     const borrar = e.target.closest('[data-borrar]');
     if (borrar) {
       if (!confirm('¿Borrar este mensaje? Queda registrado que lo borraste. Si es un archivo, se elimina del servidor.')) return;
-      await fetch(BASE + '/mensajes/' + borrar.dataset.borrar, { method: 'DELETE', headers: { Accept: 'application/json' } });
+      const r = await fetch(BASE + '/mensajes/' + borrar.dataset.borrar, { method: 'DELETE', headers: { Accept: 'application/json' } });
+      // El borrado ahora puede rechazarse por un motivo que el alumno necesita leer —la clase
+      // ya cerró— y antes la respuesta se tiraba sin mirarla: el mensaje seguía ahí y no había
+      // manera de saber por qué.
+      if (!r.ok) { const err = await r.json().catch(() => ({})); alert(err.error || 'No se pudo borrar.'); return; }
       repintarTodo();
       return;
     }
@@ -785,6 +1088,14 @@
     $('lrModo').addEventListener('click', async () => {
       const habilitado = $('lrModo').textContent.indexOf('Solo yo') === 0;
       await post(BASE + '/config', { studentsCanWrite: !habilitado });
+      pollear();
+    });
+
+    // El interruptor de las fotos. Mismo truco que su vecino: el rótulo dice lo que va a
+    // pasar, así que "Sin fotos" significa que ahora están permitidas.
+    $('lrFotos').addEventListener('click', async () => {
+      const permitidas = $('lrFotos').textContent.indexOf('Sin fotos') === 0;
+      await post(BASE + '/config', { studentsCanShareImages: !permitidas });
       pollear();
     });
 

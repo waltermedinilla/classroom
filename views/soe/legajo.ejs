@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= alumno.name %> — Orientación Escolar</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <%- include('../partials/soe-styles') %>
+  <style>
+    .ficha-cabecera { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+    .ficha-avatar {
+      width: 60px; height: 60px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: #0d7377; color: #fff; font-size: 26px; font-weight: 600;
+      object-fit: cover;
+    }
+    .anclas { display: flex; gap: 6px; flex-wrap: wrap; margin: 16px 0; }
+    .anclas a {
+      padding: 7px 14px; border-radius: 20px; font-size: 13px; font-weight: 500;
+      text-decoration: none; color: var(--text-secondary);
+      background: var(--surface); border: 1px solid var(--border);
+    }
+    .anclas a:hover { color: var(--primary); border-color: var(--primary); }
+    .indicadores { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+    .ind { background: var(--bg); border-radius: var(--radius-sm); padding: 12px 14px; }
+    .ind .n { font-size: 22px; font-weight: 700; }
+    .ind .t { font-size: 11.5px; color: var(--text-secondary); margin-top: 2px; line-height: 1.35; }
+    .lectura { font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+    .lectura.vacia { color: var(--text-hint); font-style: italic; }
+    .campo-lectura { margin-bottom: 16px; }
+    .campo-lectura > label {
+      display: block; font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .4px; color: var(--text-secondary); margin-bottom: 5px;
+    }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content main-content-ancho">
+    <%- include('../partials/soe-nav', { activePage }) %>
+
+    <a href="/soe" class="back-link" style="display:inline-flex;align-items:center;gap:4px;font-size:13px;color:var(--text-secondary);text-decoration:none;margin-bottom:12px">
+      <span class="material-symbols-outlined" style="font-size:18px">arrow_back</span> Volver al resumen
+    </a>
+
+    <div class="soe-panel">
+      <div class="ficha-cabecera">
+        <% if (alumno.avatar) { %>
+          <img src="<%= alumno.avatar %>" alt="" class="ficha-avatar">
+        <% } else { %>
+          <div class="ficha-avatar"><%= (alumno.name || '?').trim().charAt(0).toUpperCase() %></div>
+        <% } %>
+        <div style="flex:1;min-width:200px">
+          <h2 style="margin:0;font-size:22px"><%= alumno.name %></h2>
+          <div style="font-size:12.5px;color:var(--text-secondary);margin-top:3px">
+            <% if (alumno.dni) { %>DNI <%= alumno.dni %> · <% } %>
+            <%= indicadores.cantidadMaterias %> materia<%= indicadores.cantidadMaterias === 1 ? '' : 's' %>
+            <% if (alumno.lastSeen) { %> · última conexión <%= fmt.fechaCorta(alumno.lastSeen) %><% } %>
+          </div>
+          <% if (legajo) { %>
+            <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+              <span class="chip chip-neutro">
+                <span class="punto" style="background:<%= acceso.PRIORIDAD_COLORS[legajo.prioridad] %>"></span>
+                Prioridad <%= acceso.PRIORIDAD_LABELS[legajo.prioridad].toLowerCase() %>
+              </span>
+              <span class="chip <%= legajo.estado === 'cerrado' ? 'chip-neutro' : 'chip-ok' %>">
+                <%= acceso.ESTADO_LABELS[legajo.estado] %>
+              </span>
+              <% if (legajo.tieneDerivacionActiva) { %>
+                <span class="chip chip-aviso">
+                  <span class="material-symbols-outlined" style="font-size:13px">share</span> con derivación en curso
+                </span>
+              <% } %>
+            </div>
+          <% } %>
+        </div>
+      </div>
+
+      <% if (!legajo) { %>
+        <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px">
+          <% if (soeEscribe) { %>
+            <h3 style="margin:0 0 4px;font-size:15px">Este alumno todavía no tiene legajo</h3>
+            <p style="font-size:13px;color:var(--text-secondary);margin:0 0 14px;line-height:1.5">
+              Abrirlo no le avisa a nadie: el alumno no ve nada de esta pantalla, y el resto
+              del personal solo ve lo que la escuela haya habilitado.
+            </p>
+            <form method="POST" action="/soe/legajo/<%= alumno._id %>/abrir" class="soe-form">
+              <div>
+                <label for="motivo">Motivo de la intervención</label>
+                <textarea id="motivo" name="motivo" maxlength="500" placeholder="Qué se observó, quién lo trajo, desde cuándo…"></textarea>
+              </div>
+              <div class="fila">
+                <div>
+                  <label for="prioridad">Prioridad</label>
+                  <select id="prioridad" name="prioridad">
+                    <% acceso.PRIORIDADES.forEach(p => { %>
+                      <option value="<%= p %>" <%= p === 'media' ? 'selected' : '' %>><%= acceso.PRIORIDAD_LABELS[p] %></option>
+                    <% }) %>
+                  </select>
+                </div>
+                <div style="display:flex;align-items:flex-end">
+                  <button type="submit" class="btn btn-primary">
+                    <span class="material-symbols-outlined">folder_open</span> Abrir legajo
+                  </button>
+                </div>
+              </div>
+            </form>
+          <% } else { %>
+            <div class="vacio" style="padding:20px 0">
+              <span class="material-symbols-outlined">folder_off</span>
+              Este alumno no tiene legajo abierto en Orientación Escolar.
+            </div>
+          <% } %>
+        </div>
+      <% } %>
+    </div>
+
+    <div class="anclas">
+      <% if (legajo) { %><a href="#situacion">Situación</a><% } %>
+      <% if (legajo && nivel === 'completo') { %>
+        <a href="#seguimiento">Seguimiento</a>
+        <a href="#derivaciones">Derivaciones</a>
+      <% } %>
+      <a href="#como-viene">Cómo viene</a>
+    </div>
+
+    <%# ── Situación ──────────────────────────────────────────────────────── %>
+    <% if (legajo) { %>
+      <div class="soe-panel" id="situacion">
+        <h3><span class="material-symbols-outlined">assignment_ind</span> Situación</h3>
+
+        <% if (soeEscribe && legajo.estado !== 'cerrado') { %>
+          <form method="POST" action="/soe/legajo/<%= legajo._id %>/situacion" class="soe-form">
+            <div>
+              <label for="s-motivo">Motivo de la intervención</label>
+              <textarea id="s-motivo" name="motivo" maxlength="500"><%= legajo.motivo %></textarea>
+            </div>
+            <div>
+              <label for="s-fortalezas">Fortalezas — con qué cuenta</label>
+              <textarea id="s-fortalezas" name="fortalezas" maxlength="1000"><%= legajo.fortalezas %></textarea>
+              <div class="ayuda">Lo que se le da bien, lo que lo engancha, quién lo sostiene. Este campo lo ven también los docentes si la escuela les dio acceso al resumen.</div>
+            </div>
+            <div>
+              <label for="s-dificultades">Dificultades — qué le cuesta</label>
+              <textarea id="s-dificultades" name="dificultades" maxlength="1000"><%= legajo.dificultades %></textarea>
+            </div>
+            <div>
+              <label for="s-estrategias">Cómo contenerlo — estrategias acordadas</label>
+              <textarea id="s-estrategias" name="estrategias" maxlength="2000"><%= legajo.estrategias %></textarea>
+              <div class="ayuda">Qué hacer en el aula concretamente. Es la otra mitad de lo que ve el docente con acceso al resumen.</div>
+            </div>
+            <div class="fila">
+              <div>
+                <label for="s-prioridad">Prioridad</label>
+                <select id="s-prioridad" name="prioridad">
+                  <% acceso.PRIORIDADES.forEach(p => { %>
+                    <option value="<%= p %>" <%= p === legajo.prioridad ? 'selected' : '' %>><%= acceso.PRIORIDAD_LABELS[p] %></option>
+                  <% }) %>
+                </select>
+              </div>
+              <div>
+                <label for="s-estado">Estado</label>
+                <select id="s-estado" name="estado">
+                  <option value="abierto"     <%= legajo.estado === 'abierto'     ? 'selected' : '' %>>Abierto</option>
+                  <option value="seguimiento" <%= legajo.estado === 'seguimiento' ? 'selected' : '' %>>En seguimiento</option>
+                </select>
+              </div>
+              <div style="display:flex;align-items:flex-end">
+                <button type="submit" class="btn btn-primary">
+                  <span class="material-symbols-outlined">save</span> Guardar
+                </button>
+              </div>
+            </div>
+          </form>
+        <% } else { %>
+          <%# Lectura. En nivel 'resumen' motivo y dificultades ni siquiera llegan a la vista
+              (los cortó services/soeAcceso.js), así que acá no hay nada que esconder. %>
+          <% if (nivel === 'completo') { %>
+            <div class="campo-lectura">
+              <label>Motivo de la intervención</label>
+              <div class="lectura <%= legajo.motivo ? '' : 'vacia' %>"><%= legajo.motivo || 'Sin registrar' %></div>
+            </div>
+          <% } %>
+          <div class="campo-lectura">
+            <label>Fortalezas</label>
+            <div class="lectura <%= legajo.fortalezas ? '' : 'vacia' %>"><%= legajo.fortalezas || 'Sin registrar' %></div>
+          </div>
+          <% if (nivel === 'completo') { %>
+            <div class="campo-lectura">
+              <label>Dificultades</label>
+              <div class="lectura <%= legajo.dificultades ? '' : 'vacia' %>"><%= legajo.dificultades || 'Sin registrar' %></div>
+            </div>
+          <% } %>
+          <div class="campo-lectura">
+            <label>Cómo contenerlo — estrategias acordadas</label>
+            <div class="lectura <%= legajo.estrategias ? '' : 'vacia' %>"><%= legajo.estrategias || 'Sin registrar' %></div>
+          </div>
+        <% } %>
+
+        <% if (nivel === 'completo' && soeEscribe) { %>
+          <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px">
+            <% if (legajo.estado === 'cerrado') { %>
+              <div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5">
+                Cerrado el <%= fmt.fechaCorta(legajo.closedAt) %>.
+                <% if (legajo.cierreMotivo) { %><br><em><%= legajo.cierreMotivo %></em><% } %>
+              </div>
+              <form method="POST" action="/soe/legajo/<%= legajo._id %>/reabrir">
+                <button type="submit" class="btn btn-outline">
+                  <span class="material-symbols-outlined">lock_open</span> Reabrir legajo
+                </button>
+              </form>
+            <% } else { %>
+              <form method="POST" action="/soe/legajo/<%= legajo._id %>/cerrar" class="soe-form">
+                <div>
+                  <label for="cierre">Cerrar el legajo</label>
+                  <input type="text" id="cierre" name="cierreMotivo" maxlength="500" required
+                         placeholder="Por qué se cierra (obligatorio)">
+                  <div class="ayuda">No se borra nada: el seguimiento y las derivaciones quedan, y se puede reabrir.</div>
+                </div>
+                <div>
+                  <button type="submit" class="btn btn-outline">
+                    <span class="material-symbols-outlined">folder_off</span> Cerrar legajo
+                  </button>
+                </div>
+              </form>
+            <% } %>
+          </div>
+        <% } %>
+      </div>
+    <% } %>
+
+    <%# ── Seguimiento ────────────────────────────────────────────────────── %>
+    <% if (legajo && nivel === 'completo') { %>
+      <div class="soe-panel" id="seguimiento">
+        <h3><span class="material-symbols-outlined">timeline</span> Seguimiento</h3>
+
+        <% if (soeEscribe) { %>
+          <form method="POST" action="/soe/legajo/<%= legajo._id %>/entrada" class="soe-form" style="margin-bottom:20px">
+            <div class="fila">
+              <div>
+                <label for="e-fecha">Fecha del hecho</label>
+                <input type="date" id="e-fecha" name="fecha" value="<%= paraInput(new Date()) %>">
+                <div class="ayuda">La del encuentro, no la de hoy si lo estás anotando después.</div>
+              </div>
+              <div>
+                <label for="e-tipo">Tipo</label>
+                <select id="e-tipo" name="tipo">
+                  <% acceso.TIPOS_ENTRADA.forEach(t => { %>
+                    <option value="<%= t %>" <%= t === 'entrevista' ? 'selected' : '' %>><%= acceso.TIPO_ENTRADA_LABELS[t] %></option>
+                  <% }) %>
+                </select>
+              </div>
+              <div>
+                <label for="e-animo">Cómo se lo vio</label>
+                <select id="e-animo" name="animo">
+                  <option value="">No corresponde</option>
+                  <% acceso.ANIMOS.forEach(a => { %>
+                    <option value="<%= a %>"><%= acceso.ANIMO_LABELS[a] %></option>
+                  <% }) %>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label for="e-texto">Qué pasó</label>
+              <textarea id="e-texto" name="texto" maxlength="4000" required placeholder="Lo que se habló, lo que se observó, lo que se acordó…"></textarea>
+            </div>
+            <div>
+              <button type="submit" class="btn btn-primary">
+                <span class="material-symbols-outlined">add</span> Agregar al seguimiento
+              </button>
+            </div>
+          </form>
+        <% } %>
+
+        <% const entradas = (legajo.entries || []).slice().sort((a, b) => new Date(b.fecha) - new Date(a.fecha)); %>
+        <% if (!entradas.length) { %>
+          <div class="vacio">
+            <span class="material-symbols-outlined">timeline</span>
+            Todavía no hay nada registrado en el seguimiento.
+          </div>
+        <% } else { %>
+          <ul class="linea">
+            <% entradas.forEach(e => { const autor = autores.get(String(e.autor)); %>
+              <li>
+                <div class="icono">
+                  <span class="material-symbols-outlined"><%= acceso.TIPO_ENTRADA_ICONS[e.tipo] || 'sticky_note_2' %></span>
+                </div>
+                <div class="cuerpo">
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:5px">
+                    <strong style="font-size:13.5px"><%= acceso.TIPO_ENTRADA_LABELS[e.tipo] || 'Nota' %></strong>
+                    <% if (e.animo) { %>
+                      <span class="chip chip-neutro">
+                        <span class="punto" style="background:<%= acceso.ANIMO_COLORS[e.animo] %>"></span>
+                        <%= acceso.ANIMO_LABELS[e.animo] %>
+                      </span>
+                    <% } %>
+                  </div>
+                  <div class="texto"><%= e.texto %></div>
+                  <div class="meta">
+                    <%= fmt.fechaCorta(e.fecha) %>
+                    <% if (autor) { %> · <%= autor.name %><% } %>
+                    <% if (e.editedAt) { %> · editado<% } %>
+                  </div>
+                </div>
+              </li>
+            <% }) %>
+          </ul>
+        <% } %>
+      </div>
+    <% } %>
+
+    <%# ── Derivaciones ───────────────────────────────────────────────────── %>
+    <% if (legajo && nivel === 'completo') { %>
+      <div class="soe-panel" id="derivaciones">
+        <h3><span class="material-symbols-outlined">share</span> Derivaciones</h3>
+
+        <% const derivaciones = (legajo.referrals || []).slice().sort((a, b) => new Date(b.fecha) - new Date(a.fecha)); %>
+        <% if (!derivaciones.length) { %>
+          <div class="vacio" style="padding:20px 0">
+            <span class="material-symbols-outlined">share</span>
+            No se lo derivó a ningún servicio externo.
+          </div>
+        <% } %>
+
+        <% derivaciones.forEach(r => { const atencion = acceso.derivacionNecesitaAtencion(r); %>
+          <div class="deriv <%= atencion ? 'atencion' : '' %>">
+            <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+              <div style="min-width:200px;flex:1">
+                <h4><%= r.destino %></h4>
+                <div style="font-size:12px;color:var(--text-secondary)">
+                  <%= acceso.TIPO_DERIVACION_LABELS[r.tipo] %> · derivado el <%= fmt.fechaCorta(r.fecha) %>
+                  <% if (r.contacto) { %> · <%= r.contacto %><% } %>
+                </div>
+              </div>
+              <div>
+                <span class="chip <%= atencion ? 'chip-alerta' : (acceso.DERIVACION_TERMINADA.includes(r.estado) ? 'chip-neutro' : 'chip-ok') %>">
+                  <%= acceso.ESTADO_DERIVACION_LABELS[r.estado] %>
+                </span>
+              </div>
+            </div>
+
+            <% if (r.motivo) { %>
+              <div class="lectura" style="margin-top:8px;font-size:13.5px"><%= r.motivo %></div>
+            <% } %>
+
+            <% if (r.proximoSeguimiento) { %>
+              <div style="margin-top:8px;font-size:12.5px;color:<%= atencion ? '#c5221f' : 'var(--text-secondary)' %>">
+                <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px">event</span>
+                Volver a preguntar el <%= fmt.fechaCorta(r.proximoSeguimiento) %>
+              </div>
+            <% } %>
+
+            <% (r.devoluciones || []).slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha)).forEach(d => { %>
+              <div class="devolucion">
+                <div style="font-size:11px;color:var(--text-hint);margin-bottom:3px">
+                  Devolución del <%= fmt.fechaCorta(d.fecha) %>
+                </div>
+                <%= d.texto %>
+              </div>
+            <% }) %>
+
+            <% if (soeEscribe && legajo.estado !== 'cerrado') { %>
+              <details style="margin-top:12px">
+                <summary style="cursor:pointer;font-size:13px;color:var(--primary)">Registrar devolución o cambiar el estado</summary>
+                <form method="POST" action="/soe/legajo/<%= legajo._id %>/derivacion/<%= r._id %>/devolucion" class="soe-form" style="margin-top:12px">
+                  <div class="fila">
+                    <div>
+                      <label>Fecha de la devolución</label>
+                      <input type="date" name="fecha" value="<%= paraInput(new Date()) %>">
+                    </div>
+                  </div>
+                  <div>
+                    <label>Qué dijeron</label>
+                    <textarea name="texto" maxlength="2000" placeholder="Lo que informó el servicio: diagnóstico, tratamiento, sugerencias para la escuela…"></textarea>
+                  </div>
+                  <div><button type="submit" class="btn btn-primary">Guardar devolución</button></div>
+                </form>
+                <form method="POST" action="/soe/legajo/<%= legajo._id %>/derivacion/<%= r._id %>" class="soe-form" style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px">
+                  <div class="fila">
+                    <div>
+                      <label>Estado</label>
+                      <select name="estado">
+                        <% acceso.ESTADOS_DERIVACION.forEach(e => { %>
+                          <option value="<%= e %>" <%= e === r.estado ? 'selected' : '' %>><%= acceso.ESTADO_DERIVACION_LABELS[e] %></option>
+                        <% }) %>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Volver a preguntar el</label>
+                      <input type="date" name="proximoSeguimiento" value="<%= paraInput(r.proximoSeguimiento) %>">
+                    </div>
+                    <div style="display:flex;align-items:flex-end">
+                      <button type="submit" class="btn btn-outline">Actualizar</button>
+                    </div>
+                  </div>
+                </form>
+              </details>
+            <% } %>
+          </div>
+        <% }) %>
+
+        <% if (soeEscribe && legajo.estado !== 'cerrado') { %>
+          <details style="margin-top:8px">
+            <summary style="cursor:pointer;font-size:13.5px;font-weight:600;color:var(--primary)">+ Derivar a un servicio externo</summary>
+            <form method="POST" action="/soe/legajo/<%= legajo._id %>/derivacion" class="soe-form" style="margin-top:14px">
+              <div class="fila">
+                <div>
+                  <label for="d-destino">A dónde</label>
+                  <input type="text" id="d-destino" name="destino" maxlength="200" required placeholder="Hospital Zonal — Salud Mental">
+                </div>
+                <div>
+                  <label for="d-tipo">Tipo</label>
+                  <select id="d-tipo" name="tipo">
+                    <% acceso.TIPOS_DERIVACION.forEach(t => { %>
+                      <option value="<%= t %>"><%= acceso.TIPO_DERIVACION_LABELS[t] %></option>
+                    <% }) %>
+                  </select>
+                </div>
+                <div>
+                  <label for="d-contacto">Referente</label>
+                  <input type="text" id="d-contacto" name="contacto" maxlength="200" placeholder="Con quién se habló">
+                </div>
+              </div>
+              <div>
+                <label for="d-motivo">Por qué se lo deriva</label>
+                <textarea id="d-motivo" name="motivo" maxlength="1000"></textarea>
+              </div>
+              <div class="fila">
+                <div>
+                  <label for="d-fecha">Fecha de la derivación</label>
+                  <input type="date" id="d-fecha" name="fecha" value="<%= paraInput(new Date()) %>">
+                </div>
+                <div>
+                  <label for="d-prox">Volver a preguntar el</label>
+                  <input type="date" id="d-prox" name="proximoSeguimiento">
+                  <div class="ayuda">Pasada esta fecha sin devolución, la derivación aparece resaltada en el resumen.</div>
+                </div>
+                <div style="display:flex;align-items:flex-end">
+                  <button type="submit" class="btn btn-primary">Registrar derivación</button>
+                </div>
+              </div>
+            </form>
+          </details>
+        <% } %>
+      </div>
+    <% } %>
+
+    <%# ── Cómo viene ─────────────────────────────────────────────────────── %>
+    <div class="soe-panel" id="como-viene">
+      <h3><span class="material-symbols-outlined">insights</span> Cómo viene</h3>
+      <p style="font-size:12.5px;color:var(--text-hint);margin:-6px 0 14px;line-height:1.5">
+        Datos que la plataforma ya tiene. No los carga nadie a mano y no arman ningún índice
+        de riesgo: son los números, el juicio es tuyo.
+      </p>
+
+      <div class="indicadores" style="margin-bottom:18px">
+        <div class="ind">
+          <div class="n"><%= indicadores.asistencia.ultimos30.porcentaje %>%</div>
+          <div class="t">Asistencia, últimos <%= indicadores.asistencia.ventana %> días</div>
+        </div>
+        <div class="ind">
+          <div class="n"><%= indicadores.asistencia.ciclo.porcentaje %>%</div>
+          <div class="t">Asistencia del ciclo (<%= indicadores.asistencia.ciclo.ausentes %> faltas)</div>
+        </div>
+        <div class="ind">
+          <div class="n"><%= indicadores.promedioGeneral === null ? '—' : indicadores.promedioGeneral %></div>
+          <div class="t">Promedio general sobre 10</div>
+        </div>
+        <div class="ind">
+          <div class="n"><%= indicadores.entregas.pendientes %></div>
+          <div class="t">Actividades sin entregar (<%= indicadores.entregas.pendientesVencidas %> vencidas)</div>
+        </div>
+      </div>
+
+      <% if (indicadores.materias.length) { %>
+        <div class="tabla-scroll">
+          <table class="soe-tabla">
+            <thead>
+              <tr><th>Materia</th><th>Promedio</th><th>Notas</th><th>Entregadas</th><th>Tarde</th><th>Pendientes</th></tr>
+            </thead>
+            <tbody>
+              <% indicadores.materias.forEach(m => { %>
+                <tr>
+                  <td><%= m.nombre %></td>
+                  <td>
+                    <% if (m.promedio === null) { %>—<% } else { %>
+                      <span class="chip <%= m.promedio < 6 ? 'chip-alerta' : 'chip-ok' %>"><%= m.promedio %></span>
+                    <% } %>
+                  </td>
+                  <td><%= m.notas %></td>
+                  <td><%= m.entregadas %></td>
+                  <td><%= m.tardias || '—' %></td>
+                  <td><%= m.pendientes || '—' %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } else { %>
+        <div class="vacio" style="padding:20px 0">
+          <span class="material-symbols-outlined">menu_book</span>
+          El alumno no está inscripto en ninguna materia.
+        </div>
+      <% } %>
+
+      <% if (alumno.futureGoal || alumno.bio || (alumno.interests || []).length) { %>
+        <div style="border-top:1px solid var(--border);margin-top:18px;padding-top:14px">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text-secondary);margin-bottom:8px">
+            Lo que cargó el alumno en su perfil
+          </div>
+          <% if (alumno.futureGoal) { %>
+            <div class="campo-lectura">
+              <label>A qué le gustaría dedicarse</label>
+              <div class="lectura"><%= alumno.futureGoal %></div>
+            </div>
+          <% } %>
+          <% if (alumno.bio) { %>
+            <div class="campo-lectura">
+              <label>Su presentación</label>
+              <div class="lectura"><%= alumno.bio %></div>
+            </div>
+          <% } %>
+          <% if ((alumno.interests || []).length) { %>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <% alumno.interests.forEach(i => { %>
+                <span class="chip chip-neutro">
+                  <span class="material-symbols-outlined" style="font-size:13px"><%= INTEREST_ICONS[i] || 'star' %></span>
+                  <%= INTEREST_LABELS[i] || i %>
+                </span>
+              <% }) %>
+            </div>
+          <% } %>
+        </div>
+      <% } %>
+    </div>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

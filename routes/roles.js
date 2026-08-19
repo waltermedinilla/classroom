@@ -22,10 +22,25 @@ const { requireSuperAdmin } = require('../middleware/superadmin');
 const { invalidateSchool }  = require('../middleware/cache');
 const { logAudit }          = require('../middleware/audit');
 const { SECTIONS, PANELS, isConfigurable } = require('../config/sections');
+// Confidencialidad de los legajos del SOE. No pasa por SECTIONS a propósito: aquel sistema
+// es restrictivo (solo quita) y este tiene que AGREGAR acceso sobre un default cerrado.
+// Ver models/School.js, campo soeAccess.
+const soeAcceso = require('../services/soeAcceso');
 const { logDeRuta } = require('../middleware/route-log');
 
 const router = express.Router();
 router.use(requireAuth, requireSuperAdmin);
+
+// Los datos que necesita la tarjeta de legajos del SOE. En un helper para que las dos
+// ramas del GET (con escuelas y sin ninguna) no puedan quedar desincronizadas.
+const localesSoe = (school) => ({
+  SOE_ROLES: soeAcceso.ROLES_CONFIGURABLES,
+  SOE_NIVELES_POR_ROL: Object.fromEntries(
+    soeAcceso.ROLES_CONFIGURABLES.map(r => [r, soeAcceso.nivelesPara(r)]),
+  ),
+  SOE_NIVEL_LABELS: soeAcceso.NIVEL_LABELS,
+  soeAccess: (school && school.soeAccess) || {},
+});
 
 // GET /superadmin/roles[?school=<id>]
 // Sin ?school, muestra la primera escuela: la pantalla nunca arranca vacía.
@@ -35,6 +50,7 @@ router.get('/', async (req, res) => {
     if (!schools.length) {
       return res.render('superadmin/roles', {
         schools: [], school: null, SECTIONS, PANELS, roles: User.getRoles(), activePage: 'roles',
+        ...localesSoe(null),
       });
     }
 
@@ -43,11 +59,12 @@ router.get('/', async (req, res) => {
       : null;
     const target = wanted || schools[0];
 
-    const school = await School.findById(target._id).select('name color rolePermissions').lean();
+    const school = await School.findById(target._id).select('name color rolePermissions soeAccess').lean();
     if (!school) return res.status(404).send('Escuela no encontrada');
 
     res.render('superadmin/roles', {
       schools, school, SECTIONS, PANELS, roles: User.getRoles(), activePage: 'roles',
+      ...localesSoe(school),
     });
   } catch (err) {
     logDeRuta(err, res);
@@ -136,6 +153,54 @@ router.post('/reset', async (req, res) => {
     logAudit(req, 'school.role_permissions_update',
       [{ type: 'school', id: school._id, name: school.name }],
       { rol: role, seccion: 'todas', habilitado: true },
+      { schoolId },
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /superadmin/roles/soe-access — nivel de acceso de un rol a los legajos del SOE.
+// Body: { schoolId, role, nivel }
+//
+// Endpoint aparte de /toggle porque lo que se guarda es distinto: no es una solapa denegada
+// sino un nivel de acceso a CONTENIDO, y vive en School.soeAccess (ver models/School.js).
+//
+// La validación repite el techo por rol que ya aplica services/soeAcceso.js al leer. No es
+// redundancia inútil: acá evita que quede guardado un valor imposible, y allá garantiza que
+// aunque quede guardado (por un mongosh, una importación o un bug futuro) no conceda nada.
+router.post('/soe-access', async (req, res) => {
+  try {
+    const { schoolId, role, nivel } = req.body;
+
+    if (!mongoose.isValidObjectId(schoolId)) {
+      return res.status(400).json({ error: 'Escuela inválida' });
+    }
+    if (!soeAcceso.ROLES_CONFIGURABLES.includes(role)) {
+      return res.status(400).json({ error: 'Ese rol no se configura acá' });
+    }
+    if (!soeAcceso.nivelesPara(role).includes(nivel)) {
+      return res.status(400).json({ error: 'Nivel no permitido para ese rol' });
+    }
+
+    const school = await School.findByIdAndUpdate(
+      schoolId,
+      { $set: { [`soeAccess.${role}`]: nivel } },
+      { new: true, runValidators: true },
+    ).select('name soeAccess');
+    if (!school) return res.status(404).json({ error: 'Escuela no encontrada' });
+
+    // Obligatorio: res.locals.school va cacheado por worker (ver middleware/cache.js), y
+    // este campo es el que decide quién entra al panel del SOE. Sin esto, el cambio no
+    // tiene efecto hasta que expire el TTL de 5 minutos.
+    invalidateSchool(schoolId);
+
+    logAudit(req, 'school.role_permissions_update',
+      [{ type: 'school', id: school._id, name: school.name }],
+      { rol: role, seccion: 'soe_legajos', nivel },
       { schoolId },
     );
 

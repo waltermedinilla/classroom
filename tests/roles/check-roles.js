@@ -15,10 +15,12 @@
 // Los 7 pasos:
 //   1. Alta, login y configuración del alcance de cada rol.
 //   2. Redirect de "/": cada rol tiene que aterrizar en SU panel (server.js).
-//   3. Matriz de acceso: GET a las 37 secciones de config/sections.js. 200 donde el rol
+//   3. Matriz de acceso: GET a todas las secciones de config/sections.js. 200 donde el rol
 //      figura en `roles` (que es el espejo de los middlewares de rol) y bloqueo en el resto.
-//      Un 200 de más es una FUGA de permisos; un bloqueo de más, algo ROTO.
-//   4. Menú: el <nav> del panel (o el drawer del header, para docente/alumno/SOE) pinta
+//      Un 200 de más es una FUGA de permisos; un bloqueo de más, algo ROTO. Única excepción
+//      documentada: el panel del SOE, donde la puerta la abre School.soeAccess y no el
+//      catálogo (ver el comentario en el paso 3).
+//   4. Menú: el <nav> del panel (o el drawer del header, para docente y alumno) pinta
 //      exactamente las solapas permitidas. Replica la lógica de res.locals.can.
 //   5. El header muestra el rol EN ESPAÑOL (res.locals.roleNames).
 //   6. Toggle de /superadmin/roles: denegar una solapa la saca del nav Y devuelve 403 por
@@ -48,13 +50,15 @@ const c = new SmokeClient(BASE);
 // del .env si está.
 const ROLES = ['admin', 'directivo', 'preceptor', 'jefe', 'soe', 'teacher', 'student'];
 
+// `soe` pasó a tener panel propio el 2026-08-18 (specs/soe-orientacion.spec.md). Antes
+// aterrizaba en /courses con las solapas generales, como un docente sin materias.
 const LANDING = {
   superadmin: '/superadmin', admin: '/admin', directivo: '/directivo', preceptor: '/preceptor',
-  jefe: '/jefatura', soe: '/courses', teacher: '/courses', student: '/courses',
+  jefe: '/jefatura', soe: '/soe', teacher: '/courses', student: '/courses',
 };
 const PANEL_DE = {
   superadmin: 'superadmin', admin: 'admin', directivo: 'directivo', preceptor: 'preceptor',
-  jefe: 'jefatura', soe: 'app', teacher: 'app', student: 'app',
+  jefe: 'jefatura', soe: 'soe', teacher: 'app', student: 'app',
 };
 const ROL_ES = {
   superadmin: 'Superadministrador', admin: 'Administrador', directivo: 'Directivo',
@@ -190,6 +194,17 @@ async function main() {
         if (!abierto && s.flag && r.status === 404) { ok++; notas.push(`${s.key}: 404 (flag ${s.flag} apagado)`); continue; }
         if (!abierto && s.needsSchool && !a.tieneEscuela) {
           ok++; notas.push(`${s.key}: ${r.status} (needsSchool y este usuario no tiene escuela)`); continue;
+        }
+
+        // El panel del SOE es la ÚNICA excepción a la regla "figura en `roles` → entra".
+        // `directivo` y `admin` están en el catálogo para que /superadmin/roles pueda
+        // pintarles la celda, pero la puerta la abre School.soeAccess, que arranca en 'none'
+        // para todos (models/School.js). Con una escuela recién creada —que es lo que arma
+        // este chequeo— lo CORRECTO es que reciban 403.
+        if (s.panel === 'soe' && !['soe', 'superadmin'].includes(rol)) {
+          if (!abierto) { ok++; notas.push(`${s.key}: ${r.status} (soeAccess en 'none', el default)`); }
+          else { fugas++; anotar('FUGA', rol, `${s.path} devolvió 200 sin que la escuela le diera soeAccess`); }
+          continue;
         }
 
         const esperado = s.panel === 'app' ? true : s.roles.includes(rol);

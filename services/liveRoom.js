@@ -112,6 +112,15 @@ const SALAS_BASE = require('path').join(__dirname, '../archivos/salas');
 // (ver la cabecera de middleware/rate-limits.js), que acá se aplica de entrada.
 const UPLOADS_PER_10MIN = 20;
 
+// El mismo techo, para un ALUMNO. Cinco fotos cada 10 minutos: alcanza de sobra para mostrar
+// la hoja de la carpeta o el ejercicio resuelto —que es para lo que se abrió esto— y corta de
+// entrada la clase de 30 chicos descubriendo que pueden llenar el chat de fotos.
+//
+// Es un número distinto y no el mismo de la docente porque el uso es distinto: ella comparte
+// el material de la clase (varias imágenes seguidas del pizarrón es normal), el alumno
+// responde con lo suyo. Decisión del usuario, 2026-08-19.
+const UPLOADS_ALUMNO_PER_10MIN = 5;
+
 // Paleta cerrada de emojis del selector. Cerrada a propósito: valida la entrada del POST de
 // reacciones sin tener que razonar sobre unicode arbitrario, y mantiene el selector de un
 // tamaño usable en un celular.
@@ -377,6 +386,105 @@ function textoAdjunto(m) {
   return a.bytes ? `[${etiqueta}] ${nombre} (${pesoLegible(a.bytes)})` : `[${etiqueta}] ${nombre}`;
 }
 
+// ── Quién puede qué, dentro de la sala ───────────────────────────────────────
+//
+// Las tres reglas viven ACÁ y no en routes/rooms.js —donde estaba `puedeEscribir` hasta el
+// 2026-08-19— porque se componen entre ellas: compartir una foto exige poder escribir, y
+// borrar lo propio exige que la sala siga abierta. Con una regla en el router y sus dos
+// hermanas en otro lado, la próxima que se agregue va a quedar en un tercero y ninguna de las
+// tres se va a poder testear sin levantar Express.
+//
+// Reciben un CONTEXTO plano (no `req`): eso es lo que las hace puras y testeables en
+// tests/unit/salaChat.test.js sin base ni servidor. El router arma ese contexto.
+//
+//   ctx = { esGestor, esAlumno, modo, userId }
+//   session = el documento de RoomSession, o null si no hay sala abierta
+
+// ¿Puede escribir un mensaje, ahora?
+function puedeEscribir(session, ctx = {}) {
+  if (!session || session.closedAt) return false;
+  if (ctx.modo === 'observacion') return false;   // mirar sin aparecer implica no hablar
+  if (ctx.esGestor) return true;                  // la docente escribe siempre
+  if (!ctx.esAlumno) return true;                 // preceptoría y dirección presentada
+  if (!session.settings || session.settings.studentsCanWrite === false) return false;
+  return !(session.mutedStudents || []).some(id => String(id) === String(ctx.userId));
+}
+
+// ¿Puede compartir una IMAGEN, ahora?
+//
+// Solo los dos lados del mostrador de esta materia: quien la gestiona y quien la cursa.
+// Preceptoría y dirección entran a mirar la clase, no a dejar material en ella (RN-A2), así
+// que el `return false` del final no es un olvido — es la regla.
+//
+// Para el alumno son TRES condiciones y todas a la vez (RN-A3): sala abierta, interruptor
+// prendido y poder escribir. La tercera es la que pidió el usuario: silenciar a alguien lo
+// silencia entero, no lo deja seguir hablando por foto.
+//
+// `!== false` y no `=== true`: una sesión abierta ANTES de que existiera el interruptor no
+// tiene el campo, y esa clase tiene que seguir comportándose como venía (permitido).
+function puedeCompartirImagen(session, ctx = {}) {
+  if (!session || session.closedAt) return false;
+  if (ctx.modo === 'observacion') return false;
+  if (ctx.esGestor) return true;
+  if (!ctx.esAlumno) return false;
+  if (session.settings && session.settings.studentsCanShareImages === false) return false;
+  return puedeEscribir(session, ctx);
+}
+
+// ¿Puede borrar ESTE mensaje?
+//
+// La docente borra cualquier cosa y en cualquier momento: es moderación, y una clase que ya
+// terminó es justo cuando aparece el problema de convivencia que hay que sacar de la vista.
+//
+// El autor borra lo suyo SOLO con la sala abierta (RN-B1). El límite temporal es lo que
+// separa "me equivoqué de foto" —el caso real que esto viene a cubrir— de volver sobre una
+// clase de la semana pasada a limpiar el rastro de lo que uno dijo. Un mensaje del sistema no
+// es de nadie: no tiene autor a quien devolverle el permiso.
+function puedeBorrarMensaje(msg, ctx = {}, { salaAbierta = false } = {}) {
+  if (!msg || msg.deletedAt) return false;
+  if (ctx.esGestor) return true;
+  if (msg.kind === 'system') return false;
+  if (!salaAbierta) return false;
+  return String(msg.author) === String(ctx.userId);
+}
+
+// ── La cita de una respuesta ─────────────────────────────────────────────────
+
+// Cuánto del mensaje citado se copia. 90 caracteres son ~dos renglones en un celular: lo
+// suficiente para reconocer a qué se contesta, no tanto como para que la cita compita con la
+// respuesta. El resto se corta con puntos suspensivos.
+const EXTRACTO_MAX = 90;
+
+// Arma el snapshot de la cita a partir del mensaje original. Ver replySchema en
+// models/RoomMessage.js: se copia el texto en vez de resolverlo con populate porque el poll
+// pinta 100 mensajes cada 4 segundos.
+//
+// Devuelve null —y el mensaje sale SIN cita, sin error en la cara (RN-C7)— cuando no hay a
+// qué contestarle: un aviso del sistema (no es de nadie) o un mensaje ya borrado (citarlo
+// sería devolverle el texto que la moderación acaba de sacar).
+function citaDeMensaje(msg) {
+  if (!msg || msg.kind === 'system' || msg.deletedAt) return null;
+
+  // Un adjunto no lleva texto: su contenido ES el archivo. La cita muestra de qué se trata,
+  // que es lo mismo que ya hace la transcripción en CSV.
+  let extracto = '';
+  if (msg.kind === 'image')      extracto = '📷 Imagen';
+  else if (msg.kind === 'file')  extracto = '📎 ' + (msg.attachment?.name || 'Archivo');
+  else {
+    const t = String(msg.text || '').replace(/\s+/g, ' ').trim();
+    extracto = t.length > EXTRACTO_MAX ? t.slice(0, EXTRACTO_MAX - 1) + '…' : t;
+  }
+
+  return {
+    to:       msg._id,
+    seq:      msg.seq,
+    autor:    msg.authorName || '—',
+    extracto,
+    kind:     msg.kind || 'text',
+    borrado:  false,
+  };
+}
+
 // ── Funciones con base de datos ──────────────────────────────────────────────
 
 const oid = (id) => new mongoose.Types.ObjectId(id.toString());
@@ -476,7 +584,7 @@ async function nextSeq(sessionId) {
   return s ? s.lastSeq : null;
 }
 
-async function postMessage(session, user, text) {
+async function postMessage(session, user, text, { reply = null } = {}) {
   const limpio = sanitizeText(text);
   if (!limpio) return null;
 
@@ -492,7 +600,41 @@ async function postMessage(session, user, text) {
     kind:       'text',
     text:       limpio,
     seq,
+    reply,
   });
+}
+
+// Resuelve el `replyTo` que mandó el cliente y devuelve la cita lista para guardar.
+//
+// Acotado a la SESIÓN abierta (RN-C3): no se cita un mensaje de la clase del martes en la del
+// jueves, y ese filtro es además lo que impide que alguien cite —y con eso copie a la vista de
+// todos— un mensaje de una sala en la que no estuvo, mandando un id a mano.
+//
+// Cualquier cosa rara (id inválido, mensaje inexistente, de otra sesión, del sistema, ya
+// borrado) devuelve null y el mensaje sale sin cita. NUNCA un error: el alumno quiso mandar un
+// mensaje, y perder la citita no es motivo para no mandárselo (RN-C7).
+async function resolverCita(session, replyToId) {
+  if (!replyToId || !mongoose.isValidObjectId(replyToId)) return null;
+  const original = await RoomMessage.findOne({ _id: replyToId, session: session._id })
+    .select('_id seq authorName kind text attachment deletedAt').lean();
+  return citaDeMensaje(original);
+}
+
+// Apaga las citas que apuntan a un mensaje recién borrado (RN-B4).
+//
+// Es la contraparte del snapshot: el texto citado está COPIADO en cada respuesta, así que sin
+// esto la docente borra un mensaje ofensivo y el texto sigue leyéndose en las tres respuestas
+// que lo citaban. La moderación no moderaría nada.
+//
+// Se paga acá —al borrar, que pasa de a uno y cada tanto— y no en cada poll, que corre cada 4
+// segundos por cada persona de la sala. La query va acotada por `session`, que está indexado.
+async function apagarCitasDe(msg) {
+  if (!msg) return 0;
+  const r = await RoomMessage.updateMany(
+    { session: msg.session, 'reply.to': msg._id },
+    { $set: { 'reply.borrado': true, 'reply.extracto': '' } }
+  );
+  return r.modifiedCount || 0;
 }
 
 // Publica un adjunto ya guardado en disco como un mensaje más de la conversación.
@@ -505,7 +647,7 @@ async function postMessage(session, user, text) {
 //
 // `kind` es 'image' o 'file'. Es el mismo camino que postMessage —mismo $inc atómico sobre
 // lastSeq— para que un adjunto y un mensaje enviados a la vez no se peleen el número.
-async function postAttachment(session, user, kind, attachment) {
+async function postAttachment(session, user, kind, attachment, { reply = null } = {}) {
   if (kind !== 'image' && kind !== 'file') return null;
 
   const seq = await nextSeq(session._id);
@@ -521,6 +663,7 @@ async function postAttachment(session, user, kind, attachment) {
     text:       '',
     seq,
     attachment,
+    reply,
   });
 }
 
@@ -737,7 +880,7 @@ function csvAsistencia(roster, presences) {
 // no puede llevar el archivo, pero sí tiene que dejar constancia de que se compartió, cuál y
 // cuándo. Una transcripción que los omitiera diría que la docente estuvo callada.
 function csvTranscripcion(messages) {
-  const rows = [['#', 'Hora', 'Autor', 'Rol', 'Mensaje', 'Estado']];
+  const rows = [['#', 'Hora', 'Autor', 'Rol', 'Responde a', 'Mensaje', 'Estado']];
   for (const m of messages) {
     const esAdjunto = m.kind === 'image' || m.kind === 'file';
     rows.push([
@@ -745,6 +888,10 @@ function csvTranscripcion(messages) {
       fecha(m.createdAt),
       m.kind === 'system' ? '(sistema)' : (m.authorName || '—'),
       m.kind === 'system' ? '' : (m.authorRole || ''),
+      // A quién le contestaba. En la pantalla la cita se ve; en el CSV, sin esta columna, una
+      // clase entera de "sí", "dale", "yo tampoco" no dice a qué contestaba cada uno — y el
+      // CSV es justo lo que se lee cuando hay que reconstruir un episodio.
+      m.reply?.to ? `#${m.reply.seq ?? '?'} ${m.reply.autor || ''}`.trim() : '',
       esAdjunto ? textoAdjunto(m) : m.text,
       m.deletedAt ? 'Eliminado' : '',
     ]);
@@ -756,15 +903,19 @@ module.exports = {
   // constantes
   POLL_MS, DIRECTIVO_POLL_MS, ONLINE_WINDOW_MS, STAFF_ONLINE_WINDOW_MS, AUTO_CLOSE_MS, PURGE_AFTER_MS,
   MSG_MAX, MSG_PER_MIN, EMOJIS, STAFF_ROLES, ROLE_LABELS, TZ,
-  EXT_ARCHIVOS, MAX_ARCHIVO_BYTES, UPLOADS_PER_10MIN, SALAS_BASE,
+  EXT_ARCHIVOS, MAX_ARCHIVO_BYTES, UPLOADS_PER_10MIN, UPLOADS_ALUMNO_PER_10MIN, SALAS_BASE,
+  EXTRACTO_MAX,
   // hora (zona fija de la escuela)
   fmt, hora, fechaDia, fechaLarga, fechaCorta, fechaHora, diaEscolar,
   horaSegundos, diaMes, diaMesAnio, diaMesHora, diaMesAnioHora, diaMesLargo, diaMesLargoHora,
   // puras
   isOnline, presenceSummary, shouldAutoClose, horaDeCierre, gestorEnLinea, sanitizeText,
   minutosPresente, initial, pesoLegible, etiquetaExt, textoAdjunto,
+  // permisos dentro de la sala (puros: reciben un contexto plano, no `req`)
+  puedeEscribir, puedeCompartirImagen, puedeBorrarMensaje, citaDeMensaje,
   // con base
   openSession, closeSession, closeStaleSessions, postMessage, postAttachment, systemMessage,
+  resolverCita, apagarCitasDe,
   touchPresence, getOpenSessions, getTodayClosed,
   // export
   csvAsistencia, csvTranscripcion,

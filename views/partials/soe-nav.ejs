@@ -1,0 +1,44 @@
+<%# Mismo criterio que el resto de los navs: cada solapa depende de can(), que resuelve rol +
+    lo configurado en /superadmin/roles para esta escuela (ver config/sections.js).
+
+    ⚠️ can() acá NO es la guarda que importa. Quien decide si este panel se abre es
+    School.soeAccess (middleware/soe.js): un directivo sin acceso configurado ni llega a
+    renderizar esta vista. can() solo sirve para apagarle UNA solapa a quien sí entra. %>
+<% const puede = (k) => (typeof can === 'function' ? can(k) : true); %>
+<nav class="admin-nav">
+  <% if (puede('soe_dashboard')) { %>
+  <a href="/soe" class="admin-nav-item <%= activePage === 'resumen' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">psychology</span>
+    Resumen
+  </a>
+  <% } %>
+  <% if (puede('soe_alumnos')) { %>
+  <a href="/soe/alumnos" class="admin-nav-item <%= activePage === 'alumnos' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">group</span>
+    Alumnos
+  </a>
+  <% } %>
+  <% if (puede('soe_derivaciones')) { %>
+  <a href="/soe/derivaciones" class="admin-nav-item <%= activePage === 'derivaciones' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">share</span>
+    Derivaciones
+  </a>
+  <% } %>
+</nav>
+
+<% if (typeof soeEscribe !== 'undefined' && !soeEscribe) { %>
+  <%# El aviso de solo lectura. Va acá y no en cada pantalla porque el nav es el único
+      partial por el que pasan todas, y porque quien entra en 'resumen' o en 'completo' sin
+      poder escribir tiene que saberlo ANTES de buscar el botón de guardar que no existe. %>
+  <div class="soe-lectura">
+    <span class="material-symbols-outlined">visibility</span>
+    <div>
+      <strong>Solo lectura.</strong>
+      Los legajos los escribe el Servicio de Orientación Escolar.
+      <% if (typeof soeNivel !== 'undefined' && soeNivel === 'resumen') { %>
+        Estás viendo el <strong>resumen</strong>: las fortalezas del alumno y las estrategias
+        acordadas para el aula. El seguimiento y las derivaciones no se muestran.
+      <% } %>
+    </div>
+  </div>
+<% } %>

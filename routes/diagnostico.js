@@ -68,7 +68,7 @@ const diagLimiter = rateLimit({
 
 // POST /diagnostico/subida — el navegador cuenta una subida que falló.
 // Body: { codigo, ruta, motivo, status, statusText, requestId, respuesta,
-//         archivo: { nombre, bytes, mime }, enviados, ms, conexion, pantalla }
+//         archivo: { nombre, bytes, mime }, enviados, ms, intentos, conexion, pantalla }
 router.post('/subida', requireAuth, diagLimiter, (req, res) => {
   const b = req.body || {};
   const codigo = texto(b.codigo, 20);
@@ -105,6 +105,13 @@ router.post('/subida', requireAuth, diagLimiter, (req, res) => {
     enviados,
     porcentaje,
     ms:         entero(b.ms, 24 * 60 * 60 * 1000),
+    // Cuántos envíos se hicieron antes de rendirse (ver el reintento automático en
+    // public/js/subida-diagnostico.js). Solo viene cuando hubo más de uno. El tope de 20 es
+    // el mismo criterio que el de `status`: acota lo que puede escribir un cliente mentiroso
+    // sin descartar el reporte por eso.
+    //
+    // ⚠️ Al leerlo: `ms` y `enviados` son del ÚLTIMO intento, no de los cuatro sumados.
+    intentos:   entero(b.intentos, 20),
     conexion:   texto(b.conexion, 40),
     pantalla:   texto(b.pantalla, MAX_TEXTO),
     userAgent:  texto(req.get('user-agent'), MAX_TEXTO),

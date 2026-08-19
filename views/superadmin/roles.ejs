@@ -46,6 +46,12 @@
     .reset-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 16px 22px; }
     .school-pick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
     .school-pick select { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 14px; }
+    .soe-access-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+    .soe-access-row label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 5px; }
+    .soe-access-row select {
+      width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface); color: var(--text); font-size: 14px; box-sizing: border-box;
+    }
   </style>
 </head>
 <body>
@@ -184,11 +190,56 @@
     </div>
     <% } %>
 
+    <%# ── Confidencialidad de los legajos del SOE ─────────────────────────────
+        Esta tarjeta NO usa la grilla de arriba a propósito, y es la única excepción de la
+        pantalla. La grilla es RESTRICTIVA: los toggles solo QUITAN lo que el rol ya tiene, y
+        todo lo que no se toca queda habilitado. Para una historia psicopedagógica hace falta
+        exactamente lo contrario — default cerrado, y la configuración AGREGA acceso.
+        Por eso se guarda en School.soeAccess y no en rolePermissions.
+        Ver models/School.js y services/soeAcceso.js. %>
+    <div class="set-card">
+      <div class="panel-head">
+        <h3>Legajos de Orientación Escolar</h3>
+        <span class="hint">Quién más puede leerlos, además del <%= roleNames.soe %>.</span>
+      </div>
+      <p style="font-size:12.5px;color:var(--text-secondary);line-height:1.55;margin:0 0 14px">
+        Por defecto <strong>nadie</strong>: el legajo lo ve solo el <%= roleNames.soe %>, que es
+        además el único que puede escribirlo. Acá se puede abrir esa puerta, y conviene pensarlo
+        dos veces — son entrevistas, diagnósticos y derivaciones de chicos menores de edad.
+      </p>
+      <ul style="font-size:12.5px;color:var(--text-secondary);line-height:1.6;margin:0 0 16px;padding-left:18px">
+        <li><strong>Sin acceso</strong> — ni siquiera ve el panel.</li>
+        <li><strong>Solo resumen</strong> — las fortalezas del alumno y las estrategias acordadas
+            para el aula, más el dato de que hay una derivación en curso. Sin el motivo, sin las
+            dificultades, sin las entrevistas y sin saber a dónde se lo derivó.</li>
+        <li><strong>Legajo completo</strong> — todo, en modo lectura. Cada apertura queda registrada
+            en la auditoría.</li>
+      </ul>
+      <div class="soe-access-grid">
+        <% SOE_ROLES.forEach(r => { %>
+          <div class="soe-access-row">
+            <label for="soe-<%= r %>"><%= roleNames[r] %></label>
+            <select id="soe-<%= r %>" onchange="guardarSoeAccess('<%= r %>', this)">
+              <% SOE_NIVELES_POR_ROL[r].forEach(n => { %>
+                <option value="<%= n %>" <%= (soeAccess[r] || 'none') === n ? 'selected' : '' %>>
+                  <%= SOE_NIVEL_LABELS[n] %>
+                </option>
+              <% }) %>
+            </select>
+          </div>
+        <% }) %>
+      </div>
+      <p style="font-size:11.5px;color:var(--text-hint);margin:12px 0 0;line-height:1.5">
+        Preceptor y docente topean en «Solo resumen»: no se les puede dar el legajo completo
+        desde ninguna pantalla, y tampoco ven la solapa Derivaciones, que nombra a dónde se
+        derivó a cada chico.
+      </p>
+    </div>
+
     <p style="font-size:12px;color:var(--text-secondary);margin-top:4px">
-      Un rol que no aparece como columna es porque el panel no le corresponde. El rol
-      <strong><%= roleNames.soe %></strong> todavía no tiene panel propio: solo se le pueden
-      configurar los accesos generales. Las pestañas de adentro de cada materia (Novedades,
-      Actividades, Calificaciones, Personas) no se configuran acá todavía.
+      Un rol que no aparece como columna es porque el panel no le corresponde. Las pestañas de
+      adentro de cada materia (Novedades, Actividades, Calificaciones, Personas) no se
+      configuran acá todavía.
     </p>
 
     <% } %>
@@ -241,6 +292,45 @@
         alert(err.message || 'No se pudo restablecer el rol');
       }
     }
+
+    // Confidencialidad de los legajos del SOE. Va por su propio endpoint y no por
+    // /toggle: no es un permiso de solapa (booleano sobre rolePermissions) sino un nivel
+    // de acceso a contenido, guardado en School.soeAccess. Ver models/School.js.
+    //
+    // A diferencia de los toggles de la grilla, acá sí se confirma cuando se AMPLÍA el
+    // acceso: abrirle una historia clínica a un rol nuevo no es algo que se deshaga con
+    // un ctrl+Z, y el clic equivocado en un <select> es más fácil que en un checkbox.
+    async function guardarSoeAccess(role, sel) {
+      const nivel = sel.value;
+      const previo = sel.dataset.previo || 'none';
+      if (nivel !== 'none' && previo === 'none') {
+        const texto = nivel === 'completo' ? 'el legajo COMPLETO' : 'el resumen del legajo';
+        if (!confirm('Vas a habilitar a este rol para leer ' + texto
+                     + ' de los alumnos con seguimiento psicopedagógico.\n\n¿Confirmás?')) {
+          sel.value = previo;
+          return;
+        }
+      }
+      sel.disabled = true;
+      try {
+        const res = await fetch('/superadmin/roles/soe-access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ schoolId: SCHOOL_ID, role, nivel }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error');
+        sel.dataset.previo = nivel;
+      } catch (err) {
+        sel.value = previo;   // igual que los toggles: no dejar la UI mintiendo
+        alert(err.message || 'No se pudo guardar el acceso');
+      } finally {
+        sel.disabled = false;
+      }
+    }
+    // El valor de partida, para saber después si el cambio AMPLÍA o restringe.
+    document.querySelectorAll('.soe-access-row select')
+      .forEach(s => { s.dataset.previo = s.value; });
   </script>
 </body>
 </html>

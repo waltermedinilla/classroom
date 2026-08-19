@@ -54,6 +54,7 @@ const directivoRoutes    = require('./routes/directivo');
 const preceptorRoutes    = require('./routes/preceptor');
 const attendanceRoutes   = require('./routes/attendance');
 const jefaturaRoutes     = require('./routes/jefatura');
+const soeRoutes          = require('./routes/soe');
 const backupRoutes       = require('./routes/backup');
 const dbFixesRoutes      = require('./routes/dbFixes');
 const suggestionRoutes   = require('./routes/suggestions');
@@ -385,7 +386,7 @@ app.use('*', async (req, res, next) => {
     const key = schoolId.toString();
     let school = schoolCache.get(key);
     if (!school) {
-      school = await School.findById(schoolId).select('name color slug _id themes settings rolePermissions').lean();
+      school = await School.findById(schoolId).select('name color slug _id themes settings rolePermissions soeAccess').lean();
       if (school) schoolCache.set(key, school);
     }
     res.locals.school = school || null;
@@ -605,6 +606,9 @@ app.get('/', (req, res) => {
   // El jefe de sección, igual: en /courses solo vería las materias donde alguien lo haya
   // inscripto, que no es su trabajo. Su panel es el seguimiento de sus secciones.
   if (res.locals.user.role === 'jefe') return res.redirect('/jefatura');
+  // El SOE cae en su panel de legajos. Mismo motivo que los tres de arriba: en /courses no
+  // tiene nada suyo. Su trabajo son los alumnos de la escuela, no las materias.
+  if (res.locals.user.role === 'soe') return res.redirect('/soe');
   // Admin/superadmin caen en su propio panel, no en /courses — ese dashboard
   // ("Tus clases") es para docente/alumno. Antes, si el admin también era
   // dueño de alguna materia (Course.owner puede serlo, ver routes/admin.js),
@@ -666,6 +670,7 @@ app.use('/preceptor',   preceptorRoutes);
 // llama sea alumno y esté en la nómina de esa toma.
 app.use('/asistencia',  attendanceRoutes.alumnoRouter);
 app.use('/jefatura',    jefaturaRoutes);
+app.use('/soe',         soeRoutes);
 app.use('/suggestions', suggestionRoutes);
 // Bandeja del destinatario de los mensajes del superadmin. El panel del que ENVÍA se monta
 // más arriba, junto al resto de los sub-routers de /superadmin.

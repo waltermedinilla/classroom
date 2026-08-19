@@ -134,6 +134,25 @@ const ACTIONS = {
   'message.toggle_replies': { label: 'cambió las respuestas de un mensaje', icon: 'lock_open', color: '#ea8600', category: 'message' },
   'message.delete':         { label: 'eliminó un mensaje enviado',          icon: 'delete',    color: '#ea4335', category: 'message' },
 
+  // ── Orientación Escolar (SOE) ────────────────────────────────────────────
+  // El legajo psicopedagógico es el dato más sensible de la plataforma. Estas acciones no
+  // están para vigilar al gabinete: están para que, si alguna vez hay que responder "¿quién
+  // leyó esto?", la respuesta exista.
+  //
+  // 'soe.view_case' registra únicamente la lectura AJENA (directivo, admin, superadmin). La
+  // del propio SOE no se audita: es su trabajo diario, y anotarla en cada apertura llenaría
+  // la auditoría de ruido hasta volverla inservible para lo que importa.
+  //
+  // Ninguna anota el CONTENIDO en `meta` — solo el alumno, el tipo de evento y el nivel de
+  // acceso. La auditoría no puede convertirse en una segunda copia del legajo sin las
+  // guardas del legajo.
+  'soe.case_open':       { label: 'abrió un legajo de orientación',    icon: 'folder_open',      color: '#0d7377', category: 'soe' },
+  'soe.case_close':      { label: 'cerró un legajo de orientación',    icon: 'folder_off',       color: '#5f6368', category: 'soe' },
+  'soe.entry_add':       { label: 'registró un seguimiento',           icon: 'edit_note',        color: '#0d7377', category: 'soe' },
+  'soe.referral_add':    { label: 'derivó a un servicio externo',      icon: 'share',            color: '#9334e6', category: 'soe' },
+  'soe.referral_update': { label: 'actualizó una derivación',          icon: 'update',           color: '#9334e6', category: 'soe' },
+  'soe.view_case':       { label: 'consultó un legajo de orientación', icon: 'visibility',       color: '#ea8600', category: 'soe' },
+
   // ── Importación desde Excel ──────────────────────────────────────────────
   'import.execute':       { label: 'ejecutó una importación',   icon: 'upload_file',        color: '#9334e6', category: 'import' },
 
@@ -169,6 +188,7 @@ const CATEGORIES = {
   school:       'Escuelas',
   suggestion:   'Sugerencias',
   message:      'Mensajes',
+  soe:          'Orientación Escolar',
   import:       'Importación',
   system:       'Sistema',
   auth:         'Sesiones',

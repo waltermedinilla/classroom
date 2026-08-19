@@ -33,6 +33,15 @@ const mb = (b) => {
   return (b / 1024 / 1024).toFixed(1).replace('.', ',') + ' MB';
 };
 
+// Lo que el reintento automático le regala al diagnóstico y no se podía saber de ninguna
+// otra forma: si falló UN envio pudo ser un pico de un segundo, pero si fallaron los cuatro
+// repartidos en ~50 s, el corte DURÓ. Eso separa "se cayó un paquete" de "el Funnel estuvo
+// abajo", que son dos investigaciones distintas.
+function duracionDelCorte(r) {
+  if (!(r.intentos > 1)) return '';
+  return `\n  → Falló los ${r.intentos} intentos repartidos en ~50 s: el corte duró, no fue un pico.`;
+}
+
 // La lectura del veredicto. Es lo único de este archivo que hay que leer con atención: dice
 // DÓNDE seguir buscando, que es para lo que existe la herramienta.
 function veredicto(r) {
@@ -47,8 +56,24 @@ function veredicto(r) {
         'access log. Mirá del lado de la red y de lo que hay delante del server:',
         '  · Tailscale Funnel / proxy: ¿hay límite de tamaño de cuerpo o de tiempo?',
         '  · la conexión del aula (mirá el campo "conexion" de abajo)',
+        duracionDelCorte(r),
+      ].filter(Boolean).join('\n');
+    }
+    // Sin `porcentaje` no se midió NADA: la subida salió por fetch, que no informa
+    // progreso (ver `progresoMedible` en public/js/subida-diagnostico.js). Afirmar acá
+    // que subió entera es inventarlo, y manda a buscar un timeout del servidor que
+    // nadie observó.
+    if (typeof pct !== 'number') {
+      return [
+        'LA CONEXIÓN SE CORTÓ, Y CUÁNTO SE ALCANZÓ A ENVIAR no se midió.',
+        'Esta subida sale por fetch, que no puede informar progreso, así que NO se puede',
+        'distinguir "se cortó apenas arrancó" de "subió entera y murió esperando respuesta".',
+        'Lo que SÍ acota el caso es el campo `tardó` de arriba:',
+        '  · décimas de segundo  → se cortó al arrancar; mirá la red y el Funnel.',
+        '  · decenas de segundos → el archivo ya estaba arriba; mirá el timeout del proxy.',
       ].join('\n');
     }
+
     return [
       'El navegador dice que la conexión se cortó, pero alcanzó a enviar el archivo entero.',
       'Sospechá de un timeout de un intermediario mientras el servidor procesaba.',
@@ -112,7 +137,15 @@ function mostrar(r) {
   console.log(`  se envió   ${mb(r.enviados)}${typeof r.porcentaje === 'number' ? `  (${r.porcentaje}% del archivo)` : ''}`);
   console.log(`  ruta       ${r.ruta || '?'}`);
   console.log(`  resultado  motivo=${r.motivo}  status=${r.status !== undefined ? r.status : '—'} ${r.statusText || ''}`);
-  console.log(`  tardó      ${r.ms !== undefined ? (r.ms / 1000).toFixed(1) + ' s' : '?'}   conexión declarada: ${r.conexion || 'no informada'}`);
+  // El detalle de los intentos solo aparece si hubo reintento, para que los reportes de un
+  // solo envío —y los viejos, anteriores al reintento automático— se lean igual que siempre.
+  if (r.intentos > 1) {
+    console.log(`  intentos   ${r.intentos} (el envío original y ${r.intentos - 1} reintento${r.intentos - 1 === 1 ? '' : 's'} automático${r.intentos - 1 === 1 ? '' : 's'})`);
+  }
+  // La aclaración "(ese intento)" NO es adorno: sin ella se lee que la subida entera tardó
+  // 1,2 s, cuando en realidad estuvo casi un minuto peleando. `ms` es del último intento.
+  const tardo = r.ms !== undefined ? (r.ms / 1000).toFixed(1).replace('.', ',') + ' s' : '?';
+  console.log(`  tardó      ${tardo}${r.intentos > 1 ? ' (ese intento)' : ''}   conexión declarada: ${r.conexion || 'no informada'}`);
   if (r.requestId) console.log(`  requestId  ${r.requestId}`);
   if (r.respuesta) console.log(`  respondió  ${JSON.stringify(r.respuesta).slice(0, 240)}`);
   if (r.userAgent) console.log(`  navegador  ${r.userAgent.slice(0, 100)}`);
@@ -176,4 +209,10 @@ async function main() {
   }
 }
 
-main().catch(e => { console.error('Error:', e.message); process.exit(1); });
+// Como CLI corre solo; como require() expone el veredicto, que es la parte con criterio y
+// la única que vale la pena testear (tests/unit/subidaDiagnostico.test.js).
+if (require.main === module) {
+  main().catch(e => { console.error('Error:', e.message); process.exit(1); });
+} else {
+  module.exports = { veredicto, mb };
+}

@@ -152,9 +152,9 @@
       <div class="sidebar-card">
         <div class="sidebar-label">Disponible desde</div>
         <div class="sidebar-input-wrap">
-          <input type="datetime-local" id="sAvailableFrom" class="sidebar-input">
+          <input type="datetime-local" id="sAvailableFrom" class="sidebar-input" onchange="avisoProgramada('sAvailableFrom','sAvailableHint')">
         </div>
-        <div class="sidebar-hint">Por defecto: ahora mismo</div>
+        <div class="sidebar-hint" id="sAvailableHint">Por defecto: ahora mismo</div>
       </div>
 
       <div class="sidebar-card">
@@ -248,6 +248,21 @@
       document.getElementById('sDueDate').value = toLocal(nextWeek);
     })();
 
+    // Avisa en el propio formulario que con una fecha futura la actividad NO se publica al
+    // guardar. Sin esto el docente la crea, no la ve el alumno y parece que se perdió.
+    // Misma firma que la gemela de public/js/course.js, que hace lo mismo en los modales de
+    // crear y editar de la vista de materia.
+    function avisoProgramada(inputId, hintId) {
+      const input = document.getElementById(inputId);
+      const hint  = document.getElementById(hintId);
+      if (!input || !hint) return;
+      const futura = input.value && new Date(input.value) > new Date();
+      hint.textContent = futura
+        ? 'Queda deshabilitada y se publica sola en esa fecha. Podés adelantarla con el botón de ojo.'
+        : 'Por defecto: ahora mismo';
+      hint.style.color = futura ? '#b45309' : '';
+    }
+
     // { uid: { url, name, mime } } — solo archivos ya subidos al servidor
     const actUploadedFiles = {};
     let actLinks = [];
@@ -332,78 +347,114 @@
         <div class="att-upload-status">0%</div>`;
       grid.appendChild(card);
 
+      // El contador sube UNA vez por archivo, no por intento: si cada reintento lo tocara,
+      // el botón se re-habilitaría en medio de la espera y se podría crear la actividad sin
+      // el adjunto.
       pendingUploads++;
       syncCreateBtn();
 
-      const fd = new FormData();
-      fd.append('file', file);
-
-      const xhr = new XMLHttpRequest();
       // Seguimiento para el diagnóstico. Lo importante que aporta es cuántos bytes llegó a
       // empujar el navegador: es lo que distingue "se cortó en camino" (red, proxy, límite
       // de un intermediario — nada de eso deja rastro en el log del servidor) de "subió
       // entero y el servidor lo rechazó". Ver public/js/subida-diagnostico.js.
       const seg = SubidaDiag.seguir(RUTA_SUBIDA, file);
 
-      xhr.upload.onprogress = (e) => {
-        SubidaDiag.progreso(seg, e);
-        if (!e.lengthComputable) return;
-        const pct = Math.round((e.loaded / e.total) * 100);
-        const c = document.getElementById('ucard-' + uid);
-        if (!c) return;
-        c.querySelector('.att-upload-bar').style.width = pct + '%';
-        c.querySelector('.att-upload-status').textContent = pct < 100 ? pct + '%' : 'Procesando...';
+      const enPantalla = () => document.getElementById('ucard-' + uid);
+      const terminar   = () => { pendingUploads--; syncCreateBtn(); };
+      const estado     = (t) => {
+        const c = enPantalla();
+        if (c) c.querySelector('.att-upload-status').textContent = t;
       };
 
-      xhr.onload = () => {
-        pendingUploads--;
-        const c = document.getElementById('ucard-' + uid);
-        if (!c) { syncCreateBtn(); return; }
+      // Cada intento arma su propio FormData y su propio XHR. El objeto `file` sigue vivo en
+      // el closure (ya se usaba en xhr.onload), así que no hace falta volver a leer el input,
+      // que además se vació al elegir el archivo.
+      function enviarIntento() {
+        // Si la tarjeta ya no está —la quitaron, o se navegó— se abandona SOLTANDO el
+        // contador. Sin esto el botón queda en "Subiendo archivo..." para siempre.
+        if (!enPantalla()) return terminar();
 
-        let data = null;
-        try { data = JSON.parse(xhr.responseText); } catch {}
+        SubidaDiag.nuevoIntento(seg);
 
-        if ((xhr.status === 200 || xhr.status === 201) && data?.url) {
-          actUploadedFiles[uid] = { url: data.url, name: data.name, mime: data.mime };
-          c.innerHTML = `
-            <div class="att-preview-thumb" style="background:${color}">
-              <span class="att-preview-ext">${ext}</span>
-            </div>
-            <div class="att-preview-name" title="${escHtml(file.name)}">${escHtml(file.name)}</div>
-            <button class="att-preview-remove" onclick="removeUploadedFile('${uid}')" title="Quitar">
-              <span class="material-symbols-outlined">close</span>
-            </button>`;
-        } else {
-          if (c) c.remove();
-          // El mensaje del servidor, si vino, lo respeta el diagnóstico y lo muestra igual;
-          // lo que agrega es el código para poder encontrar después qué pasó exactamente.
-          showUploadErrModal('No se pudo subir el archivo',
-            SubidaDiag.mensaje(SubidaDiag.fallar(seg, xhr, 'http')));
+        const fd = new FormData();
+        fd.append('file', file);
+
+        const xhr = new XMLHttpRequest();
+
+        xhr.upload.onprogress = (e) => {
+          SubidaDiag.progreso(seg, e);
+          if (!e.lengthComputable) return;
+          const pct = Math.round((e.loaded / e.total) * 100);
+          const c = enPantalla();
+          if (!c) return;
+          c.querySelector('.att-upload-bar').style.width = pct + '%';
+          c.querySelector('.att-upload-status').textContent = pct < 100 ? pct + '%' : 'Procesando...';
+        };
+
+        xhr.onload = () => {
+          const c = enPantalla();
+          if (!c) { terminar(); return; }
+
+          let data = null;
+          try { data = JSON.parse(xhr.responseText); } catch {}
+
+          if ((xhr.status === 200 || xhr.status === 201) && data?.url) {
+            actUploadedFiles[uid] = { url: data.url, name: data.name, mime: data.mime };
+            c.innerHTML = `
+              <div class="att-preview-thumb" style="background:${color}">
+                <span class="att-preview-ext">${ext}</span>
+              </div>
+              <div class="att-preview-name" title="${escHtml(file.name)}">${escHtml(file.name)}</div>
+              <button class="att-preview-remove" onclick="removeUploadedFile('${uid}')" title="Quitar">
+                <span class="material-symbols-outlined">close</span>
+              </button>`;
+            terminar();
+            return;
+          }
+          fracaso(xhr, 'http');
+        };
+
+        xhr.onerror   = () => fracaso(null, 'red');
+        xhr.ontimeout = () => fracaso(null, 'timeout');
+
+        xhr.open('POST', RUTA_SUBIDA);
+        xhr.setRequestHeader('Accept', 'application/json');
+        xhr.send(fd);
+      }
+
+      // Los tres modos de falla convergen acá, y por eso el final es SIEMPRE el mismo: un
+      // solo `fallar()`, un solo código SUB-XXXXXX, un solo cartel.
+      function fracaso(xhr, motivo) {
+        const cuerpo = xhr ? (xhr.responseText || '') : '';
+        const espera = (enPantalla() && SubidaDiag.reintentable({
+          motivo, status: xhr ? xhr.status : 0, cuerpo,
+        })) ? SubidaDiag.esperaDe(seg.intentos) : null;
+
+        if (espera !== null) {
+          const c = enPantalla();
+          // La barra vuelve a cero: dejarla en el 8% del intento que acaba de morir es la
+          // única forma de que la tarjeta mienta sobre lo que está pasando.
+          if (c) {
+            c.querySelector('.att-upload-bar').style.width = '0%';
+            c.title = 'La subida se cortó. Se reintenta sola hasta 3 veces, durante unos 50 segundos.';
+          }
+          SubidaDiag.esperar(espera,
+            (s) => estado('Reintento en ' + s + ' s'),
+            () => { estado('Reintentando ' + (seg.intentos + 1) + ' de 4'); enviarIntento(); });
+          return;
         }
-        syncCreateBtn();
-      };
 
-      xhr.onerror = () => {
-        pendingUploads--;
-        const c = document.getElementById('ucard-' + uid);
+        // Se agotó la ventana (o no había nada que reintentar): exactamente lo de antes.
+        terminar();
+        const c = enPantalla();
         if (c) c.remove();
+        // El mensaje del servidor, si vino, lo respeta el diagnóstico y lo muestra igual;
+        // lo que agrega es el código para poder encontrar después qué pasó exactamente.
         showUploadErrModal('No se pudo subir el archivo',
-          SubidaDiag.mensaje(SubidaDiag.fallar(seg, null, 'red')));
-        syncCreateBtn();
-      };
+          SubidaDiag.mensaje(SubidaDiag.fallar(seg, xhr, motivo)));
+      }
 
-      xhr.ontimeout = () => {
-        pendingUploads--;
-        const c = document.getElementById('ucard-' + uid);
-        if (c) c.remove();
-        showUploadErrModal('No se pudo subir el archivo',
-          SubidaDiag.mensaje(SubidaDiag.fallar(seg, null, 'timeout')));
-        syncCreateBtn();
-      };
-
-      xhr.open('POST', RUTA_SUBIDA);
-      xhr.setRequestHeader('Accept', 'application/json');
-      xhr.send(fd);
+      enviarIntento();
     }
 
     function removeUploadedFile(uid) {

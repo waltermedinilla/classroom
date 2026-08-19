@@ -69,6 +69,38 @@ const schoolSchema = new Schema({
   // Ojo: mismo caveat que `settings` (ver arriba) — está en el .select() de server.js;
   // si se saca de ahí, el campo no llega y la restricción queda muda.
   rolePermissions: { type: Schema.Types.Mixed, default: undefined },
+
+  // Quién puede LEER los legajos del Servicio de Orientación Escolar, y cuánto de ellos.
+  // Lo configura el SUPERADMIN desde /superadmin/roles. Ver specs/soe-orientacion.spec.md.
+  //
+  // Por qué NO va por config/sections.js como el resto de los permisos: aquel sistema es
+  // restrictivo y fail-open — solo puede QUITAR lo que los middlewares ya conceden, y todo
+  // lo que no está denegado pasa. Es lo correcto para una solapa de "Materias" y lo
+  // equivocado para una historia psicopedagógica: acá el default tiene que ser CERRADO y la
+  // configuración tiene que AGREGAR acceso, no quitarlo.
+  //
+  // Por qué tampoco va adentro de `settings`: ese namespace lo edita el admin de la escuela
+  // desde /admin/tasks. El admin no puede ser quien se habilita a sí mismo a leer legajos.
+  // Mismo razonamiento que `rolePermissions` acá arriba.
+  //
+  // Escuela sin el campo (todas las que existen hoy) = todos en 'none': solo el SOE. Sin
+  // migración y sin cambiarle el comportamiento a nadie.
+  //
+  // 'soe' y 'superadmin' NO figuran acá y no son configurables: el primero es el dueño del
+  // legajo, el segundo tiene la base entera igual (y su lectura queda auditada).
+  //
+  // ⚠️ Preceptor y docente topean en 'resumen' — el enum de acá lo impide del lado del
+  // guardado, pero el techo REAL lo aplica services/soeAcceso.js: un valor escrito a mano
+  // con mongosh no pasa por esta validación.
+  //
+  // ⚠️ Mismo caveat que `settings` y `rolePermissions`: está en el .select() de server.js.
+  // Si se saca de ahí, el campo no llega a las vistas y la guarda queda muda.
+  soeAccess: {
+    directivo: { type: String, enum: ['none', 'resumen', 'completo'], default: 'none' },
+    admin:     { type: String, enum: ['none', 'resumen', 'completo'], default: 'none' },
+    preceptor: { type: String, enum: ['none', 'resumen'],             default: 'none' },
+    teacher:   { type: String, enum: ['none', 'resumen'],             default: 'none' },
+  },
 }, { timestamps: true });
 
 // Índice único sparse: solo indexa las escuelas donde el campo EXISTE.

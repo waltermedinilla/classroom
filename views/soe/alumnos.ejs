@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alumnos — Orientación Escolar</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <%- include('../partials/soe-styles') %>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content main-content-ancho">
+    <%- include('../partials/soe-nav', { activePage }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Alumnos</h2>
+        <div style="font-size:12.5px;color:var(--text-secondary);margin-top:2px">
+          Buscá por nombre o DNI para ver la ficha de un alumno y abrirle el legajo.
+        </div>
+      </div>
+    </div>
+
+    <div class="soe-panel">
+      <form method="GET" class="soe-form">
+        <div class="fila">
+          <div>
+            <label for="q">Nombre o DNI</label>
+            <input type="text" id="q" name="q" value="<%= q %>" placeholder="Pérez, Juan  ·  40123456" autofocus>
+          </div>
+          <div>
+            <label for="division">Curso</label>
+            <select id="division" name="division">
+              <option value="">Todos los cursos</option>
+              <% divisiones.forEach(d => { %>
+                <option value="<%= d._id %>" <%= divisionId === d._id.toString() ? 'selected' : '' %>><%= d.name %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div style="display:flex;align-items:flex-end;gap:8px">
+            <button type="submit" class="btn btn-primary">
+              <span class="material-symbols-outlined">search</span> Buscar
+            </button>
+            <% if (busco) { %><a href="/soe/alumnos" class="btn btn-outline">Limpiar</a><% } %>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    <% if (!busco) { %>
+      <div class="soe-panel">
+        <div class="vacio">
+          <span class="material-symbols-outlined">person_search</span>
+          Escribí un nombre o elegí un curso para empezar.
+          <div style="margin-top:6px;font-size:12.5px">
+            No se listan todos los alumnos de la escuela a propósito: son cientos y la
+            pantalla no se leería.
+          </div>
+        </div>
+      </div>
+    <% } else if (!alumnos.length) { %>
+      <div class="soe-panel">
+        <div class="vacio">
+          <span class="material-symbols-outlined">search_off</span>
+          Ningún alumno coincide con la búsqueda.
+        </div>
+      </div>
+    <% } else { %>
+      <div class="soe-panel">
+        <h3><span class="material-symbols-outlined">group</span> <%= alumnos.length %> resultado<%= alumnos.length === 1 ? '' : 's' %></h3>
+        <div class="tabla-scroll">
+          <table class="soe-tabla">
+            <thead>
+              <tr><th>Alumno</th><th>DNI</th><th>Legajo</th><th></th></tr>
+            </thead>
+            <tbody>
+              <% alumnos.forEach(a => { const l = legajoPorAlumno.get(a._id.toString()); %>
+                <tr>
+                  <td>
+                    <a href="/soe/legajo/<%= a._id %>"><%= a.name %></a>
+                    <% if (a.active === false) { %>
+                      <span class="chip chip-neutro" style="margin-left:6px">cuenta deshabilitada</span>
+                    <% } %>
+                  </td>
+                  <td><%= a.dni || '—' %></td>
+                  <td>
+                    <% if (l) { %>
+                      <span class="chip chip-neutro">
+                        <span class="punto" style="background:<%= acceso.PRIORIDAD_COLORS[l.prioridad] %>"></span>
+                        <%= acceso.ESTADO_LABELS[l.estado] %>
+                      </span>
+                    <% } else { %>
+                      <span style="color:var(--text-hint);font-size:12.5px">sin legajo</span>
+                    <% } %>
+                  </td>
+                  <td style="text-align:right">
+                    <a href="/soe/legajo/<%= a._id %>" class="btn btn-outline" style="padding:4px 10px;font-size:12.5px">
+                      <%= l ? 'Ver legajo' : 'Ver ficha' %>
+                    </a>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+        <% if (alumnos.length === 100) { %>
+          <div style="margin-top:10px;font-size:12px;color:var(--text-hint)">
+            Se muestran los primeros 100. Afiná la búsqueda para ver el resto.
+          </div>
+        <% } %>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

@@ -31,6 +31,9 @@ const { cursosDisponibles, automatricular } = require('../services/selfEnroll');
 const { JOIN_BY_CODE_ACTIVO, unirPorCodigo } = require('../services/joinByCode');
 // Tope de materias por alumno: a partir de ahí el panel no le ofrece sumar más.
 const { MAX_MATERIAS_ALUMNO } = require('../services/enrollment');
+// Misma regla de visibilidad que usa /activities: el contador de pendientes del inicio no
+// puede contar actividades que el alumno todavía no ve. Ver public/js/visibilidadActividad.js.
+const { filtroVisibleParaAlumno } = require('../public/js/visibilidadActividad');
 const { logDeRuta, logRechazo } = require('../middleware/route-log');
 // Guarda de forma del :id, en la primera línea de cada handler con parámetro.
 // Ver middleware/objectId.js y el issue conocido nº 10 de agente.md.
@@ -64,8 +67,8 @@ router.get('/', requireAuth, async (req, res) => {
       const now        = new Date();
       const courseIds  = joined.map(c => c._id);
       const activities = await Activity.find({
-        course:        { $in: courseIds },
-        availableFrom: { $lte: now },
+        course: { $in: courseIds },
+        ...filtroVisibleParaAlumno(now),
       }).select('_id dueDate allowLateSubmissions');
       const submissions  = await Submission.find({
         student:  req.userId,

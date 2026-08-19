@@ -29,6 +29,15 @@ const { conErroresDeSubida } = require('../middleware/upload-errors');
 // y está acotada a un bloque con su propio try/catch — ver specs/actividades-en-clase.spec.md.
 const RoomSession = require('../models/RoomSession');
 const live        = require('../services/liveRoom');
+// Regla única de "¿el alumno ve esta actividad?" (availableFrom + el ojo del docente).
+// Vive en public/js porque el navegador la necesita igual para dibujar el chip de la
+// tarjeta — ver el encabezado del archivo y specs/visibilidad-actividades.spec.md.
+const {
+  esVisibleParaAlumno,
+  filtroVisibleParaAlumno,
+  proximoOverride,
+  estadoVisibilidad,
+} = require('../public/js/visibilidadActividad');
 
 // Adjuntos del docente: dentro de /public (acceso estático directo)
 // Estructura: public/archivos/{schoolId}/actividades/{courseId}/{filename}
@@ -171,15 +180,19 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
     // incluso los alumnos recién llegados). Alumnos sin enrollmentDate (los que ya estaban
     // antes de esta feature, o los que agregó el docente manualmente) ven todo — backward compat.
     if (!isOwner) {
-      query.availableFrom = { $lte: new Date() };
+      // Dos condiciones independientes, las dos con `$or` adentro: si se asignaran las dos a
+      // query.$or la segunda pisaría a la primera en silencio (y el alumno vería las
+      // programadas). Por eso van anidadas en un $and.
+      const condiciones = [filtroVisibleParaAlumno(new Date())];
       const joinedAt = course.enrollmentDates?.get?.(userId);
       if (joinedAt) {
-        query.$or = [
+        condiciones.push({ $or: [
           { dueDate: null },
           { dueDate: { $gte: joinedAt } },
           { allowLateSubmissions: true },
-        ];
+        ] });
       }
+      query.$and = condiciones;
     }
 
     const activities = await Activity.find(query)
@@ -503,8 +516,8 @@ router.get('/my-pending', requireAuth, requireSection('app_pending'), async (req
     });
 
     const activities = await Activity.find({
-      course:        { $in: courseIds },
-      availableFrom: { $lte: now },
+      course: { $in: courseIds },
+      ...filtroVisibleParaAlumno(now),
     }).populate('course', 'name').sort({ dueDate: 1, createdAt: 1 });
 
     const submissions = await Submission.find({
@@ -745,6 +758,45 @@ router.patch('/:id/toggle-late', requireAuth, async (req, res) => {
   }
 });
 
+// PATCH /activities/:id/toggle-visibility
+// Botón de ojo de la tarjeta: invierte el estado efectivo de la actividad para los alumnos
+// (solo quien administra el curso). No es un booleano crudo: si para lograr el estado pedido
+// alcanza con volver al automático, `proximoOverride` devuelve null y la actividad queda otra
+// vez esperando su `availableFrom` — la fecha programada nunca se pierde.
+// Retorna: { visibleOverride, estado, availableFrom }
+router.patch('/:id/toggle-visibility', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Actividad no encontrada')) return;
+  try {
+    const activity = await Activity.findById(req.params.id);
+    if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
+    const course = await Course.findById(activity.course);
+    if (!course.canManage(res.locals.user)) {
+      return res.status(403).json({ error: 'Sin acceso' });
+    }
+
+    activity.visibleOverride = proximoOverride(activity, new Date());
+    await activity.save();
+
+    const estado = estadoVisibilidad(activity, new Date());
+    logAudit(req, 'activity.toggle_visibility',
+      [
+        { type: 'activity', id: activity._id, name: activity.title },
+        { type: 'course',   id: course._id,   name: course.name },
+      ],
+      { estado },
+    );
+
+    res.json({
+      visibleOverride: activity.visibleOverride,
+      estado,
+      availableFrom:   activity.availableFrom,
+    });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // PUT /activities/:id
 // Edita campos básicos de la actividad (no modifica adjuntos ni calificaciones)
 // Body: { title, description?, dueDate?, availableFrom?, points?, type?, allowResubmission? }
@@ -953,6 +1005,13 @@ router.post('/:id/submit', requireAuth, uploadLimiter, conditionalMultipart, asy
     // Solo alumnos inscriptos en el curso pueden entregar
     if (!course.students.map(s => s.toString()).includes(userId)) {
       return res.status(403).json({ error: 'No estás inscripto en este curso' });
+    }
+
+    // Bloquea la entrega a una actividad que el alumno no debería estar viendo (programada
+    // para más adelante, u ocultada con el ojo). Por la interfaz no llega —el listado se las
+    // filtra—, pero sí por un link directo guardado de antes de que la bajaran.
+    if (!esVisibleParaAlumno(activity, new Date())) {
+      return res.status(403).json({ error: 'Esta actividad todavía no está disponible.' });
     }
 
     // Bloquea si el plazo venció y el docente no habilitó entregas tardías

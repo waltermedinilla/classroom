@@ -541,6 +541,7 @@ async function loadStream() {
   // Próximas entregas en el sidebar: solo actividades con dueDate en el futuro, máx 3
   const now = new Date();
   const upcoming = (actData.activities || [])
+    .filter(a => Visibilidad.esVisibleParaAlumno(a, now))
     .filter(a => a.dueDate && new Date(a.dueDate) > now)
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
   const upcomingList = document.getElementById('upcomingList');
@@ -557,10 +558,16 @@ async function loadStream() {
     }
   }
 
-  // Mezcla y ordena novedades + actividades por fecha (más recientes primero)
+  // Mezcla y ordena novedades + actividades por fecha (más recientes primero).
+  //
+  // Al docente el servidor le manda TODAS sus actividades, programadas incluidas; al muro
+  // solo van las publicadas. Es lo mismo que hace createActivity() al crear una programada
+  // (no la prepende), y sin este filtro al recargar la página aparecía igual. Al docente la
+  // programada le sigue figurando en la solapa Actividades, con su chip y su botón de ojo.
+  const delMuro = (actData.activities || []).filter(a => Visibilidad.esVisibleParaAlumno(a, now));
   const items = [
     ...annData.announcements.map(a => ({ type: 'announcement', date: new Date(a.createdAt), data: a })),
-    ...actData.activities.map(a    => ({ type: 'activity',     date: new Date(a.createdAt), data: a })),
+    ...delMuro.map(a               => ({ type: 'activity',     date: new Date(a.createdAt), data: a })),
   ].sort((a, b) => b.date - a.date);
 
   container.innerHTML = '';
@@ -836,9 +843,9 @@ async function createActivity() {
   if (searchInput && searchInput.value) { searchInput.value = ''; filterActivities(''); }
   addActivityTabCard(data.activity); // Agrega la tarjeta al tab de actividades del docente
 
-  // Si availableFrom ya pasó (o no hay), muestra también en el stream
-  const availFrom = data.activity.availableFrom ? new Date(data.activity.availableFrom) : null;
-  if (!availFrom || availFrom <= new Date()) {
+  // En el stream (el muro de la materia) va solo si ya está publicada: la programada aparece
+  // en la solapa Actividades con su chip, y recién cae al muro cuando llega su fecha.
+  if (Visibilidad.esVisibleParaAlumno(data.activity, new Date())) {
     const streamEl = buildActivityStreamEl(data.activity);
     const container = document.getElementById('streamList');
     const empty     = container.querySelector('.empty-state');
@@ -880,6 +887,17 @@ function addActivityTabCard(act) {
       </span>`
     : '';
 
+  // Estado de cara al alumno: 'visible' | 'programada' | 'oculta' (Visibilidad viene de
+  // /js/visibilidadActividad.js, la misma regla que aplica el servidor).
+  const estado    = Visibilidad.estadoVisibilidad(act, now);
+  const seVe      = estado === Visibilidad.VISIBLE;
+  // Chip de visibilidad: solo cuando la actividad NO se ve. La programada dice desde cuándo,
+  // porque es el dato que el docente necesita para saber si la cargó bien.
+  const visChip   = seVe ? '' : `<span class="vis-chip vis-${estado}" data-actid="${act._id}">
+        <span class="material-symbols-outlined" style="font-size:12px">${estado === Visibilidad.PROGRAMADA ? 'schedule' : 'visibility_off'}</span>
+        ${Visibilidad.etiquetaVisibilidad(estado)}${estado === Visibilidad.PROGRAMADA ? ' · ' + Fecha.diaMesHora(act.availableFrom) : ''}
+      </span>`;
+
   const tc        = typeConfig(act.type);
   const typeLabel = tc.label + (act.points != null ? ' · ' + act.points + ' pts' : '');
 
@@ -906,22 +924,31 @@ function addActivityTabCard(act) {
     : '';
 
   const div = document.createElement('div');
-  div.className  = 'act-student-item';
+  // act-no-visible atenúa la tarjeta: de un vistazo se distingue lo que el alumno ya tiene
+  // de lo que todavía no. Sigue siendo clickeable y editable como cualquier otra.
+  div.className  = 'act-student-item' + (seVe ? '' : ' act-no-visible');
   div.dataset.id = act._id;
-  // Click en la tarjeta abre el detalle; click en el botón ⋮ abre el menú contextual
-  div.onclick = (e) => { if (!e.target.closest('.activity-row-menu')) openActivityDetail(act._id); };
+  // Click en la tarjeta abre el detalle; los clicks en el ⋮ y en el ojo son suyos
+  div.onclick = (e) => { if (!e.target.closest('.activity-row-menu, .act-eye-btn')) openActivityDetail(act._id); };
   div.innerHTML = `
     <div class="act-thumb" style="${thumbBg}">
       <span class="material-symbols-outlined">${tc.icon}</span>
     </div>
     <div class="act-content">
       <div class="act-type-label">${typeLabel}</div>
-      <div class="act-item-title">${act.title} ${overdueChip}</div>
+      <div class="act-item-title">${act.title} ${overdueChip}${visChip}</div>
       <div class="act-item-date${isOverdue ? ' date-overdue' : ''}">${dateText}</div>
     </div>
     <div class="act-status-col">
       ${viewedChip}
       ${submittedChip}
+    </div>
+    <div class="act-actions-col">
+      <button class="icon-btn act-eye-btn${seVe ? '' : ' is-off'}" onclick="toggleActivityVisibility('${act._id}')"
+              title="${seVe ? 'Ocultar a los alumnos' : 'Mostrar a los alumnos ahora'}"
+              aria-label="${seVe ? 'Ocultar a los alumnos' : 'Mostrar a los alumnos ahora'}">
+        <span class="material-symbols-outlined">${seVe ? 'visibility' : 'visibility_off'}</span>
+      </button>
       <button class="icon-btn activity-row-menu" onclick="toggleActivityMenu(event,'${act._id}')" title="Más opciones">
         <span class="material-symbols-outlined">more_vert</span>
       </button>
@@ -929,6 +956,108 @@ function addActivityTabCard(act) {
   `;
 
   container.appendChild(div);
+}
+
+// Avisa en el propio formulario que con una "Disponible desde" futura la actividad NO se
+// publica al guardar. Sin esto el docente la crea, no la ve el alumno y parece que se perdió.
+// Lo usan el modal de crear y el de editar (views/course.ejs).
+function avisoProgramada(inputId, hintId) {
+  const input = document.getElementById(inputId);
+  const hint  = document.getElementById(hintId);
+  if (!input || !hint) return;
+  const futura = input.value && new Date(input.value) > new Date();
+  hint.textContent = futura
+    ? 'Queda deshabilitada y se publica sola en esa fecha. Podés adelantarla con el botón de ojo.'
+    : '"Disponible desde" controla cuándo los alumnos pueden ver la actividad. Si se deja vacío, se publica inmediatamente.';
+  hint.style.color = futura ? '#b45309' : '';
+}
+
+// Barra de visibilidad del modal de detalle del docente. Misma forma que la de entregas
+// tardías (.overdue-control-bar) para que las dos se lean igual.
+function barraVisibilidad(act) {
+  const estado = Visibilidad.estadoVisibilidad(act, new Date());
+  const seVe   = estado === Visibilidad.VISIBLE;
+
+  let texto;
+  if (seVe)                                    texto = 'Visible para los alumnos';
+  else if (estado === Visibilidad.PROGRAMADA)  texto = 'Programada — se publica el ' + Fecha.diaMesHora(act.availableFrom);
+  else                                         texto = 'Oculta — los alumnos no la ven';
+
+  return `<div class="vis-control-bar ${seVe ? 'is-on' : 'is-off'}" id="visControlBar">
+    <div class="vis-control-left">
+      <span class="material-symbols-outlined" style="font-size:17px">${seVe ? 'visibility' : (estado === Visibilidad.PROGRAMADA ? 'schedule' : 'visibility_off')}</span>
+      <span class="vis-label">${texto}</span>
+    </div>
+    <button class="btn ${seVe ? 'btn-outline' : 'btn-primary'}" onclick="toggleVisibilityFromDetail('${act._id}')">
+      <span class="material-symbols-outlined">${seVe ? 'visibility_off' : 'visibility'}</span>
+      ${seVe ? 'Ocultar' : 'Mostrar ahora'}
+    </button>
+  </div>`;
+}
+
+// Mismo toggle, disparado desde el modal de detalle: además de la barra hay que refrescar la
+// tarjeta que quedó atrás en la lista, o al cerrar el modal muestra el estado anterior.
+async function toggleVisibilityFromDetail(actId) {
+  const bar = document.getElementById('visControlBar');
+  const btn = bar?.querySelector('button');
+  if (btn) btn.disabled = true;
+
+  try {
+    const res  = await fetch('/activities/' + actId + '/toggle-visibility', { method: 'PATCH' });
+    const data = await res.json();
+    if (!res.ok) { alert(data.error || 'No se pudo cambiar la visibilidad'); return; }
+
+    const act = window._activities[actId];
+    if (act) {
+      act.visibleOverride = data.visibleOverride;
+      act.availableFrom   = data.availableFrom;
+      if (bar) bar.outerHTML = barraVisibilidad(act);
+      reemplazarTarjetaActividad(actId);
+    }
+  } catch (e) {
+    alert('Error de conexión al cambiar la visibilidad');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Redibuja de cero la tarjeta del docente a partir del cache window._activities, sin recargar
+// la solapa entera (el docente que está ordenando varias seguidas no pierde el scroll).
+// addActivityTabCard hace appendChild, así que se construye al final y se la mueve al lugar
+// de la vieja. Se usa al tocar el ojo y al guardar una edición: los dos pueden cambiar el
+// estado de visibilidad, y armarla de nuevo evita tener que parchear campo por campo.
+function reemplazarTarjetaActividad(actId) {
+  const vieja = document.querySelector(`.act-student-item[data-id="${actId}"]`);
+  const act   = window._activities[actId];
+  if (!vieja || !act) return;
+  addActivityTabCard(act);
+  const nueva = document.getElementById('activitiesList').lastElementChild;
+  vieja.replaceWith(nueva);
+}
+
+/* ─── Botón de ojo: mostrar / ocultar la actividad a los alumnos ─── */
+// PATCH /activities/:id/toggle-visibility — el servidor decide el valor del override con la
+// misma regla que el cliente (public/js/visibilidadActividad.js) y devuelve el estado nuevo.
+async function toggleActivityVisibility(actId) {
+  closeActMenu();
+  const act = window._activities[actId];
+  if (!act) return;
+
+  const btn = document.querySelector(`.act-student-item[data-id="${actId}"] .act-eye-btn`);
+  if (btn) btn.disabled = true;
+
+  try {
+    const res  = await fetch('/activities/' + actId + '/toggle-visibility', { method: 'PATCH' });
+    const data = await res.json();
+    if (!res.ok) { alert(data.error || 'No se pudo cambiar la visibilidad'); return; }
+
+    act.visibleOverride = data.visibleOverride;
+    act.availableFrom   = data.availableFrom;
+    reemplazarTarjetaActividad(actId);
+  } catch (e) {
+    alert('Error de conexión al cambiar la visibilidad');
+    if (btn) btn.disabled = false;
+  }
 }
 
 /* ─── Vista alumno: tarjeta de actividad ─── */
@@ -1158,6 +1287,8 @@ function openEditModal(actId) {
   }
   document.getElementById('editDueDate').value       = toLocal(act.dueDate);
   document.getElementById('editAvailableFrom').value = toLocal(act.availableFrom);
+  // Al abrir ya tiene que decir si esta actividad está programada, no solo al tocar la fecha
+  avisoProgramada('editAvailableFrom', 'editAvailableHint');
   document.getElementById('editAllowResubmission').checked = !!act.allowResubmission;
 
   document.getElementById('editError').textContent = '';
@@ -1210,32 +1341,10 @@ async function saveEditActivity() {
   // Fusiona la actividad actualizada con el cache local (preserva campos no editables como grades)
   window._activities[id] = { ...window._activities[id], ...data.activity };
 
-  // Actualiza los elementos de texto en la tarjeta del DOM sin reconstruirla
-  const act = data.activity;
-  const row = document.querySelector(`.act-student-item[data-id="${id}"]`);
-  if (row) {
-    const isOverdue = act.dueDate && new Date(act.dueDate) < new Date();
-    const dateText  = act.dueDate
-      ? 'Entrega: ' + Fecha.diaMesHora(act.dueDate)
-      : row.querySelector('.act-item-date').textContent;
-    // firstChild porque el elemento contiene el título + posiblemente el chip de vencido
-    row.querySelector('.act-item-title').firstChild.textContent = act.title + ' ';
-    const dateEl      = row.querySelector('.act-item-date');
-    dateEl.textContent = dateText;
-    dateEl.className   = 'act-item-date' + (isOverdue ? ' date-overdue' : '');
-    const tc2    = typeConfig(act.type);
-    const typeEl = row.querySelector('.act-type-label');
-    if (typeEl) typeEl.textContent = tc2.label + (act.points != null ? ' · ' + act.points + ' pts' : '');
-    // Actualiza el color y el ícono del thumbnail según el tipo
-    const thumbEl = row.querySelector('.act-thumb');
-    if (thumbEl) {
-      const tC1 = tc2.color || window.COURSE_COLOR || '#1a73e8';
-      const tC2 = tc2.color ? '' : (window.COURSE_COLOR2 || '');
-      thumbEl.style.background = tC2 ? `linear-gradient(135deg,${tC1},${tC2})` : tC1;
-      const thumbIcon = thumbEl.querySelector('.material-symbols-outlined');
-      if (thumbIcon) thumbIcon.textContent = tc2.icon;
-    }
-  }
+  // Redibuja la tarjeta entera desde el cache ya fusionado, en vez de parchearla campo por
+  // campo: la edición puede cambiar "Disponible desde" y con eso el chip Programada/Oculta,
+  // el atenuado y el ícono del ojo, además del título, la fecha y el tipo.
+  reemplazarTarjetaActividad(id);
 
   closeEditModal();
 }
@@ -1520,6 +1629,10 @@ async function loadTeacherDetail(activityId) {
   html += '</div>';
 
   html += attachmentSection(activity.attachments);
+
+  // Barra de visibilidad: siempre presente, porque el docente que abre el detalle de una
+  // actividad que preparó para más adelante tiene que ver desde acá que todavía no se publicó.
+  html += barraVisibilidad(activity);
 
   // Barra de control de entregas tardías (solo visible si el plazo venció)
   if (activity.dueDate && new Date(activity.dueDate) < new Date()) {
@@ -2127,12 +2240,11 @@ function uploadSubFile(actId, file) {
     <div class="att-upload-status">0%</div>`;
   grid.appendChild(card);
 
+  // El contador sube UNA vez por archivo, no por intento: si cada reintento lo tocara, el
+  // botón "Entregar" se re-habilitaría en medio de la espera y se podría entregar sin el
+  // archivo.
   window._subPendingUploads++;
   syncSubmitBtn();
-
-  const fd  = new FormData();
-  fd.append('file', file);
-  const xhr = new XMLHttpRequest();
 
   // Ruta en una constante: el diagnóstico reporta cuál falló, y si no es exactamente la que
   // se llamó, el reporte manda a buscar al lugar equivocado.
@@ -2143,84 +2255,122 @@ function uploadSubFile(actId, file) {
   // servidor lo rechazó". Ver public/js/subida-diagnostico.js.
   const seg = SubidaDiag.seguir(rutaSubida, file);
 
-  xhr.upload.onprogress = (e) => {
-    SubidaDiag.progreso(seg, e);
-    if (!e.lengthComputable) return;
-    const pct = Math.round((e.loaded / e.total) * 100);
-    const c = document.getElementById('subucard-' + uid);
-    if (!c) return;
-    c.querySelector('.att-upload-bar').style.width = pct + '%';
-    c.querySelector('.att-upload-status').textContent = pct < 100 ? pct + '%' : 'Procesando...';
+  const enPantalla = () => document.getElementById('subucard-' + uid);
+  const terminar   = () => { window._subPendingUploads--; syncSubmitBtn(); };
+  const estado     = (t) => {
+    const c = enPantalla();
+    if (c) c.querySelector('.att-upload-status').textContent = t;
   };
 
-  xhr.onload = () => {
-    window._subPendingUploads--;
-    const c = document.getElementById('subucard-' + uid);
-    if (!c) { syncSubmitBtn(); return; }
+  // Cada intento arma su propio FormData y su propio XHR. El objeto `file` sigue vivo en el
+  // closure, así que no hace falta volver a leer el input (que ya se vació al elegirlo).
+  function enviarIntento() {
+    // Si la tarjeta ya no está se abandona SOLTANDO el contador. Acá importa más que en el
+    // adjunto del docente: `window._subPendingUploads` es global y sobrevive al re-render de
+    // renderSubmissionSection(), así que sin esto un reintento programado durante un
+    // repintado dejaría el botón en "Subiendo archivo..." hasta recargar la página.
+    if (!enPantalla()) return terminar();
 
-    let data = null;
-    try { data = JSON.parse(xhr.responseText); } catch {}
+    SubidaDiag.nuevoIntento(seg);
 
-    if ((xhr.status === 200 || xhr.status === 201) && data?.storagePath) {
-      window._subUploadedFiles.push({
-        uid,
-        storagePath: data.storagePath,
-        name:        data.name,
-        filename:    data.filename,
-        mime:        data.mime,
-        size:        data.size,
-      });
-      // Reemplaza la barra por el nombre + botón de quitar (mismo look que docente).
-      // La miniatura + nombre son clickeables: abren el previewer usando el endpoint
-      // /activities/:id/staged-file/:filename (sirve archivos pre-subidos aún sin Submission).
-      // El botón X sigue funcionando por stopPropagation en su onclick.
-      const previewUrl = '/activities/' + actId + '/staged-file/' + data.filename;
-      c.innerHTML = `
-        <div class="att-preview-thumb" style="background:${color};cursor:pointer"
-          data-att-type="file" data-att-name="${escAtt(data.name)}"
-          data-att-url="${escAtt(previewUrl)}" data-att-mime="${data.mime||''}"
-          onclick="handleAttachmentClick(this)" role="button" tabindex="0"
-          title="Ver archivo">
-          <span class="att-preview-ext">${ext}</span>
-        </div>
-        <div class="att-preview-name" title="${file.name}"
-          data-att-type="file" data-att-name="${escAtt(data.name)}"
-          data-att-url="${escAtt(previewUrl)}" data-att-mime="${data.mime||''}"
-          onclick="handleAttachmentClick(this)" style="cursor:pointer">${file.name}</div>
-        <button class="att-preview-remove" onclick="event.stopPropagation();removeUploadedSubFile('${uid}')" title="Quitar">
-          <span class="material-symbols-outlined">close</span>
-        </button>`;
-    } else {
-      c.remove();
-      // El mensaje del servidor, si vino, el diagnóstico lo respeta y lo muestra igual; lo
-      // que agrega es el código para poder encontrar después qué pasó exactamente.
-      showUploadErrModal('No se pudo subir el archivo',
-        SubidaDiag.mensaje(SubidaDiag.fallar(seg, xhr, 'http')));
+    const fd = new FormData();
+    fd.append('file', file);
+
+    const xhr = new XMLHttpRequest();
+
+    xhr.upload.onprogress = (e) => {
+      SubidaDiag.progreso(seg, e);
+      if (!e.lengthComputable) return;
+      const pct = Math.round((e.loaded / e.total) * 100);
+      const c = enPantalla();
+      if (!c) return;
+      c.querySelector('.att-upload-bar').style.width = pct + '%';
+      c.querySelector('.att-upload-status').textContent = pct < 100 ? pct + '%' : 'Procesando...';
+    };
+
+    xhr.onload = () => {
+      const c = enPantalla();
+      if (!c) { terminar(); return; }
+
+      let data = null;
+      try { data = JSON.parse(xhr.responseText); } catch {}
+
+      if ((xhr.status === 200 || xhr.status === 201) && data?.storagePath) {
+        window._subUploadedFiles.push({
+          uid,
+          storagePath: data.storagePath,
+          name:        data.name,
+          filename:    data.filename,
+          mime:        data.mime,
+          size:        data.size,
+        });
+        // Reemplaza la barra por el nombre + botón de quitar (mismo look que docente).
+        // La miniatura + nombre son clickeables: abren el previewer usando el endpoint
+        // /activities/:id/staged-file/:filename (sirve archivos pre-subidos aún sin Submission).
+        // El botón X sigue funcionando por stopPropagation en su onclick.
+        const previewUrl = '/activities/' + actId + '/staged-file/' + data.filename;
+        c.innerHTML = `
+          <div class="att-preview-thumb" style="background:${color};cursor:pointer"
+            data-att-type="file" data-att-name="${escAtt(data.name)}"
+            data-att-url="${escAtt(previewUrl)}" data-att-mime="${data.mime||''}"
+            onclick="handleAttachmentClick(this)" role="button" tabindex="0"
+            title="Ver archivo">
+            <span class="att-preview-ext">${ext}</span>
+          </div>
+          <div class="att-preview-name" title="${file.name}"
+            data-att-type="file" data-att-name="${escAtt(data.name)}"
+            data-att-url="${escAtt(previewUrl)}" data-att-mime="${data.mime||''}"
+            onclick="handleAttachmentClick(this)" style="cursor:pointer">${file.name}</div>
+          <button class="att-preview-remove" onclick="event.stopPropagation();removeUploadedSubFile('${uid}')" title="Quitar">
+            <span class="material-symbols-outlined">close</span>
+          </button>`;
+        terminar();
+        return;
+      }
+      fracaso(xhr, 'http');
+    };
+
+    xhr.onerror   = () => fracaso(null, 'red');
+    xhr.ontimeout = () => fracaso(null, 'timeout');
+
+    xhr.open('POST', rutaSubida);
+    xhr.setRequestHeader('Accept', 'application/json');
+    xhr.send(fd);
+  }
+
+  // Los tres modos de falla convergen acá, y por eso el final es SIEMPRE el mismo: un solo
+  // `fallar()`, un solo código SUB-XXXXXX, un solo cartel.
+  function fracaso(xhr, motivo) {
+    const cuerpo = xhr ? (xhr.responseText || '') : '';
+    const espera = (enPantalla() && SubidaDiag.reintentable({
+      motivo, status: xhr ? xhr.status : 0, cuerpo,
+    })) ? SubidaDiag.esperaDe(seg.intentos) : null;
+
+    if (espera !== null) {
+      const c = enPantalla();
+      // La barra vuelve a cero: dejarla en el 8% del intento que acaba de morir es la única
+      // forma de que la tarjeta mienta sobre lo que está pasando.
+      if (c) {
+        c.querySelector('.att-upload-bar').style.width = '0%';
+        c.title = 'La subida se cortó. Se reintenta sola hasta 3 veces, durante unos 50 segundos.';
+      }
+      SubidaDiag.esperar(espera,
+        (s) => estado('Reintento en ' + s + ' s'),
+        () => { estado('Reintentando ' + (seg.intentos + 1) + ' de 4'); enviarIntento(); });
+      return;
     }
-    syncSubmitBtn();
-  };
 
-  xhr.onerror = () => {
-    window._subPendingUploads--;
-    const c = document.getElementById('subucard-' + uid);
+    // Se agotó la ventana (o no había nada que reintentar): exactamente lo de antes.
+    terminar();
+    const c = enPantalla();
     if (c) c.remove();
+    // El mensaje del servidor, si vino, el diagnóstico lo respeta y lo muestra igual; lo
+    // que agrega es el código para poder encontrar después qué pasó exactamente.
     showUploadErrModal('No se pudo subir el archivo',
-      SubidaDiag.mensaje(SubidaDiag.fallar(seg, null, 'red')));
-    syncSubmitBtn();
-  };
+      SubidaDiag.mensaje(SubidaDiag.fallar(seg, xhr, motivo)));
+  }
 
-  xhr.ontimeout = () => {
-    window._subPendingUploads--;
-    const c = document.getElementById('subucard-' + uid);
-    if (c) c.remove();
-    showUploadErrModal('No se pudo subir el archivo',
-      SubidaDiag.mensaje(SubidaDiag.fallar(seg, null, 'timeout')));
-    syncSubmitBtn();
-  };
-
-  xhr.open('POST', rutaSubida);
-  xhr.setRequestHeader('Accept', 'application/json');
-  xhr.send(fd);
+  enviarIntento();
 }
 
 // Quita un archivo ya subido de la lista local (queda huérfano en disco hasta el cleanup periódico,

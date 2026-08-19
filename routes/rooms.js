@@ -25,7 +25,7 @@ const RoomPresence = require('../models/RoomPresence');
 
 const { requireAuth }        = require('../middleware/auth');
 const { logAudit }           = require('../middleware/audit');
-const { roomMessageLimiter, roomUploadLimiter } = require('../middleware/rate-limits');
+const { roomMessageLimiter, roomUploadLimiter, roomStudentImageLimiter } = require('../middleware/rate-limits');
 const { loadPreceptorScope } = require('../middleware/preceptor');
 const { subirImagen, guardarImagenOptimizada, ImagenInvalidaError } = require('../middleware/image-upload');
 const { EXT_IMAGENES } = require('../config/imagePresets');
@@ -181,15 +181,17 @@ async function sesionAbierta(courseId) {
   return session;
 }
 
-// ¿Este usuario puede escribir en esta sesión, ahora?
-function puedeEscribir(session, req) {
-  if (!session || session.closedAt) return false;
-  if (req.modo === 'observacion') return false;   // mirar sin aparecer implica no hablar
-  if (req.esGestor) return true;                  // la docente escribe siempre
-  if (!req.esAlumno) return true;                 // preceptoría y dirección presentada
-  if (!session.settings.studentsCanWrite) return false;
-  return !(session.mutedStudents || []).some(id => id.toString() === req.userId);
-}
+// El contexto plano que consumen las reglas de permiso de la sala.
+//
+// Las reglas viven en services/liveRoom.js desde el 2026-08-19 —antes `puedeEscribir` estaba
+// acá suelta— porque se componen entre ellas y porque así se testean sin levantar Express.
+// Este helper es todo lo que queda del lado del router: traducir `req` a datos.
+const ctxSala = (req) => ({
+  esGestor: req.esGestor,
+  esAlumno: req.esAlumno,
+  modo:     req.modo,
+  userId:   req.userId,
+});
 
 // Payload que consume la vista. Es la ÚNICA forma de la sala: la usan el render inicial y el
 // poll, para que no puedan divergir.
@@ -199,7 +201,8 @@ async function estadoDeSala(req, session, since = 0) {
   if (!session) {
     return {
       estado: 'cerrada', sessionId: null, seq: 0, puedoEscribir: false,
-      mensajes: [], settings: { studentsCanWrite: true, reactionsOn: true },
+      puedoCompartirImagen: false,
+      mensajes: [], settings: { studentsCanWrite: true, reactionsOn: true, studentsCanShareImages: true },
       presencia: { presentes: 0, total: course.students.length, conectados: [], ausentes: [] },
     };
   }
@@ -217,14 +220,20 @@ async function estadoDeSala(req, session, since = 0) {
   const presences = await RoomPresence.find({ session: session._id }).lean();
   const presencia = live.presenceSummary(presences, course.students);
 
+  const ctx = ctxSala(req);
   return {
     estado:    'abierta',
     sessionId: String(session._id),
     seq:       session.lastSeq,
-    puedoEscribir: puedeEscribir(session, req),
+    puedoEscribir: live.puedeEscribir(session, ctx),
+    // Va en el estado y no se decide en el navegador: cuando la docente apaga el interruptor,
+    // el botón de la cámara se le va de la pantalla a los alumnos en el poll siguiente, sin
+    // que nadie recargue (RN-A6). Y es el MISMO cálculo que autoriza el POST, así que el botón
+    // no puede quedar prometiendo algo que el servidor va a rechazar.
+    puedoCompartirImagen: live.puedeCompartirImagen(session, ctx),
     settings:  session.settings,
     presencia,
-    mensajes:  mensajes.map(m => serializarMensaje(m, req.userId, course._id)),
+    mensajes:  mensajes.map(m => serializarMensaje(m, { ...ctx, courseId: course._id, salaAbierta: true })),
   };
 }
 
@@ -246,7 +255,31 @@ function serializarAdjunto(m, courseId) {
   };
 }
 
-function serializarMensaje(m, userId, courseId) {
+// La cita que sale al cliente. El snapshot ya está guardado en el mensaje (ver replySchema en
+// models/RoomMessage.js), así que esto no consulta nada: solo decide qué se muestra.
+//
+// Un original borrado NO devuelve su texto, aunque el snapshot lo tenga: `reply.borrado` lo
+// marca en el momento del borrado (live.apagarCitasDe). Si la cita devolviera el extracto
+// igual, borrar un mensaje ofensivo no lo sacaría de ningún lado — seguiría leyéndose en cada
+// respuesta que lo citaba.
+function serializarCita(m) {
+  const r = m.reply;
+  if (!r || !r.to) return null;
+  return {
+    id:       String(r.to),
+    seq:      r.seq ?? null,
+    autor:    r.autor || '—',
+    extracto: r.borrado ? 'Mensaje eliminado' : (r.extracto || ''),
+    kind:     r.kind || 'text',
+    borrado:  !!r.borrado,
+  };
+}
+
+// `ctx` lleva { esGestor, esAlumno, modo, userId, courseId, salaAbierta }. Pasó de tres
+// parámetros sueltos a un objeto cuando `puedoBorrar` sumó el cuarto y el quinto: con
+// posicionales, las cinco llamadas de este archivo se equivocaban de orden tarde o temprano.
+function serializarMensaje(m, ctx) {
+  const { userId, courseId } = ctx;
   const borrado   = !!m.deletedAt;
   const esAdjunto = m.kind === 'image' || m.kind === 'file';
   return {
@@ -256,6 +289,15 @@ function serializarMensaje(m, userId, courseId) {
     autor: m.kind === 'system' ? '' : (m.authorName || '—'),
     rol:   m.authorRole || '',
     esMio: String(m.author) === String(userId),
+    // Quién puede borrar ESTE mensaje lo decide el servidor y no la vista, porque la regla ya
+    // no es "soy la docente": el autor borra lo suyo mientras la sala esté abierta (RN-B1).
+    // Con la regla repetida en el navegador, alcanzaba con que una de las dos copias quedara
+    // vieja para mostrar un botón que responde 403.
+    puedoBorrar: live.puedeBorrarMensaje(m, ctx, { salaAbierta: !!ctx.salaAbierta }),
+    // A quién le contesta este mensaje, si le contesta a alguien. Un mensaje ya borrado no
+    // manda su cita: el hueco dice "Mensaje eliminado" y colgarle de quién era la respuesta
+    // sería devolver por la ventana parte de lo que se acaba de sacar.
+    respuesta: borrado ? null : serializarCita(m),
     // El texto original se conserva en la base (es lo que permite reconstruir qué pasó si
     // hubo un problema), pero NO se manda al cliente una vez borrado. Un adjunto borrado dice
     // qué era —imagen o archivo— y nada más: el hueco en la conversación tiene que leerse.
@@ -400,20 +442,59 @@ router.post('/:id/sala/mensajes', roomMessageLimiter, async (req, res, next) => 
     // El modo se resuelve acá también, y no solo al renderizar: este POST no lleva el
     // parámetro de la URL, y sin esto quien estaba observando en silencio podía escribir.
     await aplicarModo(req, session);
-    if (!puedeEscribir(session, req)) return fallar(req, res, 403, 'No podés escribir en esta sala');
+    if (!live.puedeEscribir(session, ctxSala(req))) {
+      return fallar(req, res, 403, 'No podés escribir en esta sala');
+    }
 
-    const msg = await live.postMessage(session, usuario(req), req.body.text);
+    // La cita se resuelve contra la SESIÓN ABIERTA: un id de otra clase, inventado o de un
+    // aviso del sistema devuelve null y el mensaje sale sin cita, no con un error (RN-C7).
+    const cita = await live.resolverCita(session, req.body.replyTo);
+
+    const msg = await live.postMessage(session, usuario(req), req.body.text, { reply: cita });
     if (!msg) return fallar(req, res, 400, 'El mensaje está vacío');
 
-    res.json({ ok: true, mensaje: serializarMensaje(msg, req.userId, req.course._id) });
+    res.json({ ok: true, mensaje: serializarMensaje(msg, { ...ctxSala(req), courseId: req.course._id, salaAbierta: true }) });
   } catch (err) { next(err); }
 });
 
 router.delete('/:id/sala/mensajes/:mid', async (req, res, next) => {
   try {
-    if (!req.esGestor) return fallar(req, res, 403, 'Solo la o el docente puede hacer esto');
     if (!mongoose.isValidObjectId(req.params.mid)) {
       return fallar(req, res, 404, 'Mensaje no encontrado');
+    }
+
+    // Desde el 2026-08-19 el borrado ya no es solo de quien gestiona: el AUTOR borra lo suyo
+    // mientras la sala esté abierta (RN-B1), que es el "subí la foto equivocada" de un alumno.
+    // Por eso hay que leer el mensaje ANTES de marcarlo: el permiso depende de quién lo
+    // escribió, y eso no se sabe hasta tenerlo. La escritura sigue siendo un solo
+    // findOneAndUpdate condicionado a `deletedAt: null`, así que dos borrados simultáneos del
+    // mismo mensaje no se pisan.
+    const previo = await RoomMessage.findOne({ _id: req.params.mid, course: req.course._id })
+      .select('_id author kind deletedAt session').lean();
+    if (!previo) return fallar(req, res, 404, 'Mensaje no encontrado');
+
+    // El orden de los tres chequeos importa, y el primero es QUIÉN.
+    //
+    // Preceptoría y dirección entran a la sala y no moderan nada: para ellos la respuesta es
+    // la misma sea cual sea el estado del mensaje. Preguntando antes por el estado, un
+    // mensaje ya borrado les contestaba 404 y uno vivo 403 — o sea que quien no tiene ningún
+    // derecho sobre el mensaje podía averiguar si existe y si sigue en pie probando el
+    // borrado. No es grave, pero es información que no le corresponde y no cuesta nada no darla.
+    const esAutor = String(previo.author) === req.userId && previo.kind !== 'system';
+    if (!req.esGestor && !esAutor) {
+      return fallar(req, res, 403, 'Solo podés borrar tus propios mensajes');
+    }
+    if (previo.deletedAt) return fallar(req, res, 404, 'Mensaje no encontrado');
+
+    // Recién acá hace falta saber si la clase sigue abierta, y solo para el autor: la docente
+    // borra igual con la sala cerrada (es moderación). La query se paga después de los dos
+    // rechazos baratos, no antes.
+    const abierta = await sesionAbierta(req.course._id);
+    const salaAbierta = !!abierta && String(abierta._id) === String(previo.session);
+
+    if (!live.puedeBorrarMensaje(previo, ctxSala(req), { salaAbierta })) {
+      // Al alumno que se equivocó de foto hay que decirle qué hacer, no "acceso denegado".
+      return fallar(req, res, 403, 'La clase terminó: pedile a la o el docente que lo borre');
     }
 
     // El texto NO se borra: se marca. Ver models/RoomMessage.js.
@@ -423,6 +504,11 @@ router.delete('/:id/sala/mensajes/:mid', async (req, res, next) => {
       { new: true }
     );
     if (!msg) return fallar(req, res, 404, 'Mensaje no encontrado');
+
+    // Las respuestas que CITABAN a este mensaje dejan de mostrar su texto (RN-B4). Sin esto,
+    // borrar algo ofensivo lo deja vivo dentro de cada cita, porque el texto está copiado en
+    // otro documento.
+    await live.apagarCitasDe(msg);
 
     // Con un adjunto, el archivo se borra de disco DE VERDAD, y el documento queda marcado
     // como cualquier otro mensaje (quién lo borró, cuándo, y qué archivo era). Ver el
@@ -471,7 +557,7 @@ router.post('/:id/sala/mensajes/:mid/reaccion', async (req, res, next) => {
     }
     await msg.save();
 
-    res.json({ ok: true, mensaje: serializarMensaje(msg, req.userId, req.course._id) });
+    res.json({ ok: true, mensaje: serializarMensaje(msg, { ...ctxSala(req), courseId: req.course._id, salaAbierta: true }) });
   } catch (err) { next(err); }
 });
 
@@ -512,6 +598,53 @@ async function exigirGestorEnSalaAbierta(req, res, next) {
     req.sala = session;
     next();
   } catch (err) { next(err); }
+}
+
+// La misma puerta, para las IMÁGENES, que desde el 2026-08-19 comparte también el alumno.
+//
+// Va igual de temprano que su hermana y por el mismo motivo (RN-A4): multer corre antes que
+// el handler, así que con el chequeo adentro del handler la foto de alguien sin permiso ya
+// estaría escrita en disco cuando se responde 403.
+//
+// Los tres rechazos dicen cosas distintas a propósito. El alumno que toca la cámara y recibe
+// "acceso denegado" no tiene forma de saber si se rompió algo, si la profe apagó las fotos o
+// si está silenciado — y esas tres cosas se resuelven de tres maneras distintas.
+async function exigirPermisoDeImagen(req, res, next) {
+  try {
+    const session = await sesionAbierta(req.course._id);
+    if (!session) return fallar(req, res, 409, 'La sala está cerrada');
+
+    // El modo se resuelve acá también, y no solo al renderizar: este POST no lleva el
+    // `?modo=observacion` de la URL, y sin esto quien mira en silencio podría dejar una foto
+    // —o sea, aparecer en la sala— sin haberse presentado nunca.
+    await aplicarModo(req, session);
+
+    const ctx = ctxSala(req);
+    if (!live.puedeCompartirImagen(session, ctx)) {
+      if (req.esAlumno && session.settings?.studentsCanShareImages === false) {
+        return fallar(req, res, 403, 'La o el docente desactivó las imágenes de los alumnos');
+      }
+      if (req.esAlumno) return fallar(req, res, 403, 'No podés compartir imágenes en esta sala');
+      // Preceptoría y dirección: entran a mirar la clase, no a dejar material en ella (RN-A2).
+      return fallar(req, res, 403, 'Solo la clase puede compartir imágenes en la sala');
+    }
+
+    req.sala = session;
+    next();
+  } catch (err) { next(err); }
+}
+
+// Elige el cupo de subida según quién sube: 5 cada 10 minutos para el alumno, 20 para quien da
+// la clase (ver middleware/rate-limits.js).
+//
+// Se despacha en tiempo de pedido y no con dos rutas distintas porque el endpoint ES el mismo:
+// partirlo en /adjuntos/imagen y /adjuntos/imagen-alumno duplicaría el handler entero —el que
+// recomprime, guarda y audita— para cambiar un número.
+//
+// `req.esAlumno` ya está resuelto: el router.use de arriba corre cargarSala antes que esto.
+function limitarSubidaDeImagen(req, res, next) {
+  const limiter = req.esAlumno && !req.esGestor ? roomStudentImageLimiter : roomUploadLimiter;
+  return limiter(req, res, next);
 }
 
 // Directorio de esta sesión, relativo a SALAS_BASE. Un directorio por clase: la purga de los
@@ -560,7 +693,7 @@ function conArchivo(campo) {
 // POST /courses/:id/sala/adjuntos/imagen — foto del pizarrón, una consigna, un mapa.
 // Se recomprime a WebP con el preset 'sala' antes de tocar el disco: lo que la docente sube
 // desde el celular pesa 3 MB y termina en ~100 KB, que es lo que van a bajar los 30 alumnos.
-router.post('/:id/sala/adjuntos/imagen', roomUploadLimiter, exigirGestorEnSalaAbierta,
+router.post('/:id/sala/adjuntos/imagen', limitarSubidaDeImagen, exigirPermisoDeImagen,
   subirImagen('imagen'), async (req, res, next) => {
     try {
       // Sin req.file hay dos causas y el usuario tiene que poder distinguirlas: o el
@@ -584,6 +717,12 @@ router.post('/:id/sala/adjuntos/imagen', roomUploadLimiter, exigirGestorEnSalaAb
       const extFinal = path.extname(guardada.filename).toLowerCase();
       const base     = path.basename(arreglarNombre(req.file.originalname), path.extname(req.file.originalname));
 
+      // La cita viaja como un campo más del formulario. Se lee DESPUÉS de multer —que es
+      // quien llena req.body en un multipart— y no antes: arriba, en el guard, `req.body`
+      // todavía está vacío. Mostrar la carpeta contestándole a la consigna es el caso de uso
+      // que pidió el usuario (RN-C5).
+      const cita = await live.resolverCita(req.sala, req.body.replyTo);
+
       const msg = await live.postAttachment(req.sala, usuario(req), 'image', {
         name:   `${base}${extFinal}`.slice(0, 120),
         ext:    extFinal,
@@ -592,7 +731,7 @@ router.post('/:id/sala/adjuntos/imagen', roomUploadLimiter, exigirGestorEnSalaAb
         path:   path.join(relDir, guardada.filename),
         width:  guardada.width,
         height: guardada.height,
-      });
+      }, { reply: cita });
       // Mismo caso que en el POST de archivo: la sesión se cerró entre el chequeo y la
       // escritura. La imagen YA está en disco y no va a tener mensaje que la muestre, así que
       // se limpia acá en vez de dejarla esperando a cleanup-files.js.
@@ -601,11 +740,16 @@ router.post('/:id/sala/adjuntos/imagen', roomUploadLimiter, exigirGestorEnSalaAb
         return fallar(req, res, 409, 'La sala está cerrada');
       }
 
+      // `deQuien` no es decorativo: desde que los alumnos comparten fotos, la pregunta que se
+      // le hace a la auditoría dejó de ser "qué material subió la docente" y pasó a ser "quién
+      // subió esto". El nombre ya va en el registro; esto deja el ROL a la vista en la lista,
+      // sin abrir cada entrada (RN-A7).
       logAudit(req, 'room.share_file',
         [{ type: 'course', id: req.course._id, name: req.course.name }],
-        { sessionId: String(req.sala._id), tipo: 'imagen', archivo: msg.attachment.name });
+        { sessionId: String(req.sala._id), tipo: 'imagen', archivo: msg.attachment.name,
+          deQuien: req.esGestor ? 'docente' : 'alumno' });
 
-      res.status(201).json({ ok: true, mensaje: serializarMensaje(msg, req.userId, req.course._id) });
+      res.status(201).json({ ok: true, mensaje: serializarMensaje(msg, { ...ctxSala(req), courseId: req.course._id, salaAbierta: true }) });
     } catch (err) {
       if (err instanceof ImagenInvalidaError) return fallar(req, res, 400, err.message);
       next(err);
@@ -625,13 +769,18 @@ router.post('/:id/sala/adjuntos/archivo', roomUploadLimiter, exigirGestorEnSalaA
       const relDir = dirDeSesion(req);
       const ext    = path.extname(req.file.filename).toLowerCase();
 
+      // Mismo criterio que la imagen: la cita llega como campo del formulario y se lee
+      // después de multer. Este endpoint sigue siendo solo de quien gestiona la materia — el
+      // alumno comparte fotos, no documentos (RN-A1).
+      const cita = await live.resolverCita(req.sala, req.body.replyTo);
+
       const msg = await live.postAttachment(req.sala, usuario(req), 'file', {
         name:  arreglarNombre(req.file.originalname).slice(0, 120),
         ext,
         mime:  req.file.mimetype || '',
         bytes: req.file.size,
         path:  path.join(relDir, req.file.filename),
-      });
+      }, { reply: cita });
       // La sesión se cerró entre el chequeo y la escritura: el archivo ya está en disco y no
       // va a tener mensaje que lo muestre, así que se limpia acá mismo.
       if (!msg) {
@@ -643,7 +792,7 @@ router.post('/:id/sala/adjuntos/archivo', roomUploadLimiter, exigirGestorEnSalaA
         [{ type: 'course', id: req.course._id, name: req.course.name }],
         { sessionId: String(req.sala._id), tipo: 'archivo', archivo: msg.attachment.name });
 
-      res.status(201).json({ ok: true, mensaje: serializarMensaje(msg, req.userId, req.course._id) });
+      res.status(201).json({ ok: true, mensaje: serializarMensaje(msg, { ...ctxSala(req), courseId: req.course._id, salaAbierta: true }) });
     } catch (err) { next(err); }
   });
 
@@ -712,18 +861,36 @@ router.post('/:id/sala/config', async (req, res, next) => {
     const session = await sesionAbierta(req.course._id);
     if (!session) return fallar(req, res, 409, 'La sala está cerrada');
 
+    // Un formulario manda strings ('true'), un fetch manda booleanos. Los dos entran.
+    const bandera = (v) => v === true || v === 'true';
+
+    // Cada aviso se anuncia SOLO si su propio interruptor vino en el pedido. Antes se
+    // anunciaba el estado de la palabra en cualquier llamada a /config, así que apagar otra
+    // cosa metía un "la docente habilitó la palabra" en el chat sin que nadie la hubiera
+    // tocado. Con tres interruptores eso pasaba de rareza a mentira.
+    const avisos = [];
+
     if (req.body.studentsCanWrite !== undefined) {
-      session.settings.studentsCanWrite = req.body.studentsCanWrite === true
-                                       || req.body.studentsCanWrite === 'true';
+      session.settings.studentsCanWrite = bandera(req.body.studentsCanWrite);
+      avisos.push(session.settings.studentsCanWrite
+        ? 'La docente habilitó la palabra para el curso.'
+        : 'La docente puso la sala en modo "solo docente".');
     }
     if (req.body.reactionsOn !== undefined) {
-      session.settings.reactionsOn = req.body.reactionsOn === true
-                                  || req.body.reactionsOn === 'true';
+      session.settings.reactionsOn = bandera(req.body.reactionsOn);
     }
+    // El interruptor de las fotos de los alumnos (RN-A3). Se anuncia en el chat, igual que la
+    // palabra: el alumno que ve desaparecer el botón de la cámara tiene que poder leer por qué,
+    // o lo va a reportar como que "se rompió".
+    if (req.body.studentsCanShareImages !== undefined) {
+      session.settings.studentsCanShareImages = bandera(req.body.studentsCanShareImages);
+      avisos.push(session.settings.studentsCanShareImages
+        ? 'La docente habilitó las imágenes para el curso.'
+        : 'La docente desactivó las imágenes de los alumnos.');
+    }
+
     await session.save();
-    await live.systemMessage(session, session.settings.studentsCanWrite
-      ? 'La docente habilitó la palabra para el curso.'
-      : 'La docente puso la sala en modo "solo docente".');
+    for (const aviso of avisos) await live.systemMessage(session, aviso);
 
     res.json({ ok: true, settings: session.settings });
   } catch (err) { next(err); }

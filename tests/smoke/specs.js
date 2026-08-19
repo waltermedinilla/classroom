@@ -1033,6 +1033,140 @@ const specs = [
       assert(actDespues.viewedCount <= actDespues.totalStudents, 'nunca puede haber más vistos que alumnos');
     },
   },
+
+  /* ─── Visibilidad: actividad programada + botón de ojo ───
+     specs/visibilidad-actividades.spec.md. Trabajan sobre actividades PROPIAS y no sobre
+     state.activityId, que la comparten los specs de entregas y notas que vienen después. */
+  {
+    id: 'visibilidad-crea-programada',
+    title: 'El docente carga una actividad con "Disponible desde" a futuro',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Dos días adelante: el caso real es preparar hoy la clase del martes que viene.
+      const enDosDias = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+      const res = await client.post('scopedTeacher', '/activities/create', {
+        body: {
+          courseId: state.courseId, title: `Actividad programada ${RUN_ID}`, type: 'tarea',
+          points: '10', availableFrom: enDosDias.toISOString(),
+        },
+        expectStatus: 201,
+      });
+      state.actProgramadaId = res.json.activity._id;
+      assert(res.json.activity.visibleOverride == null,
+        'una actividad recién creada no debería nacer con override manual');
+    },
+  },
+  {
+    id: 'visibilidad-programada-oculta-al-alumno',
+    title: 'La programada no le figura al alumno, pero sí al docente',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const alumno = await client.get('scopedStudent', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      assert(!alumno.json.activities.some(a => a._id === state.actProgramadaId),
+        'el alumno NO debería ver una actividad cuya fecha de publicación todavía no llegó');
+      // Y la que sí está publicada tiene que seguir viéndose: el filtro nuevo no puede
+      // llevarse puesto el resto del listado.
+      assert(alumno.json.activities.some(a => a._id === state.activityId),
+        'la actividad ya publicada debería seguir apareciendo');
+
+      const docente = await client.get('scopedTeacher', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      assert(docente.json.activities.some(a => a._id === state.actProgramadaId),
+        'el docente tiene que ver TODAS sus actividades, programadas incluidas');
+    },
+  },
+  {
+    id: 'visibilidad-programada-rechaza-entrega',
+    title: 'El alumno no puede entregar una actividad que todavía no ve (403)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // Por la interfaz no llega; por link directo, sí. La guarda está en POST /submit.
+      await client.post('scopedStudent', `/activities/${state.actProgramadaId}/submit`, {
+        body: { text: 'entrega adelantada' }, expectStatus: 403,
+      });
+    },
+  },
+  {
+    id: 'visibilidad-alumno-no-puede-togglear',
+    title: 'El alumno no puede tocar la visibilidad de una actividad (403)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.patch('scopedStudent', `/activities/${state.actProgramadaId}/toggle-visibility`, {
+        expectStatus: 403,
+      });
+    },
+  },
+  {
+    id: 'visibilidad-ojo-adelanta-publicacion',
+    title: 'El ojo publica la programada sin esperar a la fecha',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.patch('scopedTeacher', `/activities/${state.actProgramadaId}/toggle-visibility`, {
+        expectStatus: 200,
+      });
+      assert(res.json.visibleOverride === true, `visibleOverride debería ser true, es ${res.json.visibleOverride}`);
+      assert(res.json.estado === 'visible', `estado debería ser "visible", es "${res.json.estado}"`);
+
+      const alumno = await client.get('scopedStudent', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      assert(alumno.json.activities.some(a => a._id === state.actProgramadaId),
+        'tras tocar el ojo, el alumno debería ver la actividad aunque la fecha sea futura');
+    },
+  },
+  {
+    id: 'visibilidad-ojo-vuelve-al-automatico',
+    title: 'El segundo click la devuelve a programada, conservando la fecha',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const antes = await client.get('scopedTeacher', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      const fechaAntes = antes.json.activities.find(a => a._id === state.actProgramadaId).availableFrom;
+
+      const res = await client.patch('scopedTeacher', `/activities/${state.actProgramadaId}/toggle-visibility`, {
+        expectStatus: 200,
+      });
+      // Lo importante: NO queda en false (oculta para siempre), vuelve al automático.
+      assert(res.json.visibleOverride === null, `visibleOverride debería volver a null, es ${res.json.visibleOverride}`);
+      assert(res.json.estado === 'programada', `estado debería ser "programada", es "${res.json.estado}"`);
+      assert(new Date(res.json.availableFrom).getTime() === new Date(fechaAntes).getTime(),
+        'la fecha programada no se puede perder al ir y volver con el ojo');
+
+      const alumno = await client.get('scopedStudent', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      assert(!alumno.json.activities.some(a => a._id === state.actProgramadaId),
+        'vuelta al automático, el alumno no debería verla otra vez');
+    },
+  },
+  {
+    id: 'visibilidad-ojo-baja-una-publicada',
+    title: 'El ojo también oculta una actividad que ya estaba publicada',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Actividad aparte: bajar la del suite rompería los specs de entrega y notas.
+      const creada = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: `Actividad a ocultar ${RUN_ID}`, type: 'tarea', points: '10' },
+        expectStatus: 201,
+      });
+      const actId = creada.json.activity._id;
+
+      const alumnoAntes = await client.get('scopedStudent', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      assert(alumnoAntes.json.activities.some(a => a._id === actId), 'recién creada, el alumno debería verla');
+
+      const off = await client.patch('scopedTeacher', `/activities/${actId}/toggle-visibility`, { expectStatus: 200 });
+      assert(off.json.visibleOverride === false, `visibleOverride debería ser false, es ${off.json.visibleOverride}`);
+      assert(off.json.estado === 'oculta', `estado debería ser "oculta", es "${off.json.estado}"`);
+
+      const alumnoDespues = await client.get('scopedStudent', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      assert(!alumnoDespues.json.activities.some(a => a._id === actId),
+        'ocultada con el ojo, el alumno no debería verla aunque su fecha ya haya pasado');
+      await client.post('scopedStudent', `/activities/${actId}/submit`, {
+        body: { text: 'entrega a una oculta' }, expectStatus: 403,
+      });
+
+      // Y el tercer estado: volver a mostrarla deja el override en null, no en true.
+      const on = await client.patch('scopedTeacher', `/activities/${actId}/toggle-visibility`, { expectStatus: 200 });
+      assert(on.json.visibleOverride === null, `al volver a mostrarla debería quedar en null, es ${on.json.visibleOverride}`);
+      assert(on.json.estado === 'visible', `estado debería ser "visible", es "${on.json.estado}"`);
+
+      await client.delete('scopedTeacher', `/activities/${actId}`, { expectStatus: 200 });
+    },
+  },
   {
     id: 'admin-task-settings-toggle',
     title: 'El admin prende y apaga el aviso de acuse de lectura',
@@ -2785,6 +2919,7 @@ const specs = [
           archivo:  { nombre: 'consigna.pdf', bytes: 3145728, mime: 'application/pdf' },
           enviados: 1048576,
           ms:       12000,
+          intentos: 4,
           conexion: '3g',
           pantalla: '/courses/xxx',
         },
@@ -2815,6 +2950,10 @@ const specs = [
       assert(String(linea.usuario).includes('@'), `debería registrar al usuario de la sesión, dice ${linea.usuario}`);
       assert(linea.rol, 'debería registrar el rol');
       assert(linea.archivo?.nombre === 'consigna.pdf', 'debería registrar el archivo');
+      // Cuántas veces se reintentó antes de rendirse. Es lo que distingue "se cayó un
+      // paquete" de "el corte duró los cincuenta segundos", que son dos investigaciones
+      // distintas. Ver el reintento automático en public/js/subida-diagnostico.js.
+      assert(linea.intentos === 4, `debería registrar los 4 intentos, dice ${linea.intentos}`);
     },
   },
   {
@@ -2842,6 +2981,7 @@ const specs = [
           archivo:   { nombre: 'B'.repeat(5000), bytes: 'no es un número' },
           status:    99999,
           ms:        -1,
+          intentos:  'muchos',
         },
         expectStatus: 200,
       });
@@ -2865,6 +3005,7 @@ const specs = [
       assert(linea.archivo.bytes === undefined, 'un tamaño que no es número no debería registrarse');
       assert(linea.status === 599, `el status debería toparse en 599, quedó ${linea.status}`);
       assert(linea.ms === undefined, 'un tiempo negativo no debería registrarse');
+      assert(linea.intentos === undefined, 'un contador de intentos que no es número no debería registrarse');
     },
   },
   {
@@ -6188,6 +6329,7 @@ const specs = [
         ['scopedTeacher', 'POST',   id => `/activities/${id}/grade`],
         ['scopedTeacher', 'DELETE', id => `/activities/${id}`],
         ['scopedTeacher', 'PATCH',  id => `/activities/${id}/toggle-late`],
+        ['scopedTeacher', 'PATCH',  id => `/activities/${id}/toggle-visibility`],
         ['scopedTeacher', 'PUT',    id => `/activities/${id}`],
         ['scopedTeacher', 'GET',    id => `/activities/${id}/staged-file/prueba.pdf`],
         ['scopedTeacher', 'POST',   id => `/activities/${id}/upload-submission-file`],
@@ -6603,6 +6745,16 @@ const specs = [
         client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes`, { body: { text: 'uno' }, expectStatus: 200 }),
         client.post('scopedTeacher', `/courses/${state.courseId}/sala/mensajes`, { body: { text: 'dos' }, expectStatus: 200 }),
       ]);
+      // Los dos se guardan aparte para 'sala-borrado-propio': el de la docente es el "mensaje
+      // ajeno" (desde que el alumno borra lo suyo, probar el rechazo con su PROPIO mensaje
+      // dejó de probar nada) y el del alumno es el que él mismo va a borrar.
+      //
+      // Se REUSAN en vez de mandar mensajes nuevos: roomMessageLimiter deja 10 por minuto y
+      // por usuario, y el bloque de la sala entero corre bien adentro de ese minuto. Un par de
+      // mensajes de más y los specs empiezan a fallar con 429 por el test, no por el código.
+      state.salaMensajeDocenteId = b.json.mensaje.id;
+      state.salaMensajeAlumnoId  = a.json.mensaje.id;
+
       const seqs = [a.json.mensaje.seq, b.json.mensaje.seq].sort((x, y) => x - y);
       assert(seqs[0] !== seqs[1], `dos mensajes simultáneos recibieron el mismo seq (${seqs[0]})`);
       assert(seqs[1] - seqs[0] === 1, `los seq deberían ser consecutivos, fueron ${seqs.join(' y ')}`);
@@ -6685,8 +6837,10 @@ const specs = [
     title: 'La docente borra y silencia; el alumno no puede moderar',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state, assert }) {
-      // Borrar es solo del docente.
-      await client.delete('scopedStudent', `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeId}`, { expectStatus: 403 });
+      // Borrar lo AJENO es solo del docente. (Lo propio lo borra su autor: ver
+      // 'sala-borrado-propio'. Este spec probaba el rechazo con el mensaje del propio alumno,
+      // que desde el 2026-08-19 sí puede borrar — ahí ya no probaba lo que dice el título.)
+      await client.delete('scopedStudent', `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeDocenteId}`, { expectStatus: 403 });
       await client.delete('scopedTeacher', `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeId}`, { expectStatus: 200 });
 
       const tras = await client.get('scopedTeacher', `/courses/${state.courseId}/sala/poll?since=0`, {
@@ -6784,12 +6938,13 @@ const specs = [
         'falta el nosniff en la respuesta del archivo');
 
       // ── Quién NO puede ───────────────────────────────────────────────────
-      // El alumno del curso no sube nada: compartir es de quien da la clase.
-      await client.post('scopedStudent', `${base}/adjuntos/imagen`, {
-        form: formCon('imagen', png, 'mia.png', 'image/png'),
+      // El alumno del curso SÍ comparte imágenes desde el 2026-08-19 (ver 'sala-imagen-alumno'),
+      // pero no archivos: comparte fotos, no documentos (RN-A1).
+      await client.post('scopedStudent', `${base}/adjuntos/archivo`, {
+        form: formCon('archivo', Buffer.from('mio'), 'mio.txt', 'text/plain'),
         expectStatus: 403, headers: json,
       });
-      // Preceptoría y dirección tampoco: entrar a la sala no es gestionarla.
+      // Preceptoría y dirección no suben NADA: entran a mirar la clase, no a dejar material.
       await client.post('salaPreceptor', `${base}/adjuntos/imagen`, {
         form: formCon('imagen', png, 'suya.png', 'image/png'),
         expectStatus: 403, headers: json,
@@ -6847,6 +7002,175 @@ const specs = [
       assert(borrada.adjunto === null, 'un adjunto borrado no puede seguir mandando su URL');
       assert(borrada.texto === 'Imagen eliminada',
         `el hueco debería decir qué era, fue "${borrada.texto}"`);
+    },
+  },
+  {
+    id: 'sala-borrado-propio',
+    title: 'El alumno borra lo suyo con la sala abierta; lo ajeno no (RN-B1)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const base = `/courses/${state.courseId}/sala`;
+      const json = { Accept: 'application/json' };
+
+      const id = state.salaMensajeAlumnoId;
+
+      // El permiso lo manda el SERVIDOR mensaje por mensaje: la vista ya no decide "soy la
+      // docente", así que lo que se prueba acá es exactamente lo que va a pintar el botón.
+      const antes = await client.get('scopedStudent', `${base}/poll?since=0`, {
+        expectStatus: 200, headers: json,
+      });
+      const mio = antes.json.mensajes.find(m => m.id === id);
+      assert(mio && mio.puedoBorrar === true, 'el alumno debería poder borrar lo suyo con la sala abierta');
+      const ajenoEnPoll = antes.json.mensajes.find(m => m.id === state.salaMensajeDocenteId);
+      assert(ajenoEnPoll && ajenoEnPoll.puedoBorrar === false,
+        'el alumno no debería recibir permiso de borrado sobre un mensaje ajeno');
+
+      await client.delete('scopedStudent', `${base}/mensajes/${id}`, { expectStatus: 200, headers: json });
+
+      const poll = await client.get('scopedStudent', `${base}/poll?since=0`, {
+        expectStatus: 200, headers: json,
+      });
+      const borrado = poll.json.mensajes.find(m => m.id === id);
+      assert(borrado && borrado.borrado === true, 'debería figurar como eliminado para todos');
+      assert(borrado.texto === 'Mensaje eliminado', 'el texto original no puede viajar al cliente');
+      assert(borrado.puedoBorrar === false, 'lo ya borrado no se vuelve a borrar');
+
+      // Lo ajeno sigue siendo intocable, y el motivo se lee (no es un "acceso denegado" a secas).
+      const ajeno = await client.delete('scopedStudent', `${base}/mensajes/${state.salaMensajeDocenteId}`, {
+        expectStatus: 403, headers: json,
+      });
+      assert(/tus propios mensajes/i.test(ajeno.json?.error || ''),
+        `el 403 debería explicar la regla, dijo "${ajeno.json?.error}"`);
+    },
+  },
+  {
+    id: 'sala-imagen-alumno',
+    title: 'El alumno comparte una foto; el interruptor de la docente y el silencio la cortan',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const base = `/courses/${state.courseId}/sala`;
+      const json = { Accept: 'application/json' };
+      const png = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64');
+      const forma = (nombre) => {
+        const fd = new FormData();
+        fd.append('imagen', new Blob([png], { type: 'image/png' }), nombre);
+        return fd;
+      };
+
+      // ── El caso que abrió la feature: el alumno muestra la carpeta ────────
+      const subida = await client.post('scopedStudent', `${base}/adjuntos/imagen`, {
+        form: forma('mi carpeta.png'), expectStatus: 201, headers: json,
+      });
+      assert(subida.json.mensaje.kind === 'image', 'debería quedar como mensaje de tipo imagen');
+      const idFoto = subida.json.mensaje.id;
+
+      // La docente la ve, y el alumno puede sacarla él mismo si se equivocó (RN-B1 + adjunto).
+      const vistaDocente = await client.get('scopedTeacher', `${base}/poll?since=0`, {
+        expectStatus: 200, headers: json,
+      });
+      const laFoto = vistaDocente.json.mensajes.find(m => m.id === idFoto);
+      assert(laFoto && laFoto.adjunto && laFoto.adjunto.url, 'la docente debería ver la foto del alumno');
+      const urlFoto = laFoto.adjunto.url;
+
+      // ── El interruptor de la docente (RN-A3) ─────────────────────────────
+      await client.post('scopedTeacher', `${base}/config`, {
+        body: { studentsCanShareImages: false }, expectStatus: 200, headers: json,
+      });
+      const cortado = await client.post('scopedStudent', `${base}/adjuntos/imagen`, {
+        form: forma('otra.png'), expectStatus: 403, headers: json,
+      });
+      assert(/desactiv/i.test(cortado.json?.error || ''),
+        `el 403 debería decir que la docente las desactivó, dijo "${cortado.json?.error}"`);
+
+      // El botón se apaga solo del lado del alumno, y NO del lado de la docente: el
+      // interruptor es "fotos de los alumnos", no "fotos".
+      const estadoAlumno = await client.get('scopedStudent', `${base}/poll`, { expectStatus: 200, headers: json });
+      assert(estadoAlumno.json.puedoCompartirImagen === false,
+        'el estado tiene que apagar el botón del alumno sin recargar (RN-A6)');
+      // Apagar las fotos NO calla a la clase: es todo el punto de que sea un interruptor
+      // aparte y no un modo de "solo yo escribo". Se mira en el estado y no mandando un
+      // mensaje: el bloque de la sala entero entra en un minuto y roomMessageLimiter deja 10.
+      assert(estadoAlumno.json.puedoEscribir === true,
+        'sin fotos el alumno tiene que seguir pudiendo escribir');
+
+      const estadoDocente = await client.get('scopedTeacher', `${base}/poll`, { expectStatus: 200, headers: json });
+      assert(estadoDocente.json.puedoCompartirImagen === true,
+        'la docente comparte igual: el interruptor no es para ella');
+
+      await client.post('scopedTeacher', `${base}/config`, {
+        body: { studentsCanShareImages: true }, expectStatus: 200, headers: json,
+      });
+
+      // ── Silenciar apaga también las fotos ────────────────────────────────
+      // Es el pedido explícito del usuario: al que se le sacó la palabra no puede seguir
+      // hablando por imagen.
+      await client.post('scopedTeacher', `${base}/silenciar/${state.scopedStudentId}`, {
+        body: { muted: true }, expectStatus: 200, headers: json,
+      });
+      await client.post('scopedStudent', `${base}/adjuntos/imagen`, {
+        form: forma('igual.png'), expectStatus: 403, headers: json,
+      });
+      await client.post('scopedTeacher', `${base}/silenciar/${state.scopedStudentId}`, {
+        body: { muted: false }, expectStatus: 200, headers: json,
+      });
+
+      // ── El alumno saca su propia foto y el archivo se va del disco ───────
+      await client.delete('scopedStudent', `${base}/mensajes/${idFoto}`, { expectStatus: 200, headers: json });
+      await client.get('scopedStudent', urlFoto, { expectStatus: 404, headers: json });
+    },
+  },
+  {
+    id: 'sala-responder',
+    title: 'Responder cita al mensaje original; borrarlo apaga la cita (RN-C, RN-B4)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const base = `/courses/${state.courseId}/sala`;
+      const json = { Accept: 'application/json' };
+
+      const original = await client.post('scopedTeacher', `${base}/mensajes`, {
+        body: { text: 'Resuelvan el ejercicio 4 y muéstrenmelo' }, expectStatus: 200, headers: json,
+      });
+      const idOriginal = original.json.mensaje.id;
+
+      const respuesta = await client.post('scopedStudent', `${base}/mensajes`, {
+        body: { text: 'ya lo tengo', replyTo: idOriginal }, expectStatus: 200, headers: json,
+      });
+      const cita = respuesta.json.mensaje.respuesta;
+      assert(cita, 'la respuesta debería viajar con su cita');
+      assert(cita.id === idOriginal, 'la cita tiene que apuntar al mensaje original');
+      assert(/Resuelvan el ejercicio 4/.test(cita.extracto),
+        `la cita debería traer el texto citado, trajo "${cita.extracto}"`);
+      assert(cita.autor && cita.autor.length > 0, 'la cita tiene que decir a quién se le contesta');
+      assert(cita.borrado === false);
+
+      // RN-C7: una cita imposible no rompe el envío, solo se pierde la cita. Los manda la
+      // DOCENTE y no el alumno solo por cupo: roomMessageLimiter deja 10 mensajes por minuto
+      // y por usuario, y el alumno ya gastó los suyos en los specs anteriores de este bloque.
+      const sinCita = await client.post('scopedTeacher', `${base}/mensajes`, {
+        body: { text: 'sin cita', replyTo: '000000000000000000000000' }, expectStatus: 200, headers: json,
+      });
+      assert(sinCita.json.mensaje.respuesta === null,
+        'un replyTo inexistente tiene que salir sin cita, no con un error en la cara');
+      const basura = await client.post('scopedTeacher', `${base}/mensajes`, {
+        body: { text: 'tampoco', replyTo: 'no-es-un-id' }, expectStatus: 200, headers: json,
+      });
+      assert(basura.json.mensaje.respuesta === null, 'un id inválido tampoco puede romper el envío');
+
+      // ── RN-B4: borrar el original apaga la cita en las respuestas ────────
+      // Sin esto, la docente borra un mensaje y su texto sigue leyéndose en cada respuesta que
+      // lo citaba, porque el snapshot está copiado en otro documento.
+      await client.delete('scopedTeacher', `${base}/mensajes/${idOriginal}`, { expectStatus: 200, headers: json });
+
+      const poll = await client.get('scopedStudent', `${base}/poll?since=0`, {
+        expectStatus: 200, headers: json,
+      });
+      const laRespuesta = poll.json.mensajes.find(m => m.id === respuesta.json.mensaje.id);
+      assert(laRespuesta, 'la respuesta debería seguir en la conversación');
+      assert(laRespuesta.respuesta.borrado === true, 'la cita tiene que quedar marcada como eliminada');
+      assert(!/ejercicio 4/i.test(laRespuesta.respuesta.extracto),
+        `el texto borrado NO puede sobrevivir dentro de la cita, quedó "${laRespuesta.respuesta.extracto}"`);
     },
   },
   {
@@ -7323,6 +7647,254 @@ const specs = [
       await client.post('admin', `/admin/courses/${state.courseId}/delete`, { expectStatus: 200 });
     },
   },
+  // ── SOE — Servicio de Orientación Escolar ─────────────────────────────────
+  // Cubren los criterios 14 a 23 de specs/soe-orientacion.spec.md. Lo que se prueba acá y
+  // no en los unitarios son las RUTAS: quién recibe 200 y quién 403, y —lo más importante—
+  // que el nivel 'resumen' no filtre texto clínico en el HTML que llega al navegador.
+  {
+    id: 'soe-crear-usuarios',
+    title: 'SOE: el admin da de alta un usuario de orientación y un directivo de prueba',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const soeEmail = `smoke.soe.${RUN_ID}@test.local`;
+      const dirEmail = `smoke.soedir.${RUN_ID}@test.local`;
+
+      const soe = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke SOE ${RUN_ID}`, email: soeEmail, password: 'SmokeTest1234', role: 'soe', dni: dniSmoke(91) },
+        expectStatus: 201,
+      });
+      state.soeId    = soe.json.user._id;
+      state.soeEmail = soeEmail;
+
+      // Un directivo propio: el de los specs de más arriba ya fue borrado en su limpieza.
+      const dir = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke SOEDir ${RUN_ID}`, email: dirEmail, password: 'SmokeTest1234', role: 'directivo', dni: dniSmoke(92) },
+        expectStatus: 201,
+      });
+      state.soeDirId    = dir.json.user._id;
+      state.soeDirEmail = dirEmail;
+
+      await client.post('soe',    '/login', { body: { email: soeEmail, password: 'SmokeTest1234' }, expectStatus: 200 });
+      await client.post('soeDir', '/login', { body: { email: dirEmail, password: 'SmokeTest1234' }, expectStatus: 200 });
+    },
+  },
+  {
+    id: 'soe-panel-abre-y-redirige',
+    title: 'SOE: el rol entra a /soe y "/" lo lleva ahí (criterio 14)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const panel = await client.get('soe', '/soe', { expectStatus: 200 });
+      assert(/Orientaci[oó]n Escolar/i.test(panel.text || ''), 'el panel debería titularse Orientación Escolar');
+
+      await client.get('soe', '/soe/alumnos', { expectStatus: 200 });
+      await client.get('soe', '/soe/derivaciones', { expectStatus: 200 });
+    },
+  },
+  {
+    id: 'soe-otros-roles-403',
+    title: 'SOE: alumno, docente y directivo NO entran con la escuela en su default (criterios 14 y 15)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      // El default de School.soeAccess es 'none' para todos. Que el directivo esté listado
+      // en config/sections.js no le abre nada: la puerta la abre la escuela, no el catálogo.
+      for (const actor of ['scopedStudent', 'scopedTeacher', 'soeDir']) {
+        await client.get(actor, '/soe',              { expectStatus: 403 });
+        await client.get(actor, '/soe/alumnos',      { expectStatus: 403 });
+        await client.get(actor, '/soe/derivaciones', { expectStatus: 403 });
+      }
+    },
+  },
+  {
+    id: 'soe-abrir-legajo',
+    title: 'SOE: abre un legajo, y abrirlo dos veces no duplica (criterio 19)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      state.soeMotivo = `MOTIVO-CLINICO-${RUN_ID}`;
+
+      await client.post('soe', `/soe/legajo/${state.scopedStudentId}/abrir`, {
+        body: { motivo: state.soeMotivo, prioridad: 'alta' }, expectStatus: 302,
+      });
+      // Segunda vez: tiene que redirigir al que ya existe, no crear otro ni tirar 500.
+      await client.post('soe', `/soe/legajo/${state.scopedStudentId}/abrir`, {
+        body: { motivo: 'otro motivo distinto', prioridad: 'baja' }, expectStatus: 302,
+      });
+
+      const ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(ficha.text.includes(state.soeMotivo), 'el SOE debería ver el motivo que cargó');
+      assert(!ficha.text.includes('otro motivo distinto'), 'el segundo intento no debería haber pisado el legajo');
+
+      const resumen = await client.get('soe', '/soe', { expectStatus: 200 });
+      const veces = (resumen.text.match(new RegExp(`/soe/legajo/${state.scopedStudentId}`, 'g')) || []).length;
+      assert(veces === 1, `el alumno debería aparecer UNA vez en el resumen, aparece ${veces}`);
+    },
+  },
+  {
+    id: 'soe-alumno-fuera-de-alcance',
+    title: 'SOE: no se puede abrir el legajo de quien no es alumno (criterio 18)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // El panel es de alumnos. Dejar abrir el "legajo" de un docente sería una forma
+      // silenciosa de fichar al personal.
+      await client.get('soe', `/soe/legajo/${state.scopedTeacherId}`, { expectStatus: 403 });
+      await client.post('soe', `/soe/legajo/${state.scopedTeacherId}/abrir`, {
+        body: { motivo: 'no debería entrar' }, expectStatus: 403,
+      });
+    },
+  },
+  {
+    id: 'soe-seguimiento-y-derivacion',
+    title: 'SOE: registra seguimiento, deriva y anota la devolución del servicio',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const ficha0 = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      state.soeCaseId = (ficha0.text.match(/\/soe\/legajo\/([a-f0-9]{24})\/situacion/) || [])[1];
+      assert(state.soeCaseId, 'no se pudo leer el id del legajo desde la ficha');
+
+      state.soeEntrada = `ENTREVISTA-${RUN_ID}`;
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/entrada`, {
+        body: { fecha: '2026-08-10', tipo: 'entrevista', animo: 'preocupante', texto: state.soeEntrada },
+        expectStatus: 302,
+      });
+
+      state.soeDestino = `HOSPITAL-${RUN_ID}`;
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/derivacion`, {
+        body: { destino: state.soeDestino, tipo: 'salud_mental', motivo: 'Evaluación', fecha: '2026-08-12' },
+        expectStatus: 302,
+      });
+
+      const conDeriv = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(conDeriv.text.includes(state.soeEntrada), 'la entrada del seguimiento debería verse');
+      assert(conDeriv.text.includes(state.soeDestino), 'la derivación debería verse');
+      // La fecha del hecho no puede correrse un día: es la trampa de zona horaria del
+      // proyecto (un <input type="date"> llega como medianoche UTC y producción corre en UTC).
+      assert(/10\/08|10 de ago/i.test(conDeriv.text), 'la entrada del 10/08 se está mostrando con otra fecha');
+
+      state.soeRefId = (conDeriv.text.match(/\/derivacion\/([a-f0-9]{24})\/devolucion/) || [])[1];
+      assert(state.soeRefId, 'no se pudo leer el id de la derivación');
+
+      state.soeDevolucion = `DEVOLUCION-${RUN_ID}`;
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/derivacion/${state.soeRefId}/devolucion`, {
+        body: { fecha: '2026-08-15', texto: state.soeDevolucion }, expectStatus: 302,
+      });
+
+      const lista = await client.get('soe', '/soe/derivaciones', { expectStatus: 200 });
+      assert(lista.text.includes(state.soeDestino), 'la derivación debería aparecer en /soe/derivaciones');
+    },
+  },
+  {
+    id: 'soe-resumen-no-filtra-lo-clinico',
+    title: 'SOE: el directivo en nivel "resumen" no recibe lo clínico en el HTML (criterios 15, 16 y 25)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, env, assert }) {
+      await client.post('superadmin', '/login', {
+        body: { email: env.SMOKE_SUPERADMIN_EMAIL, password: env.SMOKE_SUPERADMIN_PASSWORD },
+        expectStatus: 200,
+      });
+
+      // Las fortalezas y las estrategias SÍ las ve el nivel resumen: son lo que sirve en el aula.
+      state.soeFortaleza  = `FORTALEZA-${RUN_ID}`;
+      state.soeDificultad = `DIFICULTAD-${RUN_ID}`;
+      state.soeEstrategia = `ESTRATEGIA-${RUN_ID}`;
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/situacion`, {
+        body: {
+          motivo: state.soeMotivo, fortalezas: state.soeFortaleza,
+          dificultades: state.soeDificultad, estrategias: state.soeEstrategia,
+          prioridad: 'alta', estado: 'seguimiento',
+        },
+        expectStatus: 302,
+      });
+
+      // La escuela del admin, que ya resolvió el spec 'roles-screen-loads'.
+      const escuela = state.rolesSchoolId;
+      assert(escuela, 'falta state.rolesSchoolId (lo deja el spec roles-screen-loads)');
+      try {
+        await client.post('superadmin', '/superadmin/roles/soe-access', {
+          body: { schoolId: escuela, role: 'directivo', nivel: 'resumen' },
+          expectStatus: 200,
+        });
+
+        const ficha = await client.get('soeDir', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+
+        // Lo que SÍ tiene que ver.
+        assert(ficha.text.includes(state.soeFortaleza),  'el resumen debería incluir las fortalezas');
+        assert(ficha.text.includes(state.soeEstrategia), 'el resumen debería incluir las estrategias de aula');
+
+        // Lo que NO puede aparecer NUNCA en el HTML, ni escondido en un atributo.
+        for (const secreto of [state.soeMotivo, state.soeDificultad, state.soeEntrada, state.soeDestino, state.soeDevolucion]) {
+          assert(!ficha.text.includes(secreto), `el nivel resumen filtró texto clínico: ${secreto}`);
+        }
+
+        // Y no se le dibuja ningún formulario de escritura (criterio 25).
+        assert(!/action="\/soe\/legajo\/[a-f0-9]{24}\/entrada"/.test(ficha.text),
+          'el nivel resumen no debería dibujar el formulario de seguimiento');
+
+        // La solapa Derivaciones nombra el destino de cada derivación, que es justo lo que
+        // 'resumen' no puede saber. No la cierra config/sections.js (sectionGuard es
+        // fail-open: solo deniega lo explícitamente denegado) sino requireCompleto.
+        await client.get('soeDir', '/soe/derivaciones', { expectStatus: 403 });
+        const home = await client.get('soeDir', '/soe', { expectStatus: 200 });
+        assert(!home.text.includes(state.soeDestino),
+          'el resumen del panel filtró el destino de la derivación');
+
+        // Escribir, ni con el formulario a mano: solo el rol soe (criterio 17).
+        await client.post('soeDir', `/soe/legajo/${state.soeCaseId}/entrada`, {
+          body: { texto: 'no debería poder', tipo: 'nota' }, expectStatus: 403,
+        });
+        await client.post('superadmin', `/soe/legajo/${state.soeCaseId}/entrada`, {
+          body: { texto: 'el superadmin tampoco', tipo: 'nota' }, expectStatus: 403,
+        });
+      } finally {
+        // Se restaura SIEMPRE: este spec toca la configuración de una escuela real.
+        await client.post('superadmin', '/superadmin/roles/soe-access', {
+          body: { schoolId: escuela, role: 'directivo', nivel: 'none' },
+        });
+      }
+    },
+  },
+  {
+    id: 'soe-cerrar-y-reabrir',
+    title: 'SOE: cerrar exige motivo y reabrir conserva la historia (criterio 20)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Sin motivo no cierra: un legajo cerrado sin decir por qué no le sirve a nadie.
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/cerrar`, { body: { cierreMotivo: '' }, expectStatus: 302 });
+      let ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(!ficha.text.includes('Reabrir legajo'), 'no debería haberse cerrado sin motivo');
+
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/cerrar`, {
+        body: { cierreMotivo: `CIERRE-${RUN_ID}` }, expectStatus: 302,
+      });
+      ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(ficha.text.includes('Reabrir legajo'), 'el legajo debería figurar cerrado');
+      assert(ficha.text.includes(state.soeEntrada), 'cerrar no puede borrar el seguimiento');
+
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/reabrir`, { expectStatus: 302 });
+      ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(ficha.text.includes(state.soeEntrada), 'reabrir debe devolver la historia entera');
+      assert(ficha.text.includes(state.soeDestino), 'reabrir debe devolver las derivaciones');
+    },
+  },
+  {
+    id: 'soe-cleanup',
+    title: 'Limpieza: borra el legajo y los usuarios del SOE',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env }) {
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        // No hay ruta para borrar un legajo (a propósito: un legajo se cierra, no se borra).
+        // El smoke lo saca por la base, igual que hace con los audit logs.
+        if (state.scopedStudentId) {
+          await mongo.db().collection('soecases').deleteMany({ student: new ObjectId(state.scopedStudentId) });
+        }
+      } finally {
+        await mongo.close();
+      }
+      if (state.soeId)    await client.post('admin', `/admin/users/${state.soeId}/delete`,    { expectStatus: 200 });
+      if (state.soeDirId) await client.post('admin', `/admin/users/${state.soeDirId}/delete`, { expectStatus: 200 });
+    },
+  },
   {
     id: 'cleanup-users-and-division',
     title: 'Limpieza: el admin borra los usuarios y la división de prueba',
@@ -7421,6 +7993,7 @@ const specs = [
           state.joinCourseId, state.joinOtherCourseId, state.joinOtherDivisionId,
           state.dupConMateriaId, state.dupVaciaId, state.dupCourseId,
           state.dupMailViejaId, state.dupMailNuevaId,
+          state.soeId, state.soeDirId,
         ].filter(Boolean);
         const ids = idStrings.map(s => new ObjectId(s));
 

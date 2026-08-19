@@ -18,7 +18,7 @@
 | `directivo` | Directivo | Directivo institucional |
 | `teacher` | Docente | Puede ser dueño de cursos |
 | `preceptor` | Preceptor | Panel propio en `/preceptor`, acotado a las divisiones que un admin le asigna. Ve materias, docentes y alumnos de esos cursos, y administra a los alumnos (alta, edición, baja lógica). **No es auto-asignable** |
-| `soe` | SOE | SOE |
+| `soe` | SOE | Servicio de Orientación Escolar. Panel propio en `/soe`: legajo psicopedagógico por alumno (situación, seguimiento, derivaciones externas con sus devoluciones) más un panel de indicadores de solo lectura. Ve toda su escuela salvo que un admin le asigne divisiones. **Es el único rol que escribe legajos**; quién más los lee lo decide `School.soeAccess` (default: nadie) |
 | `student` | Alumno | Puede unirse a cursos |
 
 > Los valores internos en la BD son en inglés. La traducción al español se hace mediante `res.locals.roleNames` definido como middleware global en `server.js`. Nunca cambiar los valores internos del enum.
@@ -176,7 +176,7 @@ Agregar `data-analytics="nombre_del_evento"` al `<button>`/`<a>` — no hace fal
 | `name` | String | Requerido, trim |
 | `email` | String | Requerido, único, lowercase, trim |
 | `password` | String | Requerido, minlength **5**, hasheado con bcrypt en pre-save |
-| `role` | String | Enum: admin/directivo/teacher/preceptor/soe/student |
+| `role` | String | Enum: admin/directivo/teacher/preceptor/jefe/soe/student |
 | `createdAt` | Date | Timestamps |
 
 - Métodos: `comparePassword()`, `toJSON()` (sin password)
@@ -386,6 +386,284 @@ que deja usuarios de prueba sin borrar). Espaciar las corridas o limpiar a mano.
 ---
 
 ## Historial de Cambios (Changelog)
+
+### 2026-08-19 — La sala en vivo: fotos del alumno, responder citando, y el chat que no se leía en oscuro
+
+Tres pedidos del usuario en la misma pantalla.
+
+**1. El alumno comparte fotos.** Los adjuntos existían desde el 2026-08-10 pero eran solo de
+quien daba la clase: el chico que resolvía el ejercicio solo podía describirlo por texto. Ahora
+sube **imágenes** (nunca archivos: una foto es una foto, un `.docx` de 20 MB por alumno es otro
+problema y otra moderación). Misma recompresión a WebP con el preset `sala`, misma ruta
+autenticada, mismo borrado real de disco.
+
+Para que la docente no quede sin herramientas, el permiso tiene **tres condiciones y valen las
+tres**: sala abierta, interruptor prendido, y poder escribir.
+
+- El **interruptor** es propio (`settings.studentsCanShareImages`, botón "Sin fotos de
+  alumnos"): cuando las fotos se van de tema se cortan **sin callar a la clase**, que era lo
+  único que se podía hacer antes.
+- La tercera condición es la que pidió el usuario con todas las letras: **silenciar a alguien lo
+  silencia entero**. Al que se le sacó la palabra no puede seguir hablando por foto.
+- El botón de la cámara **se apaga solo** en la pantalla de los alumnos en el poll siguiente, sin
+  que nadie recargue, y el chat dice por qué. El servidor revalida igual: esconder un botón no
+  es un permiso.
+- Cupo: **5 imágenes cada 10 minutos por alumno** (la docente conserva sus 20), por usuario y no
+  por IP — la escuela entera sale por una sola IP NAT.
+
+**2. Responder a alguien, como en WhatsApp.** Con treinta personas escribiendo, "sí, dale" no
+dice nada. Ahora cada mensaje tiene "responder", la cita aparece arriba del cuadro de escribir
+y viaja adentro de la burbuja; tocarla lleva al original y lo resalta. Se responde a texto y a
+adjuntos, **nunca a un aviso del sistema** (no es de nadie), y una imagen también puede salir
+como respuesta — mostrar la carpeta *contestándole* a la consigna es el caso de uso.
+
+La cita se guarda como **snapshot** (`RoomMessage.reply`) y no como un `populate`: el poll pinta
+hasta 100 mensajes cada 4 segundos por persona, y resolver la cita ahí sería agregarle una query
+a **el** camino más caliente de la app. Eso obliga a su contraparte: **borrar un mensaje apaga
+las citas que lo copiaban** (`live.apagarCitasDe`), o la moderación no moderaría nada — el texto
+seguiría vivo dentro de cada respuesta. Se paga al borrar, que pasa de a uno, no en cada poll.
+Un `replyTo` inexistente, de otra sesión o del sistema manda el mensaje **sin** cita: nunca un
+error en la cara.
+
+**3. El modo oscuro: "no se veía el texto".** Era literal. `.lr-msg.mio .lr-burbuja` fijaba el
+fondo celeste `#e8f0fe` **sin declarar el color del texto**, así que en oscuro heredaba
+`var(--text)` (`#e3e5e8`, casi blanco): **1,10:1 medido en el navegador**. Cada uno veía en
+blanco sobre blanco exactamente sus propios mensajes. Lo mismo su propia reacción. Se coló
+cuando la sala pasó a seguir al tema por variable (2026-08-17) y estas dos reglas quedaron con
+el hex de cuando la sala era una pantalla clara de punta a punta.
+
+Arreglado y **medido en el navegador sobre los colores compuestos**, no a ojo: burbuja propia
+**12,6:1**, reacción propia 8,5:1, cita 7,0:1. De paso, midiendo aparecieron cuatro más:
+
+- Los grises tenues del chat (avisos del sistema, pie de las cards, y los botones "responder" y
+  "borrar", que son **controles**) daban 3,52:1 en oscuro y **2,64:1 en claro** — el tema claro
+  estaba peor y nadie lo había mirado. Los dos suben con **una** variable local de la sala
+  (`--lr-tenue`), sin tocar la paleta global que usan otras 30 vistas.
+- Las pastillas de reacción, en fondo `--surface` sobre una tarjeta `--surface`, se distinguían
+  por un borde de 1,3:1: no se veían como controles.
+- El borde del cuadro de escribir, casi invisible en oscuro.
+- El avión de enviar tenía la variante oscura escrita **y no se aplicaba nunca**: el color
+  estaba en un `style=` inline, que le gana a cualquier hoja. Seguía en 3,59:1.
+
+Quedó **un** hallazgo sin tocar y está en el backlog: `.btn-outline` da 3,59:1 en los dos temas,
+pero es el botón global de la app (151 usos en 54 vistas) y arreglarlo es un cambio de paleta,
+no un arreglo de esta pantalla.
+
+**Reglas al servicio, y bajo test.** `puedeEscribir` vivía suelta en `routes/rooms.js`; ahora
+está con sus dos hermanas nuevas (`puedeCompartirImagen`, `puedeBorrarMensaje`) en
+`services/liveRoom.js`, recibiendo un contexto plano en vez de `req` — se componen entre ellas
+y se testean sin levantar Express. El permiso de borrado ahora **viaja mensaje por mensaje**
+(`puedoBorrar`) en vez de repetir "soy la docente" en el navegador.
+
+**El borrado propio**: el autor borra lo suyo **mientras la sala esté abierta**. Cubre el "subí
+la foto equivocada" sin convertir el borrado en una forma de limpiar, la semana siguiente, el
+rastro de lo que uno dijo. La docente sigue borrando cualquier cosa y en cualquier momento.
+
+**Ni una migración**: `reply` es `null` y `studentsCanShareImages` es `true` por default, así que
+los documentos existentes se comportan igual que antes. **La base de producción no se toca.**
+
+Spec: `specs/sala-imagenes-y-respuestas.spec.md`. Tests: `tests/unit/salaChat.test.js` (27, con
+el contraste **calculado** a partir de los colores del archivo — mirarlo a ojo una vez es lo que
+ya se había hecho y la regresión entró igual) + 3 specs de smoke nuevos (`sala-borrado-propio`,
+`sala-imagen-alumno`, `sala-responder`) y 2 viejos adecuados. El CSV de la transcripción y la
+vista de clase archivada suman la columna "Responde a": ahí es donde se reconstruye un episodio,
+y una clase entera de "sí", "dale" sin saber a qué contestaba cada uno no reconstruye nada.
+
+### 2026-08-18 — Actividad programada + botón de ojo
+
+El docente prepara con anticipación la actividad de una clase futura. El campo
+`availableFrom` ("Disponible desde") ya existía y el servidor ya se la filtraba al alumno,
+**pero el docente no lo veía en ninguna parte**: en su lista la programada figuraba igual que
+una publicada, así que la feature era invisible y no la usaba nadie. Tampoco había forma de
+adelantar o retirar una publicación sin editar la fecha a mano.
+
+Ahora:
+
+- La actividad con "Disponible desde" a futuro le figura al docente **atenuada**, con el chip
+  **"Programada · \<fecha\>"**, y se publica sola cuando llega esa fecha (nada corre en
+  segundo plano: es una condición de lectura, no una tarea programada).
+- Un **botón de ojo** en la tarjeta — y una barra en el detalle — invierte el estado: publica
+  ya la programada, u oculta una que ya estaba publicada (chip **"Oculta"**).
+- Al elegir una fecha futura, el formulario avisa que la actividad va a quedar deshabilitada
+  en vez de dejar al docente creyendo que se publicó.
+
+Modelo: `Activity.visibleOverride` (`null` = automático por fecha, `true` = mostrar ya,
+`false` = ocultar). Los documentos anteriores no tienen el campo y se leen como automático:
+**el comportamiento de todo lo ya cargado no cambia y no hace falta migrar nada.**
+
+El ojo **no cicla entre tres estados**: invierte el estado efectivo y, si con eso alcanza
+volver al automático, borra el override en vez de fijarlo — así **la fecha programada nunca
+se pierde** al ir y volver.
+
+La regla vive en **un solo archivo**, `public/js/visibilidadActividad.js`: la `require()` el
+servidor (para filtrar el listado, los pendientes y el resumen del inicio) y la carga el
+navegador (para el chip y el ícono). Un test cruzado verifica que el fragmento de query de
+Mongo acepta exactamente los mismos documentos que la función pura.
+
+De paso quedaron cerrados dos huecos que la feature dejaba a la vista: `POST
+/activities/:id/submit` ahora rechaza con 403 la entrega a una actividad que el alumno no
+debería estar viendo (por link directo), y el muro de la materia ya no muestra al recargar la
+programada que `createActivity()` no le agregaba al crearla.
+
+Spec: `specs/visibilidad-actividades.spec.md`. Tests: `tests/unit/visibilidadActividad.test.js`
+(15) + 7 specs de smoke (`visibilidad-*`).
+
+### 2026-08-18 — Las subidas ahora se reintentan solas
+
+Mitigación del corte del Funnel medido esta misma mañana (ver el changelog de abajo). La
+subida se rendía en **un segundo** y el corte dura **uno o dos minutos**, así que el docente
+veía el error al instante y reintentaba a mano — una lo hizo **seis veces con el mismo PDF
+entre las 08:49 y las 09:00**. Ahora el navegador insiste solo: el envío original más 3
+reintentos, esperando 5 s, 15 s y 30 s. **Cuatro envíos repartidos en 50 segundos**, que es del
+orden de lo que dura un corte.
+
+Si se agota la ventana, lo que ve la persona es **exactamente lo de antes**: la tarjeta se
+borra y sale el cartel con un único código `SUB-XXXXXX`. No se agregó ningún elemento nuevo a
+la pantalla de fallo.
+
+**A qué se le insiste y a qué no.** Es la única decisión que importaba, porque insistirle a
+algo que la aplicación rechazó a propósito no lo arregla y en dos casos lo empeora. La regla:
+**si el cuerpo de la respuesta parsea como objeto JSON, contestó la aplicación y no se
+reintenta.** Ningún intermediario —Funnel, proxy, balanceador— devuelve JSON; devuelven HTML o
+texto plano. Es la misma bifurcación que ya organiza el diagnóstico entero.
+
+| Situación | Quién contestó | Decisión |
+|---|---|---|
+| Conexión cortada (0 bytes, ~1 s) | nadie | **reintenta** ← el caso real |
+| 502 / 504 del proxy | un intermediario | **reintenta** |
+| 403 sin acceso, 400 de validación | la app | no |
+| 429 de rate limit | la app | no — insistirle a un límite es la única forma de empeorarlo |
+| 503 de mantenimiento | la app | no |
+| Cualquier 413 por tamaño | la app o un proxy | no — es determinista |
+
+⚠️ **Dos casos que parecían obvios y no lo eran**, y que definieron el criterio final:
+
+1. **No alcanza con buscar el campo `error`.** El 503 del modo mantenimiento responde
+   `{ maintenance, message, eta }` **sin** `error`, y los tres caminos de subida mandan
+   `Accept: application/json`, así que caen justo ahí. Con la regla del `error`, una ventana de
+   mantenimiento habría hecho que **cada subida golpeara el servidor cuatro veces en cincuenta
+   segundos** — lo contrario de lo que el mantenimiento pide. Por eso la pregunta es "¿es un
+   objeto JSON?" y no "¿tiene tal campo?": así quedan cubiertas las formas de error futuras.
+2. **El 413 de un intermediario tampoco se reintenta**, aunque no sea nuestro. Un límite de
+   cuerpo es configuración estática: los cuatro intentos darían el mismo 413 y serían cincuenta
+   segundos del docente para llegar al mismo lugar. Solo se reintenta lo que puede cambiar solo.
+
+**Lo que ve la persona mientras espera**: `Reintento en 12 s` con cuenta atrás, y
+`Reintentando 2 de 4` al arrancar cada envío. Nada de rojo ni de "Error" mientras quede
+ventana — todavía no hubo fallo, y pintar en rojo algo que en cinco segundos va a andar enseña
+a desconfiar de la pantalla. La barra vuelve a `0%` en cada espera: dejarla en el 8 % del
+intento que acaba de morir es la única forma de que la tarjeta mienta.
+
+**El reintento le regala un dato nuevo al diagnóstico.** El reporte se manda **una sola vez**,
+al agotarse la ventana (el endpoint tiene rate limit de 30 por hora por persona: avisar en cada
+intento quemaría cuatro slots y mostraría un código que no es el del fallo reportado), y ahora
+lleva el campo `intentos`. Con eso `ver-subida.js` puede decir algo que antes no se podía saber
+de ninguna forma: *"Falló los 4 intentos repartidos en ~50 s: el corte duró, no fue un pico"* —
+que separa "se cayó un paquete" de "el Funnel estuvo abajo".
+
+⚠️ **`nuevoIntento()` reinicia `t0` y `enviados` a propósito.** Si acumularan los cuatro
+intentos, `ms` daría ~50.000 y el informe concluiría *"decenas de segundos → el archivo ya
+estaba arriba, mirá el timeout del proxy"*: falso, y manda a la capa equivocada. `ms` y
+`enviados` siguen describiendo el **último** intento; lo nuevo es `intentos`.
+
+**No se agregó `xhr.timeout`**, aunque los tres `ontimeout` sigan siendo código muerto. No es la
+causa (las 21 fallas dispararon `onerror` en menos de dos segundos) y no hay un valor que sirva:
+`xhr.timeout` mide el tiempo **total** desde `send()`, así que un valor corto para rescatar un
+socket colgado mataría una subida legítima de 50 MB en el wifi del aula. Si algún día se quiere
+cubrir ese caso, la herramienta correcta es un **vigía de estancamiento** (abortar si pasan 30 s
+sin que avance un byte), que distingue "lento pero vivo" de "colgado". Primero habría que medir
+si ocurre.
+
+**Riesgo aceptado**: si el servidor recibe el archivo y se pierde la respuesta, el reintento
+sube un duplicado. En el adjunto del docente y en la entrega es inofensivo (queda un huérfano
+que `cleanup-files.js` ya barre, porque solo la respuesta del intento exitoso entra en la
+lista). **En la sala en vivo se vería**: crea un mensaje en el chat. Es acotado y reversible —
+se borra con el `DELETE` que ya existe— y la solución de fondo sería una clave de idempotencia,
+que hoy sería resolver un problema no observado.
+
+**Alcance**: los 3 caminos (`views/activities/new.ejs`, `public/js/course.js`,
+`views/partials/live-room.ejs`). **Tests**: 13 casos nuevos en
+`tests/unit/subidaDiagnostico.test.js` y el campo `intentos` sumado a los 2 specs de smoke del
+diagnóstico. Suites: **386 unit · 329 smoke · roles sin hallazgos**. Verificado además en el
+navegador contra un puerto cerrado: los 4 envíos salieron a los 0,0 s / 5,0 s / 20,1 s / 50,1 s,
+con la cuenta atrás corriendo, y al agotarse un solo código.
+
+⚠️ **Trampa de orden de carga que hay que respetar en la sala en vivo**: en `views/course.ejs`
+el partial `live-room` se incluye **antes** de que cargue `/js/subida-diagnostico.js`. Toda
+referencia a `SubidaDiag` tiene que quedar **dentro** de `subirAdjunto()`; una referencia en el
+nivel de arriba del IIFE anda en la sala suelta y tira `ReferenceError` en la solapa "En vivo"
+de la materia — un bug que aparecería en una sola de las dos vistas. Está comentado en el código.
+
+---
+
+### 2026-08-18 — El diagnóstico de subidas se equivocaba en las dos direcciones
+
+Llegó el **primer código real** del cartel de subidas (`SUB-9JDGX2`, una docente con un PDF de
+739 KB) y con él los primeros 21 casos registrados. Usar la herramienta en serio destapó que
+mentía, y en los dos sentidos a la vez — que es el modo de falla propio de un instrumento de
+diagnóstico: no se rompe, **afirma con seguridad algo que no midió**, y manda a revisar la capa
+equivocada.
+
+**Bug 1 — decía "1 KB" cuando eran 0 bytes.** El `mb()` de `public/js/subida-diagnostico.js`
+redondeaba con `Math.max(1, Math.round(b / 1024))`, puesto ahí para que un archivo de 300 bytes
+no dijera "0 KB". Pero aplastaba también el cero de verdad: el cartel le decía a la docente
+*"se alcanzaron a enviar 1 KB de 739 KB"* cuando el navegador **no había enviado nada**. La
+distinción es justo la que la herramienta existe para hacer:
+
+| Lo que dice | Lo que significa | Dónde hay que mirar |
+|---|---|---|
+| 0 bytes enviados | la conexión **nunca se estableció** | el Funnel, el proxy |
+| 1 KB enviado | se estableció y **murió transmitiendo** | el ancho de banda, el enlace |
+
+Encima el informe del servidor mostraba "0 KB" —tiene su propio `mb()` sin el `Math.max`—, así
+que los dos números salían del mismo dato y no coincidían. Ahora el cero exacto se resuelve
+antes del redondeo, y el cartel dice *"No se alcanzó a enviar nada del archivo (0 de 739 KB)"*.
+
+**Bug 2 — afirmaba que el archivo había subido entero sin haberlo medido.** Las subidas de la
+sala en vivo salen por `fetch`, que no puede informar progreso, así que van con
+`progresoMedible: false` y el reporte llega **sin** `enviados`. En `veredicto()` de
+`tools/ver-subida.js` eso dejaba `pct` en `undefined`, la condición `pct < 100` daba falso y
+caía al `else`: *"alcanzó a enviar el archivo entero, sospechá de un timeout de un
+intermediario"*. Un timeout que nadie observó. Contradecía el principio que el propio
+`subida-diagnostico.js` declara en sus comentarios — *un diagnóstico que miente con seguridad
+es peor que uno que dice "esto no lo sé"*. Ahora hay una tercera rama que admite que no sabe y
+manda a leer el campo `tardó`, que sí acota el caso.
+
+**Tests**: `tests/unit/subidaDiagnostico.test.js`, 7 casos nuevos. Los 3 que apuntan a los bugs
+se verificaron en rojo antes del arreglo. Para poder testearlos, los dos archivos adoptaron el
+patrón de export dual de `public/js/ratelimit-chart.js` (`window.*` en el navegador,
+`module.exports` bajo `node --test`); `mb` y `detalleHumano` salen **solo** por `module.exports`,
+así que la superficie pública en el navegador no cambió. `ver-subida.js` corre igual como CLI:
+el `main()` quedó detrás de `require.main === module`.
+
+**Lo que mostraron los 21 casos** — 4 personas distintas, las 3 rutas de subida, archivos de
+321 KB a 2,1 MB, **0 bytes enviados en 19 de 21**, muriendo en 0,0–1,5 s, todos declarando
+conexión `4g`, concentrados entre las 08:36 y las 09:33. Eso **descarta el límite de tamaño de
+cuerpo**, que era la sospecha número uno del caso abierto desde el 15/08 ("PDFs de ~3 MB"):
+falla un PDF de 321 KB, y un tope de tamaño rechaza al final, no en el byte cero. También
+descarta que sea una persona, un dispositivo o una ruta. La franja horaria coincide con el
+[incidente matutino](#) ya cerrado y medido: cortes intermitentes de 1-2 minutos del Tailscale
+Funnel. Laura Vásquez reintentó el mismo PDF **seis veces entre 08:49 y 09:00** y falló siempre.
+
+**Se midió el mismo día y cerró el caso.** Cruzando las `subida_fallida` contra los POST de
+subida que **sí llegaron** al access log: **1023 subidas llegaron al servidor y 1003 salieron
+bien — el 98 %**. Y en la misma hora conviven las dos cosas: el 18/08 a las 08:00 **fallaron 15
+y entraron 21**. Un límite de tamaño o un bug de ruta no se comporta así, fallaría siempre. En
+todo el log hay **5** `Request aborted` contra 21 fallas, así que al menos 16 murieron **sin
+abrir una request**: no llegaron ni cortadas. El perfil horario — 42 % de falla a las 08:00,
+5 % a las 09:00, **0 % a las 10:00** — replica el que el watchdog había medido por otro lado
+para el incidente matutino. Dos instrumentos independientes apuntando al mismo lugar.
+
+⚠️ **El matiz que importa para elegir el arreglo**: el reporte de diagnóstico (POST JSON de
+~500 bytes) llegó las 21 veces mientras la subida moría, pero en esa misma hora 21 subidas
+grandes también pasaron. O sea que **no** es "el Funnel rechaza los cuerpos grandes" — durante
+los cortes de 1-2 minutos falla lo que intente pasar, y una subida grande está expuesta a la
+ventana más tiempo que un POST chico. Además de sacar el Funnel del camino, hay una mitigación
+posible sin tocar infraestructura: **reintento automático con backoff en el cliente**. La
+subida muere en 0,1-1,5 s y el corte dura minutos, así que hoy el docente ve el error al
+instante; 2-3 reintentos espaciados taparían buena parte del agujero. No implementado.
+
+---
 
 ### 2026-08-18 — Toda la plataforma pasa a la hora de la escuela (y un reloj en el header)
 
@@ -3253,6 +3531,110 @@ Por qué la segunda: el primer intento fue solo el latido y **no alcanzó** — 
 
 **Tests**: 4 unitarios nuevos en `tests/unit/liveRoom.test.js` (42/42). Van ahí y no al smoke porque dependen del paso del tiempo: hay que poder inyectar el `now` en vez de esperar 90 segundos por request.
 
+## Rol SOE — Servicio de Orientación Escolar, panel `/soe` (2026-08-18)
+
+Pedido del usuario: *"me gustaría que desarrollaras un rol que diga SOE, referido a la orientación
+psicopedagógica, para poder conocer cómo está el niño, cuáles son sus falencias, sus puntos fuertes
+y débiles, cómo podemos hacer para contenerlo, llevar un seguimiento si al alumno se lo deriva o no
+a otro lugar y en ese lugar qué le dicen"*.
+
+El rol `soe` **ya existía y estaba vacío** desde el principio: estaba en el enum de `models/User.js`,
+se podía asignar, tenía nombre, color e ícono y entraba a las salas en vivo como staff — pero
+aterrizaba en `/courses` como un docente sin materias. `views/superadmin/roles.ejs` tenía una nota
+diciendo justamente eso. Lo que se construyó no es el rol: es su trabajo.
+
+Spec: `specs/soe-orientacion.spec.md` (31 criterios de aceptación).
+
+### Qué hace
+
+**Legajo por alumno** (`models/SoeCase.js`, uno por alumno para siempre — se cierra y se reabre, no
+se duplica), con cuatro solapas en la ficha:
+
+- **Situación** — motivo de intervención, fortalezas (con qué cuenta), dificultades (qué le cuesta)
+  y estrategias de contención acordadas para el aula.
+- **Seguimiento** — línea de tiempo de entrevistas, observaciones, contactos con la familia y
+  acuerdos con docentes. Cada entrada lleva la fecha **del hecho** (no la de carga), su autor, y un
+  campo "cómo se lo vio" (bien / con altibajos / preocupante) que es lo que convierte el legajo en
+  un pulso y no en una foto.
+- **Derivaciones** — a dónde, por qué, con qué referente, en qué estado, y las **devoluciones** que
+  ese lugar va dando. Con fecha de "volver a preguntar": vencida sin respuesta, la derivación se
+  resalta. Es el mecanismo que evita que un chico se pierda entre la derivación y la devolución que
+  nunca llegó.
+- **Cómo viene** — asistencia (30 días y ciclo), promedio por materia, entregas pendientes y
+  tardías, última conexión, intereses y a qué quiere dedicarse. Todo dato que la plataforma **ya
+  tenía**; nadie lo carga a mano. No calcula ningún "índice de riesgo": muestra los números, el
+  juicio queda en la persona del gabinete.
+
+Más `/soe/derivaciones`, la lista de toda la escuela ordenada por lo que pide atención primero.
+
+### Las tres decisiones que importan
+
+**1. La confidencialidad no pasa por `config/sections.js`.** Ese sistema es restrictivo y fail-open:
+solo QUITA lo que los middlewares conceden, y lo que no está denegado pasa. Es lo correcto para una
+solapa de "Materias" y lo equivocado para una historia psicopedagógica, donde el default tiene que
+ser cerrado y la configuración tiene que AGREGAR. Vive en `School.soeAccess`, con tres niveles:
+
+| nivel | qué ve |
+|---|---|
+| `none` (default de todos) | ni la solapa: `/soe` responde 403 |
+| `resumen` | fortalezas, estrategias de aula, estado, prioridad y que hay una derivación en curso — **sin** motivo, dificultades, entrevistas ni destino |
+| `completo` | todo, en modo lectura |
+
+Preceptor y docente **topean en `resumen`**, y el techo lo aplica `services/soeAcceso.js` al leer, no
+solo el enum del schema: un valor escrito con `mongosh` no concede nada. Lo configura el superadmin
+desde `/superadmin/roles`, en una tarjeta aparte de la grilla.
+
+**Escribir escribe siempre y solo el rol `soe`.** Ni el superadmin — un legajo firmado por el dueño
+técnico de la plataforma no significa nada. El superadmin sí puede leer (tiene la base igual), y esa
+lectura queda auditada.
+
+**2. El alcance es fail-OPEN, al revés de preceptor y jefatura.** Un SOE sin `assignedDivisions` ve
+toda su escuela; solo queda acotado si un admin le carga divisiones (escuelas con un gabinete por
+turno). Los otros paneles son fail-closed porque el rol se asigna por caminos que no preguntan por
+divisiones; acá eso es justamente lo buscado, y está escrito y testeado para que nadie lo "arregle".
+
+**3. La autorización nunca lee el snapshot.** Un alumno no tiene división propia: se deduce de
+`Course.students`. `SoeCase.division` es un snapshot para listar sin joins, pero `alumnoEnScope()`
+resuelve las divisiones **actuales** con una query. Si al chico lo cambiaron de curso, lo ve el SOE
+del curso nuevo.
+
+### Fuera de alcance, decidido
+
+**Adjuntos** (informes escaneados) — y no por recortar: los adjuntos de hoy van a disco con
+`diskStorage` y se sirven por una URL adivinable. Un informe psicológico de un menor no puede vivir
+ahí; necesita ruta propia con guarda de lectura, que es otra spec. También quedaron afuera el pedido
+de intervención del docente ("Derivar al SOE" desde la ficha), las alertas automáticas de riesgo, el
+export a PDF y la mensajería con la familia.
+
+**El alumno y la familia no ven absolutamente nada**: no hay ninguna ruta del lado del alumno.
+
+### Archivos
+
+Nuevos: `models/SoeCase.js`, `middleware/soe.js`, `routes/soe.js`, `services/soeAcceso.js` (todas las
+reglas puras), `services/soeIndicadores.js`, `views/soe/{index,alumnos,legajo,derivaciones}.ejs`,
+`views/partials/soe-{nav,styles}.ejs`, `tests/unit/soe{Acceso,Scope}.test.js`.
+Tocados: `models/School.js` (`soeAccess`), `server.js` (mount, `.select()` de la escuela y redirect
+de `/`), `config/sections.js` (panel + 3 solapas), `config/audit-actions.js` (6 acciones y la
+categoría `soe`), `views/superadmin/roles.ejs` y `routes/roles.js` (la tarjeta de configuración),
+`tests/roles/check-roles.js`, `tests/smoke/specs.js`.
+
+**Cambio en la base**: colección nueva `soecases` + campo `soeAccess` en `School`. Los dos aditivos:
+ninguna escuela ni usuario existente necesita migración, y nada de lo ya cargado cambia.
+
+### Verificación
+
+34 unitarios nuevos (`soeAcceso` + `soeScope`), suite completa **435/435**. Matriz de roles: las 44
+secciones × 8 roles, **44/44 en todos, sin fugas**. Y en el navegador, con datos reales de la escuela:
+se abrió un legajo, se cargó una entrevista fechada el 10/08 (que se imprimió 10/08 y no 09/08 — la
+trampa de zona horaria del proyecto), se derivó con seguimiento vencido y apareció resaltada en las
+tres pantallas. La prueba que más importa, corrida de punta a punta: con el directivo en nivel
+`resumen`, ninguno de los cinco textos clínicos aparece en el HTML que llega al navegador, no se le
+dibuja ningún formulario, y tanto él como el superadmin reciben 403 al intentar escribir — **23/23**.
+
+**Una excepción documentada en `tests/roles/check-roles.js`**: el paso 3 asume "figura en `roles` →
+entra". El panel del SOE es el único donde eso no vale, porque la puerta la abre `School.soeAccess`.
+Con una escuela sin configurar, lo correcto es que directivo y admin reciban 403, y así se verifica.
+
 ## Solapa "Actividades Diarias" del directivo (2026-08-17)
 
 Pedido del usuario: *"me gusta la manera que manejaste el calendario en el rol de preceptor, quiero una nueva solapa en el rol de directivo"*. Dirección no tenía forma de responder **quién cargó actividad y quién no** en un período: el calendario del preceptor contesta otra pregunta —un curso, un mes, día por día— y hay que entrar división por división para armarse el panorama.
@@ -3351,5 +3733,16 @@ Pedido del usuario: *"me gusta la manera que manejaste el calendario en el rol d
 ### Funcionalidades faltantes — mayor complejidad
 - Notificaciones (in-app / email / push).
 - Preview de temas para el admin antes de aceptarlos.
+
+### Pendientes del SOE (v2) — decididos fuera de alcance el 2026-08-18
+- **Adjuntos en el legajo** (informes escaneados, certificados). Bloqueado por una razón
+  concreta: los adjuntos de hoy van a disco con `diskStorage` y se sirven por una URL
+  adivinable. Un informe psicológico de un menor necesita una ruta propia con guarda de
+  lectura antes de que exista el botón de subir.
+- **"Derivar al SOE" desde la ficha del alumno** para docente y preceptor, con bandeja de
+  pedidos pendientes en el panel. Hoy el legajo lo abre solo el gabinete.
+- **Alertas automáticas**: sugerir alumnos en riesgo (ausentismo, materias bajas, sin
+  entregar) que todavía no tienen legajo. Los datos ya están en `services/soeIndicadores.js`.
+- **Export del legajo a PDF** para el pase de escuela o el pedido de un organismo.
 
 > ⚠️ **Nota de mantenimiento**: `agente.md` conserva desactualizaciones anteriores a esta revisión en las secciones de Pantallas, Rutas y Vistas (ej: no documenta los modelos School/Division/Activity/Submission/Suggestion, ni las rutas de superadmin, actividades y sugerencias). Pendiente una pasada completa de actualización del documento.

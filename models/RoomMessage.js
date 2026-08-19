@@ -8,6 +8,27 @@ const reactionSchema = new mongoose.Schema({
   users: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
 }, { _id: false });
 
+// La respuesta citada, estilo WhatsApp: este mensaje contesta a otro y muestra un pedacito
+// del original arriba.
+//
+// Es un SNAPSHOT y no solamente un ref, por el mismo motivo que authorName: el poll pinta
+// hasta 100 mensajes cada 4 segundos por cada persona de la sala, y resolver la cita con
+// populate agregaría una query a EL camino más caliente de la app. Acá el texto de la cita
+// ya viene escrito y pintarla no cuesta nada.
+//
+// `borrado` es la contraparte obligatoria de ese snapshot. Sin él, borrar un mensaje
+// ofensivo lo dejaría vivo adentro de la cita de cada respuesta —o sea, la moderación no
+// moderaría nada— porque el texto citado está copiado en OTRO documento. Se marca en el
+// momento del borrado (una operación rara) y no se recalcula en cada poll (la operación cara).
+const replySchema = new mongoose.Schema({
+  to:       { type: mongoose.Schema.Types.ObjectId, ref: 'RoomMessage', required: true },
+  seq:      { type: Number, default: null },   // posición del original: así se lo busca en el DOM
+  autor:    { type: String, default: '' },     // snapshot del nombre, igual que authorName
+  extracto: { type: String, default: '' },     // los primeros 90 caracteres; '' si era un adjunto
+  kind:     { type: String, default: 'text' }, // 'text' | 'image' | 'file'
+  borrado:  { type: Boolean, default: false },
+}, { _id: false });
+
 // Un mensaje dentro de una sesión de sala en vivo.
 const roomMessageSchema = new mongoose.Schema({
   session: { type: mongoose.Schema.Types.ObjectId, ref: 'RoomSession', required: true },
@@ -73,6 +94,14 @@ const roomMessageSchema = new mongoose.Schema({
   // Opcional y sin índice: no se consulta por este campo, se lee junto con el mensaje. Los
   // mensajes anteriores a esta feature lo tienen en null y se pintan como siempre.
   activity: { type: mongoose.Schema.Types.ObjectId, ref: 'Activity', default: null },
+
+  // A qué mensaje contesta este. Ver replySchema arriba. `null` (el default) es "no contesta
+  // a nadie", que es como se leen todos los mensajes anteriores a esta feature.
+  //
+  // Sin índice propio: nunca se consulta POR este campo salvo al borrar un mensaje, y esa
+  // query va acotada por `session` —que sí está indexado— porque una cita solo puede apuntar
+  // a un mensaje de la misma sesión (no se cita la clase del martes en la del jueves).
+  reply: { type: replySchema, default: null },
 
   // Posición dentro de la sesión (1..N). Es el cursor del polling: el cliente manda el
   // último `seq` que tiene y recibe solo lo posterior. Se asigna con un $inc atómico sobre

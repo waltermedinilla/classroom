@@ -1414,6 +1414,40 @@ select, .select-input {
 [data-theme="dark"] .overdue-control-left.open   { color: #86efac; }
 .overdue-control-right { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-secondary); }
 
+/* ─── Actividades: visibilidad para el alumno (programada / oculta) ───
+   Ver specs/visibilidad-actividades.spec.md. Todo esto es SOLO de la vista del docente:
+   al alumno la actividad no visible directamente no le llega del servidor. */
+
+/* Tarjeta atenuada: se distingue de un vistazo lo que el alumno ya tiene de lo que no.
+   Se atenúa el contenido y no la fila entera para que el ojo y el ⋮ sigan legibles —
+   son justamente los controles que el docente necesita para publicarla. */
+.act-no-visible .act-thumb,
+.act-no-visible .act-content { opacity: .55; }
+.act-no-visible .vis-chip    { opacity: 1; }
+
+/* Chip de estado, al lado del título. Ámbar = programada (se abre sola), gris = bajada a mano. */
+.vis-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; border-radius: 4px; padding: 2px 8px; white-space: nowrap; vertical-align: middle; margin-left: 8px; }
+.vis-chip.vis-programada { color: #b45309; background: #fef3c7; }
+.vis-chip.vis-oculta     { color: #4b5563; background: #e5e7eb; }
+[data-theme="dark"] .vis-chip.vis-programada { background: rgba(251,191,36,.15); color: #fbbf24; }
+[data-theme="dark"] .vis-chip.vis-oculta     { background: rgba(255,255,255,.08); color: var(--text-hint); }
+
+/* Columna de acciones de la tarjeta: el ojo y el ⋮ van uno al lado del otro, no apilados
+   con los chips de la columna de estado. */
+.act-actions-col { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.act-eye-btn.is-off { color: #b45309; }
+[data-theme="dark"] .act-eye-btn.is-off { color: #fbbf24; }
+.act-eye-btn:disabled { opacity: .5; cursor: default; }
+
+/* Barra del modal de detalle, con la misma forma que la de entregas tardías. */
+.vis-control-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 10px 14px; border-radius: var(--radius-sm); margin: 12px 0; }
+.vis-control-bar.is-on  { background: var(--bg); border: 1px solid var(--border); }
+.vis-control-bar.is-off { background: #fffbeb; border: 1px solid #fde68a; }
+[data-theme="dark"] .vis-control-bar.is-off { background: rgba(251,191,36,.10); border-color: rgba(251,191,36,.28); }
+.vis-control-left { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.vis-control-bar.is-off .vis-control-left { color: #b45309; }
+[data-theme="dark"] .vis-control-bar.is-off .vis-control-left { color: #fbbf24; }
+
 .deadline-warning { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #fef2f2; border: 1px solid #fecaca; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; color: #b91c1c; margin: 16px 0 0; }
 .deadline-info    { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; color: #166534; margin: 16px 0 0; }
 [data-theme="dark"] .deadline-warning { background: rgba(185,28,28,.12); border-color: rgba(185,28,28,.3); color: #fca5a5; }

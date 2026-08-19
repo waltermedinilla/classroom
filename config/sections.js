@@ -98,6 +98,29 @@ const SECTIONS = [
   { key: 'jefe_dashboard', panel: 'jefatura', label: 'Actividades', icon: 'assignment', path: '/jefatura',          roles: ['jefe', 'directivo', 'admin', 'superadmin'], locked: true },
   { key: 'jefe_teachers',  panel: 'jefatura', label: 'Docentes',    icon: 'badge',      path: '/jefatura/docentes', roles: ['jefe', 'directivo', 'admin', 'superadmin'] },
 
+  // ── Panel Orientación Escolar (base: middleware/soe.js requireSoe) ─────────
+  // ⚠️ ATENCIÓN, ACÁ LA REGLA ES DISTINTA. Que `directivo` y `admin` figuren en `roles` NO
+  // les da acceso: este catálogo solo puede QUITAR (ver el encabezado del archivo), y quien
+  // CONCEDE la entrada al panel es requireSoe leyendo School.soeAccess, que arranca cerrado
+  // para todos menos el propio SOE. Están listados para que /superadmin/roles pueda pintar
+  // la celda, y para que una escuela que les dio acceso pueda además apagarles una solapa.
+  //
+  // Preceptor y docente SÍ figuran en las dos primeras: su techo es 'resumen' (las fortalezas
+  // del alumno y las estrategias acordadas para el aula), y si una escuela se lo habilita
+  // tienen que tener dónde leerlo. En 'Derivaciones' NO están, porque esa pantalla nombra el
+  // destino de cada derivación y 'resumen' está definido como "sabe que hay una en curso, sin
+  // saber a dónde".
+  //
+  // ⚠️ Que estén o no en `roles` NO es lo que cierra esa puerta —sectionGuard es fail-open y
+  // solo deniega lo explícitamente denegado—: la cierra `requireCompleto` en routes/soe.js.
+  // Esta lista decide qué solapa se PINTA; aquella, a qué se puede ENTRAR.
+  //
+  // 'soe_dashboard' va locked por la INVARIANTE del archivo: es el destino del redirect de
+  // "/" para el rol `soe` (server.js).
+  { key: 'soe_dashboard',    panel: 'soe', label: 'Resumen',      icon: 'psychology', path: '/soe',              roles: ['soe', 'directivo', 'admin', 'superadmin', 'preceptor', 'teacher'], locked: true },
+  { key: 'soe_alumnos',      panel: 'soe', label: 'Alumnos',      icon: 'group',      path: '/soe/alumnos',      roles: ['soe', 'directivo', 'admin', 'superadmin', 'preceptor', 'teacher'] },
+  { key: 'soe_derivaciones', panel: 'soe', label: 'Derivaciones', icon: 'share',      path: '/soe/derivaciones', roles: ['soe', 'directivo', 'admin', 'superadmin'] },
+
   // ── General: los accesos del menú lateral (header.ejs) ─────────────────────
   { key: 'app_courses', panel: 'app', label: 'Mis clases',     icon: 'menu_book',       path: '/courses',               roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'student'], locked: true },
   { key: 'app_profile', panel: 'app', label: 'Mi perfil',      icon: 'account_circle',  path: '/courses/profile',       roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'student'] },
@@ -133,6 +156,7 @@ const PANELS = [
   { id: 'directivo',  label: 'Directivo' },
   { id: 'preceptor',  label: 'Preceptoría' },
   { id: 'jefatura',   label: 'Jefatura de Sección' },
+  { id: 'soe',        label: 'Orientación Escolar' },
   { id: 'app',        label: 'General' },
   { id: 'superadmin', label: 'Superadministración' },
 ];

@@ -48,6 +48,14 @@ const activitySchema = new mongoose.Schema({
   dueDate: { type: Date, default: null },
   // Fecha desde la que la actividad es visible para los alumnos; por defecto ahora mismo
   availableFrom: { type: Date, default: Date.now },
+  // Override manual de la visibilidad, el botón de ojo de la tarjeta del docente:
+  //   null (o ausente) → automático: visible cuando availableFrom <= ahora
+  //   true             → visible ya, aunque availableFrom sea futura
+  //   false            → oculta, aunque availableFrom ya haya pasado
+  // Los documentos anteriores a la feature no tienen el campo y se leen como automático,
+  // así que nada de lo ya cargado cambia de comportamiento. La regla que combina este campo
+  // con availableFrom vive en un solo lugar: public/js/visibilidadActividad.js.
+  visibleOverride: { type: Boolean, default: null },
   // Puntaje máximo; null = sin calificación numérica
   points:  { type: Number, default: null, min: 0 },
   // Array de calificaciones; cada alumno tiene como máximo una entrada (upsert en la ruta /grade)

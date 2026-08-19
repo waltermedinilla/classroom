@@ -49,6 +49,17 @@ const roomSessionSchema = new mongoose.Schema({
     // el jueves.
     studentsCanWrite: { type: Boolean, default: true },
     reactionsOn:      { type: Boolean, default: true },
+
+    // false = los alumnos no comparten fotos en esta clase. Interruptor PROPIO y no atado a
+    // `studentsCanWrite`, a pedido del usuario: cuando las fotos se van de tema, la docente
+    // tiene que poder cortarlas sin callar a la clase entera, que es lo único que podía hacer
+    // antes. Al revés sí manda: apagar la palabra apaga también las fotos (ver
+    // puedeCompartirImagen en services/liveRoom.js) — silenciar a alguien lo silencia entero.
+    //
+    // Por sesión, mismo criterio que sus dos hermanos: apagarlas un martes no las apaga el
+    // jueves. Default true: la sesión de una clase que ya estaba abierta cuando esto se
+    // desplegó lee `undefined`, y el default hace que se comporte como el resto.
+    studentsCanShareImages: { type: Boolean, default: true },
   },
 
   // Silenciados SOLO en esta sesión. No vive en User ni en Course a propósito: silenciar a

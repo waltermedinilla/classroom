@@ -342,8 +342,9 @@
     <div class="tab-content hidden" id="envivoTab">
       <%- include('partials/live-room', {
             sala: {
-              estado: 'cerrada', sessionId: null, seq: 0, puedoEscribir: false, mensajes: [],
-              settings: { studentsCanWrite: true, reactionsOn: true },
+              estado: 'cerrada', sessionId: null, seq: 0, puedoEscribir: false,
+              puedoCompartirImagen: false, mensajes: [],
+              settings: { studentsCanWrite: true, reactionsOn: true, studentsCanShareImages: true },
               presencia: { presentes: 0, total: course.students.length, conectados: [], ausentes: [] },
             },
             modo:     'visible',
@@ -411,9 +412,10 @@
         </div>
         <div class="input-group" style="margin-bottom:16px">
           <span class="material-symbols-outlined input-icon">event_available</span>
-          <input type="datetime-local" id="activityAvailableFrom" title="Disponible para alumnos desde (vacío = ahora)">
+          <input type="datetime-local" id="activityAvailableFrom" title="Disponible para alumnos desde (vacío = ahora)"
+                 onchange="avisoProgramada('activityAvailableFrom','activityAvailableHint')">
         </div>
-        <p style="font-size:12px;color:var(--text-hint);margin-bottom:16px;margin-top:-8px;padding-left:4px">
+        <p id="activityAvailableHint" style="font-size:12px;color:var(--text-hint);margin-bottom:16px;margin-top:-8px;padding-left:4px">
           "Disponible desde" controla cuándo los alumnos pueden ver la actividad. Si se deja vacío, se publica inmediatamente.
         </p>
 
@@ -503,8 +505,10 @@
         </div>
         <div class="input-group" style="margin-bottom:16px">
           <span class="material-symbols-outlined input-icon">event_available</span>
-          <input type="datetime-local" id="editAvailableFrom" title="Disponible desde">
+          <input type="datetime-local" id="editAvailableFrom" title="Disponible desde"
+                 onchange="avisoProgramada('editAvailableFrom','editAvailableHint')">
         </div>
+        <p id="editAvailableHint" style="font-size:12px;color:var(--text-hint);margin-bottom:14px;margin-top:-8px;padding-left:4px"></p>
         <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;margin-bottom:14px">
           <input type="checkbox" id="editAllowResubmission">
           Permitir que el alumno edite su entrega después de enviarla
@@ -743,6 +747,9 @@
     window.COURSE_COLOR2 = '<%= (course.header && course.header.color2) ? course.header.color2 : "" %>';
   </script>
   <script src="/js/devoluciones.js"></script>
+  <!-- Regla de visibilidad de actividades (la misma que aplica el servidor). Va ANTES de
+       course.js, que la usa en addActivityTabCard() para el chip y el botón de ojo. -->
+  <script src="/js/visibilidadActividad.js"></script>
   <!-- Diagnóstico de subidas fallidas. Va ANTES de course.js, que lo usa en uploadSubFile(). -->
   <script src="/js/subida-diagnostico.js"></script>
   <script src="/js/course.js"></script>
