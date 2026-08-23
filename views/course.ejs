@@ -423,9 +423,18 @@
         <div class="att-section">
           <div class="att-buttons">
             <label class="btn btn-outline att-btn">
-              <input type="file" id="activityFileInput" accept=".pdf,.doc,.docx,.xls,.xlsx" multiple hidden>
+              <input type="file" id="activityFileInput"
+                     accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif"
+                     multiple hidden>
               <span class="material-symbols-outlined">attach_file</span>
               Subir archivo
+            </label>
+            <!-- Botón propio para la foto: en el celular, `image/*` abre la cámara y la galería
+                 directamente, que es como se sube la foto del pizarrón sin salir de la clase. -->
+            <label class="btn btn-outline att-btn">
+              <input type="file" id="activityImageInput" accept="image/*,.heic,.heif" multiple hidden>
+              <span class="material-symbols-outlined">image</span>
+              Subir imagen
             </label>
             <button type="button" class="btn btn-outline att-btn" onclick="toggleLinkInput()">
               <span class="material-symbols-outlined">link</span>
@@ -752,6 +761,9 @@
   <script src="/js/visibilidadActividad.js"></script>
   <!-- Diagnóstico de subidas fallidas. Va ANTES de course.js, que lo usa en uploadSubFile(). -->
   <script src="/js/subida-diagnostico.js"></script>
+  <!-- Qué adjunto es una imagen (la misma regla que aplica el servidor). Va ANTES de
+       course.js, que la usa para elegir la ruta de subida y para dibujar la miniatura. -->
+  <script src="/js/adjuntosActividad.js"></script>
   <script src="/js/course.js"></script>
   <script src="/js/task-runner.js"></script>
   <% if (course.canManage(user)) { %>

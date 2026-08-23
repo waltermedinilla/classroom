@@ -85,6 +85,24 @@ describe('imageOptimizer', () => {
     assert.strictEqual(r.height, 400, 'el alto debe escalar proporcional (3200x800 → 1600x400)');
   });
 
+  test('el preset adjunto conserva más resolución que el de novedad', async () => {
+    // La imagen que el docente adjunta a una actividad no se MIRA, se LEE: la consigna
+    // escrita en el pizarrón, el ejercicio del libro fotografiado. El alumno le hace zoom en
+    // el celular, y con el techo de novedad (1600) el manuscrito se empasta. Si alguien
+    // "unifica" los dos presets, esto lo frena.
+    const original = await fotoRealista(3000, 2250).jpeg({ quality: 95 }).toBuffer();
+    const r = await optimizar(original, 'adjunto', 'consigna-pizarron.jpg');
+
+    assert.strictEqual(r.ext, '.webp');
+    assert.strictEqual(r.width, 2000, 'debe entrar justo en el ancho máximo del preset');
+    assert.strictEqual(r.height, 1500, 'el alto escala proporcional (3000x2250 → 2000x1500)');
+    assert.ok(r.width > PRESETS.novedad.width, 'tiene que ser MÁS grande que una novedad');
+    // Aun conservando resolución, la foto del celular tiene que dejar de pesar lo que pesaba:
+    // es lo que van a bajar 30 alumnos al abrir la tarea.
+    assert.ok(r.bytes < original.length / 2,
+      `esperaba al menos 50% de ahorro, pasó de ${original.length} a ${r.bytes}`);
+  });
+
   test('no agranda una imagen más chica que el preset', async () => {
     const original = await fotoRealista(100, 100).png().toBuffer();
     const r = await optimizar(original, 'avatar', 'chiquita.png');

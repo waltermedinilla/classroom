@@ -164,7 +164,7 @@ const authLimiter = rateLimit({
 
 // Límite para subida de archivos: definido en middleware/rate-limits.js y aplicado
 // inline en las rutas específicas que hacen upload (activities/create, upload-attachment,
-// upload-submission-file, submit, announcements/create). Antes se aplicaba con
+// upload-image, upload-submission-file, submit, announcements/create). Antes se aplicaba con
 // `app.use('/activities', ...)` y golpeaba todos los GET del router, agotando el cupo
 // con navegación normal y rompiendo "Mis notas", listado de actividades y novedades.
 

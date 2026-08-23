@@ -293,6 +293,8 @@ Variables CSS para colores, sombras, radios. Componentes:
 | `register.js` | Submit register → POST `/register` → redirect |
 | `dashboard.js` | Modales create/join, escape key, click-outside-close |
 | `course.js` | Tabs, formulario anuncio colapsable, post/load announcements |
+| `adjuntosActividad.js` | Regla compartida navegador↔servidor: qué adjunto es una imagen (decide la ruta de subida y la miniatura) y qué URL puede guardarse como adjunto. La `require()` `routes/activities.js` |
+| `visibilidadActividad.js` | Regla única de "¿el alumno ve esta actividad?" (`availableFrom` + el ojo del docente). También la `require()` el servidor |
 
 ---
 
@@ -386,6 +388,73 @@ que deja usuarios de prueba sin borrar). Espaciar las corridas o limpiar a mano.
 ---
 
 ## Historial de Cambios (Changelog)
+
+### 2026-08-19 — El docente adjunta imágenes a la actividad
+
+Pedido del usuario: *"en la creación de una actividad, el docente debe poder subir y compartir
+archivos de imágenes"*. Hasta ahora los adjuntos del docente eran solo `.pdf .doc .docx .xls
+.xlsx`: la foto del pizarrón, el mapa o la consigna escaneada —lo que más rápido se genera en
+el aula— había que subirla a Drive y pegar el enlace.
+
+Era la única pata que faltaba, y por eso llamaba la atención: el **visor ya sabía mostrar
+imágenes** a pantalla completa, el **alumno ya podía entregar** en jpg/png/gif, y la **docente
+ya compartía fotos en la sala en vivo**. Lo único que no existía era el camino de entrada.
+
+**Qué se agregó**: los dos formularios de creación aceptan `.jpg .jpeg .png .webp .gif .heic
+.heif` —los mismos que el resto de la plataforma, HEIC incluido porque es lo que sale del
+iPhone— con un botón propio **"Subir imagen"** que en el celular abre la cámara y la galería
+directas. El alumno la ve como un adjunto **con miniatura**, y al tocarla se abre a pantalla
+completa en el visor de siempre. Spec: `specs/actividad-imagenes.spec.md`.
+
+**Ruta nueva y no una extensión más en la lista**, que era lo obvio y estaba mal: la imagen no
+se guarda como llega. `POST /activities/upload-image` la recibe **en memoria** y la recomprime
+a WebP con un preset propio antes de tocar el disco, igual que avatares, portadas, novedades y
+la sala. Una foto de celular de 4 MB termina en unos cientos de KB, que es lo que van a bajar
+30 alumnos al abrir la tarea. La respuesta es **idéntica** a la de `/upload-attachment`, así
+que el formulario mete las dos en el mismo `uploadedFiles` sin recordar de dónde vino cada una.
+
+**El preset `adjunto` es el único que se va por arriba de 1600** (2000 px, calidad 82). Acá la
+imagen no se mira, se **lee**: la consigna escrita a mano, el ejercicio del libro, el mapa con
+referencias chicas. El alumno le hace zoom en el celular, y con el techo de una novedad el
+manuscrito se empasta justo cuando lo necesita legible. Hay un test que lo sostiene, para que
+"unificar los presets" no lo deshaga sin querer.
+
+**Dos cosas que estaban mal y salieron en el camino** (las dos con test):
+
+- **El permiso se chequeaba después de multer.** Alguien ajeno a la materia alcanzaba a
+  escribir 50 MB en su disco y recién después leía el 403 — la ruta los borraba a mano con un
+  `unlink` que ahora sobra. El guard `exigirGestorDelCurso` corre **antes** de recibir el
+  cuerpo. Es la regla que ya había dejado escrita la sala en vivo.
+- **`uploadedFiles` se guardaba a ojos cerrados.** Es un JSON que arma el navegador: lo que
+  llegaba era lo que quisiera mandar quien llamara la ruta, no lo que se había subido. Se podía
+  dejar como "archivo" de la tarea cualquier URL —incluida una `javascript:`— y quien la abría
+  era el alumno; y un `..` en el medio hacía que borrar la actividad hiciera `unlink` fuera de
+  la carpeta de adjuntos. Ahora cada URL pasa por `esUrlDeAdjunto()` y la creación se corta
+  entera si alguna no cuelga de `/archivos/`.
+
+**De regalo, un contraste**: el chip *"2 archivos"* del muro fijaba `background:#f0f4f8` con
+`color: var(--text-secondary)` — en modo oscuro quedaba gris claro sobre gris claro, ~1,9:1. El
+color era exactamente `var(--bg)`, así que el arreglo no cambia un solo píxel en modo claro. Es
+otra vez la regla de la sala: si el texto viene de una variable, el fondo también.
+
+**Sin cambios en la base**: la imagen es un `attachment` más (`type: 'file'`), se distingue por
+la extensión del nombre. Nada que migrar en producción y las actividades viejas quedan igual.
+
+**Tests**: 12 unitarios nuevos (`tests/unit/adjuntosActividad.test.js`) sobre las reglas
+compartidas navegador↔servidor —incluido uno que compara la lista de extensiones del navegador
+contra la que autoriza el servidor y falla si alguien toca una sola—, 1 de imágenes para el
+preset nuevo, y un spec de smoke que sube la foto, la adjunta, la ve el alumno, la rechaza para
+el alumno que intenta subirla, rebota el PNG falso y el `.txt`, y comprueba que borrar la
+actividad se lleva el archivo del disco.
+
+Suites completas: **474 unitarios · 18 de imágenes · 349 smoke · matriz de roles sin hallazgos**.
+La guarda de `uploadedFiles` se verificó **desactivándola**: sin ella el smoke recibe 201 y la
+URL externa queda guardada como adjunto de la actividad, que era exactamente el agujero.
+
+Un detalle del spec de smoke que vale para el próximo: la primera versión subía un PNG de 1×1 y
+fallaba pidiendo un `.webp`. **Estaba bien que fallara**: con una imagen diminuta el optimizador
+conserva el original a propósito (el WebP pesaría más), así que el test medía la rama equivocada.
+Se cambió por una foto de 2400×1800 generada con `fotoDePrueba()`.
 
 ### 2026-08-19 — La sala en vivo: fotos del alumno, responder citando, y el chat que no se leía en oscuro
 

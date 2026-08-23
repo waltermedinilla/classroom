@@ -38,6 +38,13 @@ const {
   proximoOverride,
   estadoVisibilidad,
 } = require('../public/js/visibilidadActividad');
+// Regla compartida con el navegador sobre los adjuntos: qué es una imagen y qué URL puede
+// guardarse como adjunto. Ver public/js/adjuntosActividad.js y specs/actividad-imagenes.spec.md.
+const { esUrlDeAdjunto } = require('../public/js/adjuntosActividad');
+// Pipeline de imágenes (memoria → sharp → WebP → disco), el mismo de avatares, portadas,
+// novedades y la sala en vivo.
+const { subirImagen, guardarImagenOptimizada, ImagenInvalidaError } = require('../middleware/image-upload');
+const { EXT_IMAGENES } = require('../config/imagePresets');
 
 // Adjuntos del docente: dentro de /public (acceso estático directo)
 // Estructura: public/archivos/{schoolId}/actividades/{courseId}/{filename}
@@ -121,6 +128,28 @@ const subirAdjuntosDeActividad = conErroresDeSubida(
   upload.array('files', 10),
   { maxMb: ADJUNTO_MAX_MB },
 );
+
+// Resuelve el curso de `?courseId=` y corta si quien sube no puede administrarlo.
+//
+// Va ANTES de multer, no adentro del handler, y ahí está toda la gracia: multer recibe el
+// cuerpo ENTERO antes de que el handler llegue a correr. Con el chequeo tardío, alguien
+// ajeno a la materia alcanzaba a escribir 50 MB en su disco y recién después leía el 403
+// (la ruta los borraba a mano con un unlink que ahora sobra). Es la misma regla que dejó
+// escrita la sala en vivo con `exigirPermisoDeImagen`.
+async function exigirGestorDelCurso(req, res, next) {
+  try {
+    const course = await Course.findById(req.query.courseId);
+    if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
+    if (!course.canManage(res.locals.user)) {
+      return res.status(403).json({ error: 'Sin acceso al curso' });
+    }
+    req.cursoDestino = course;
+    next();
+  } catch {
+    // Un courseId con forma inválida es lo mismo que un curso que no existe: 404, no 500.
+    res.status(404).json({ error: 'Curso no encontrado' });
+  }
+}
 
 const SUBMISSION_MAX_SIZE = 20 * 1024 * 1024; // 20 MB por archivo
 
@@ -347,10 +376,22 @@ router.post('/create', requireAuth, uploadLimiter, subirAdjuntosDeActividad, asy
     const schoolId    = res.locals.user.school?.toString() || 'general';
     const attachments = [];
 
-    // Archivos pre-subidos vía /upload-attachment (URL ya guardada en disco)
+    // Archivos pre-subidos vía /upload-attachment o /upload-image (URL ya guardada en disco).
+    //
+    // `uploadedFiles` es un JSON que arma el navegador: lo que llega acá es lo que quiera
+    // mandar quien llame a la ruta, NO lo que efectivamente se subió. Por eso cada URL pasa
+    // por esUrlDeAdjunto(): antes se guardaba como "archivo" de la actividad cualquier cosa
+    // —incluida una `javascript:`— y quien terminaba abriéndola era el alumno.
+    //
+    // Se corta la creación entera en vez de saltear la entrada mala: un cliente legítimo no
+    // puede llegar a esto, y perder el adjunto en silencio sería peor que no crear la tarea.
     if (req.body.uploadedFiles) {
-      JSON.parse(req.body.uploadedFiles).forEach(f => {
-        if (f.url) attachments.push({ type: 'file', name: f.name, url: f.url, mime: f.mime || '' });
+      const previos = JSON.parse(req.body.uploadedFiles);
+      if (previos.some(f => !esUrlDeAdjunto(f?.url))) {
+        return res.status(400).json({ error: 'Uno de los archivos adjuntos no es válido' });
+      }
+      previos.forEach(f => {
+        attachments.push({ type: 'file', name: f.name || 'archivo', url: f.url, mime: f.mime || '' });
       });
     }
 
@@ -442,7 +483,10 @@ const uploadSingle = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
       const schoolId = req.res?.locals?.user?.school?.toString() || 'general';
-      const courseId = req.query.courseId || 'general';
+      // El id CANÓNICO del curso que resolvió exigirGestorDelCurso, no el string crudo de la
+      // query: Mongoose acepta el hex en mayúsculas y lo normaliza, así que un cliente que
+      // mande "ABC…" escribiría en una carpeta y recibiría la URL de otra.
+      const courseId = req.cursoDestino?._id?.toString() || req.query.courseId || 'general';
       const dir = path.join(ARCHIVOS_BASE, schoolId, 'actividades', courseId);
       fs.mkdirSync(dir, { recursive: true });
       cb(null, dir);
@@ -459,7 +503,7 @@ const uploadSingle = multer({
 // Pre-sube un adjunto antes de crear la actividad; courseId viene en la query string.
 // Body multipart: { file }
 // Retorna: { url, name, mime }
-router.post('/upload-attachment', requireAuth, uploadLimiter, (req, res, next) => {
+router.post('/upload-attachment', requireAuth, uploadLimiter, exigirGestorDelCurso, (req, res, next) => {
   // Intercepta errores de multer para devolver JSON en español en lugar del mensaje en inglés
   uploadSingle.single('file')(req, res, (err) => {
     if (err) {
@@ -473,17 +517,8 @@ router.post('/upload-attachment', requireAuth, uploadLimiter, (req, res, next) =
 }, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Tipo de archivo no permitido (PDF, Word, Excel)' });
-    const courseId = req.query.courseId;
-    const course = await Course.findById(courseId);
-    if (!course) {
-      fs.unlinkSync(req.file.path);
-      return res.status(404).json({ error: 'Curso no encontrado' });
-    }
-    if (!course.canManage(res.locals.user)) {
-      fs.unlinkSync(req.file.path);
-      return res.status(403).json({ error: 'Sin acceso al curso' });
-    }
     const schoolId = res.locals.user.school?.toString() || 'general';
+    const courseId = req.cursoDestino._id.toString();
     const url = `/archivos/${schoolId}/actividades/${courseId}/${req.file.filename}`;
     res.json({ url, name: fixFilenameEncoding(req.file.originalname), mime: req.file.mimetype });
   } catch (err) {
@@ -492,6 +527,57 @@ router.post('/upload-attachment', requireAuth, uploadLimiter, (req, res, next) =
     res.status(500).json({ error: err.message || 'Error al subir el archivo' });
   }
 });
+
+// POST /activities/upload-image?courseId=...
+// Pre-sube una IMAGEN del docente: la foto del pizarrón, la consigna escaneada, el mapa.
+// Body multipart: { file }
+// Retorna: { url, name, mime } — la MISMA forma que /upload-attachment, para que el formulario
+// meta las dos en el mismo `uploadedFiles` sin tener que recordar de dónde vino cada una.
+//
+// Ruta aparte y no una extensión más en EXT_ALLOWED porque el camino del archivo es otro: la
+// imagen no se guarda como llega, se recomprime a WebP con el preset 'adjunto' antes de tocar
+// el disco (multer en memoria). Una foto de celular de 4 MB termina en unos cientos de KB, que
+// es lo que van a bajar 30 alumnos.
+router.post('/upload-image', requireAuth, uploadLimiter, exigirGestorDelCurso,
+  subirImagen('file'), async (req, res) => {
+    try {
+      // Sin req.file hay dos causas y el docente tiene que poder distinguirlas: el fileFilter
+      // rechazó la extensión (el caso real es el .heic del iPhone, que acá SÍ entra), o no se
+      // adjuntó nada. Mismo criterio que la sala en vivo.
+      if (!req.file) {
+        return res.status(400).json({
+          error: `Esa imagen no se puede subir. Aceptamos: ${EXT_IMAGENES.join(', ')}`,
+        });
+      }
+
+      const schoolId = res.locals.user.school?.toString() || 'general';
+      const courseId = req.cursoDestino._id.toString();
+      const guardada = await guardarImagenOptimizada(req.file, {
+        preset: 'adjunto',
+        dir:    path.join(ARCHIVOS_BASE, schoolId, 'actividades', courseId),
+      });
+
+      // El nombre VISIBLE lleva la extensión que quedó EN DISCO, no la que eligió el docente:
+      // si sube "pizarron.jpg" y se guarda como WebP, mostrar ".jpg" haría que el archivo
+      // descargado no coincida con su propio nombre. Misma regla que la sala.
+      const original = fixFilenameEncoding(req.file.originalname);
+      const extFinal = path.extname(guardada.filename).toLowerCase();
+      const base     = path.basename(original, path.extname(original));
+
+      res.json({
+        url:  `/archivos/${schoolId}/actividades/${courseId}/${guardada.filename}`,
+        name: `${base}${extFinal}`.slice(0, 120),
+        mime: extFinal === '.webp' ? 'image/webp' : (req.file.mimetype || ''),
+      });
+    } catch (err) {
+      // ImagenInvalidaError = el archivo que mandaron no es una imagen de verdad (sharp no la
+      // pudo decodificar). Es culpa del archivo, no nuestra: 400 con el mensaje que ya explica
+      // qué pasó, no un 500 en el error.log.
+      if (err instanceof ImagenInvalidaError) return res.status(400).json({ error: err.message });
+      logDeRuta(err, res);
+      res.status(500).json({ error: 'Error al subir la imagen' });
+    }
+  });
 
 // GET /activities/my-pending
 // Página del alumno: listado de todas sus actividades pendientes en todos sus cursos

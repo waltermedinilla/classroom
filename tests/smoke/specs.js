@@ -4027,6 +4027,124 @@ const specs = [
         form: fd3, expectStatus: 400, timeoutMs: 30000,
       });
       assert(/PDF/i.test(malo.json?.error || ''), `debería decir qué formatos acepta; dijo ${JSON.stringify(malo.json)}`);
+
+      // El 403 del ajeno tiene que llegar ANTES de que el archivo se escriba: el chequeo de
+      // permiso pasó a ser un middleware previo a multer (exigirGestorDelCurso). Con un
+      // courseId que no existe la ruta corta igual, sin llegar a tocar el disco.
+      const fd4 = new FormData();
+      fd4.append('file', new Blob([pdf], { type: 'application/pdf' }), 'inexistente.pdf');
+      await client.post('scopedTeacher', '/activities/upload-attachment?courseId=000000000000000000000000', {
+        form: fd4, expectStatus: 404, timeoutMs: 30000,
+      });
+    },
+  },
+  {
+    id: 'actividad-adjunto-imagen',
+    title: 'La docente adjunta una foto a la actividad, se guarda en WebP y el alumno la ve',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // El pedido del 2026-08-19: "en la creación de una actividad, el docente debe poder
+      // subir y compartir archivos de imágenes". Antes rebotaba por extensión — la foto del
+      // pizarrón había que subirla a Drive y pegar el enlace.
+      assert(state.courseId, 'falta el curso de prueba');
+
+      // Una foto GRANDE de verdad, como la que sale de un celular. No sirve un PNG de 1×1:
+      // el optimizador conserva el original cuando el WebP pesaría más (que es lo correcto
+      // para un ícono diminuto), así que con la imagen chica este spec estaría midiendo la
+      // rama equivocada y pasaría sin probar nada de lo que dice probar.
+      const foto = await fotoDePrueba(2400, 1800);
+      const formCon = (buf, nombre, tipo) => {
+        const fd = new FormData();
+        fd.append('file', new Blob([buf], { type: tipo }), nombre);
+        return fd;
+      };
+      const rutaImagen = `/activities/upload-image?courseId=${state.courseId}`;
+
+      // ── La docente la pre-sube ────────────────────────────────────────────
+      const sub = await client.post('scopedTeacher', rutaImagen, {
+        form: formCon(foto, 'pizarrón clase 1.jpg', 'image/jpeg'),
+        expectStatus: 200, timeoutMs: 30000,
+      });
+      assert(/^\/archivos\/.+\.webp$/.test(sub.json?.url || ''),
+        `debería guardarse recomprimida a WebP; devolvió ${JSON.stringify(sub.json)}`);
+      // El nombre visible lleva la extensión que quedó EN DISCO: mostrar ".jpg" haría que el
+      // archivo descargado no coincida con su propio nombre.
+      assert(sub.json.name === 'pizarrón clase 1.webp',
+        `el nombre debería conservar el original con la extensión final; es "${sub.json.name}"`);
+      assert(sub.json.mime === 'image/webp', `el mime debería ser image/webp; es "${sub.json.mime}"`);
+
+      // El archivo está y se sirve: es lo que va a pedir el <img> de la miniatura. Y pesa una
+      // fracción del original — es lo que van a bajar 30 alumnos al abrir la tarea.
+      const enDisco = await client.get('scopedTeacher', sub.json.url, { expectStatus: 200 });
+      assert((enDisco.byteLength || 0) > 0, 'la imagen servida no puede venir vacía');
+      assert(enDisco.byteLength < foto.length / 2,
+        `la guardada debería pesar bastante menos que el original (${foto.length} B); pesa ${enDisco.byteLength} B`);
+
+      // ── Y la usa al crear la actividad ────────────────────────────────────
+      const creada = await client.post('scopedTeacher', '/activities/create', {
+        body: {
+          courseId: state.courseId,
+          title:    `Actividad con foto ${RUN_ID}`,
+          type:     'tarea',
+          uploadedFiles: JSON.stringify([{ url: sub.json.url, name: sub.json.name, mime: sub.json.mime }]),
+        },
+        expectStatus: 201,
+      });
+      const actId   = creada.json.activity._id;
+      const adjunto = (creada.json.activity.attachments || [])[0];
+      assert(adjunto && adjunto.url === sub.json.url,
+        `la actividad debería quedar con la imagen adjunta; quedó ${JSON.stringify(creada.json.activity.attachments)}`);
+      assert(adjunto.type === 'file', `el adjunto debería ser de tipo file; es "${adjunto.type}"`);
+
+      // Una URL que NO salió de nuestras rutas de subida no se guarda como adjunto: el campo
+      // `uploadedFiles` lo arma el navegador, y lo que se guarde ahí lo termina abriendo el
+      // alumno. Se corta la creación entera, no se saltea la entrada en silencio.
+      const colada = await client.post('scopedTeacher', '/activities/create', {
+        body: {
+          courseId: state.courseId,
+          title:    `Actividad con URL colada ${RUN_ID}`,
+          uploadedFiles: JSON.stringify([{ url: 'https://ejemplo.invalido/pixel.png', name: 'pixel.png' }]),
+        },
+        expectStatus: 400,
+      });
+      assert(/adjunt/i.test(colada.json?.error || ''),
+        `debería explicar que el adjunto no es válido; dijo ${JSON.stringify(colada.json)}`);
+
+      // ── El alumno la ve ───────────────────────────────────────────────────
+      // Relogin por el mismo motivo que en upload-attachment-sube-y-respeta-permisos: el spec
+      // de invalidación de cache le deja el jar vacío, y un 302 al login haría pasar los dos
+      // chequeos de abajo por la razón equivocada.
+      await client.post('scopedStudent', '/login', {
+        body: { email: state.scopedStudentEmail, password: 'SmokeTest1234' }, expectStatus: 200,
+      });
+      const delAlumno = await client.get('scopedStudent', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      const vista = delAlumno.json.activities.find(a => a._id === actId);
+      assert(vista && (vista.attachments || []).some(a => a.url === sub.json.url),
+        'el alumno debería ver la imagen entre los adjuntos de la actividad');
+
+      // Pero no puede subir una: la ruta pide poder administrar el curso, no matrícula.
+      await client.post('scopedStudent', rutaImagen, {
+        form: formCon(foto, 'colada.jpg', 'image/jpeg'), expectStatus: 403, timeoutMs: 30000,
+      });
+
+      // ── Lo que no es una imagen no entra ──────────────────────────────────
+      // Extensión permitida pero contenido que no es una imagen: lo caza sharp al decodificar,
+      // y tiene que ser un 400 explicando el problema, no un 500 en el error.log.
+      await client.post('scopedTeacher', rutaImagen, {
+        form: formCon(Buffer.from('esto no es una imagen'), 'trucha.png', 'image/png'),
+        expectStatus: 400, timeoutMs: 30000,
+      });
+      // Extensión fuera de la lista: se corta antes, por el fileFilter.
+      const texto = await client.post('scopedTeacher', rutaImagen, {
+        form: formCon(Buffer.from('hola'), 'notas.txt', 'text/plain'),
+        expectStatus: 400, timeoutMs: 30000,
+      });
+      assert(/jpg|png/i.test(texto.json?.error || ''),
+        `debería decir qué formatos acepta; dijo ${JSON.stringify(texto.json)}`);
+
+      // ── Borrar la actividad se lleva la imagen del disco ──────────────────
+      await client.delete('scopedTeacher', `/activities/${actId}`, { expectStatus: 200 });
+      await client.get('scopedTeacher', sub.json.url, { expectStatus: 404 });
     },
   },
   // ── Subidas: un error del usuario no es un error del servidor ─────────────

@@ -64,6 +64,24 @@ const PRESETS = {
     quality: 76,
     label:   'imagen de la sala',
   },
+
+  // Imagen que el docente adjunta a una actividad (models/Activity.js, attachments[]).
+  //
+  // Es el único preset que se va por arriba de 1600, y el motivo es que acá la imagen no se
+  // MIRA, se LEE: la foto de la consigna escrita en el pizarrón, el ejercicio del libro
+  // fotografiado, el mapa con referencias chicas. El alumno le va a hacer zoom en el celular,
+  // y con 1600 el texto manuscrito se empasta justo cuando lo necesita legible.
+  //
+  // Calidad 82 por lo mismo: dos puntos por encima de novedad. Los artefactos del WebP se
+  // notan en los bordes de alto contraste —que es exactamente lo que es una letra— mucho
+  // antes que en una foto. Aún así una foto de celular de 4 MB termina en unos cientos de KB.
+  adjunto: {
+    width:   2000,
+    height:  2000,
+    fit:     'inside',
+    quality: 82,
+    label:   'imagen adjunta',
+  },
 };
 
 // Extensiones que aceptamos como entrada. La validación REAL de que el archivo es una

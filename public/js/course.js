@@ -35,7 +35,9 @@ function escAtt(s) { return String(s || '').replace(/&/g,'&amp;').replace(/"/g,'
 
 function _isPdf(name)    { return /\.pdf$/i.test(name || ''); }
 function _isOffice(name) { return /\.(doc|docx|xls|xlsx)$/i.test(name || ''); }
-function _isImage(name)  { return /\.(jpe?g|png|gif|webp)$/i.test(name || ''); }
+// Delega en la regla compartida (public/js/adjuntosActividad.js) para que el visor a pantalla
+// completa y la miniatura de la lista no puedan opinar distinto sobre el mismo archivo.
+function _isImage(name)  { return Adjuntos.esImagen(name); }
 function _isYoutube(url) { return /youtu\.?be/.test(url || ''); }
 function _ytId(url) {
   const m = (url || '').match(/(?:v=|youtu\.be\/|\/embed\/)([A-Za-z0-9_-]{11})/);
@@ -85,12 +87,19 @@ function buildAttachmentListHTML(attachments) {
       const { ext, color } = extColor(a.name);
       // PDF y Office → ícono de vista previa
       const actionIcon = 'visibility';
+      // La imagen muestra la imagen: un cuadradito gris que dice "WEBP" no le dice nada a
+      // nadie, y la miniatura es lo que permite reconocer de un vistazo cuál de las tres
+      // fotos del pizarrón es la que hace falta. `loading="lazy"` porque una actividad puede
+      // traer varias y no todas se ven al abrir.
+      const icono = Adjuntos.esImagen(a.name)
+        ? `<div class="att-item-icon att-item-thumb"><img src="${escAtt(a.url)}" alt="" loading="lazy"></div>`
+        : `<div class="att-item-icon" style="background:${color}">${ext}</div>`;
       return `<div class="att-item" style="cursor:pointer"
         data-att-type="file" data-att-name="${escAtt(a.name)}"
         data-att-url="${escAtt(a.url)}" data-att-mime="${a.mime||''}"
         onclick="handleAttachmentClick(this)" role="button" tabindex="0">
-        <div class="att-item-icon" style="background:${color}">${ext}</div>
-        <span class="att-item-name">${a.name}</span>
+        ${icono}
+        <span class="att-item-name">${Adjuntos.escaparTexto(a.name)}</span>
         <span class="material-symbols-outlined att-item-open">${actionIcon}</span>
       </div>`;
     }
@@ -108,7 +117,7 @@ function buildAttachmentListHTML(attachments) {
         <img src="https://www.google.com/s2/favicons?domain=${domain}&sz=32" width="20" height="20"
           style="border-radius:3px" onerror="this.outerHTML='<span class=\\'material-symbols-outlined\\' style=\\'font-size:20px;color:var(--primary)\\'>language</span>'">
       </div>
-      <span class="att-item-name">${a.name || domain}</span>
+      <span class="att-item-name">${Adjuntos.escaparTexto(a.name || domain)}</span>
       <span class="material-symbols-outlined att-item-open">${linkIcon}</span>
     </div>`;
   }).join('');
@@ -262,13 +271,18 @@ function closeAttPreview() {
   document.body.style.overflow = '';
 }
 
-// Chip de resumen de adjuntos ("2 archivos · 1 vínculo") para mostrar en tarjetas del stream
+// Chip de resumen de adjuntos ("2 archivos · 1 imagen · 1 vínculo") para las tarjetas del stream
 function attachmentCountChip(attachments) {
   if (!attachments || attachments.length === 0) return '';
-  const files = attachments.filter(a => a.type === 'file').length;
+  // La imagen se cuenta aparte: "1 archivo" no le anticipa al alumno que lo que hay adentro
+  // es la foto de la consigna, que es justo el dato que hace que la abra.
+  const archivos = attachments.filter(a => a.type === 'file');
+  const imgs  = archivos.filter(a => Adjuntos.esImagen(a.name)).length;
+  const files = archivos.length - imgs;
   const links = attachments.filter(a => a.type === 'link').length;
   const parts = [];
   if (files) parts.push(`${files} archivo${files > 1 ? 's' : ''}`);
+  if (imgs)  parts.push(`${imgs} ${imgs > 1 ? 'imágenes' : 'imagen'}`);
   if (links) parts.push(`${links} vínculo${links > 1 ? 's' : ''}`);
   return `<span class="att-count-chip"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-3px">attach_file</span> ${parts.join(' · ')}</span>`;
 }
@@ -679,12 +693,165 @@ async function postAnnouncement() {
 let activityFiles = []; // Archivos locales seleccionados (File objects, aún no subidos)
 let activityLinks = []; // Links agregados manualmente [{ name, url }]
 
-// Agrega archivos al array local cuando el usuario los selecciona
-document.getElementById('activityFileInput')?.addEventListener('change', function () {
-  Array.from(this.files).forEach(f => activityFiles.push(f));
-  this.value = ''; // Resetea el input para permitir seleccionar el mismo archivo de nuevo
-  renderAttachmentPreviews();
+// Imágenes: NO viajan con el create como los demás archivos, se pre-suben apenas se eligen.
+//
+// El motivo es que la imagen no se guarda como llega: el servidor la recomprime a WebP
+// (POST /activities/upload-image), y eso necesita su propia ruta. La contrapartida es que
+// acá hay que llevar el estado de una subida en curso, que para PDF/Word/Excel no existía.
+//
+// Forma de cada entrada: { uid, estado: 'subiendo' | 'listo', nombre, pct, url, mime }.
+// Las 'listo' son exactamente lo que espera `uploadedFiles` en POST /activities/create.
+let activityImages = [];
+// Tope de entrada de la imagen: el servidor la recibe en memoria para recomprimirla
+// (MAX_INPUT_BYTES en config/imagePresets.js). Entra cualquier foto de celular.
+const ACT_IMG_MAX_SIZE = 20 * 1024 * 1024;
+
+// Agrega archivos al array local cuando el usuario los selecciona.
+// Los dos inputs —"Subir archivo" y "Subir imagen"— caen acá: lo que decide por dónde va
+// cada uno es la extensión, no el botón que se apretó.
+['activityFileInput', 'activityImageInput'].forEach(id => {
+  document.getElementById(id)?.addEventListener('change', function () {
+    Array.from(this.files).forEach(f => {
+      if (Adjuntos.esImagen(f.name)) subirImagenAdjunta(f);
+      else activityFiles.push(f);
+    });
+    this.value = ''; // Resetea el input para permitir seleccionar el mismo archivo de nuevo
+    renderAttachmentPreviews();
+  });
 });
+
+// Deshabilita "Crear actividad" mientras haya una imagen subiendo. Sin esto se puede crear
+// la actividad sin la foto que se está subiendo, y el docente no se entera: la imagen queda
+// huérfana en el disco y la tarea sale sin adjunto.
+function syncActivitySubmitBtn() {
+  const btn = document.getElementById('activitySubmitBtn');
+  if (!btn) return;
+  const subiendo = activityImages.filter(i => i.estado === 'subiendo').length;
+  btn.disabled = subiendo > 0;
+  btn.innerHTML = subiendo > 0
+    ? `<span class="material-symbols-outlined">hourglass_top</span> Subiendo ${subiendo === 1 ? 'imagen' : subiendo + ' imágenes'}...`
+    : '<span class="material-symbols-outlined">check</span> Crear actividad';
+}
+
+// Sube una imagen a /activities/upload-image y la deja lista para el create.
+//
+// Es la misma coreografía que uploadSubFile() (barra de progreso, código de diagnóstico,
+// reintentos con espera): la red del aula es la misma para la docente que para el alumno.
+function subirImagenAdjunta(file) {
+  if (file.size > ACT_IMG_MAX_SIZE) {
+    const mb = (file.size / 1024 / 1024).toFixed(1);
+    showUploadErrModal('Imagen demasiado grande',
+      `"${file.name}" pesa ${mb} MB. El máximo permitido es ${ACT_IMG_MAX_SIZE / 1024 / 1024} MB.`);
+    return;
+  }
+
+  const uid     = Date.now() + '-' + Math.random().toString(36).slice(2);
+  const entrada = { uid, estado: 'subiendo', nombre: file.name, pct: 0, url: '', mime: '' };
+  activityImages.push(entrada);
+  renderAttachmentPreviews();
+
+  const ruta = '/activities/upload-image?courseId=' + encodeURIComponent(window.COURSE_ID);
+  // Lo que aporta el seguimiento es cuántos bytes llegó a empujar el navegador: es lo que
+  // distingue "se cortó en camino" (nada de eso deja rastro en el log del servidor) de
+  // "subió entera y el servidor la rechazó". Ver public/js/subida-diagnostico.js.
+  const seg  = SubidaDiag.seguir(ruta, file);
+
+  // La tarjeta se vuelve a dibujar entera cada vez que cambia algo del grid (se agrega un
+  // link, se quita un archivo), así que el progreso se guarda en la entrada y además se
+  // pinta directo sobre el nodo: si el repintado pasa en el medio, la barra no vuelve a cero.
+  const enPantalla = () => document.getElementById('aimg-' + uid);
+  const estado     = (t) => {
+    const c = enPantalla();
+    if (c) c.querySelector('.att-upload-status').textContent = t;
+  };
+  const sigueViva  = () => activityImages.includes(entrada);
+  const quitar     = () => {
+    const i = activityImages.indexOf(entrada);
+    if (i !== -1) activityImages.splice(i, 1);
+    renderAttachmentPreviews();
+  };
+
+  function enviarIntento() {
+    // Si la quitaron (o se cerró el modal) se abandona sin tocar nada más.
+    if (!sigueViva()) return;
+
+    SubidaDiag.nuevoIntento(seg);
+
+    const fd = new FormData();
+    fd.append('file', file);
+
+    const xhr = new XMLHttpRequest();
+
+    xhr.upload.onprogress = (e) => {
+      SubidaDiag.progreso(seg, e);
+      if (!e.lengthComputable || !sigueViva()) return;
+      entrada.pct = Math.round((e.loaded / e.total) * 100);
+      const c = enPantalla();
+      if (!c) return;
+      c.querySelector('.att-upload-bar').style.width = entrada.pct + '%';
+      c.querySelector('.att-upload-status').textContent = entrada.pct < 100 ? entrada.pct + '%' : 'Procesando...';
+    };
+
+    xhr.onload = () => {
+      if (!sigueViva()) return;
+
+      let data = null;
+      try { data = JSON.parse(xhr.responseText); } catch {}
+
+      if ((xhr.status === 200 || xhr.status === 201) && data?.url) {
+        entrada.estado = 'listo';
+        entrada.url    = data.url;
+        // El nombre que devuelve el servidor ya no es "pizarron.jpg" sino "pizarron.webp":
+        // es el archivo que existe de verdad, y es el que va a descargar el alumno.
+        entrada.nombre = data.name || file.name;
+        entrada.mime   = data.mime || '';
+        renderAttachmentPreviews();
+        return;
+      }
+      fracaso(xhr, 'http');
+    };
+
+    xhr.onerror   = () => fracaso(null, 'red');
+    xhr.ontimeout = () => fracaso(null, 'timeout');
+
+    xhr.open('POST', ruta);
+    xhr.setRequestHeader('Accept', 'application/json');
+    xhr.send(fd);
+  }
+
+  // Los tres modos de falla convergen acá: un solo código SUB-XXXXXX, un solo cartel.
+  function fracaso(xhr, motivo) {
+    const cuerpo = xhr ? (xhr.responseText || '') : '';
+    const espera = (sigueViva() && SubidaDiag.reintentable({
+      motivo, status: xhr ? xhr.status : 0, cuerpo,
+    })) ? SubidaDiag.esperaDe(seg.intentos) : null;
+
+    if (espera !== null) {
+      // La barra vuelve a cero: dejarla donde murió el intento sería hacerla mentir.
+      entrada.pct = 0;
+      const c = enPantalla();
+      if (c) c.querySelector('.att-upload-bar').style.width = '0%';
+      SubidaDiag.esperar(espera,
+        (s) => estado('Reintento en ' + s + ' s'),
+        () => { estado('Reintentando ' + (seg.intentos + 1) + ' de 4'); enviarIntento(); });
+      return;
+    }
+
+    quitar();
+    showUploadErrModal('No se pudo subir la imagen',
+      SubidaDiag.mensaje(SubidaDiag.fallar(seg, xhr, motivo)));
+  }
+
+  enviarIntento();
+}
+
+// Quita una imagen ya subida (o en curso) del modal. El archivo ya subido queda en el disco
+// hasta que pase cleanup-files.js, igual que en el creador de pantalla completa.
+function removeActivityImage(uid) {
+  const i = activityImages.findIndex(x => x.uid === uid);
+  if (i !== -1) activityImages.splice(i, 1);
+  renderAttachmentPreviews();
+}
 
 // Muestra u oculta el campo para agregar un link manualmente
 function toggleLinkInput() {
@@ -723,6 +890,33 @@ function renderAttachmentPreviews() {
   const grid = document.getElementById('attachmentPreviews');
   grid.innerHTML = '';
 
+  // Las imágenes van primero: son las únicas que ya están subidas de verdad, y la miniatura
+  // es lo que le confirma al docente que la foto salió bien antes de crear la actividad.
+  activityImages.forEach(img => {
+    const card = document.createElement('div');
+    card.className = 'att-preview-card';
+    card.id = 'aimg-' + img.uid;
+    // Mientras sube no hay miniatura: la que se muestra es la que devolvió el servidor, ya
+    // recomprimida, que es exactamente la que va a ver el alumno.
+    card.innerHTML = img.estado === 'listo'
+      ? `<div class="att-preview-thumb att-thumb-img"><img src="${escAtt(img.url)}" alt=""></div>
+         <div class="att-preview-name" title="${escAtt(img.nombre)}">${Adjuntos.escaparTexto(img.nombre)}</div>
+         <button class="att-preview-remove" onclick="removeActivityImage('${img.uid}')" title="Quitar">
+           <span class="material-symbols-outlined">close</span>
+         </button>`
+      : `<div class="att-preview-thumb att-thumb-img">
+           <span class="material-symbols-outlined" style="font-size:34px;color:var(--text-hint)">image</span>
+         </div>
+         <div class="att-upload-progress-wrap">
+           <div class="att-upload-bar" style="width:${img.pct}%"></div>
+         </div>
+         <div class="att-upload-status">${img.pct}%</div>
+         <button class="att-preview-remove" onclick="removeActivityImage('${img.uid}')" title="Cancelar">
+           <span class="material-symbols-outlined">close</span>
+         </button>`;
+    grid.appendChild(card);
+  });
+
   activityFiles.forEach((f, i) => {
     const { ext, color } = extColor(f.name);
     const card = document.createElement('div');
@@ -731,7 +925,7 @@ function renderAttachmentPreviews() {
       <div class="att-preview-thumb" style="background:${color}">
         <span class="att-preview-ext">${ext}</span>
       </div>
-      <div class="att-preview-name" title="${f.name}">${f.name}</div>
+      <div class="att-preview-name" title="${escAtt(f.name)}">${Adjuntos.escaparTexto(f.name)}</div>
       <button class="att-preview-remove" onclick="removeFile(${i})" title="Quitar">
         <span class="material-symbols-outlined">close</span>
       </button>
@@ -756,6 +950,10 @@ function renderAttachmentPreviews() {
     `;
     grid.appendChild(card);
   });
+
+  // El botón de crear depende de si queda alguna imagen subiendo, y el grid es justamente
+  // lo que se repinta cada vez que eso cambia.
+  syncActivitySubmitBtn();
 }
 
 /* ─── Crear Actividad ─── */
@@ -778,6 +976,9 @@ function closeActivityModal() {
     .forEach(id => { document.getElementById(id).value = ''; });
   activityFiles = [];
   activityLinks = [];
+  // Las imágenes que estaban subiendo se sueltan acá: el XHR sigue su curso, pero al no
+  // encontrar su entrada en el array se abandona solo (ver sigueViva() en subirImagenAdjunta).
+  activityImages = [];
   renderAttachmentPreviews();
   document.getElementById('linkInputArea').style.display = 'none';
   document.getElementById('linkUrlInput').value = '';
@@ -824,6 +1025,12 @@ async function createActivity() {
   fd.append('points',         document.getElementById('activityPoints').value || '');
   activityFiles.forEach(f => fd.append('files', f)); // Cada archivo como campo "files"
   fd.append('links', JSON.stringify(activityLinks));  // Links como JSON string
+  // Las imágenes ya están en el disco del servidor: viajan como referencia, no como archivo.
+  // Solo las terminadas — el botón está deshabilitado mientras quede alguna subiendo, así que
+  // acá no debería haber ninguna a medias, pero filtrar es más barato que confiar.
+  fd.append('uploadedFiles', JSON.stringify(activityImages
+    .filter(i => i.estado === 'listo')
+    .map(i => ({ url: i.url, name: i.nombre, mime: i.mime }))));
 
   const res  = await fetch('/activities/create', { method: 'POST', body: fd });
   const data = await res.json();

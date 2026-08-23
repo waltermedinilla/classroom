@@ -65,12 +65,21 @@
       <div class="creator-card">
         <div class="creator-card-section-title">Adjuntar</div>
         <div class="creator-att-row">
-          <label class="creator-att-btn" title="Subir archivo (PDF, Word, Excel)">
-            <input type="file" id="fileInput" accept=".pdf,.doc,.docx,.xls,.xlsx" multiple hidden>
+          <label class="creator-att-btn" title="Subir archivo (PDF, Word, Excel) o imagen">
+            <input type="file" id="fileInput"
+                   accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif"
+                   multiple hidden>
             <div class="creator-att-circle">
               <span class="material-symbols-outlined">upload</span>
             </div>
             <span>Subir</span>
+          </label>
+          <label class="creator-att-btn" title="Subir una foto o imagen">
+            <input type="file" id="imageInput" accept="image/*,.heic,.heif" multiple hidden>
+            <div class="creator-att-circle">
+              <span class="material-symbols-outlined">image</span>
+            </div>
+            <span>Imagen</span>
           </label>
           <button type="button" class="creator-att-btn" onclick="openLinkDialog()" title="Agregar enlace">
             <div class="creator-att-circle">
@@ -191,12 +200,20 @@
 
   <!-- Diagnóstico de subidas fallidas. Va ANTES del script de esta página, que lo usa. -->
   <script src="/js/subida-diagnostico.js"></script>
+  <!-- Regla compartida con el servidor de qué adjunto es una imagen (window.Adjuntos). -->
+  <script src="/js/adjuntosActividad.js"></script>
   <script>
     const COURSE_ID = '<%= course._id %>';
-    // En una constante y no armada dos veces: el diagnóstico reporta la ruta que falló, y si
-    // la que reporta no es exactamente la que se llamó, el reporte manda a buscar al lugar
-    // equivocado — que es el único error que un diagnóstico no puede permitirse.
-    const RUTA_SUBIDA = '/activities/upload-attachment?courseId=' + encodeURIComponent(COURSE_ID);
+    // Las imágenes van por su propia ruta: se recomprimen a WebP antes de tocar el disco.
+    // El resto (PDF, Word, Excel) sigue yendo por donde iba.
+    //
+    // La ruta se arma en UN solo lugar y no dos veces: el diagnóstico reporta la ruta que
+    // falló, y si la que reporta no es exactamente la que se llamó, el reporte manda a buscar
+    // al lugar equivocado — que es el único error que un diagnóstico no puede permitirse.
+    function rutaDeSubida(nombre) {
+      const endpoint = Adjuntos.esImagen(nombre) ? 'upload-image' : 'upload-attachment';
+      return '/activities/' + endpoint + '?courseId=' + encodeURIComponent(COURSE_ID);
+    }
 
     // Carga plantillas habilitadas para este curso. Si el feature flag está apagado
     // en el server, la respuesta es {templates:[]} y el selector queda oculto.
@@ -300,30 +317,41 @@
     });
 
     /* ─── Adjuntos: archivos — sube de inmediato al seleccionar ─── */
-    const ALLOWED_EXTS   = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
-    const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
+    const DOC_EXTS       = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
+    // Las de Adjuntos.EXT_IMAGEN vienen con punto ('.jpg'); acá se compara sin él.
+    const IMG_EXTS       = Adjuntos.EXT_IMAGEN.map(e => e.slice(1));
+    const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB — PDF, Word, Excel
+    // La imagen tiene su propio tope, más bajo, porque el servidor la recibe EN MEMORIA para
+    // recomprimirla (ver MAX_INPUT_BYTES en config/imagePresets.js). Igual entra cualquier
+    // foto de celular: 20 MB es un HDR de 12 MP con margen.
+    const MAX_IMG_BYTES  = 20 * 1024 * 1024;
 
-    document.getElementById('fileInput').addEventListener('change', function () {
-      Array.from(this.files).forEach(uploadFile);
-      this.value = '';
+    ['fileInput', 'imageInput'].forEach(id => {
+      document.getElementById(id).addEventListener('change', function () {
+        Array.from(this.files).forEach(uploadFile);
+        this.value = '';
+      });
     });
 
     function uploadFile(file) {
+      const extRaw  = file.name.split('.').pop().toLowerCase();
+      const esImagen = Adjuntos.esImagen(file.name);
+
       // Validación cliente: tipo de archivo
-      const extRaw = file.name.split('.').pop().toLowerCase();
-      if (!ALLOWED_EXTS.includes(extRaw)) {
+      if (!esImagen && !DOC_EXTS.includes(extRaw)) {
         showUploadErrModal(
           'Tipo de archivo no permitido',
-          `"${file.name}" no es un formato aceptado.\nPodés subir archivos PDF, Word (.doc, .docx) o Excel (.xls, .xlsx).`
+          `"${file.name}" no es un formato aceptado.\nPodés subir archivos PDF, Word (.doc, .docx), Excel (.xls, .xlsx) o imágenes (${IMG_EXTS.join(', ')}).`
         );
         return;
       }
-      // Validación cliente: tamaño
-      if (file.size > MAX_SIZE_BYTES) {
+      // Validación cliente: tamaño. El tope depende de por qué ruta va a ir.
+      const tope = esImagen ? MAX_IMG_BYTES : MAX_SIZE_BYTES;
+      if (file.size > tope) {
         const mb = (file.size / 1024 / 1024).toFixed(1);
         showUploadErrModal(
-          'Archivo demasiado grande',
-          `"${file.name}" pesa ${mb} MB. El máximo permitido es 50 MB.`
+          esImagen ? 'Imagen demasiado grande' : 'Archivo demasiado grande',
+          `"${file.name}" pesa ${mb} MB. El máximo permitido es ${Math.round(tope / 1024 / 1024)} MB.`
         );
         return;
       }
@@ -331,6 +359,15 @@
       const uid   = Date.now() + '-' + Math.random().toString(36).slice(2);
       const ext   = extRaw.toUpperCase();
       const color = EXT_COLOR[ext] || '#5f6368';
+      // Mientras sube todavía no hay miniatura que mostrar —la que se muestra al final es la
+      // que devuelve el servidor, ya recomprimida— así que la imagen viaja con su ícono.
+      const thumbInicial = esImagen
+        ? `<div class="att-preview-thumb att-thumb-img">
+             <span class="material-symbols-outlined" style="font-size:34px;color:var(--text-hint)">image</span>
+           </div>`
+        : `<div class="att-preview-thumb" style="background:${color}">
+             <span class="att-preview-ext">${ext}</span>
+           </div>`;
 
       // Agrega la tarjeta con barra de progreso
       const grid = document.getElementById('attPreviews');
@@ -338,9 +375,7 @@
       card.className = 'att-preview-card';
       card.id = 'ucard-' + uid;
       card.innerHTML = `
-        <div class="att-preview-thumb" style="background:${color}">
-          <span class="att-preview-ext">${ext}</span>
-        </div>
+        ${thumbInicial}
         <div class="att-upload-progress-wrap">
           <div class="att-upload-bar" style="width:0%"></div>
         </div>
@@ -357,7 +392,8 @@
       // empujar el navegador: es lo que distingue "se cortó en camino" (red, proxy, límite
       // de un intermediario — nada de eso deja rastro en el log del servidor) de "subió
       // entero y el servidor lo rechazó". Ver public/js/subida-diagnostico.js.
-      const seg = SubidaDiag.seguir(RUTA_SUBIDA, file);
+      const ruta = rutaDeSubida(file.name);
+      const seg  = SubidaDiag.seguir(ruta, file);
 
       const enPantalla = () => document.getElementById('ucard-' + uid);
       const terminar   = () => { pendingUploads--; syncCreateBtn(); };
@@ -400,11 +436,20 @@
 
           if ((xhr.status === 200 || xhr.status === 201) && data?.url) {
             actUploadedFiles[uid] = { url: data.url, name: data.name, mime: data.mime };
+            // La miniatura sale del archivo YA guardado, no de un FileReader sobre el
+            // original: es la versión recomprimida (unos cientos de KB en vez de 4 MB) y
+            // además muestra exactamente lo que va a ver el alumno.
+            const thumb = esImagen
+              ? `<div class="att-preview-thumb att-thumb-img"><img src="${escHtml(data.url)}" alt=""></div>`
+              : `<div class="att-preview-thumb" style="background:${color}">
+                   <span class="att-preview-ext">${ext}</span>
+                 </div>`;
+            // El nombre que se muestra es el que devolvió el servidor: para una imagen ya no
+            // es "pizarron.jpg" sino "pizarron.webp", que es el archivo que existe de verdad.
+            const nombre = data.name || file.name;
             c.innerHTML = `
-              <div class="att-preview-thumb" style="background:${color}">
-                <span class="att-preview-ext">${ext}</span>
-              </div>
-              <div class="att-preview-name" title="${escHtml(file.name)}">${escHtml(file.name)}</div>
+              ${thumb}
+              <div class="att-preview-name" title="${escHtml(nombre)}">${escHtml(nombre)}</div>
               <button class="att-preview-remove" onclick="removeUploadedFile('${uid}')" title="Quitar">
                 <span class="material-symbols-outlined">close</span>
               </button>`;
@@ -417,7 +462,7 @@
         xhr.onerror   = () => fracaso(null, 'red');
         xhr.ontimeout = () => fracaso(null, 'timeout');
 
-        xhr.open('POST', RUTA_SUBIDA);
+        xhr.open('POST', ruta);
         xhr.setRequestHeader('Accept', 'application/json');
         xhr.send(fd);
       }

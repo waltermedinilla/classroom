@@ -764,9 +764,23 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
 .link-icon { background: var(--bg); border: 1px solid var(--border); }
 .att-item-name { flex: 1; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .att-item-open { font-size: 18px !important; color: var(--text-hint); flex-shrink: 0; }
+/* Miniatura de un adjunto que es imagen, en la lista del detalle de la actividad.
+   Reemplaza al cuadradito de color con la extensión: "WEBP" no le dice nada a nadie. */
+.att-item-thumb {
+  background: var(--bg); border: 1px solid var(--border); overflow: hidden; padding: 0;
+}
+.att-item-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Ídem en la tarjeta del formulario de creación, mientras se arma la actividad. */
+.att-thumb-img { background: var(--bg); overflow: hidden; }
+.att-thumb-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* `var(--bg)` y no el `#f0f4f8` que estaba: en claro es EL MISMO color (--bg vale eso), pero
+   el hex fijo con `color: var(--text-secondary)` dejaba el chip en gris claro sobre gris
+   claro en modo oscuro (~1,9:1, ilegible). Es la regla de la sala: un fondo en hex obliga a
+   declarar su color de texto en hex; si el texto viene de una variable, el fondo también. */
 .att-count-chip {
   display: inline-flex; align-items: center; gap: 4px;
-  background: #f0f4f8; color: var(--text-secondary);
+  background: var(--bg); color: var(--text-secondary);
   padding: 2px 8px; border-radius: 100px; font-size: 12px;
 }
 
