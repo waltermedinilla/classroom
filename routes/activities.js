@@ -38,6 +38,9 @@ const {
   proximoOverride,
   estadoVisibilidad,
 } = require('../public/js/visibilidadActividad');
+// Regla única de "¿esto todavía le cuenta como tarea pendiente?": la sin fecha de entrega y
+// la vencida con las tardías abiertas caducan solas. Ver specs/pendientes-vencidos.spec.md.
+const { sigueSiendoPendiente, porUrgencia } = require('../public/js/pendienteActividad');
 // Regla compartida con el navegador sobre los adjuntos: qué es una imagen y qué URL puede
 // guardarse como adjunto. Ver public/js/adjuntosActividad.js y specs/actividad-imagenes.spec.md.
 const { esUrlDeAdjunto } = require('../public/js/adjuntosActividad');
@@ -601,10 +604,14 @@ router.get('/my-pending', requireAuth, requireSection('app_pending'), async (req
       if (dt) joinedAtByCourse[c._id.toString()] = dt;
     });
 
+    // El orden final NO lo decide esta query: `sort({ dueDate: 1 })` pone los `null` PRIMERO
+    // (así ordena Mongo) y la lista arrancaba con las tareas sin plazo, empujando abajo lo que
+    // vence mañana. Acá solo se pide un orden estable para los empates; el bueno lo pone
+    // porUrgencia() después de filtrar.
     const activities = await Activity.find({
       course: { $in: courseIds },
       ...filtroVisibleParaAlumno(now),
-    }).populate('course', 'name').sort({ dueDate: 1, createdAt: 1 });
+    }).populate('course', 'name').sort({ createdAt: 1 });
 
     const submissions = await Submission.find({
       student:  user._id,
@@ -621,11 +628,13 @@ router.get('/my-pending', requireAuth, requireSection('app_pending'), async (req
       if (joinedAt && a.dueDate && new Date(a.dueDate) < joinedAt && !a.allowLateSubmissions) {
         return false;
       }
-      if (!a.dueDate) return true;
-      if (new Date(a.dueDate) >= now) return true;
-      if (a.allowLateSubmissions) return true;
-      return false;
+      // Misma función que usa el contador del inicio (GET /courses): si las dos pantallas
+      // no comparten la regla, el cartel dice un número y esta lista muestra otro.
+      return sigueSiendoPendiente(a, now);
     });
+
+    // Lo que vence primero, arriba; las que no tienen fecha de entrega, al final.
+    pending.sort(porUrgencia);
 
     res.render('activities/pending', { pending });
   } catch (err) {

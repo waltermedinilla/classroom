@@ -1,5 +1,5 @@
 <%#
-  Cartel del inicio del alumno: "Dar asistencia".
+  Cartel del inicio del alumno: "Dar presente".
   Ver specs/asistencia-preceptoria.spec.md.
 
   Espera en locals: tomasAsistencia = [{ id, curso, abiertaDesde, cierraA, yaDi, estado }].
@@ -8,6 +8,11 @@
 
   Es un ARRAY y no una toma suelta a propósito: un alumno puede cursar en más de una división
   (repitentes con materias de dos años). En la práctica trae una sola.
+
+  El botón dice "Dar presente" y no "Dar asistencia" (2026-08-23, pedido del usuario): es la
+  pantalla del ALUMNO y "dar el presente" es lo que hace él. "Tomar asistencia" es lo que hace
+  preceptoría, y con las dos palabras tan parecidas el alumno dudaba de qué estaba apretando.
+  La mano levantada (front_hand) va por lo mismo: se entiende sin leer.
 %>
 <% if (Array.isArray(locals.tomasAsistencia) && tomasAsistencia.length) { %>
 <style>
@@ -15,17 +20,29 @@
              background:#e6f4ea; border:1px solid #ceead6; border-radius:12px;
              padding:14px 16px; margin-bottom:16px; }
   .as-band + .as-band { margin-top:-6px; }
-  .as-band .material-symbols-outlined { color:#137333; }
+  .as-band > .material-symbols-outlined { color:#137333; }
   .as-band-txt { flex:1 1 220px; font-size:14px; color:#0d652d; }
   .as-band-txt small { display:block; color:#5f6368; font-size:12px; margin-top:2px; }
-  .as-band-btn { font-size:14px; font-weight:500; padding:10px 20px; border-radius:8px;
+  /* inline-flex + justify-content:center: la mano y el texto quedan centrados como una
+     sola pieza, y siguen centrados cuando el texto cambia ("Enviando…", "Presente dado"). */
+  .as-band-btn { display:inline-flex; align-items:center; justify-content:center; gap:8px;
+                 font-size:14px; font-weight:500; padding:10px 20px; border-radius:8px;
                  border:none; background:#137333; color:#fff; cursor:pointer;
                  font-family:inherit; }
+  .as-band-btn .material-symbols-outlined { font-size:20px; line-height:1; }
   .as-band-btn:hover  { background:#0d652d; }
   .as-band-btn:disabled { background:#ceead6; color:#0d652d; cursor:default; }
   .as-band.dada { background:#f1f3f4; border-color:#dadce0; }
-  .as-band.dada .material-symbols-outlined,
+  .as-band.dada > .material-symbols-outlined,
   .as-band.dada .as-band-txt { color:#5f6368; }
+
+  /* En el celular la banda envuelve y el botón cae solo en la segunda línea, pegado a la
+     izquierda: 149 px de ancho contra 343 de banda, medido a 375 px. A ancho completo queda
+     centrado de verdad —que es lo que se pidió— y de paso el área tocable pasa de 40 a 46 px,
+     que es la que necesita un pulgar. El breakpoint es el mismo 768 px del resto de la app. */
+  @media (max-width: 768px) {
+    .as-band-btn { flex:1 1 100%; min-height:46px; }
+  }
 </style>
 
 <% tomasAsistencia.forEach(t => { %>
@@ -33,7 +50,7 @@
     <span class="material-symbols-outlined"><%= t.yaDi ? 'task_alt' : 'fact_check' %></span>
     <div class="as-band-txt">
       <% if (t.yaDi) { %>
-        Ya diste tu asistencia de hoy en <strong><%= t.curso %></strong>.
+        Ya diste el presente de hoy en <strong><%= t.curso %></strong>.
         <small>Si te la tomaron distinto, hablalo con preceptoría.</small>
       <% } else { %>
         Preceptoría abrió la asistencia de <strong><%= t.curso %></strong>.
@@ -43,20 +60,28 @@
       <% } %>
     </div>
     <button class="as-band-btn" <%= t.yaDi ? 'disabled' : '' %>>
-      <%= t.yaDi ? 'Asistencia dada' : 'Dar asistencia' %>
+      <span class="material-symbols-outlined" aria-hidden="true"><%= t.yaDi ? 'task_alt' : 'front_hand' %></span>
+      <span class="as-band-btn-txt"><%= t.yaDi ? 'Presente dado' : 'Dar presente' %></span>
     </button>
   </div>
 <% }) %>
 
 <script>
 (function () {
+  // El botón tiene DOS hijos (la mano y el texto). Tocar btn.textContent lo dejaría sin
+  // ícono en el primer click, así que se cambian por separado.
+  function pintarBoton(btn, icono, texto) {
+    btn.querySelector('.material-symbols-outlined').textContent = icono;
+    btn.querySelector('.as-band-btn-txt').textContent = texto;
+  }
+
   document.querySelectorAll('.as-band').forEach(band => {
     const btn = band.querySelector('.as-band-btn');
     if (btn.disabled) return;
 
     btn.addEventListener('click', async () => {
       btn.disabled = true;
-      btn.textContent = 'Enviando…';
+      pintarBoton(btn, 'hourglass_top', 'Enviando…');
       try {
         const r = await fetch('/asistencia/' + band.dataset.toma + '/presente', {
           method: 'POST',
@@ -66,20 +91,20 @@
           body: '{}',
         });
         const data = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(data.error || 'No se pudo dar la asistencia');
+        if (!r.ok) throw new Error(data.error || 'No se pudo dar el presente');
 
         band.classList.add('dada');
         band.querySelector('.material-symbols-outlined').textContent = 'task_alt';
-        btn.textContent = 'Asistencia dada';
+        pintarBoton(btn, 'task_alt', 'Presente dado');
         band.querySelector('.as-band-txt').innerHTML = data.respetada === false
           // El preceptor ya había decidido otra cosa: se le dice, en vez de mostrarle un
           // "listo" que no se corresponde con lo que va a figurar en la planilla.
           ? 'Preceptoría ya te había tomado la asistencia. Quedó registrado que diste el presente.' +
             '<small>Si no coincide con lo que pasó, hablalo con preceptoría.</small>'
-          : 'Listo, quedó tu asistencia de hoy.<small>La puede corregir preceptoría.</small>';
+          : 'Listo, quedó tu presente de hoy.<small>Lo puede corregir preceptoría.</small>';
       } catch (e) {
         btn.disabled = false;
-        btn.textContent = 'Dar asistencia';
+        pintarBoton(btn, 'front_hand', 'Dar presente');
         band.querySelector('.as-band-txt').insertAdjacentHTML('beforeend',
           '<small style="color:#d93025">' + e.message + '</small>');
       }

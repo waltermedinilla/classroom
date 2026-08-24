@@ -463,7 +463,7 @@ alumnoRouter.get('/abierta', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /asistencia/:id/presente — el botón "Dar asistencia".
+// POST /asistencia/:id/presente — el botón "Dar presente" del alumno.
 //
 // El BODY SE IGNORA POR COMPLETO. No lleva ni a quién marcar ni con qué estado: el alumno se
 // marca a sí mismo y siempre como presente. Si mandara `studentId` de un compañero o

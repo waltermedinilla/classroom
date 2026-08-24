@@ -46,7 +46,7 @@
 > **Se implementa en dos fases mergeables por separado**, en este orden:
 > **Fase A — la toma**: modelos, servicio, panel del preceptor (pase de lista y ventana
 > abierta), cierre, solapa, backup y auditoría. Se puede usar sola.
-> **Fase B — el alumno y los reportes**: botón "Dar asistencia" en el inicio del alumno,
+> **Fase B — el alumno y los reportes**: botón "Dar presente" en el inicio del alumno,
 > sugerencias desde la sala en vivo, historial y exportación a CSV.
 
 ## Objetivo
@@ -250,7 +250,7 @@ divisiones— antes de caer en el router correcto, y paga la query dos veces.
 | `views/preceptor/asistencia.ejs` | Una tarjeta por curso del alcance con el estado de HOY: sin tomar / abierta (N de M) / cerrada. Botones "Pasar lista" y "Abrir ventana" |
 | `views/preceptor/asistencia-toma.ejs` | La grilla: nómina, cuatro botones por alumno, resumen arriba, sugerencias de la sala, cerrar |
 | `views/preceptor/asistencia-historial.ejs` | Días anteriores del curso + resumen del mes + los dos botones de exportación |
-| `views/partials/asistencia-banner.ejs` | El cartel del alumno con el botón "Dar asistencia". Se incluye en `views/dashboard.ejs` |
+| `views/partials/asistencia-banner.ejs` | El cartel del alumno con el botón "Dar presente" (mano levantada). Se incluye en `views/dashboard.ejs` |
 
 Ninguna vista formatea horas por su cuenta: reciben `fmt` (`services/liveRoom.js:91`), igual
 que las de la sala.
@@ -563,7 +563,7 @@ materias de dos años). En la práctica trae una sola.
 
 ### Autoasistencia del alumno
 
-- **CA-23** — Dada una toma abierta con `selfCheckin`, cuando el alumno toca "Dar asistencia",
+- **CA-23** — Dada una toma abierta con `selfCheckin`, cuando el alumno toca "Dar presente",
   entonces su marca queda `presente`, `source: 'alumno'`, `markedBy: null` y `selfMarkedAt`
   seteado (RN-06).
 - **CA-24** — Dado ese mismo alumno tocando el botón **dos veces**, entonces hay **una** marca,

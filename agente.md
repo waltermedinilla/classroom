@@ -3910,12 +3910,57 @@ Pedido del usuario: *"me gusta la manera que manejaste el calendario en el rol d
 
 **Tests**: 32 unitarios nuevos en `tests/unit/actividadesDelDia.test.js` (el del domingo se verificó rompiendo `rangoDeSemana` a propósito: `dow - 1` manda al lunes de la semana *siguiente* y el test lo caza), un spec de smoke con los filtros y los rangos inválidos, y la solapa sumada a la lista de toggles de la matriz de roles.
 
+## "Dar presente" con la mano levantada + los pendientes caducan solos (2026-08-23)
+
+Dos pedidos del usuario en la misma frase, los dos sobre la pantalla del alumno.
+
+### 1. El botón del cartel de asistencia
+
+Decía **"Dar asistencia"**, y a un metro de distancia eso es lo mismo que *"tomar asistencia"* —que es lo que hace preceptoría, no el alumno—. Ahora dice **"Dar presente"** y arranca con una **mano levantada** (`front_hand`), ícono y texto centrados como una sola pieza. Cuando ya la dio: `task_alt` + **"Presente dado"**.
+
+Tres detalles que no son cosméticos:
+
+- **El botón tiene dos hijos ahora** (el ícono y un `<span class="as-band-btn-txt">`). El script hacía `btn.textContent = '…'`, que en el primer click se hubiera comido la mano. Por eso existe `pintarBoton(btn, icono, texto)`: cambia los dos por separado.
+- **El selector del ícono de la banda pasó a ser `>`** (`.as-band > .material-symbols-outlined`). Sin el hijo directo, el verde `#137333` de la banda le ganaba también al ícono de adentro del botón, que va en blanco sobre el fondo verde.
+- **En el celular el botón va a ancho completo.** Medido a 375 px: la banda envuelve y el botón caía solo en la segunda línea, 149 px contra 343 de banda, pegado a la izquierda — o sea, todo menos centrado. Con `flex:1 1 100%` dentro del `@media (max-width: 768px)` queda centrado de verdad y el área tocable pasa de 40 a 46 px.
+- **Se renombró en los tres lados a la vez.** El panel del preceptor le anuncia al que abre la ventana lo que va a ver el alumno (`_abrir-ventana.ejs` y el aviso de `asistencia-toma.ejs`): si ahí seguía diciendo "Dar asistencia", la pantalla del preceptor pasaba a mentir sobre la del alumno. Los dos specs de smoke que buscaban el texto en el HTML del inicio se actualizaron con el mismo cambio.
+
+### 2. Tareas que expiraron y seguían figurando como pendientes
+
+Reporte del usuario: *"cuando los profesores han dejado tarea anteriormente les sigue figurando a los alumnos que tienen tareas para entregar pero eso ya expiró"*. Era cierto, y eran **dos** agujeros distintos con la misma forma. El filtro —repetido en `routes/courses.js` y `routes/activities.js`— tenía dos líneas que nunca dejaban de dar verdadero:
+
+```js
+if (!a.dueDate)             return true;   // ← pendiente para siempre
+if (a.allowLateSubmissions) return true;   // ← pendiente para siempre
+```
+
+La primera es la actividad **sin fecha de entrega**; la segunda, la **vencida con las tardías abiertas** que el docente nunca cerró. Ninguna de las dos depende del alumno: por más que entregara todo, no se las sacaba nunca de encima. Medido sobre el espejo local: **68 sin fecha** (hasta 29 días) y **45 tardías vencidas** (hasta 24 días), 113 de 674 actividades.
+
+**El arreglo**: cada actividad **caduca sola** como pendiente, con dos ventanas elegidas por el usuario — **15 días** desde que se publica para la sin fecha, **14 días** después del vencimiento para la que tiene las tardías abiertas. La regla vive en un solo archivo, `public/js/pendienteActividad.js`, hermano de `visibilidadActividad.js` y con el mismo envoltorio: el contador del inicio y "Mis pendientes" llaman a la **misma función**, que es lo único que garantiza que las dos pantallas digan el mismo número.
+
+**Lo que NO hace, y es la mitad del diseño**: caducar el pendiente **no cierra ninguna puerta**. La actividad sigue en la solapa Actividades con su chip de siempre, y `POST /activities/:id/submit` sigue decidiendo con `allowLateSubmissions` — el que se atrasó puede entregar el día 90 igual. Tampoco toca el legajo del SOE (`services/soeIndicadores.js`), donde "pendiente" significa *"esto nunca lo entregó"* y las vencidas **tienen** que contar. Es la misma palabra para dos preguntas distintas y a propósito no comparten función.
+
+**La regla es temporal pura: no escribe nada.** Las 113 actividades caducan al desplegar sin tocar un solo documento, y una que hoy caducó vuelve a figurar sola si el docente le pone fecha de entrega futura. **No requiere cambios en la base de producción.**
+
+**Efecto medido sobre el espejo local**: los pendientes contados en toda la escuela pasan de **3.504 a 1.942**, y los alumnos con al menos un pendiente de 877 a 753. El caso peor bajó de 8 a 1.
+
+**Y de paso, el orden de la lista.** "Mis pendientes" ordenaba con `sort({ dueDate: 1, createdAt: 1 })`, y en Mongo el `null` va **antes** que cualquier fecha: la lista arrancaba con las tareas sin plazo y empujaba para abajo lo que vencía mañana. Ahora el orden lo pone `porUrgencia()` —en el mismo archivo de la regla— después de filtrar: lo que vence primero arriba, las sin fecha al final, y entre ellas la publicada antes. **No** se ordena por `caducaEl()` aunque sea tentador tener un solo criterio: una sin fecha publicada hace 14 días caduca mañana y se treparía arriba de una tarea que vence mañana, que es el bug de vuelta. Verificado contra un alumno real del espejo: pasó de arrancar con dos "Sin fecha" a arrancar con la que vence en dos días.
+
+**Dos trampas del camino**:
+
+- **Los 15 días se cuentan desde `availableFrom`, no desde `createdAt`.** El docente que carga el domingo una actividad programada para el martes tiene que estrenar su ventana el martes. `createdAt` quedó solo como respaldo de los documentos viejos sin el campo.
+- **`"N vencen hoy"` estaba mal por dos motivos a la vez** y se arregló de paso. Era `dueDate <= endOfToday` con `setHours()` sobre la hora del **servidor**: sin piso, contaba como "vence hoy" cualquier vencida vieja que siguiera pendiente; y producción corre en UTC, así que su "hoy" empezaba a las 21 de ayer en Argentina. Ahora es `live.diaEscolar(dueDate) === live.diaEscolar(now)` — el único dueño de la zona horaria, como manda `tests/unit/zonaHoraria.test.js`.
+
+**Tests**: 20 unitarios nuevos (`tests/unit/pendienteActividad.test.js`) y 5 specs de smoke. Verificados contra la regla vieja puesta a propósito: caen 5 de los 14 unitarios y el spec `pendientes-caducidad-my-pending`. Suites completas en verde: **354 smoke · 521 unitarios · matriz de roles sin hallazgos**.
+
+**Spec**: `specs/pendientes-vencidos.spec.md`.
+
 ## Plan de Futuras Actualizaciones (Roadmap)
 
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`).
-> **Sincronizado con el backlog el 2026-08-18.** Suites de referencia a esa fecha: **328 smoke ·
-> 366 unitarios · 17 de imágenes · matriz de roles sin hallazgos**. Lo que se resuelve se saca
-> de acá: si un renglón dice "pendiente", es porque lo sigue estando.
+> **Sincronizado con el backlog el 2026-08-18.** Suites de referencia, medidas el 2026-08-23:
+> **354 smoke · 521 unitarios · 17 de imágenes · matriz de roles sin hallazgos**. Lo que se
+> resuelve se saca de acá: si un renglón dice "pendiente", es porque lo sigue estando.
 
 ### 🔴 Investigaciones abiertas
 - ~~**Producción no carga a la mañana**~~ **CERRADA el 2026-08-18: es el Tailscale Funnel.** El watchdog midió la semana del 11 al 17/08 y **todas** las fallas de la franja 6-11 son de capa 5/6 (`dns-funnel` o `funnel`): *"la aplicación está sana, pero el nombre público no resuelve desde internet"*. Adentro el servidor contesta en 1 ms con load 0,00 y 2,5 GB de 15 usados. Fallas por hora: 06:00 → 17/180 · 07:00 → 7 · 08:00 → 7 · 09:00 → 4 · 10:00 → 1 · 11:00 → 14. Son cortes intermitentes de 1-2 minutos, no una caída sostenida, lo que explica el *"después se normaliza"*. **El código no tiene nada que ver.** El parche conocido es `tailscale funnel reset && tailscale funnel --bg 3000`; el arreglo de fondo es **sacar el Funnel del camino**: la máquina ya corre `server-caddy-1` para otro proyecto, así que servir la escuela por un dominio propio detrás de Caddy es una opción concreta, no un rediseño. **Esa es la conversación siguiente.**

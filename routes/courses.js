@@ -18,7 +18,7 @@ const { SYSTEM_OWNER_EMAIL } = require('../config/maintenance');
 const { INTERESTS, MAX_INTERESTS } = require('../config/interests');
 // Constantes de la sala en vivo (la solapa "En vivo" del detalle de materia).
 const live = require('../services/liveRoom');
-// Asistencia de preceptoría: de acá sale el cartel "Dar asistencia" del inicio del alumno.
+// Asistencia de preceptoría: de acá sale el cartel "Dar presente" del inicio del alumno.
 const asistencia = require('../services/attendance');
 // Subida de imágenes: multer en memoria + redimensionado/compresión a WebP antes de
 // escribir en disco (ver middleware/image-upload.js y config/imagePresets.js).
@@ -34,6 +34,9 @@ const { MAX_MATERIAS_ALUMNO } = require('../services/enrollment');
 // Misma regla de visibilidad que usa /activities: el contador de pendientes del inicio no
 // puede contar actividades que el alumno todavía no ve. Ver public/js/visibilidadActividad.js.
 const { filtroVisibleParaAlumno } = require('../public/js/visibilidadActividad');
+// Caducidad del pendiente: una tarea sin fecha, o vencida con las tardías abiertas, deja de
+// contar sola pasada su ventana. Ver specs/pendientes-vencidos.spec.md.
+const { sigueSiendoPendiente } = require('../public/js/pendienteActividad');
 const { logDeRuta, logRechazo } = require('../middleware/route-log');
 // Guarda de forma del :id, en la primera línea de cada handler con parámetro.
 // Ver middleware/objectId.js y el issue conocido nº 10 de agente.md.
@@ -66,10 +69,12 @@ router.get('/', requireAuth, async (req, res) => {
     if (res.locals.user?.role === 'student' && joined.length > 0) {
       const now        = new Date();
       const courseIds  = joined.map(c => c._id);
+      // availableFrom y createdAt van en el select porque los necesita sigueSiendoPendiente()
+      // para las actividades sin fecha de entrega: su ventana se cuenta desde la publicación.
       const activities = await Activity.find({
         course: { $in: courseIds },
         ...filtroVisibleParaAlumno(now),
-      }).select('_id dueDate allowLateSubmissions');
+      }).select('_id dueDate allowLateSubmissions availableFrom createdAt');
       const submissions  = await Submission.find({
         student:  req.userId,
         activity: { $in: activities.map(a => a._id) },
@@ -77,14 +82,17 @@ router.get('/', requireAuth, async (req, res) => {
       const submittedSet = new Set(submissions.map(s => s.activity.toString()));
       const pending = activities.filter(a => {
         if (submittedSet.has(a._id.toString())) return false;
-        if (!a.dueDate) return true;
-        if (new Date(a.dueDate) >= now)         return true;
-        if (a.allowLateSubmissions)             return true;
-        return false;
+        return sigueSiendoPendiente(a, now);
       });
-      const endOfToday = new Date(now);
-      endOfToday.setHours(23, 59, 59, 999);
-      const dueToday = pending.filter(a => a.dueDate && new Date(a.dueDate) <= endOfToday).length;
+      // "N vencen hoy": la fecha de entrega cae HOY, en la zona de la escuela.
+      //
+      // Antes era `dueDate <= endOfToday` con endOfToday calculado con setHours() sobre la
+      // hora del servidor. Eso fallaba por dos lados a la vez: contaba como "vence hoy"
+      // cualquier vencida vieja que siguiera pendiente (no tenía piso), y el servidor de
+      // producción corre en UTC, así que su "hoy" empieza a las 21 de ayer en Argentina.
+      // diaEscolar() es el único dueño de la zona horaria (ver services/liveRoom.js).
+      const hoy = live.diaEscolar(now);
+      const dueToday = pending.filter(a => a.dueDate && live.diaEscolar(a.dueDate) === hoy).length;
       if (pending.length > 0) pendingSummary = { total: pending.length, dueToday };
     }
 

@@ -1220,6 +1220,117 @@ const specs = [
       await client.delete('scopedTeacher', `/activities/${actId}`, { expectStatus: 200 });
     },
   },
+  /* ─── Pendientes que caducan solos ───
+     specs/pendientes-vencidos.spec.md. Actividades PROPIAS de este bloque —se crean con
+     fechas viejas a mano y se borran al final—, para no tocar state.activityId, que la
+     comparten los specs de entregas y notas.
+
+     El caso que se está cubriendo: antes, "sin fecha de entrega" y "vencida con tardías
+     abiertas" eran dos formas de quedar pendiente PARA SIEMPRE. Las dos actividades viejas
+     de acá abajo fallan estos specs si se revierte public/js/pendienteActividad.js. */
+  {
+    id: 'pendientes-caducidad-alta',
+    title: 'El docente carga las cuatro actividades del caso (viejas y nuevas)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const hace = d => new Date(Date.now() - d * 24 * 60 * 60 * 1000).toISOString();
+      const crear = async (clave, titulo, body) => {
+        const res = await client.post('scopedTeacher', '/activities/create', {
+          body: { courseId: state.courseId, title: `${titulo} ${RUN_ID}`, type: 'tarea', points: '10', ...body },
+          expectStatus: 201,
+        });
+        state[clave] = res.json.activity._id;
+        state[clave + 'Titulo'] = `${titulo} ${RUN_ID}`;
+      };
+
+      // Vencidas. Las tardías se prenden después, con la ruta del docente.
+      await crear('pendTardiaVieja',    'Vencida hace 20 dias',   { dueDate: hace(20) });
+      await crear('pendTardiaReciente', 'Vencida hace 3 dias',    { dueDate: hace(3)  });
+      // Sin fecha de entrega: lo que las separa es CUÁNDO se publicaron.
+      await crear('pendSinFechaVieja',  'Sin fecha hace 20 dias', { availableFrom: hace(20) });
+      await crear('pendSinFechaNueva',  'Sin fecha de hoy',       {});
+
+      for (const clave of ['pendTardiaVieja', 'pendTardiaReciente']) {
+        const res = await client.patch('scopedTeacher', `/activities/${state[clave]}/toggle-late`, {
+          expectStatus: 200,
+        });
+        assert(res.json.allowLateSubmissions === true, `las tardías de ${clave} deberían quedar abiertas`);
+      }
+    },
+  },
+  {
+    id: 'pendientes-caducidad-my-pending',
+    title: 'A "Mis pendientes" solo llegan las que todavía están en ventana',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('scopedStudent', '/activities/my-pending', { expectStatus: 200 });
+
+      // Sin la caducidad estas dos figuraban para siempre: la vencida porque el docente dejó
+      // las tardías abiertas, la sin fecha porque `if (!a.dueDate) return true`.
+      assert(!res.text.includes(state.pendTardiaViejaTitulo),
+        'una vencida hace 20 días no debería seguir siendo pendiente, aunque tenga tardías');
+      assert(!res.text.includes(state.pendSinFechaViejaTitulo),
+        'una sin fecha publicada hace 20 días ya pasó su ventana de 15');
+
+      // Y las que sí: la gracia de 14 días de las tardías y la ventana de 15 de la sin fecha.
+      assert(res.text.includes(state.pendTardiaRecienteTitulo),
+        'una vencida hace 3 días con tardías abiertas tiene que seguir pendiente');
+      assert(res.text.includes(state.pendSinFechaNuevaTitulo),
+        'una sin fecha publicada hoy tiene que estar pendiente');
+
+      // Y en ese orden: lo que tiene plazo arriba, lo que no lo tiene al final. Mongo ordena
+      // los `null` PRIMERO, así que sin el sort en JS la sin fecha encabezaba la lista.
+      assert(res.text.indexOf(state.pendTardiaRecienteTitulo) < res.text.indexOf(state.pendSinFechaNuevaTitulo),
+        'la que tiene fecha de entrega tiene que figurar ANTES que la que no tiene');
+    },
+  },
+  {
+    id: 'pendientes-caducidad-no-cierra-la-puerta',
+    title: 'La caducada sigue en la materia y se puede entregar igual',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Caducar el pendiente NO es ocultar la actividad ni cerrar la entrega: el alumno la
+      // sigue teniendo en la solapa Actividades y, con las tardías abiertas, puede entregar.
+      const curso = await client.get('scopedStudent', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      assert(curso.json.activities.some(a => a._id === state.pendTardiaVieja),
+        'la vencida caducada tiene que seguir apareciendo en la materia');
+      assert(curso.json.activities.some(a => a._id === state.pendSinFechaVieja),
+        'la sin fecha caducada tiene que seguir apareciendo en la materia');
+
+      await client.post('scopedStudent', `/activities/${state.pendTardiaVieja}/submit`, {
+        body: { text: 'entrega tardía a una que ya no cuenta como pendiente' },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'pendientes-caducidad-contador-coincide',
+    title: 'El cartel del inicio dice el mismo número que "Mis pendientes"',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      // Las dos pantallas comparten sigueSiendoPendiente(). Si alguien vuelve a escribir la
+      // regla a mano en una de las dos, este spec es el que se cae.
+      const inicio = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
+      const lista  = await client.get('scopedStudent', '/activities/my-pending', { expectStatus: 200 });
+
+      const m = inicio.text.match(/Ten[eé]s\s*<strong>\s*(\d+)\s*<\/strong>/);
+      const enElCartel = m ? Number(m[1]) : 0;   // sin cartel = sin pendientes
+      const enLaLista  = (lista.text.match(/class="pending-item /g) || []).length;
+
+      assert(enElCartel === enLaLista,
+        `el cartel dice ${enElCartel} y la lista muestra ${enLaLista}`);
+    },
+  },
+  {
+    id: 'pendientes-caducidad-limpieza',
+    title: 'Se borran las cuatro actividades del caso',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      for (const clave of ['pendTardiaVieja', 'pendTardiaReciente', 'pendSinFechaVieja', 'pendSinFechaNueva']) {
+        await client.delete('scopedTeacher', `/activities/${state[clave]}`, { expectStatus: 200 });
+      }
+    },
+  },
   {
     id: 'admin-task-settings-toggle',
     title: 'El admin prende y apaga el aviso de acuse de lectura',
@@ -5108,7 +5219,7 @@ const specs = [
       assert(!(sinNada.json.tomas || []).some(t => t.id === state.tomaId),
         'con el pase de lista el alumno NO tiene que ver la toma');
       const inicioSin = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
-      assert(!inicioSin.text.includes('Dar asistencia'), 'ni el cartel en su inicio');
+      assert(!inicioSin.text.includes('Dar presente'), 'ni el cartel en su inicio');
       await client.post('scopedStudent', `/asistencia/${state.tomaId}/presente`, { expectStatus: 409 });
 
       // Y se vuelve a abrir para ellos, con la planilla SIEMPRE abierta.
@@ -5137,7 +5248,7 @@ const specs = [
       assert(toma.abiertaDesde, 'debería traer la hora ya formateada por el servidor');
 
       const inicio = await client.get('scopedStudent', '/courses', { expectStatus: 200 });
-      assert(inicio.text.includes('Dar asistencia'), 'el cartel debería aparecer en el inicio');
+      assert(inicio.text.includes('Dar presente'), 'el cartel debería aparecer en el inicio');
     },
   },
   {
@@ -6616,7 +6727,7 @@ const specs = [
         ['admin',         'GET', id => `/preceptor/asistencia/toma/${id}/poll`],
         ['jefe',          'GET', id => `/jefatura/actividades/${id}`],
         ['jefe',          'GET', id => `/jefatura/docentes/${id}`],
-        // El botón "Dar asistencia" del alumno. Vive en el SEGUNDO router de
+        // El botón "Dar presente" del alumno. Vive en el SEGUNDO router de
         // routes/attendance.js (`alumnoRouter`, montado en /asistencia), que es justamente
         // el que se saltea cualquier auditoría que busque rutas por `^router.`.
         // Se prueba con UN solo id malo: detrás hay un limiter de 10 cada 5 minutos por
