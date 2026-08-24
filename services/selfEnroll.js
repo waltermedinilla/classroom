@@ -1,9 +1,14 @@
 // AUTOMATRÍCULA DEL ALUMNO — FUNCIÓN TEMPORAL (pedida el 2026-07-31).
 //
 // El alumno elige su Curso (1°1°, 2°3°…) UNA SOLA VEZ y queda inscripto en todas las
-// materias de ese curso. Hay dos puertas, y las dos pasan por acá:
-//   1. Al registrarse en /register, si elige el rol Alumno.
+// materias de ese curso. Nació con dos puertas, las dos por acá:
+//   1. Al registrarse en /register, si elegía el rol Alumno.
+//      ⚠️ MUERTA desde el 2026-08-23: el registro público está CERRADO
+//      (services/registroPublico.js). El código de `POST /register` sigue llamando acá,
+//      pero detrás del flag, así que hoy no lo ejecuta nadie. Si alguna vez se reabre el
+//      registro, esta puerta vuelve sola — tenerlo presente antes de tocar `automatricular`.
 //   2. Desde su propio panel, si ya tiene cuenta pero no está en ninguna materia.
+//      Es la ÚNICA puerta viva hoy, y la que ejercitan los tests.
 //
 // ⚠️ VA CONTRA LA DECISIÓN DEL 2026-07-30, a sabiendas: ese día se eliminó "unirse por
 // código" justamente para que matricular fuera siempre una acción administrativa, y el

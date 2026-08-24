@@ -8,6 +8,12 @@ const { normalizeDni } = require('../services/dni');
 const {
   AUTOMATRICULA_ACTIVA, cursosDisponibles, cursoElegible, automatricular,
 } = require('../services/selfEnroll');
+// Registro público CERRADO desde 2026-08-23: las cuentas las crea un administrador.
+// Las dos puertas de alta de este archivo (/register y /register/invite/:token) quedan
+// atadas a estos flags. Ver la cabecera de services/registroPublico.js.
+const {
+  REGISTRO_ABIERTO, INVITACION_ABIERTA, rechazarAlta,
+} = require('../services/registroPublico');
 // Ventana de mantenimiento: mientras el sistema está EN ESPERA se corta la puerta de
 // entrada, pero el que ya está adentro sigue trabajando sin enterarse de nada
 // (ver specs/mantenimiento-ventana.spec.md).
@@ -67,6 +73,10 @@ router.get('/login', (req, res) => {
 // Pasa los roles disponibles excluyendo 'admin' (los admins solo los crea el superadmin)
 router.get('/register', async (req, res) => {
   if (res.locals.user) return res.redirect('/');
+  // Registro cerrado: al login, que es el único lugar al que esta persona puede ir. El
+  // enlace ya no se pinta en ninguna vista, así que quien llega acá viene de un favorito
+  // viejo o de una URL a mano — mandarlo al formulario de entrada es la respuesta útil.
+  if (!REGISTRO_ABIERTO) return res.redirect('/login');
   res.render('register', {
     roles: User.getRoles().filter(r => r !== 'admin'),
     // Lista para el select de Curso que se despliega al elegir el rol Alumno. Con la
@@ -80,6 +90,11 @@ router.get('/register', async (req, res) => {
 // Retorna: { user, materias } con 201, o error 400 si email duplicado / validación falla
 router.post('/register', async (req, res) => {
   try {
+    // Puerta cerrada: se contesta ANTES que el mantenimiento a propósito. El mantenimiento
+    // es un "ahora no" (503, volvé más tarde) y esto es un "por acá no" (403, pedile la
+    // cuenta al administrador). Si contestara 503, el que quedó afuera volvería a intentar.
+    if (!REGISTRO_ABIERTO) return rechazarAlta(res);
+
     // Crear una cuenta es la forma más extrema de "querer entrar en este momento": si con
     // una espera en curso no se admiten logins, tampoco altas nuevas.
     if (getPendingState()) return rechazarIngreso(res);
@@ -191,15 +206,23 @@ router.post('/login', async (req, res) => {
 // Si el token no existe en ninguna escuela → pantalla de enlace inválido
 router.get('/register/invite/:token', async (req, res) => {
   if (res.locals.user) return res.redirect('/');
+  // Invitación cerrada: la misma pantalla de "este enlace no sirve", con el texto que
+  // corresponde. NO se busca la escuela ni se la nombra — un enlace que ya no da de alta
+  // no tiene por qué seguir revelando a qué institución pertenece.
+  if (!INVITACION_ABIERTA) {
+    return res.render('invite-register', {
+      school: null, token: req.params.token, roles: [], cerrado: true,
+    });
+  }
   try {
     const school = await School.findOne({ inviteToken: req.params.token });
     // Misma lista que valida el POST de abajo: 'preceptor' quedó fuera al pasar a ser un
     // rol con permisos de administración sobre alumnos.
     const roles = User.getRoles().filter(r => !['superadmin', 'admin', 'preceptor'].includes(r));
     // school=null indica enlace inválido; la vista maneja ambos casos
-    res.render('invite-register', { school: school || null, token: req.params.token, roles });
+    res.render('invite-register', { school: school || null, token: req.params.token, roles, cerrado: false });
   } catch (err) {
-    res.render('invite-register', { school: null, token: req.params.token, roles: [] });
+    res.render('invite-register', { school: null, token: req.params.token, roles: [], cerrado: false });
   }
 });
 
@@ -208,6 +231,11 @@ router.get('/register/invite/:token', async (req, res) => {
 // Retorna: { user } 201 o error 400
 router.post('/register/invite/:token', async (req, res) => {
   try {
+    // Mismo criterio que /register: la puerta cerrada contesta primero. Acá pesa más
+    // todavía, porque este alta dejaba elegir el rol —incluidos `directivo` y `soe`, que
+    // abre el legajo psicopedagógico— a cualquiera que tuviera el enlace.
+    if (!INVITACION_ABIERTA) return rechazarAlta(res);
+
     if (getPendingState()) return rechazarIngreso(res);
 
     const school = await School.findOne({ inviteToken: req.params.token });

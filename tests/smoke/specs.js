@@ -176,57 +176,110 @@ const specs = [
     },
   },
   {
-    id: 'register-teacher',
-    title: 'Un docente puede autoregistrarse',
-    async run({ client, state }) {
-      const res = await client.post('teacher', '/register', {
-        body: { name: teacher.name, email: teacher.email, password: teacher.password, role: 'teacher', dni: dniSmoke(1) },
+    // ── Nivel 1: los dos actores base ────────────────────────────────────────
+    // El registro público quedó CERRADO el 2026-08-23 (ver services/registroPublico.js):
+    // estos dos ya no pueden autoregistrarse, así que entran por la única puerta que queda,
+    // el alta administrativa.
+    //
+    // Se usa el SUPERADMIN y no el admin de escuela A PROPÓSITO: `POST /superadmin/users/create`
+    // deja la cuenta con `school: null`, que es exactamente la semántica que tenían estos dos
+    // cuando se autoregistraban. Con el alta del admin quedarían CON escuela y specs de más
+    // abajo —los 403 de la sala, del adjunto ajeno, del alta de materia— pasarían a probar
+    // otra cosa sin que nadie se entere.
+    id: 'alta-teacher-por-superadmin',
+    title: 'El superadmin da de alta al docente de prueba (el registro público está cerrado)',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, env }) {
+      // Login inline en vez de depender del spec `superadmin-login`, que corre 3000 líneas
+      // más abajo: subirlo hasta acá reordenaría la cadena de `state` de media suite. El
+      // login es idempotente, así que aquel spec sigue valiendo tal como está.
+      await client.post('superadmin', '/login', {
+        body: { email: env.SMOKE_SUPERADMIN_EMAIL, password: env.SMOKE_SUPERADMIN_PASSWORD },
+        expectStatus: 200,
+      });
+
+      const res = await client.post('superadmin', '/superadmin/users/create', {
+        body: {
+          name: teacher.name, email: teacher.email, password: teacher.password,
+          role: 'teacher', dni: dniSmoke(1),
+        },
         expectStatus: 201,
       });
       state.teacherId = res.json.user._id;
+
+      // El actor 'teacher' necesita su propia cookie: los specs de abajo entran como él.
+      // Antes se la daba el 201 del registro; ahora hay que iniciar sesión de verdad.
+      await client.post('teacher', '/login', {
+        body: { email: teacher.email, password: teacher.password },
+        expectStatus: 200,
+      });
     },
   },
   {
-    id: 'register-student',
-    title: 'Un alumno se autoregistra eligiendo su curso y queda matriculado',
+    id: 'alta-student-por-superadmin',
+    title: 'El superadmin da de alta al alumno de prueba y el alumno elige su curso',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
     async run({ client, state, assert }) {
-      // Desde el 2026-07-31 el alumno elige Curso al registrarse (automatrícula temporal,
-      // ver services/selfEnroll.js). El id se saca del formulario mismo, que es de donde
-      // lo saca una persona: si el <select> deja de pintarse, el spec falla acá y no en
-      // un 400 críptico del POST.
-      const page   = await client.get(null, '/register', { expectStatus: 200 });
-      const bloque = (page.text || '').split('id="divisionId"')[1] || '';
-      const opcion = bloque.match(/<option value="([a-f0-9]{24})"/i);
-      assert(opcion, 'el formulario de registro no ofrece ningún curso para elegir');
-      state.selfEnrollDivisionId = opcion[1];
-
-      const res = await client.post('student', '/register', {
+      const res = await client.post('superadmin', '/superadmin/users/create', {
         body: {
           name: student.name, email: student.email, password: student.password,
-          role: 'student', dni: dniSmoke(2), divisionId: opcion[1],
+          role: 'student', dni: dniSmoke(2),
         },
         expectStatus: 201,
       });
       state.studentId = res.json.user._id;
-      assert(res.json.materias > 0,
-        `debería haber quedado inscripto en las materias del curso, quedó en ${res.json.materias}`);
-      assert(res.json.user.school,
-        'elegir curso también tiene que asignarle la escuela; quedó sin escuela');
+      await client.post('student', '/login', {
+        body: { email: student.email, password: student.password },
+        expectStatus: 200,
+      });
+
+      // La automatrícula sigue viva, pero desde el 2026-08-23 su ÚNICA puerta es el panel
+      // del alumno (services/selfEnroll.js): la otra era el formulario de registro y murió
+      // con él. El id del curso se saca del panel mismo, que es de donde lo saca una
+      // persona: si el <select> deja de pintarse, el spec falla acá y no en un 400 críptico.
+      const panel  = await client.get('student', '/courses', { expectStatus: 200 });
+      const bloque = (panel.text || '').split('autoMatriculaCurso')[1] || '';
+      const opcion = bloque.match(/<option value="([a-f0-9]{24})"/i);
+      assert(opcion, 'el panel del alumno sin materias no le ofrece ningún curso para elegir');
+      state.selfEnrollDivisionId = opcion[1];
+
+      const r = await client.post('student', '/courses/self-enroll', {
+        body: { divisionId: opcion[1] },
+        expectStatus: 200,
+      });
+      assert(r.json.materias > 0,
+        `debería haber quedado inscripto en las materias del curso, quedó en ${r.json.materias}`);
     },
   },
   {
-    id: 'register-student-requires-curso',
-    title: 'El alumno que no elige curso no se puede registrar (400)',
-    async run({ client }) {
-      // Es la razón de ser de la automatrícula: que no vuelvan a nacer cuentas de alumno
-      // sin escuela y sin ninguna materia, que es lo que diagnostica /superadmin/otros.
-      await client.post(null, '/register', {
+    // El cambio del 2026-08-23, probado por la puerta principal. Reemplaza al viejo
+    // `register-student-requires-curso`, que verificaba el 400 del alumno que no elegía
+    // curso al registrarse: ya no hay registro donde elegirlo.
+    id: 'registro-publico-cerrado',
+    title: 'El registro público está cerrado: /register no muestra formulario ni da de alta',
+    async run({ client, assert }) {
+      // La pantalla ya no existe para el que llega de un favorito viejo: se lo manda al login.
+      const pagina = await client.get(null, '/register', { expectStatus: 302 });
+      assert(/\/login/.test(pagina.headers.get('location') || ''),
+        `GET /register debería redirigir a /login, mandó a ${pagina.headers.get('location')}`);
+
+      // Y el POST no crea la cuenta ni con un cuerpo completo y válido — que es lo único
+      // que importa: la pantalla es una comodidad, la ruta es la puerta.
+      const alta = await client.post(null, '/register', {
         body: {
-          name: 'Smoke Sin Curso', email: `sincurso.${RUN_ID}@example.com`,
+          name: 'Smoke Colado', email: `colado.registro.${RUN_ID}@example.com`,
           password: 'SmokeTest1234', role: 'student', dni: dniSmoke(15),
         },
-        expectStatus: 400,
+        expectStatus: 403,
       });
+      assert(alta.json && alta.json.registroCerrado === true,
+        `el 403 debería declarar registroCerrado; dijo ${JSON.stringify(alta.json)}`);
+
+      // Y la pantalla de login ya no ofrece la puerta: sin esto el enlace podría quedar
+      // pintado apuntando a una ruta que contesta 403, que es peor que no ofrecer nada.
+      const login = await client.get(null, '/login', { expectStatus: 200 });
+      assert(!/href="\/register"/.test(login.text || ''),
+        'la pantalla de login no debería seguir ofreciendo "Crear cuenta nueva"');
     },
   },
   {
@@ -1849,13 +1902,20 @@ const specs = [
     },
   },
   {
-    id: 'dni-required-on-self-register',
-    title: 'El auto-registro también exige DNI (400)',
-    async run({ client }) {
-      await client.post(null, '/register', {
+    // Antes se llamaba `dni-required-on-self-register` y verificaba el 400 por DNI faltante
+    // en el auto-registro. Desde el 2026-08-23 no hay auto-registro, así que lo que hay que
+    // fijar es el ORDEN de las guardas: la puerta cerrada contesta ANTES que la validación
+    // del DNI. Si algún día alguien reordena eso, el 400 volvería a filtrar que la ruta
+    // sigue procesando cuerpos de alta.
+    id: 'registro-cerrado-gana-a-la-validacion',
+    title: 'Con el registro cerrado, /register contesta 403 antes de validar nada (ni el DNI)',
+    async run({ client, assert }) {
+      const r = await client.post(null, '/register', {
         body: { name: 'Registro Sin DNI', email: `regsindni.${RUN_ID}@example.com`, password: 'SmokeTest1234', role: 'student' },
-        expectStatus: 400,
+        expectStatus: 403,
       });
+      assert(r.json && r.json.registroCerrado === true,
+        `debería cortar por registro cerrado y no por el DNI; dijo ${JSON.stringify(r.json)}`);
     },
   },
   {
@@ -3828,12 +3888,27 @@ const specs = [
         }
         assert(urls[0] !== urls[1], 'cada escuela debería tener su propio token');
 
-        // El enlace abre el registro por invitación (ruta pública, sin sesión) y la pantalla
-        // muestra de qué escuela es.
+        // El enlace se sigue generando y revocando (es lo que prueba este spec: que el
+        // índice sparse no choque), pero desde el 2026-08-23 YA NO DA DE ALTA A NADIE:
+        // el registro por invitación está cerrado en services/registroPublico.js.
+        //
+        // Antes acá se verificaba que la pantalla nombrara a la escuela. Ahora se verifica
+        // lo contrario, y es a propósito: un enlace que no registra a nadie tampoco tiene
+        // por qué seguir revelando a qué institución pertenece.
         const token = urls[0].split('/').pop();
         const vivo = await client.get(null, `/register/invite/${token}`, { expectStatus: 200 });
-        assert((vivo.text || '').includes(`Escuela Invite ${RUN_ID} C`),
-          'la pantalla de invitación debería decir a qué escuela invita');
+        assert((vivo.text || '').includes('Registro cerrado'),
+          'la pantalla de invitación debería avisar que el registro está cerrado');
+        assert(!(vivo.text || '').includes(`Escuela Invite ${RUN_ID} C`),
+          'y no debería nombrar a la escuela: el enlace ya no da de alta a nadie');
+
+        // La puerta misma: ni con el token VIVO se crea la cuenta.
+        const conTokenVivo = await client.post(null, `/register/invite/${token}`, {
+          body: { name: 'Colado Invitado', email: `colado.invite.${RUN_ID}@example.com`, password: 'SmokeTest1234', role: 'directivo', dni: dniSmoke(74) },
+          expectStatus: 403,
+        });
+        assert(conTokenVivo.json && conTokenVivo.json.registroCerrado === true,
+          `el alta por invitación debería cortar por registro cerrado; dijo ${JSON.stringify(conTokenVivo.json)}`);
 
         // Se revocan los dos. Es acá donde se reintroducía el choque.
         for (const id of creadas) {
@@ -3845,17 +3920,19 @@ const specs = [
         // lo que hay que verificar es el CONTENIDO, no el código. El que sí corta con un
         // error es el POST, que es el que crearía la cuenta.
         const muerto = await client.get(null, `/register/invite/${token}`, { expectStatus: 200 });
-        assert((muerto.text || '').includes('Enlace inválido'),
-          'el enlace revocado debería mostrar la pantalla de enlace inválido');
         assert(!(muerto.text || '').includes(`Escuela Invite ${RUN_ID} C`),
-          'y no debería seguir nombrando a la escuela');
+          'el enlace revocado no debería nombrar a la escuela');
 
+        // Con la invitación cerrada, el POST corta ANTES de mirar el token: el mensaje ya no
+        // habla de "revocado" sino de registro cerrado. La distinción vivo/revocado deja de
+        // ser observable desde afuera, que es exactamente lo que se quiere de una puerta
+        // cerrada — y por eso lo que se prueba acá es el 403, no el 400 de antes.
         const alta = await client.post(null, `/register/invite/${token}`, {
           body: { name: 'Colado', email: `colado.${RUN_ID}@example.com`, password: 'SmokeTest1234', role: 'student', dni: dniSmoke(73) },
-          expectStatus: 400,
+          expectStatus: 403,
         });
-        assert(/revocad|no es válido/i.test(alta.json?.error || ''),
-          `el alta por un enlace revocado debería explicarlo; dijo ${JSON.stringify(alta.json)}`);
+        assert(alta.json && alta.json.registroCerrado === true,
+          `el alta por un enlace revocado también corta por registro cerrado; dijo ${JSON.stringify(alta.json)}`);
 
         // La prueba de fuego: con las dos revocadas, todavía se puede crear una tercera.
         const tercera = await client.post('superadmin', '/superadmin/schools/create', {
@@ -4593,14 +4670,20 @@ const specs = [
         assert(loginPage.text.includes('Mantenimiento en unos minutos'),
           'la pantalla de login debería avisar del mantenimiento inminente');
 
-        // Crear una cuenta es la forma más extrema de "querer entrar ahora".
-        await client.post('ingressProbe', '/register', {
+        // Crear una cuenta era "la forma más extrema de querer entrar ahora" y este probe
+        // esperaba el 503 del mantenimiento. Desde el 2026-08-23 el registro está cerrado
+        // (services/registroPublico.js), así que la respuesta correcta es 403 y no 503: la
+        // puerta cerrada gana sobre el "volvé más tarde", que sería mentirle al que pregunta.
+        // El corte de ingresos por mantenimiento ya quedó probado arriba, sobre /login.
+        const bloqueado = await client.post('ingressProbe', '/register', {
           body: {
             name: 'Smoke Bloqueado', email: `smoke.blocked.${RUN_ID}@example.com`,
             password: 'SmokeTest1234', role: 'teacher', dni: dniSmoke(90),
           },
-          expectStatus: 503,
+          expectStatus: 403,
         });
+        assert(bloqueado.json && bloqueado.json.registroCerrado === true,
+          `ni en mantenimiento el registro debería contestar otra cosa que registro cerrado; dijo ${JSON.stringify(bloqueado.json)}`);
       } finally {
         await client.post('superadmin', '/superadmin/backup/maintenance/off', { body: {} });
       }
@@ -5489,24 +5572,34 @@ const specs = [
     },
   },
   {
+    // Antes: "nadie puede auto-registrarse como preceptor (cae a alumno)". Desde el
+    // 2026-08-23 nadie puede auto-registrarse Y PUNTO, así que la garantía es más fuerte y
+    // el spec lo dice: el rol no se degrada, la cuenta directamente no nace.
+    //
+    // La lista blanca de roles del POST sigue existiendo en routes/auth.js detrás del flag.
+    // Es a propósito: si alguna vez se reabre el registro, tiene que reabrirse con el
+    // preceptor todavía afuera.
     id: 'preceptor-role-not-self-assignable',
-    title: 'Nadie puede auto-registrarse como preceptor (queda como alumno)',
+    title: 'Nadie puede auto-registrarse como preceptor: no hay auto-registro (403)',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
     async run({ client, state, assert }) {
-      const res = await client.post(null, '/register', {
+      const email = `fake.preceptor.${RUN_ID}@example.com`;
+      await client.post(null, '/register', {
         body: {
-          name: 'Smoke Fake Preceptor', email: `fake.preceptor.${RUN_ID}@example.com`,
+          name: 'Smoke Fake Preceptor', email,
           password: 'SmokeTest1234', role: 'preceptor', dni: dniSmoke(9),
-          // Cae a rol alumno, y el alumno necesita curso para registrarse: sin esto el
-          // POST devolvería 400 y el spec no llegaría a probar lo que quiere probar.
           divisionId: state.selfEnrollDivisionId,
         },
-        expectStatus: 201,
+        expectStatus: 403,
       });
-      // Queda sin escuela, igual que los usuarios de Nivel 1: el admin no puede borrarlo
-      // (su delete exige misma escuela), así que se limpia junto a ellos desde Mongo.
-      state.fakePreceptorId = res.json.user._id;
-      assert(res.json.user.role === 'student',
-        `el rol preceptor no debe ser auto-asignable, quedó como ${res.json.user.role}`);
+
+      // Y lo que de verdad importa: que no haya quedado NADA creado. Un 403 que igual
+      // hubiera escrito el usuario sería el peor de los mundos.
+      await client.post('noExiste', '/login', {
+        body: { email, password: 'SmokeTest1234' },
+        expectStatus: 400,
+      });
+      assert(true, 'la cuenta no existe: el login de esa dirección es rechazado');
     },
   },
 
@@ -6352,21 +6445,22 @@ const specs = [
     },
   },
   {
+    // Misma historia que `preceptor-role-not-self-assignable`: desde el 2026-08-23 la
+    // garantía no es "queda como alumno" sino "no se crea la cuenta".
     id: 'jefatura-rol-no-autoasignable',
-    title: 'Nadie puede auto-registrarse como Jefe de Sección (queda como alumno)',
+    title: 'Nadie puede auto-registrarse como Jefe de Sección: no hay auto-registro (403)',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state, assert }) {
-      const res = await client.post(null, '/register', {
+      const r = await client.post(null, '/register', {
         body: {
           name: 'Smoke Fake Jefe', email: `fake.jefe.${RUN_ID}@example.com`,
           password: 'SmokeTest1234', role: 'jefe', dni: dniSmoke(24),
           divisionId: state.selfEnrollDivisionId,
         },
-        expectStatus: 201,
+        expectStatus: 403,
       });
-      state.fakeJefeId = res.json.user._id;
-      assert(res.json.user.role === 'student',
-        `el rol jefe no debe ser auto-asignable, quedó como ${res.json.user.role}`);
+      assert(r.json && r.json.registroCerrado === true,
+        `debería cortar por registro cerrado; dijo ${JSON.stringify(r.json)}`);
     },
   },
 
@@ -8044,13 +8138,18 @@ const specs = [
     },
   },
   {
-    // Los usuarios de Nivel 1 se autoregistran (no los crea el admin), así que no hay
-    // ruta que los borre: el DELETE del admin exige misma escuela y hasta el 2026-07-31
-    // estos quedaban sin ninguna. Ahora el alumno elige curso al registrarse, así que
-    // además de la cuenta hay que sacarlo de las materias REALES donde quedó inscripto —
-    // si no, el docente ve un alumno de prueba en su lista de la base local.
+    // Los usuarios de Nivel 1 nacen SIN escuela (los crea el superadmin desde el
+    // 2026-08-23, antes se autoregistraban), así que no hay ruta que los borre: el DELETE
+    // del admin exige misma escuela. Y como el alumno elige curso desde su panel, además
+    // de la cuenta hay que sacarlo de las materias REALES donde quedó inscripto — si no,
+    // el docente ve un alumno de prueba en su lista de la base local.
+    //
+    // `fakePreceptorId`/`fakeJefeId` ya no se setean: desde que el registro está cerrado
+    // esos specs no crean cuentas, solo comprueban el 403. Se dejan en la lista igual —
+    // `filter(Boolean)` los saltea— para que la limpieza siga sirviendo si algún día se
+    // reabre el registro y vuelven a nacer.
     id: 'cleanup-self-registered-db',
-    title: 'Limpieza: borra los usuarios autoregistrados y su matrícula',
+    title: 'Limpieza: borra los usuarios de Nivel 1 y su matrícula',
     requiresEnv: ['MONGODB_URI'],
     async run({ env, state }) {
       const { MongoClient, ObjectId } = require('mongodb');
