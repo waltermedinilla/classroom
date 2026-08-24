@@ -49,10 +49,13 @@ El admin puede "ver como" cualquier otro usuario (excepto el admin protegido):
 - Formulario: email + contraseña
 - JS: `public/js/login.js` — fetch POST `/login`, redirect a `/`
 
-### 2. Register (`/register`)
-- Formulario: nombre, email, contraseña, rol (select — sin admin)
-- El primer usuario registrado se crea como `admin`
-- JS: `public/js/register.js`
+### 2. Register (`/register`) — **CERRADA desde el 2026-08-23**
+- **La pantalla ya no se sirve**: `GET /register` redirige a `/login` y `POST /register`
+  contesta `403 { registroCerrado: true }`. Las cuentas las crea un administrador desde
+  `/admin/users/create`. Ver `services/registroPublico.js` y el changelog del 2026-08-23.
+- La vista (`views/register.ejs`), su JS (`public/js/register.js`) y el handler siguen en el
+  repo detrás del flag `REGISTRO_ABIERTO`, para poder reabrirla sin reescribirla.
+- Cuando estaba abierta: formulario de nombre, email, contraseña y rol (select — sin admin).
 
 ### 3. Dashboard / Tus Clases (`/courses`)
 - Header con logo, avatar y menú de usuario
@@ -219,8 +222,8 @@ Agregar `data-analytics="nombre_del_evento"` al `<button>`/`<a>` — no hace fal
 | Método | Ruta | Comportamiento |
 |---|---|---|
 | GET | `/login` | Renderiza `login.ejs` |
-| GET | `/register` | Renderiza `register.ejs` |
-| POST | `/register` | Crea usuario, JWT cookie, JSON `{ user }` |
+| GET | `/register` | **CERRADA (2026-08-23)** — `302` a `/login`. Con `REGISTRO_ABIERTO`: renderiza `register.ejs` |
+| POST | `/register` | **CERRADA (2026-08-23)** — `403 { registroCerrado: true }`. Con `REGISTRO_ABIERTO`: crea usuario, JWT cookie, JSON `{ user }` |
 | POST | `/login` | Valida credenciales, JWT cookie, JSON `{ user }` |
 | POST | `/logout` | Limpia cookies `token` y `adminToken` |
 | GET | `/exit-impersonate` | Restaura la sesión admin desde `adminToken` |
@@ -290,7 +293,7 @@ Variables CSS para colores, sombras, radios. Componentes:
 | Archivo | Funcionalidad |
 |---|---|
 | `login.js` | Submit login → POST `/login` → redirect |
-| `register.js` | Submit register → POST `/register` → redirect |
+| `register.js` | Submit register → POST `/register` → redirect. **Inerte desde el 2026-08-23**: la pantalla que lo carga ya no se sirve (registro cerrado) |
 | `dashboard.js` | Modales create/join, escape key, click-outside-close |
 | `course.js` | Tabs, formulario anuncio colapsable, post/load announcements |
 | `adjuntosActividad.js` | Regla compartida navegador↔servidor: qué adjunto es una imagen (decide la ruta de subida y la miniatura) y qué URL puede guardarse como adjunto. La `require()` `routes/activities.js` |
@@ -371,7 +374,7 @@ que deja usuarios de prueba sin borrar). Espaciar las corridas o limpiar a mano.
 ## Notas / Issues Conocidos
 1. `GET /courses/create` existe en la ruta pero usa modal en dashboard — no tiene vista propia
 2. Archivos subidos a disco local (`public/archivos/` para adjuntos del docente y novedades; `archivos/entregas/` fuera de `public` para entregas de alumnos), sin cloud storage
-3. Sin recuperación de contraseña ni verificación de email
+3. **Sin recuperación de contraseña ni verificación de email.** Sube de prioridad desde el 2026-08-23: cerrado el registro público, cada olvido de contraseña es un pedido manual al admin. No hay ninguna librería de mail instalada en el proyecto.
 4. La relación materia↔curso es por coincidencia de texto (`Subject.name` === `Course.name`), no hay FK. Renombrar una materia rompe la asociación. Mejora futura: `Course.subject` como ObjectId ref
 5. Rate limiting (`express-rate-limit`) y Helmet **ya están activos** (ver `server.js`)
 6. **Cache por-worker** de usuario y escuela (TTL 45s, ver `middleware/cache.js`): reduce load en Mongo pero no se comparte entre workers de PM2 cluster. Cambios de rol/estado/escuela pueden tardar hasta 45s en aplicar en OTRO worker. Ver mitigaciones en el changelog 2026-07-21.
@@ -387,7 +390,186 @@ que deja usuarios de prueba sin borrar). Espaciar las corridas o limpiar a mano.
 
 ---
 
+## Auditoría transversal del 2026-08-23 — lo que le falta al proyecto
+
+Barrido completo pedido por el usuario. Todo lo de acá está **verificado en el repo**, no
+inferido. Lo funcional que ya figura en el Roadmap no se repite.
+
+### Riesgo, por orden
+1. **4 planillas con datos reales de alumnos y docentes están commiteadas**:
+   `Basealumnos-materias-docentes.xls`, `Reporte de alumnos, Esc. 4118 (2).xls`,
+   `Cargos 4118 202606.xls`, `Servicios 4118 202606.xls`, más
+   `public/uploads/activities/1779380808445-v1lnzo8v43.xls`. El `.gitignore` **dice** que las
+   planillas con DNI nunca van al repo, pero solo nombra `issues.txt` y `Escuela_4118.xlsx`:
+   las otras entraron antes de esa regla y siguen en el índice **y en toda la historia**.
+   Son datos de menores. Sacarlas exige reescribir historia sobre `main` → decisión del dueño.
+   (El `.git` pesa 507 MB por estos mismos binarios.)
+2. **`public/archivos/` se sirve con `express.static('public')` sin guarda** (`server.js`):
+   adjuntos del docente y fotos de novedades quedan públicos para cualquiera con la URL. Las
+   **entregas del alumno sí están protegidas** (`GET /activities/submission-file/:filename`
+   verifica alumno o docente). Es la misma ruta con guarda que ya está pendiente para los
+   adjuntos del legajo SOE: un solo trabajo cierra los dos.
+3. **Los logs no rotan**: `config/logger.js` crea los transports `File` sin `maxsize` ni
+   `maxFiles`. `logs/combined.log` va por 25 MB solo en la máquina de desarrollo.
+4. **`npm audit`: 4 altas.** `brace-expansion`, `ip-address` y `body-parser` salen con
+   `npm audit fix` sin romper nada. **`xlsx` no tiene fix** (prototype pollution + ReDoS) y es
+   el que parsea las planillas que sube el admin → candidato a migrar a `exceljs`.
+
+5. **La escuela entera sigue colgando del Tailscale Funnel.** Es un relay que no está pensado
+   para 300 personas entrando a la vez, y ya dejó el sitio inalcanzable el 20/07, 22/07 y
+   10/08, más los cortes intermitentes de la franja 6-11 que midió el watchdog. Desde el
+   2026-08-23 hay un guardián que lo repara solo (`tools/funnel-guard.js`, ver el changelog),
+   pero **eso compra tiempo, no arregla el fondo**: el arreglo es sacarlo del camino con un
+   dominio propio detrás del Caddy que la máquina ya corre para el otro proyecto. Falta que el
+   dueño consiga el dominio y decida.
+
+### Ingeniería
+- **No hay CI.** `.github/` no existe. Hay ~490 unitarios, ~350 smoke y la matriz de roles, y
+  **nada los corre solo**; el `pre-commit` de husky es un placeholder y el único hook vivo es
+  el autobump de versión. Con el webhook desplegando directo a producción, una regresión llega
+  a la escuela sin que nadie la haya frenado. **Es lo de mayor retorno de la lista.**
+- Sin linter ni formatter, sin `README`, sin `.env.example`, sin `engines` en `package.json`
+  (corre Node 24), sin medición de cobertura.
+- Dependencias en fin de vida: **mongoose 6**, **multer 1.x**, **express 4**.
+- Monolitos ya formados: `services/dbFixes.js` (1908 líneas), `routes/admin.js` (1825),
+  `routes/activities.js` (1407), `routes/directivo.js` (1196).
+
+### Verificado que ya está (no reinvestigar)
+- Imágenes en novedades y adjuntas en tareas: **hechas** las dos.
+- Los índices de Mongo están bien puestos en los 23 modelos; hay `/health`; hay manejo de
+  404/500 al final de `server.js`.
+- **CSRF: no hay tokens y está bien** — las cookies van `sameSite: 'lax'`, que ya corta el
+  POST cross-site. No abrir ese frente sin una razón nueva.
+- **CSP desactivado a propósito** en helmet (las vistas usan estilos y scripts inline).
+  Reactivarlo es un proyecto, no un flag.
+
+---
+
 ## Historial de Cambios (Changelog)
+
+### 2026-08-23 — El Funnel se repara solo: guardián cada minuto + sección en el monitor
+
+Pedido del usuario: *"como siempre tengo problemas por los dns del funnel, me gustaría que
+cada 3 minutos se lance un script"* con los tres comandos de siempre (`funnel status`,
+`funnel reset && funnel --bg 3000`, `funnel status`) *"para evitar tener que estar haciendo
+ssh y hacerlo yo"*, y verlo *"en la pestaña monitor"*. En el mismo intercambio lo ajustó:
+**"chequéalo cada 1 minuto, y si se encuentra caído, generás el reset"**.
+
+**El reset a intervalo fijo habría empeorado el problema.** `funnel reset` da de baja el
+registro DNS público y `--bg 3000` lo vuelve a publicar; esa propagación tardó **10-15 minutos**
+el 20/07 (y menos de 1 minuto el 10/08). Un reset cada 3 minutos pisa la propagación en curso
+y la reinicia desde cero: el nombre no se publicaría nunca y el sitio quedaría caído **para
+siempre** — lo contrario de lo que se buscaba. Encima, cada reset corta las conexiones TLS
+abiertas: a las 7 de la mañana, con 300 personas entrando, serían microcortes autoinfligidos.
+Por eso el guardián **mide primero y repara solo cuando hace falta**, que es exactamente lo
+que el usuario terminó pidiendo.
+
+**Cómo funciona** (`tools/funnel-guard.js`, por cron cada minuto):
+
+| | |
+|---|---|
+| Mide | la app en `localhost:3000`, el DNS público contra `8.8.8.8`, y HTTPS **a la IP** que devolvió ese DNS (nombre en SNI y en `Host`) |
+| Repara | con **2 chequeos fallados seguidos** (`FUNNEL_FALLAS`), corriendo los tres comandos tal cual se hacían a mano |
+| Espera | **10 minutos** después de reparar (`FUNNEL_COOLDOWN`) para dejar propagar |
+| No repara | si la falla es de la aplicación: un reset no la arregla y agrega un corte encima |
+
+**Las dos mediciones que no se pueden hacer de cualquier forma** (las mismas trampas que ya
+documentó el watchdog): el DNS se pregunta con un resolver propio contra `8.8.8.8` porque el
+del sistema tiene MagicDNS enganchado y devuelve la IP interna `100.x` — un falso OK; y el
+pedido HTTPS va **a la IP**, porque consultar el nombre desde el propio server sale por el
+túnel y responde 200 aunque el Funnel esté roto para todo el mundo (la trampa del 22/07).
+
+**En el monitor**: sección **Acceso público (Tailscale Funnel)**, la primera de la página —
+es la capa que ya dejó el sitio inalcanzable tres veces con el servidor sano, y es la primera
+pregunta ante un "no anda". Estado del último chequeo, reparaciones del rango con su marca en
+la franja de tiempo, disponibilidad (1 chequeo por minuto ⇒ cada falla ≈ 1 minuto caído) y
+franja minuto a minuto con selector 1h/6h/24h/7d.
+
+**Tres estados del panel que valen más que el verde**:
+- *Guardián detenido* — hace más de 5 minutos que no llega un chequeo: el cron no corre. Un
+  verde con el guardián apagado diría "cubierto" justo cuando no hay nadie vigilando.
+- *N reparaciones fallaron al ejecutarse* — detecta pero no puede arreglar (casi siempre, el
+  cron no corre como root).
+- *Sin datos* — no está instalado, y el aviso trae el comando de instalación.
+
+**Piezas**: `services/funnelGuard.js` (el criterio, testeado) · `tools/funnel-guard.js` (mide y
+ejecuta) · `GET /superadmin/monitor/funnel?rango=` (cache 20 s por rango) · sección en
+`views/superadmin/monitor.ejs` · `tools/README-funnel-guard.md` · `npm run funnel:estado |
+funnel:simular | funnel:reparar`.
+
+**Detalles que importan**
+- El panel es **solo lectura**: no ejecuta nada de Tailscale. La app corre como `walter` y el
+  reset necesita root; además, un endpoint que resetea el Funnel sería un botón para tumbar el
+  sitio desde el navegador.
+- El modo literal del pedido original sigue disponible: `FUNNEL_MODO=siempre` resetea en cada
+  corrida. Está documentado junto a por qué no es el default.
+- La racha de fallas y el enfriamiento salen de leer el propio log, no de un archivo de estado
+  aparte que se pueda desincronizar.
+- Los dos grupos de botones de rango del monitor (rate limit y Funnel) comparten la clase
+  `.rl-rango`; el selector del rate limit era global y le apagaba el rango marcado al otro.
+  Ahora cada uno está acotado a su contenedor.
+
+**Tests**: `tests/unit/funnelGuard.test.js` (25 casos). Cubren los dos modos de falla graves y
+opuestos: resetear de más (deja el sitio caído para siempre) y resetear de menos (vuelve el
+ritual del SSH a las 7 de la mañana).
+
+**No toca la base de datos.** Todo sale de un archivo de log; no hay colección nueva.
+
+
+### 2026-08-23 — Se cierra el registro público: las cuentas las crea el administrador
+
+Pedido del usuario: *"me gustaría que ya no puedan añadirse o agregarse más alumnos en la
+página de login, los únicos roles autorizados para ingresar o crear alumnos y docentes, es
+el usuario administrador"*.
+
+**Había DOS puertas de auto-alta, no una**, y se cerraron las dos:
+
+1. **`/register`** — el "Crear cuenta nueva" que colgaba del modal de DNI de la pantalla de
+   login. Es la que el usuario nombró.
+2. **`/register/invite/:token`** — el enlace de invitación por escuela que genera el
+   superadmin. No está en la pantalla de login, pero **daba de alta alumnos y docentes sin
+   que interviniera ningún administrador**: cualquiera con el enlace se registraba y, además,
+   **elegía su propio rol** de una lista que incluía `directivo` y `soe`. El rol `soe` abre el
+   legajo psicopedagógico de un menor. Dejar esa puerta abierta contradecía el pedido de la
+   forma más cara posible, así que entró en el mismo cierre.
+
+**Cómo está hecho**: `services/registroPublico.js`, dos flags (`REGISTRO_ABIERTO`,
+`INVITACION_ABIERTA`), los dos en `false`. Mismo patrón que `services/selfEnroll.js` y
+`services/joinByCode.js` — esta puerta ya fue y vino varias veces en este proyecto, así que
+**reabrir cualquiera de las dos es cambiar un `false` por un `true`**, sin tocar rutas,
+vistas ni tests.
+
+| Ruta | Antes | Ahora |
+|---|---|---|
+| `GET /register` | formulario de alta | `302` → `/login` |
+| `POST /register` | creaba la cuenta (201) | `403 { registroCerrado: true }` |
+| `GET /register/invite/:token` | pantalla con nombre y color de la escuela | `200` con "Registro cerrado", **sin nombrar la escuela** |
+| `POST /register/invite/:token` | creaba la cuenta con el rol pedido | `403 { registroCerrado: true }` |
+
+**Detalles que importan**
+- Las guardas contestan **antes de tocar la base**, y antes que el chequeo de mantenimiento.
+  El 403 ("por acá no") le gana al 503 ("ahora no"): con 503 el que rebota volvería a intentar.
+  El orden está fijado por test — si alguien mete un `await User…` arriba de la guarda, se cae.
+- **`GET /register/lookup` sigue vivo**: es el "buscá tus datos de acceso con el DNI" del
+  login. No crea nada; le dice a quien YA tiene cuenta con qué correo entra.
+- **La automatrícula del alumno no se tocó** (`services/selfEnroll.js`), pero perdió una de sus
+  dos puertas: la del registro. Hoy la única viva es la del panel del alumno.
+- El pie del modal de DNI ya no ofrece "Crear cuenta nueva": ahora dice a quién pedirle el alta.
+- Las dos pantallas del superadmin que reparten el enlace de invitación (`schools.ejs`,
+  `school-profile.ejs`) llevan un aviso: el enlace se sigue generando y revocando —eso no se
+  tocó— pero **hoy no da de alta a nadie**.
+
+**Tests**: `tests/unit/registroPublico.test.js` (8 casos, monta el router en un Express **sin
+Mongo**: si una guarda dejara de contestar primero, el test cuelga en vez de pasar) + los
+specs `registro-publico-cerrado` y `registro-cerrado-gana-a-la-validacion` en el smoke. Se
+adecuaron 7 specs viejos que daban por hecho el auto-registro; los dos actores de Nivel 1
+(`teacher`, `student`) ahora los crea el **superadmin** —no el admin de escuela— porque
+`POST /superadmin/users/create` deja la cuenta con `school: null`, que es la semántica que
+tenían cuando se autoregistraban. Con el alta del admin quedarían CON escuela y media docena
+de specs de 403 pasarían a probar otra cosa sin que nadie se entere.
+
+**No toca la base de datos.** No hay campos nuevos ni migración: es todo código.
+
 
 ### 2026-08-19 — El docente adjunta imágenes a la actividad
 

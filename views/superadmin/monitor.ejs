@@ -138,9 +138,19 @@
     }
     .rl-leyenda i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; }
 
+    /* ── Franja del guardián del Funnel ── */
+    /* Cada bloque es un intervalo de tiempo, no una magnitud: por eso ocupan todo el alto
+       y lo que informa es el color. Un gráfico de barras acá haría pensar que la altura
+       significa algo. */
+    .fn-franja { display: flex; gap: 1px; height: 34px; margin-top: 10px; }
+    .fn-franja > div { flex: 1 1 0; min-width: 0; border-radius: 2px; }
+    .fn-marcas { display: flex; gap: 1px; height: 6px; margin-top: 3px; }
+    .fn-marcas > div { flex: 1 1 0; min-width: 0; border-radius: 1px; }
+
     @media (max-width: 600px) {
       .monitor-grid { grid-template-columns: 1fr 1fr; }
       .metric-value { font-size: 26px; }
+      .fn-franja { height: 26px; }
     }
   </style>
 </head>
@@ -162,6 +172,80 @@
         Actualizar
       </button>
       <span style="font-size:12px;color:var(--text-secondary);margin-left:auto" id="countdown"></span>
+    </div>
+
+    <!-- Acceso público (Funnel) — va PRIMERO a propósito: es la capa que ya dejó el sitio
+         inalcanzable tres veces con el servidor perfectamente sano, y la primera pregunta
+         ante un "no anda" es si el camino público está en pie. Los datos salen del log que
+         deja tools/funnel-guard.js por cron; el panel no ejecuta nada de Tailscale. -->
+    <div class="section-title">Acceso público (Tailscale Funnel)</div>
+    <div class="monitor-grid">
+      <div class="metric-card" id="m-fn-card" style="border-top:3px solid var(--border)">
+        <span class="material-symbols-outlined metric-icon" id="m-fn-icon">public</span>
+        <div class="metric-label">Camino público</div>
+        <div class="metric-value" style="font-size:24px" id="m-fn-estado">—</div>
+        <div class="metric-sub" id="m-fn-detalle">—</div>
+      </div>
+
+      <div class="metric-card">
+        <span class="material-symbols-outlined metric-icon" style="color:#ea8600">healing</span>
+        <div class="metric-label" id="m-fn-rep-label">Reparaciones automáticas</div>
+        <div class="metric-value" id="m-fn-rep">—</div>
+        <div class="metric-sub" id="m-fn-rep-sub">—</div>
+      </div>
+
+      <div class="metric-card">
+        <span class="material-symbols-outlined metric-icon" style="color:#1a73e8">percent</span>
+        <div class="metric-label" id="m-fn-disp-label">Disponibilidad</div>
+        <div class="metric-value" style="font-size:26px" id="m-fn-disp">—</div>
+        <div class="metric-sub" id="m-fn-disp-sub">—</div>
+      </div>
+    </div>
+
+    <div class="monitor-grid" style="margin-top:14px">
+      <div class="metric-card" style="grid-column: 1 / -1">
+        <div class="rl-chart-head">
+          <div>
+            <span class="material-symbols-outlined metric-icon" style="font-size:20px;color:#34a853">timeline</span>
+            <span class="metric-label">Chequeo minuto a minuto</span>
+          </div>
+          <div class="rl-rangos" id="m-fn-rangos">
+            <button class="rl-rango" data-rango="1h">1h</button>
+            <button class="rl-rango activo" data-rango="6h">6h</button>
+            <button class="rl-rango" data-rango="24h">24h</button>
+            <button class="rl-rango" data-rango="7d">7d</button>
+          </div>
+        </div>
+
+        <div class="fn-franja" id="m-fn-franja"></div>
+        <!-- Fila aparte para las reparaciones: en 7 días cada bloque mide 2 px y cualquier
+             ícono adentro sería invisible. Acá una marca de 6 px se ve igual de angosta. -->
+        <div class="fn-marcas" id="m-fn-marcas"></div>
+        <div class="rl-eje" id="m-fn-eje"></div>
+
+        <div class="rl-leyenda">
+          <span><i style="background:#34a853"></i> Accesible</span>
+          <span><i style="background:#ea8600"></i> Cortes intermitentes</span>
+          <span><i style="background:#ea4335"></i> Caído</span>
+          <span><i style="background:var(--text-hint);opacity:.35"></i> Sin chequeo</span>
+          <span><i style="background:#9334e6"></i> Reparación automática</span>
+        </div>
+
+        <div id="m-fn-aviso" style="display:none;font-size:12px;line-height:1.6;margin-top:12px;
+             padding:10px 12px;border-radius:8px;background:#fef7e0;color:#5c4400;border:1px solid #f6c344"></div>
+
+        <div style="font-size:11px;color:var(--text-hint);margin-top:12px;line-height:1.5">
+          El guardián chequea el camino público <strong>cada minuto</strong> desde el servidor:
+          resuelve el nombre contra 8.8.8.8 (no contra el DNS del sistema, que tiene MagicDNS
+          enganchado y daría un falso OK) y entra por la IP pública que le devuelve.
+          Si falla <strong id="m-fn-cfg-fallas">—</strong> chequeos seguidos corre
+          <code>tailscale funnel reset</code> + <code>--bg 3000</code>, y después espera
+          <strong id="m-fn-cfg-cooldown">—</strong> minutos antes de volver a intentarlo:
+          republicar el nombre puede tardar hasta 15 minutos y resetear encima de una
+          propagación en curso la reinicia desde cero.<br>
+          La salida cruda de cada reparación queda en <code>logs/funnel-guard-detalle.log</code>.
+        </div>
+      </div>
     </div>
 
     <!-- Usuarios -->
@@ -618,8 +702,142 @@
       const btn = e.target.closest('.rl-rango');
       if (!btn) return;
       rlRango = btn.dataset.rango;
-      document.querySelectorAll('.rl-rango').forEach(b => b.classList.toggle('activo', b === btn));
+      // Acotado a ESTE grupo de botones: la franja del Funnel usa la misma clase y un
+      // selector global le apagaría el rango marcado a la otra sección.
+      document.querySelectorAll('#m-rl-rangos .rl-rango').forEach(b => b.classList.toggle('activo', b === btn));
       fetchRateLimit();
+    });
+
+    // ── Guardián del Funnel ───────────────────────────────────────────────────
+    // Se refresca cada 30 s y no junto con el resto del panel (cada 5 s) por dos razones:
+    // el guardián escribe una línea por minuto, así que no hay nada nuevo que mirar, y cada
+    // request del monitor consume cupo del rate limit.
+    let fnRango = '6h';
+    let fnTimer;
+    const FN_REFRESH_MS = 30 * 1000;
+    const FN_ETIQUETA = { '1h': 'la última hora', '6h': 'las últimas 6 horas', '24h': 'las últimas 24 horas', '7d': 'los últimos 7 días' };
+    const FN_COLOR    = { ok: '#34a853', parcial: '#ea8600', falla: '#ea4335' };
+
+    function fnAviso(html) {
+      const el = document.getElementById('m-fn-aviso');
+      el.innerHTML   = html || '';
+      el.style.display = html ? 'block' : 'none';
+    }
+
+    // Estado grande de la primera tarjeta. Devuelve el color para el borde y el ícono.
+    function fnPintarEstado(texto, detalle, color, icono) {
+      setText('m-fn-estado', texto);
+      setText('m-fn-detalle', detalle);
+      document.getElementById('m-fn-card').style.borderTopColor = color;
+      const ic = document.getElementById('m-fn-icon');
+      ic.textContent   = icono;
+      ic.style.color   = color;
+      document.getElementById('m-fn-estado').style.color = color;
+    }
+
+    function fnPintarFranja(data) {
+      const franja = document.getElementById('m-fn-franja');
+      const marcas = document.getElementById('m-fn-marcas');
+      // Mismo criterio que las barras del rate limit: con muchos bloques el separador de
+      // 1 px termina siendo más ancho que el dato.
+      const gap = data.serie.length > 80 ? '0' : '1px';
+      franja.style.gap = gap;
+      marcas.style.gap = gap;
+
+      franja.innerHTML = data.serie.map(b => {
+        const color = FN_COLOR[b.estado] || 'var(--text-hint)';
+        const op    = b.estado === 'vacio' ? '.35' : '1';
+        const texto = b.total === 0
+          ? 'sin chequeos'
+          : `${b.total - b.fallas} de ${b.total} chequeos accesibles`;
+        return `<div title="${Fecha.diaMesHora(b.t)} — ${texto}" style="background:${color};opacity:${op}"></div>`;
+      }).join('');
+
+      marcas.innerHTML = data.serie.map(b => b.reparaciones
+        ? `<div title="${Fecha.diaMesHora(b.t)} — ${b.reparaciones} ${b.reparaciones === 1 ? 'reparación' : 'reparaciones'} del Funnel" style="background:#9334e6"></div>`
+        : '<div></div>').join('');
+
+      document.getElementById('m-fn-eje').innerHTML =
+        window.etiquetasEjeX(data.serie, data.rango).map(m => `<span>${m.label}</span>`).join('');
+    }
+
+    async function fetchFunnel() {
+      try {
+        const res  = await fetch('/superadmin/monitor/funnel?rango=' + fnRango);
+        const data = await res.json();
+
+        // Sin log no hay nada que mostrar: el guardián no está instalado en esta máquina.
+        // Se dice cómo instalarlo en vez de dejar tres guiones sin explicación.
+        if (!data.instalado) {
+          fnPintarEstado('Sin datos', 'El guardián no está instalado en este servidor', 'var(--text-hint)', 'help');
+          setText('m-fn-rep', '—');
+          setText('m-fn-rep-sub', '—');
+          setText('m-fn-disp', '—');
+          setText('m-fn-disp-sub', '—');
+          document.getElementById('m-fn-franja').innerHTML = '';
+          document.getElementById('m-fn-marcas').innerHTML = '';
+          fnAviso('<strong>El guardián del Funnel no está corriendo.</strong> En el servidor, como root:<br>' +
+                  '<code>( crontab -l 2>/dev/null; echo "* * * * * $(command -v node) /home/walter/classroom/tools/funnel-guard.js >/dev/null 2>&1" ) | crontab -</code>');
+          return;
+        }
+
+        const r = data.resumen;
+        setText('m-fn-cfg-fallas',   data.config.fallasParaReparar);
+        setText('m-fn-cfg-cooldown', data.config.cooldownMin);
+
+        if (!r.ultimo) {
+          fnPintarEstado('Sin chequeos', 'No hay mediciones en ' + FN_ETIQUETA[data.rango], 'var(--text-hint)', 'help');
+        } else if (!data.vivo) {
+          // Peor que una falla: el panel en verde con el guardián apagado diría "cubierto"
+          // justo cuando no hay nadie vigilando.
+          fnPintarEstado('Guardián detenido', 'Último chequeo: ' + Fecha.fechaHora(r.ultimo.fecha), '#ea8600', 'running_with_errors');
+          fnAviso('<strong>Hace más de 5 minutos que no llega un chequeo.</strong> El cron del guardián no está corriendo: ' +
+                  'el sitio puede caerse sin que nadie lo repare. Verificar con <code>crontab -l | grep funnel-guard</code>.');
+        } else if (r.ultimo.estado === 'falla') {
+          fnPintarEstado('Caído', r.ultimo.texto, '#ea4335', 'public_off');
+          fnAviso('');
+        } else if (r.ultimo.estado === 'indeterminado') {
+          fnPintarEstado('Sin confirmar', r.ultimo.texto, '#ea8600', 'help');
+          fnAviso('');
+        } else {
+          fnPintarEstado('En línea', 'Último chequeo: ' + Fecha.hora(r.ultimo.fecha), '#34a853', 'public');
+          fnAviso('');
+        }
+
+        // Una reparación que no se pudo ejecutar es el caso más engañoso: el guardián
+        // detecta bien y no puede arreglar (típicamente, sin permisos de sudo).
+        if (r.errores > 0) {
+          fnAviso(`<strong>${r.errores === 1 ? '1 reparación falló' : r.errores + ' reparaciones fallaron'} al ejecutarse.</strong> ` +
+                  'El guardián detecta la caída pero no puede resetear el Funnel: casi siempre es que el cron no ' +
+                  'corre como root o falta el permiso de sudo. Ver <code>logs/funnel-guard-detalle.log</code>.');
+        }
+
+        setText('m-fn-rep-label', 'Reparaciones en ' + FN_ETIQUETA[data.rango]);
+        setText('m-fn-rep', r.reparaciones);
+        setText('m-fn-rep-sub', r.ultimaReparacion
+          ? 'última: ' + Fecha.fechaHora(r.ultimaReparacion)
+          : 'no hizo falta ninguna');
+        document.getElementById('m-fn-rep').style.color = r.reparaciones > 0 ? '#ea8600' : 'var(--text)';
+
+        setText('m-fn-disp-label', 'Disponibilidad en ' + FN_ETIQUETA[data.rango]);
+        setText('m-fn-disp', r.disponibilidad === null ? '—' : r.disponibilidad + '%');
+        // Un chequeo por minuto ⇒ cada medición fallada es aproximadamente un minuto caído.
+        setText('m-fn-disp-sub', `${r.conFalla} de ${r.total} chequeos con falla (≈ ${r.conFalla} min)`);
+        document.getElementById('m-fn-disp').style.color =
+          r.disponibilidad === 100 ? '#34a853' : (r.disponibilidad >= 99 ? '#ea8600' : '#ea4335');
+
+        fnPintarFranja(data);
+      } catch {
+        fnPintarEstado('Sin datos', 'No se pudo leer el estado del Funnel', 'var(--text-hint)', 'help');
+      }
+    }
+
+    document.getElementById('m-fn-rangos').addEventListener('click', (e) => {
+      const btn = e.target.closest('.rl-rango');
+      if (!btn) return;
+      fnRango = btn.dataset.rango;
+      document.querySelectorAll('#m-fn-rangos .rl-rango').forEach(b => b.classList.toggle('activo', b === btn));
+      fetchFunnel();
     });
 
     async function fetchStats() {
@@ -767,16 +985,22 @@
     // el ancho de banda con una métrica que nadie está mirando.
     document.addEventListener('bkc:open', () => {
       clearInterval(timer);
+      clearInterval(fnTimer);
       setText('countdown', 'Pausado');
     });
     document.addEventListener('bkc:close', () => {
       countdown = REFRESH_SECONDS;
-      timer = setInterval(tick, 1000);
+      timer   = setInterval(tick, 1000);
+      fnTimer = setInterval(fetchFunnel, FN_REFRESH_MS);
       fetchStats();
+      fetchFunnel();
     });
 
     fetchStats();
     timer = setInterval(tick, 1000);
+
+    fetchFunnel();
+    fnTimer = setInterval(fetchFunnel, FN_REFRESH_MS);
   </script>
 </body>
 </html>

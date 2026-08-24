@@ -2,6 +2,8 @@ const express = require('express');
 const multer  = require('multer');
 const XLSX    = require('xlsx');
 const os       = require('os');
+const fs       = require('fs');
+const path     = require('path');
 const mongoose = require('mongoose');
 // Almacenamiento del monitor. El escaneo de carpetas viene cacheado desde el servicio.
 const { getDiskStats } = require('../services/diskStats');
@@ -18,6 +20,14 @@ const RateLimitSample = require('../models/RateLimitSample');
 const {
   rangoValido, configDeRango, agregarSerie, resumirMuestras,
 } = require('../services/rateLimitStats');
+// Guardián del Funnel. `agregarSerie` se renombra porque el del rate limit ya ocupa el
+// nombre y son dos series distintas.
+const {
+  parsearLinea: parsearLineaFunnel,
+  resumir: resumirFunnel,
+  agregarSerie: agregarSerieFunnel,
+  CONFIG_DEFAULT: FUNNEL_CONFIG,
+} = require('../services/funnelGuard');
 const { requireAuth }      = require('../middleware/auth');
 const { requireSuperAdmin } = require('../middleware/superadmin');
 const { invalidateUser, invalidateSchool } = require('../middleware/cache');
@@ -985,6 +995,78 @@ router.get('/monitor/ratelimit', async (req, res) => {
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).json({ error: 'Error al cargar el consumo del rate limit' });
+  }
+});
+
+/* ─── Guardián del Funnel ─── */
+// Muestra lo que hizo tools/funnel-guard.js, que corre por cron cada minuto y deja una línea
+// por chequeo. El panel es SOLO LECTURA: no ejecuta nada de Tailscale. Que la reparación viva
+// en el cron y no acá no es casual — la app corre como `walter` y el reset necesita root, y
+// además un endpoint que resetea el Funnel es un botón para tumbar el sitio desde el navegador.
+const FUNNEL_LOG = process.env.FUNNEL_GUARD_LOG
+  || path.join(__dirname, '..', 'logs', 'funnel-guard.log');
+
+// Mismo criterio que el cache del rate limit: el monitor refresca cada 5 s y el guardián
+// escribe una vez por minuto. Sin esto serían 12 lecturas del archivo entero por minuto y
+// por worker para dibujar una franja que cambia una vez por minuto.
+const fgCache = new Map(); // rango → { t, payload }
+const FG_CACHE_MS = 20 * 1000;
+
+// Un chequeo tendría que llegar cada minuto. Si el último es más viejo que esto, el cron no
+// está corriendo — y un panel en verde con el guardián apagado sería lo peor de todo:
+// diría "cubierto" justo cuando no hay nadie vigilando.
+const FG_VIVO_MS = 5 * 60 * 1000;
+
+// GET /superadmin/monitor/funnel?rango=1h|6h|24h|7d
+router.get('/monitor/funnel', async (req, res) => {
+  try {
+    const rango = rangoValido(req.query.rango) ? req.query.rango : '6h';
+
+    let cacheado = fgCache.get(rango);
+    if (!cacheado || Date.now() - cacheado.t > FG_CACHE_MS) {
+      const { ventanaMin, bucketMin } = configDeRango(rango);
+      const desde = new Date(Date.now() - ventanaMin * 60 * 1000);
+      const hasta = new Date();
+
+      let crudo = null;
+      try {
+        crudo = await fs.promises.readFile(FUNNEL_LOG, 'utf8');
+      } catch {
+        crudo = null; // el guardián todavía no está instalado en esta máquina
+      }
+
+      if (crudo === null) {
+        cacheado = { t: Date.now(), payload: { instalado: false, rango, log: FUNNEL_LOG } };
+      } else {
+        // El archivo está acotado por la rotación del propio guardián (20 mil líneas ≈ 14
+        // días), así que leerlo entero y filtrar es más simple que buscar la cola a mano.
+        const registros = crudo.split('\n')
+          .map(parsearLineaFunnel)
+          .filter(r => r && r.fecha >= desde);
+
+        const resumen = resumirFunnel(registros);
+        cacheado = {
+          t: Date.now(),
+          payload: {
+            instalado: true,
+            rango, bucketMin, desde, hasta,
+            serie:   agregarSerieFunnel(registros, desde, hasta, bucketMin),
+            resumen,
+            // "El guardián está corriendo": se mide contra el último chequeo, no contra la
+            // existencia del archivo, que sobrevive al cron que lo escribía.
+            vivo: !!(resumen.ultimo && Date.now() - new Date(resumen.ultimo.fecha).getTime() < FG_VIVO_MS),
+            config: FUNNEL_CONFIG,
+            log: FUNNEL_LOG,
+          },
+        };
+      }
+      fgCache.set(rango, cacheado);
+    }
+
+    res.json(cacheado.payload);
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error al leer el estado del Funnel' });
   }
 });
 
