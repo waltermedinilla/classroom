@@ -2298,7 +2298,12 @@ window._subFiles = [];
 // isBlocked=true → solo muestra el mensaje de plazo vencido, sin formulario
 // submission puede ser null (primera entrega) o el objeto Submission existente (reenvío)
 // Configuración compartida con el server (routes/activities.js: EXT_SUBMISSIONS + SUBMISSION_MAX_SIZE)
-const SUB_ALLOWED_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'gif', 'zip'];
+// Documentos que acepta la entrega. Las IMÁGENES no están acá: las decide Adjuntos.esImagen()
+// —la misma lista que usa el servidor— y viajan por /upload-submission-image, que las
+// recomprime. Tenerlas duplicadas fue el bug del 2026-08-24: esta lista se quedó sin .heic ni
+// .webp cuando el resto de la aplicación ya los aceptaba, así que la foto del iPhone rebotaba
+// con un cartel que nombraba a las imágenes entre los formatos permitidos.
+const SUB_ALLOWED_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'zip'];
 const SUB_MAX_SIZE     = 20 * 1024 * 1024; // 20 MB
 
 function renderSubmissionSection(actId, submission, isBlocked = false, allowResubmission = false) {
@@ -2387,7 +2392,7 @@ function renderSubmissionSection(actId, submission, isBlocked = false, allowResu
       <div class="creator-att-row">
         <label class="creator-att-btn" title="Subir archivo (PDF, Word, Excel, imágenes o ZIP)">
           <input type="file" id="subFileInput" multiple hidden
-            accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.zip">
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.zip,image/*,.jfif,.avif,.tif,.tiff">
           <div class="creator-att-circle">
             <span class="material-symbols-outlined">upload</span>
           </div>
@@ -2438,12 +2443,14 @@ function syncSubmitBtn(submission) {
 // Pre-sube UN archivo con XHR + barra de progreso en tiempo real.
 // Mismo patrón que uploadFile() en views/activities/new.ejs (docente).
 function uploadSubFile(actId, file) {
-  // Validación cliente: extensión
+  // Validación cliente: extensión. Las imágenes las decide la regla compartida con el
+  // servidor (public/js/adjuntosActividad.js), no una lista propia de esta pantalla.
   const extRaw = file.name.split('.').pop().toLowerCase();
-  if (!SUB_ALLOWED_EXTS.includes(extRaw)) {
+  const esFoto = Adjuntos.esImagen(file.name);
+  if (!esFoto && !SUB_ALLOWED_EXTS.includes(extRaw)) {
     showUploadErrModal(
       'Tipo de archivo no permitido',
-      `"${file.name}" no es un formato aceptado.\nPodés subir PDF, Word, Excel, imágenes (jpg, png, gif) o ZIP.`
+      `"${file.name}" no es un formato aceptado.\nPodés subir PDF, Word, Excel, ZIP o una foto (jpg, png, webp, heic...).`
     );
     return;
   }
@@ -2484,7 +2491,12 @@ function uploadSubFile(actId, file) {
 
   // Ruta en una constante: el diagnóstico reporta cuál falló, y si no es exactamente la que
   // se llamó, el reporte manda a buscar al lugar equivocado.
-  const rutaSubida = '/activities/' + actId + '/upload-submission-file';
+  // Las fotos van por su propia ruta, que las recomprime a WebP antes de tocar el disco; los
+  // documentos siguen viajando enteros. Las dos rutas contestan lo mismo, así que de acá para
+  // abajo no hay ninguna diferencia. Mismo reparto que hace el docente entre /upload-image y
+  // /upload-attachment.
+  const rutaSubida = '/activities/' + actId
+    + (esFoto ? '/upload-submission-image' : '/upload-submission-file');
   // Seguimiento del diagnóstico. Lo que aporta es cuántos bytes llegó a empujar el
   // navegador: distingue "se cortó en camino" (red del aula, proxy, límite de un
   // intermediario — nada de eso deja rastro en el log del servidor) de "subió entero y el

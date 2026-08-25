@@ -151,7 +151,7 @@
             <div id="imagePreviewContainer"></div>
             <div class="announcement-actions">
               <label class="icon-btn" title="Adjuntar imagen">
-                <input type="file" id="imageInput" accept="image/*" hidden>
+                <input type="file" id="imageInput" accept="image/*,.jfif,.avif,.tif,.tiff" hidden>
                 <span class="material-symbols-outlined">image</span>
               </label>
               <span id="imageName" class="image-name"></span>
@@ -424,7 +424,7 @@
           <div class="att-buttons">
             <label class="btn btn-outline att-btn">
               <input type="file" id="activityFileInput"
-                     accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif"
+                     accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.jfif,.png,.webp,.gif,.avif,.tif,.tiff"
                      multiple hidden>
               <span class="material-symbols-outlined">attach_file</span>
               Subir archivo
@@ -432,7 +432,7 @@
             <!-- Botón propio para la foto: en el celular, `image/*` abre la cámara y la galería
                  directamente, que es como se sube la foto del pizarrón sin salir de la clase. -->
             <label class="btn btn-outline att-btn">
-              <input type="file" id="activityImageInput" accept="image/*,.heic,.heif" multiple hidden>
+              <input type="file" id="activityImageInput" accept="image/*,.jfif,.avif,.tif,.tiff" multiple hidden>
               <span class="material-symbols-outlined">image</span>
               Subir imagen
             </label>
@@ -684,7 +684,7 @@
         <div id="customizePanelImage" style="display:none">
           <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
             <label class="btn btn-outline" style="cursor:pointer">
-              <input type="file" id="hImageInput" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" hidden onchange="onImageSelected()">
+              <input type="file" id="hImageInput" accept="image/*,.jfif,.avif,.tif,.tiff" hidden onchange="onImageSelected()">
               <span class="material-symbols-outlined" style="font-size:16px!important">upload</span>
               Subir imagen
             </label>

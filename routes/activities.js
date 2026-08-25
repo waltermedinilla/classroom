@@ -63,7 +63,12 @@ const EXT_ALLOWED     = ['.pdf', '.doc', '.docx', '.xls', '.xlsx'];
 // sola constante para los dos multer que lo usan (crear la actividad y el pre-upload) y para
 // los mensajes de error, que antes repetían el número a mano.
 const ADJUNTO_MAX_MB  = 50;
-// Extensiones permitidas para entregas de alumnos (incluye imágenes y zip)
+// Extensiones permitidas para entregas de alumnos por la ruta de ARCHIVOS.
+//
+// Desde el 2026-08-24 las fotos NO entran por acá: van por /upload-submission-image, que las
+// recomprime a WebP. Las de imagen se dejan igual en esta lista a propósito, como red: un
+// navegador con el JS viejo en cache sigue mandando la foto a esta ruta, y es mejor que se
+// guarde entera a que le rebote. Cuando el cache ya no importe se pueden sacar.
 const EXT_SUBMISSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png', '.gif', '.zip'];
 
 // Genera un nombre único para evitar colisiones en disco: timestamp + random + extensión original
@@ -1019,6 +1024,94 @@ router.get('/:id/staged-file/:filename', requireAuth, async (req, res) => {
   }
 });
 
+// Guard del alumno que va a entregar: existe la actividad, está inscripto, el plazo sigue
+// abierto y no tiene una entrega cerrada. Es exactamente lo que ya chequeaba a mano
+// /upload-submission-file, pero acá va ANTES de multer y esa es toda la gracia: multer recibe
+// el cuerpo ENTERO antes de que el handler corra, así que con el chequeo tardío alguien que
+// no puede entregar igual alcanza a empujar 20 MB. Misma regla que `exigirGestorDelCurso`.
+async function exigirAlumnoQuePuedeEntregar(req, res, next) {
+  if (idMalo(req, res, 'Actividad no encontrada', { como: 'json' })) return;
+  try {
+    const activity = await Activity.findById(req.params.id);
+    if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
+
+    const course = await Course.findById(activity.course);
+    const userId = res.locals.user._id.toString();
+    if (!course || !course.students.map(s => s.toString()).includes(userId)) {
+      return res.status(403).json({ error: 'No estás inscripto en este curso' });
+    }
+    if (activity.dueDate && new Date(activity.dueDate) < new Date() && !activity.allowLateSubmissions) {
+      return res.status(403).json({ error: 'El plazo de entrega ha vencido. El docente debe habilitar las entregas tardías.' });
+    }
+    const yaEntregada = await Submission.findOne({ activity: req.params.id, student: userId });
+    if (yaEntregada && !activity.allowResubmission) {
+      return res.status(403).json({ error: 'Esta actividad no permite modificar la entrega una vez enviada.' });
+    }
+    next();
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error al preparar la entrega' });
+  }
+}
+
+// POST /activities/:id/upload-submission-image
+// La FOTO de la entrega del alumno: la hoja de la carpeta, el ejercicio resuelto, la maqueta.
+//
+// Ruta aparte de /upload-submission-file por el mismo motivo que /upload-image lo es de
+// /upload-attachment: el camino del archivo es otro. Acá va multer EN MEMORIA → sharp → WebP
+// → disco, y aquella es diskStorage. Sumar las imágenes a EXT_SUBMISSIONS habría guardado la
+// foto de 4 MB tal cual.
+//
+// Qué resuelve (auditoría del 2026-08-24): era el ÚNICO camino de subida de la aplicación que
+// no pasaba por el optimizador, y se notaba en las dos puntas:
+//
+//   1. Rechazaba `.heic` —lo que manda un iPhone— con el cartel "Tipo de archivo no permitido
+//      (PDF, Word, Excel, imágenes o ZIP)", que nombra a las imágenes mientras rechaza una.
+//      También `.webp` (lo que baja de WhatsApp o de Chrome) y `.jfif`.
+//   2. Lo que sí entraba viajaba y se guardaba entero: una foto de celular son varios MB por
+//      alumno por entrega, y cuanto más tarda la subida más expuesta está a los cortes del
+//      Funnel (ver el informe de subidas del 18/08).
+//
+// La respuesta es IDÉNTICA a la de /upload-submission-file a propósito: el navegador mete las
+// dos en el mismo `_subUploadedFiles` y el submit no distingue.
+router.post('/:id/upload-submission-image', requireAuth, uploadLimiter,
+  exigirAlumnoQuePuedeEntregar, subirImagen('file'), async (req, res) => {
+    try {
+      // Una extensión rechazada ya no llega hasta acá (el fileFilter falla con su propio 400
+      // y la lista completa). Lo que queda es "no adjuntó nada".
+      if (!req.file) return res.status(400).json({ error: 'No se recibió ninguna imagen' });
+
+      const schoolId = res.locals.user.school?.toString() || 'general';
+      const userId   = res.locals.user._id.toString();
+      // Mismo directorio y mismo formato de storagePath que la ruta de archivos: el submit
+      // valida que el prefijo sea {schoolId}/{activityId}/{userId}/ y no le importa por cuál
+      // de las dos rutas entró.
+      const guardada = await guardarImagenOptimizada(req.file, {
+        preset: 'adjunto',
+        dir:    path.join(ENTREGAS_BASE, schoolId, req.params.id, userId),
+      });
+
+      // El nombre VISIBLE lleva la extensión que quedó EN DISCO. Misma regla que la sala y que
+      // el adjunto del docente: si no, el archivo que el docente descarga no coincide con su
+      // propio nombre.
+      const original = fixFilenameEncoding(req.file.originalname);
+      const extFinal = path.extname(guardada.filename).toLowerCase();
+      const base     = path.basename(original, path.extname(original));
+
+      res.json({
+        storagePath: [schoolId, req.params.id, userId, guardada.filename].join('/'),
+        name:        `${base}${extFinal}`.slice(0, 120),
+        filename:    guardada.filename,
+        mime:        extFinal === '.webp' ? 'image/webp' : (req.file.mimetype || ''),
+        size:        guardada.bytes,
+      });
+    } catch (err) {
+      if (err instanceof ImagenInvalidaError) return res.status(400).json({ error: err.message });
+      logDeRuta(err, res);
+      res.status(500).json({ error: 'Error al subir la imagen' });
+    }
+  });
+
 // POST /activities/:id/upload-submission-file
 // Pre-sube UN archivo al path final de la entrega, igual que el docente hace con
 // /activities/upload-attachment. Devuelve la metadata para que el frontend la mande
@@ -1043,7 +1136,15 @@ router.post('/:id/upload-submission-file', requireAuth, (req, res, next) => {
   });
 }, async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'Tipo de archivo no permitido (PDF, Word, Excel, imágenes o ZIP)' });
+    // El mensaje enumera lo que ESTA ruta acepta. Antes decía "(PDF, Word, Excel, imágenes o
+    // ZIP)" y era justo el cartel que veía el alumno cuando le rebotaba una foto de iPhone:
+    // nombraba a las imágenes entre lo permitido mientras rechazaba una. Las fotos ahora
+    // tienen su propia ruta y su propio mensaje.
+    if (!req.file) {
+      return res.status(400).json({
+        error: `Ese archivo no se puede subir. Aceptamos ${EXT_SUBMISSIONS.join(', ')} y fotos.`,
+      });
+    }
 
     const activity = await Activity.findById(req.params.id);
     if (!activity) { fs.unlinkSync(req.file.path); return res.status(404).json({ error: 'Actividad no encontrada' }); }

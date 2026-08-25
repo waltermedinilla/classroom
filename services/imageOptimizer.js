@@ -35,17 +35,57 @@ function sharpDisponible() {
   return sharp !== null;
 }
 
-// ¿Este libvips sabe LEER HEIC/HEIF? Se consulta a sharp en vez de asumirlo: el soporte
-// depende del binario precompilado de cada plataforma, y el de desarrollo (Windows) puede
-// no coincidir con el de producción (Linux).
+// ¿Este libvips sabe LEER el HEIC de un iPhone?
 //
-// Ojo con la asimetría, que confunde al diagnosticar: ESCRIBIR HEIC casi nunca está
-// disponible (el codificador HEVC tiene patentes; sharp tira "heifsave: Unsupported
-// compression"), pero LEERLO normalmente sí. Acá solo nos importa leer — nunca generamos
-// HEIC, todo sale convertido a WebP.
+// ⚠️ LA PREGUNTA NO ES SI EXISTE EL LOADER HEIF, y confundirlas costó una investigación
+// entera. `sharp.format.heif.input.buffer` da `true` en los binarios precompilados igual, y
+// no porque sepan leer HEIC: el loader heif está compilado para **AVIF** (libheif con AV1).
+// El HEIC del iPhone es **HEVC**, que tiene patentes y no viene en el prebuilt.
+//
+// Lo que sí lo dice es la lista de sufijos que libvips ANUNCIA para el loader: la arma según
+// los decodificadores que encontró. Medido el 2026-08-24 en las dos máquinas —el Windows de
+// desarrollo y el Ubuntu de producción, las dos con libvips 8.17.3:
+//
+//     input: { file: true, buffer: true, stream: true, fileSuffix: [ '.avif' ] }
+//                                                                    ↑ solo AVIF
+//
+// Si el HEVC estuviera, ahí figurarían también '.heic' y '.heif'.
+//
+// La versión vieja de esta función miraba `input.buffer` y por lo tanto contestaba que SÍ en
+// un servidor que no puede leer un solo HEIC. Eso no es un detalle: es lo que decide la
+// severidad del log de abajo, así que cada foto de iPhone rechazada dejaba un WARN diciendo
+// "el loader está disponible, el problema es el archivo" — culpando a la foto de la docente y
+// mandando a quien investigara a la capa equivocada. Un instrumento que miente es peor que no
+// tener instrumento.
 function heifSoportado() {
-  return Boolean(sharp && sharp.format && sharp.format.heif && sharp.format.heif.input
-    && (sharp.format.heif.input.buffer || sharp.format.heif.input.file));
+  const sufijos = sharp?.format?.heif?.input?.fileSuffix;
+  if (!Array.isArray(sufijos)) return false;
+  return sufijos.includes('.heic') || sufijos.includes('.heif');
+}
+
+// El cartel que ve quien sube un HEIC que no podemos leer. Vive acá, en una constante, para
+// que el rechazo rápido del middleware y el fallo al decodificar digan LO MISMO: son el mismo
+// problema visto en dos momentos distintos, y dos redacciones distintas harían pensar que son
+// dos fallas.
+// Dos consejos y en este orden, porque resuelven cosas distintas: el primero arregla LA FOTO
+// QUE YA SACARON (al elegirla desde Fotos, iOS la convierte a JPG en el camino; desde Archivos
+// la manda tal cual), y el segundo evita que vuelva a pasar. Decirle solo lo segundo a alguien
+// que tiene la foto sacada y la tarea por entregar no le sirve de nada hoy.
+const MENSAJE_HEIC_SIN_CODEC =
+  'No pudimos leer esta foto de iPhone. Elegila desde Fotos (no desde Archivos) y el ' +
+  'teléfono la manda como JPG. Para que salgan siempre así: Ajustes → Cámara → Formatos → ' +
+  '"Más compatible".';
+
+// Aviso ÚNICO al arrancar el worker, y a propósito no uno por request: que falte el códec es
+// un hecho de la INSTALACIÓN, no de cada foto. Loguearlo en cada intento llenaría el log de
+// alarmas repetidas por algo que no cambia hasta que alguien toque el servidor — y un log que
+// grita siempre deja de leerse.
+if (sharpDisponible() && !heifSoportado()) {
+  logger.warn('libvips vino sin el códec HEVC: no se pueden leer los HEIC del iPhone', {
+    detalle: 'el loader heif está compilado solo para AVIF',
+    sufijos: sharp?.format?.heif?.input?.fileSuffix,
+    efecto:  'las fotos .heic se rechazan al instante con el cartel que explica cómo pasarlas a JPG',
+  });
 }
 
 // `failOn` decide con qué nivel de problema sharp aborta la decodificación. El default es
@@ -121,10 +161,7 @@ async function optimizar(buffer, presetName, originalname = '', { tolerante = fa
       } else {
         logger.warn('No se pudo decodificar un HEIC/HEIF (el loader está disponible)', datos);
       }
-      throw new ImagenInvalidaError(
-        'No pudimos leer esta foto de iPhone. Volvé a enviarla como JPG: en el iPhone, ' +
-        'Ajustes → Cámara → Formatos → "Más compatible".',
-        err.message);
+      throw new ImagenInvalidaError(MENSAJE_HEIC_SIN_CODEC, err.message);
     }
     // sharp no pudo ni leer la cabecera: esto NO es una imagen, por más que la extensión
     // y el Content-Type digan lo contrario. Antes de esto, el fileFilter de multer miraba
@@ -216,4 +253,7 @@ async function optimizar(buffer, presetName, originalname = '', { tolerante = fa
   };
 }
 
-module.exports = { optimizar, sharpDisponible, sharpError, ImagenInvalidaError };
+module.exports = {
+  optimizar, sharpDisponible, sharpError, heifSoportado,
+  MENSAJE_HEIC_SIN_CODEC, ImagenInvalidaError,
+};

@@ -362,7 +362,11 @@ router.get('/profile', requireAuth, async (req, res) => {
 // guardarImagenOptimizada() DESPUÉS de escribir la nueva.
 router.post('/profile/avatar', requireAuth, subirImagen('avatar'), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'Formato no permitido (JPG, PNG, WebP o GIF)' });
+    // Desde el 2026-08-24 una extensión rechazada NO llega hasta acá: el fileFilter de
+    // subirImagen falla con su propio 400 y el mensaje con la lista completa. Lo único que
+    // queda para este if es "no adjuntó nada", y el mensaje lo dice. Antes enumeraba a mano
+    // "(JPG, PNG, WebP o GIF)" y ya mentía: hacía dos semanas que aceptábamos HEIC.
+    if (!req.file) return res.status(400).json({ error: 'No se recibió ninguna imagen' });
     const schoolId = res.locals.user?.school?.toString() || 'general';
     const userId   = res.locals.user._id.toString();
     const dir      = path.join(ARCHIVOS_BASE, schoolId, 'avatars', userId);

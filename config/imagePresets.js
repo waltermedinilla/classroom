@@ -95,12 +95,40 @@ const PRESETS = {
 //
 // Salen convertidos a WebP como cualquier otra imagen, así que al alumno le llega un
 // formato que su navegador entiende: el HEIC nunca queda publicado tal cual.
-const EXT_IMAGENES = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic', '.heif'];
+// `.jfif`, `.avif`, `.tif` y `.tiff` van desde el 2026-08-24, y las cuatro por el mismo
+// motivo: sharp las decodifica sin problema (verificado contra este binario), así que
+// rechazarlas era friccion pura. Los dos casos reales que las trajeron:
+//
+//   - `.jfif` ES un JPEG. Chrome en Windows guarda así muchas imágenes al hacer "Guardar
+//     imagen como", sin avisarle a nadie: la docente baja una lámina, la sube y rebota.
+//   - `.avif` es lo que sirven hoy muchos sitios, y Chrome lo guarda con esa extensión.
+//
+// `.bmp` NO entra, y la ausencia es deliberada: este libvips no lo decodifica ("unsupported
+// image format"), así que aceptarlo por extensión solo cambiaría un rechazo honesto por un
+// "El archivo no es una imagen válida" que miente. Que el cartel diga que no aceptamos .bmp
+// es más útil: se guarda como JPG y listo.
+const EXT_IMAGENES = ['.jpg', '.jpeg', '.jfif', '.png', '.webp', '.gif', '.avif', '.tif', '.tiff', '.heic', '.heif'];
 
 // Extensiones cuya decodificación depende de que libvips traiga el códec HEVC. Se listan
 // aparte porque el modo de falla es distinto al de un archivo corrupto y el mensaje al
 // usuario tiene que decirle qué hacer (ver imageOptimizer.js).
 const EXT_DEPENDEN_DE_CODEC = ['.heic', '.heif'];
+
+// ⚠️ POR QUÉ ESTAS DOS NO VAN EN LOS `accept=` DE LOS FORMULARIOS, aunque estén acá.
+//
+// Safari en iOS decide qué mandar mirando el `accept`: con `image/*` convierte la foto a JPG
+// en el camino, pero si el formulario DICE que acepta HEIC, le manda el original. O sea que
+// nombrarlas ahí es pedirle al teléfono justo lo único que el servidor no puede leer (ver
+// heifSoportado() en services/imageOptimizer.js: este libvips trae el loader heif solo para
+// AVIF). Decisión del usuario del 2026-08-24: las cámaras de la escuela van en "Más
+// compatible" y no se reconstruye sharp.
+//
+// Siguen en ESTA lista igual, y no es contradicción: si un HEIC llega de todas formas —desde
+// la app Archivos, desde un navegador de terceros— lo que recibe la persona es el cartel que
+// le explica qué hacer, y no un "formato no permitido" que no explica nada.
+//
+// Si algún día el servidor tiene el códec HEVC, esto se revisa junto con el rechazo rápido
+// del fileFilter: son las dos caras de la misma decisión.
 
 // Tamaño máximo de ENTRADA. Es alto a propósito: la salida se comprime a ~40 KB, así que
 // no hay motivo para castigar a alguien que sube la foto tal cual sale del celular.

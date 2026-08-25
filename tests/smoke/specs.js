@@ -982,6 +982,73 @@ const specs = [
       });
     },
   },
+  /* ─── Auditoría de subidas de imagen (2026-08-24) ───
+     specs/subidas-de-imagen.spec.md. Los dos specs de acá abajo son EL caso: antes del
+     arreglo, una imagen con una extensión que el servidor no conocía se descartaba en
+     silencio y la novedad se publicaba igual, con 201 y sin foto. No había cartel, ni línea
+     en el log, ni código SUB — así que del lado del usuario "a veces no sube la imagen" era
+     literalmente imposible de rastrear. */
+  {
+    id: 'novedad-imagen-rara-avisa-en-vez-de-descartar',
+    title: 'Una imagen con formato no aceptado se rechaza con cartel, no se descarta callada',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const foto = await fotoDePrueba(1200, 900);
+      const fd = new FormData();
+      fd.append('courseId', state.courseId);
+      fd.append('text', 'Novedad con una imagen .bmp (smoke)');
+      fd.append('image', new Blob([foto], { type: 'image/bmp' }), 'lamina.bmp');
+
+      const res = await client.post('scopedTeacher', '/announcements/create', {
+        form: fd, expectStatus: 400,
+      });
+      assert(/\.bmp/.test(res.json.error || ''), `el cartel tiene que nombrar la extensión: ${res.json.error}`);
+      assert(/\.jpg/.test(res.json.error || ''), 'y enumerar lo que sí aceptamos');
+    },
+  },
+  {
+    id: 'novedad-imagen-jfif-entra',
+    title: 'Un .jfif (lo que guarda Chrome en Windows) se acepta y sale como WebP',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // .jfif ES un JPEG: rechazarlo era fricción pura, y le pasaba a cualquiera que bajara
+      // una lámina con "Guardar imagen como".
+      const foto = await fotoDePrueba(2000, 1500);
+      const fd = new FormData();
+      fd.append('courseId', state.courseId);
+      fd.append('text', 'Novedad con .jfif (smoke)');
+      fd.append('image', new Blob([foto], { type: 'image/jpeg' }), 'lamina.jfif');
+
+      const res = await client.post('scopedTeacher', '/announcements/create', {
+        form: fd, expectStatus: 201,
+      });
+      const url = res.json.announcement.image;
+      assert(url && url.endsWith('.webp'), `el .jfif debería quedar como .webp, quedó: ${url}`);
+
+      await client.post('scopedTeacher', `/announcements/${res.json.announcement._id}/delete`,
+        { expectStatus: 200 });
+    },
+  },
+  {
+    id: 'portada-imagen-rara-avisa',
+    title: 'La portada de la materia también avisa en vez de guardar sin imagen',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Mismo bug que la novedad y por la misma causa: `if (req.file)` sin else. Acá el
+      // síntoma era peor de leer — la docente apretaba Guardar, recibía 200 y la portada
+      // seguía siendo la de antes.
+      const foto = await fotoDePrueba(1600, 600);
+      const fd = new FormData();
+      fd.append('mode', 'image');
+      fd.append('color', '#0d7377');
+      fd.append('image', new Blob([foto], { type: 'image/bmp' }), 'portada.bmp');
+
+      const res = await client.post('scopedTeacher', `/courses/${state.courseId}/customize`, {
+        form: fd, expectStatus: 400,
+      });
+      assert(/\.bmp/.test(res.json.error || ''), `el cartel tiene que nombrar la extensión: ${res.json.error}`);
+    },
+  },
   {
     id: 'activity-create',
     title: 'El docente crea una actividad',
@@ -1696,10 +1763,10 @@ const specs = [
     title: 'El optimizador no toca los adjuntos que no son imágenes (el PDF sigue siendo PDF)',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state, assert }) {
-      // Las entregas siguen en diskStorage y SIN optimizar (fuera del alcance de v1.0.7:
-      // ahí hay PDFs de hasta 50 MB que no tienen por qué pasar por RAM). Este spec fija
-      // ese límite — si algún día se extiende el optimizador a las entregas, que no se
-      // lleve puestos los PDFs por el camino.
+      // Desde el 2026-08-24 las FOTOS de la entrega sí se optimizan (por
+      // /upload-submission-image), pero los documentos no: siguen en diskStorage y enteros,
+      // porque acá hay PDFs de hasta 20 MB que no tienen por qué pasar por RAM. Este spec es
+      // el que vigila esa frontera — que el optimizador no se lleve puestos los PDFs.
       const fd = new FormData();
       fd.append('file', new Blob(['%PDF-1.4 smoke sin tocar'], { type: 'application/pdf' }), 'intacto.pdf');
       const up = await client.post('scopedStudent', `/activities/${state.activityId}/upload-submission-file`, {
@@ -1707,6 +1774,91 @@ const specs = [
       });
       assert(up.json.filename.endsWith('.pdf'),
         `el PDF debería conservar su extensión, quedó: ${up.json.filename}`);
+    },
+  },
+  {
+    id: 'entrega-foto-se-recomprime',
+    title: 'La foto de la entrega se recomprime a WebP antes de tocar el disco',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Era el único camino de subida de la aplicación que guardaba la imagen tal cual venía
+      // del celular. Además de disco, costaba tiempo de subida: cuanto más tarda, más
+      // expuesta está a los cortes del Funnel (ver el informe de subidas del 18/08).
+      const foto = await fotoDePrueba(2400, 1800);
+      const fd = new FormData();
+      fd.append('file', new Blob([foto], { type: 'image/jpeg' }), 'carpeta.jpg');
+
+      const up = await client.post('scopedStudent', `/activities/${state.activityId}/upload-submission-image`, {
+        form: fd, expectStatus: 200,
+      });
+
+      assert(up.json.filename.endsWith('.webp'), `debería quedar como .webp, quedó: ${up.json.filename}`);
+      // El nombre VISIBLE lleva la extensión que quedó en disco: si dijera .jpg, el archivo
+      // que descarga el docente no coincidiría con su propio nombre.
+      assert(up.json.name === 'carpeta.webp', `el nombre visible debería ser carpeta.webp, es: ${up.json.name}`);
+      assert(up.json.size < foto.length,
+        `la foto tendría que adelgazar: ${up.json.size} vs ${foto.length} original`);
+      assert(up.json.mime === 'image/webp', `el mime debería ser image/webp, es: ${up.json.mime}`);
+
+      // Y entra en la entrega como cualquier otro archivo: el submit no distingue por cuál de
+      // las dos rutas subió.
+      const submit = await client.post('scopedStudent', `/activities/${state.activityId}/submit`, {
+        body: { text: 'Foto de la carpeta', uploadedFiles: [up.json] },
+        expectStatus: 200,
+      });
+      assert(submit.json.submission.files.some(f => f.filename === up.json.filename),
+        'la foto debería quedar en la entrega');
+    },
+  },
+  {
+    id: 'entrega-foto-de-iphone',
+    title: 'La foto de iPhone (.heic) entra, o explica cómo pasarla a JPG — nunca "no permitido"',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // El caso: hasta el 2026-08-24 la entrega rechazaba .heic con el cartel "Tipo de archivo
+      // no permitido (PDF, Word, Excel, imágenes o ZIP)" — nombraba a las imágenes mientras
+      // rechazaba una, y no le decía al alumno qué hacer.
+      //
+      // El resultado correcto depende del servidor y este spec acepta los dos, porque los dos
+      // son correctos; lo que NO se acepta es un cartel que no explique nada:
+      //
+      //   - con el códec HEVC     → 200, y la foto sale convertida a WebP;
+      //   - sin el códec (el caso de hoy: el libvips precompilado trae el loader heif solo
+      //     para AVIF) → 400 en el primer segundo, con el cartel que dice cómo poner la cámara
+      //     en "Más compatible". El rechazo es RÁPIDO: no se sube la foto entera para nada.
+      const foto = await fotoDePrueba(1800, 2400);
+      const fd = new FormData();
+      fd.append('file', new Blob([foto], { type: 'image/heic' }), 'IMG_4821.HEIC');
+
+      const up = await client.post('scopedStudent', `/activities/${state.activityId}/upload-submission-image`, {
+        form: fd, expectStatus: [200, 400],
+      });
+
+      if (up.status === 200) {
+        assert(up.json.filename.endsWith('.webp'),
+          'el HEIC nunca queda publicado tal cual: sale convertido');
+      } else {
+        assert(/iPhone/i.test(up.json.error || ''),
+          `el cartel tiene que explicar el problema, dijo: ${up.json.error}`);
+        assert(/JPG|compatible/i.test(up.json.error || ''),
+          'y decirle a la persona qué hacer para poder entregar');
+      }
+    },
+  },
+  {
+    id: 'entrega-foto-de-un-ajeno-no-entra',
+    title: 'Quien no está inscripto no llega ni a subir la foto (el permiso va antes de multer)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // El guard corre ANTES de recibir el cuerpo: sin eso, alguien ajeno alcanza a empujar
+      // 20 MB al disco de la escuela y recién después lee el 403. Misma regla que dejó escrita
+      // el adjunto del docente.
+      const foto = await fotoDePrueba(800, 600);
+      const fd = new FormData();
+      fd.append('file', new Blob([foto], { type: 'image/jpeg' }), 'colada.jpg');
+      await client.post('scopedTeacher', `/activities/${state.activityId}/upload-submission-image`, {
+        form: fd, expectStatus: 403,
+      });
     },
   },
   {

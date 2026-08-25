@@ -17,31 +17,102 @@ const fs     = require('fs');
 const fsp    = require('fs/promises');
 const crypto = require('crypto');
 const logger = require('../config/logger');
-const { optimizar, ImagenInvalidaError } = require('../services/imageOptimizer');
-const { EXT_IMAGENES, MAX_INPUT_BYTES } = require('../config/imagePresets');
+const { logRechazo } = require('./route-log');
+const {
+  optimizar, heifSoportado, MENSAJE_HEIC_SIN_CODEC, ImagenInvalidaError,
+} = require('../services/imageOptimizer');
+const { EXT_IMAGENES, EXT_DEPENDEN_DE_CODEC, MAX_INPUT_BYTES } = require('../config/imagePresets');
+
+// Extensión que no aceptamos. Es una clase y no un string suelto para que el mensaje —el
+// que ve el usuario— se arme en un solo lugar y siempre nombre la lista completa.
+class ExtensionNoPermitidaError extends Error {
+  constructor(ext) {
+    super(`Esa imagen no se puede subir${ext ? ` (${ext})` : ''}. Aceptamos: ${EXT_IMAGENES.join(', ')}`);
+    this.name = 'ExtensionNoPermitidaError';
+    this.ext  = ext;
+  }
+}
 
 // Multer compartido por todas las subidas de imagen. El fileFilter es un primer filtro
 // barato por extensión; la validación real (¿esto es una imagen?) la hace sharp al
 // decodificar en services/imageOptimizer.js.
+//
+// ⚠️ QUÉ PASA CUANDO LA EXTENSIÓN NO SIRVE. El rechazo se ANOTA en el request y lo contesta
+// subirImagen() cuando multer terminó. Las otras dos formas de escribir esto están las dos
+// mal, y cada una se pagó una vez:
+//
+//   1. `cb(null, false)` a secas —lo que había hasta el 2026-08-24— descarta el archivo y
+//      sigue como si nada. El handler recibe `req.file` undefined, indistinguible de "no
+//      adjuntó nada", y las rutas donde la imagen es OPCIONAL (la novedad, la portada) hacen
+//      `if (req.file)` y siguen de largo: publicaban SIN la foto y contestaban 201/200.
+//      Medido: subir una novedad con `prueba.jfif` devolvía 201 con `image: null`. Sin
+//      cartel, sin línea en el log y sin código SUB-XXXXXX (el diagnóstico solo se dispara
+//      cuando falla la red, no cuando el servidor contesta que sí). Un fallo que no se podía
+//      encontrar — que es exactamente como lo reportaban los docentes.
+//
+//   2. `cb(err)` aborta el parseo, y el servidor contesta el 400 mientras el navegador
+//      TODAVÍA está subiendo. La conexión queda a medio camino y el pedido siguiente de ese
+//      mismo socket muere con "fetch failed": se vio en el smoke del 2026-08-24, fallando
+//      dos specs sin relación entre sí, los dos justo después de uno que rechazaba una
+//      imagen.
+//
+// La marca + `cb(null, false)` se queda con lo bueno de las dos: multer termina de leer el
+// cuerpo (la conexión queda sana, igual que antes) y la respuesta es un 400 con su cartel.
 const uploadImagen = multer({
   storage: multer.memoryStorage(),
   limits:  { fileSize: MAX_INPUT_BYTES },
   fileFilter: (req, file, cb) => {
-    cb(null, EXT_IMAGENES.includes(path.extname(file.originalname).toLowerCase()));
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (EXT_IMAGENES.includes(ext)) {
+      // Rechazo RÁPIDO del HEIC cuando este libvips no trae el códec HEVC (medido el
+      // 2026-08-24: no lo trae, ni acá ni en producción). Sin esto, la foto de 5 MB viaja
+      // ENTERA por la red del aula para morir recién al decodificar — y en una conexión que
+      // se corta sola cada tanto, esa espera es lo peor que se le puede pedir a alguien para
+      // después decirle que no. El cartel es el mismo, llega en el primer segundo.
+      //
+      // La extensión sigue en EXT_IMAGENES y en los `accept` a propósito: si algún día el
+      // servidor tiene el códec, esto se apaga solo. Y mientras tanto es mejor que la foto se
+      // pueda elegir y reciba una explicación, a que no aparezca en el selector y la persona
+      // crea que su archivo está roto.
+      if (EXT_DEPENDEN_DE_CODEC.includes(ext) && !heifSoportado()) {
+        req.imagenRechazada = new Error(MENSAJE_HEIC_SIN_CODEC);
+        return cb(null, false);
+      }
+      return cb(null, true);
+    }
+    req.imagenRechazada = new ExtensionNoPermitidaError(ext);
+    cb(null, false);
   },
 });
 
 // Envuelve `uploadImagen.single(campo)` para devolver JSON en español en vez del mensaje
 // en inglés de multer. Mismo patrón que routes/activities.js.
+//
+// Todo rechazo queda además en el log con `logRechazo`, por lo mismo que lo hace la sala en
+// vivo: sin eso, del lado del servidor no hay una sola línea que diga que a alguien le
+// rebotó una foto, y "no me deja subir" se vuelve imposible de investigar.
 function subirImagen(campo) {
   return (req, res, next) => {
     uploadImagen.single(campo)(req, res, (err) => {
+      // El rechazo por extensión se contesta ACÁ y no en cada ruta, a propósito: si hubiera
+      // que agregar un middleware a mano en cada una, la próxima ruta de imagen que alguien
+      // escriba se lo va a olvidar — y el olvido es justamente el bug que esto arregla. Por
+      // pasar por subirImagen(), ya está cubierta.
+      if (!err && req.imagenRechazada) {
+        const motivo = req.imagenRechazada.message;
+        logRechazo(res, 400, motivo);
+        return res.status(400).json({ error: motivo });
+      }
       if (!err) return next();
       if (err.code === 'LIMIT_FILE_SIZE') {
         const mb = Math.round(MAX_INPUT_BYTES / (1024 * 1024));
-        return res.status(413).json({ error: `La imagen es demasiado grande (máximo ${mb} MB)` });
+        const msg = `La imagen es demasiado grande (máximo ${mb} MB)`;
+        logRechazo(res, 413, msg);
+        return res.status(413).json({ error: msg });
       }
-      return res.status(400).json({ error: err.message || 'Error al procesar la imagen' });
+      const msg = err.message || 'Error al procesar la imagen';
+      logRechazo(res, 400, msg);
+      return res.status(400).json({ error: msg });
     });
   };
 }
@@ -135,6 +206,7 @@ function borrarPorUrlPublica(urlPublica) {
 
 module.exports = {
   subirImagen,
+  ExtensionNoPermitidaError,
   guardarImagenOptimizada,
   borrarVersionesPrevias,
   borrarPorUrlPublica,

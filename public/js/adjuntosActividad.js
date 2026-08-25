@@ -20,7 +20,7 @@
   else raiz.Adjuntos = api;
 })(typeof window !== 'undefined' ? window : globalThis, function () {
 
-  var EXT_IMAGEN = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic', '.heif'];
+  var EXT_IMAGEN = ['.jpg', '.jpeg', '.jfif', '.png', '.webp', '.gif', '.avif', '.tif', '.tiff', '.heic', '.heif'];
 
   // Extensión en minúsculas y con el punto, o '' si el nombre no tiene ninguna.
   // Se mira SIEMPRE el último punto: "consigna.pdf.exe" es un .exe, no un .pdf.

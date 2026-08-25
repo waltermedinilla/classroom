@@ -300,6 +300,7 @@ Variables CSS para colores, sombras, radios. Componentes:
 | `adjuntosActividad.js` | Regla compartida navegador↔servidor: qué adjunto es una imagen (decide la ruta de subida y la miniatura) y qué URL puede guardarse como adjunto. La `require()` `routes/activities.js` |
 | `visibilidadActividad.js` | Regla única de "¿el alumno ve esta actividad?" (`availableFrom` + el ojo del docente). También la `require()` el servidor |
 | `estadoActividad.js` | Regla única de "¿en qué estado está esta actividad **para este alumno**?" (Calificada / Entregada / Vencida / Tardía / Pendiente) y qué va en "Próximas entregas". La usan el chip de la tarjeta y el sidebar; ver `specs/entrega-sale-de-pendientes.spec.md` |
+| `adjuntosActividad.js` → `esImagen()` | ⭐ La ÚNICA respuesta a "¿esto es una imagen?" en el navegador. Ninguna pantalla arma su propia lista: el bug del 2026-08-24 fue exactamente eso (la entrega tenía la suya y se quedó sin `.heic` ni `.webp`). La lista autorizada vive en `config/imagePresets.js` y un test compara las dos |
 
 ---
 
@@ -372,6 +373,35 @@ El par `public/js/devoluciones.js` + `tests/unit/devoluciones.test.js` es el eje
 que deja usuarios de prueba sin borrar). Espaciar las corridas o limpiar a mano.
 
 ---
+
+## Subidas de imagen — los seis caminos
+
+Auditoría completa del 2026-08-24: `specs/subidas-de-imagen.spec.md`.
+
+| Camino | Quién | Ruta | Preset |
+|---|---|---|---|
+| Avatar | todos | `POST /courses/profile/avatar` | `avatar` |
+| Portada de la materia | docente | `POST /courses/:id/customize` | `header` |
+| Imagen de una novedad | docente y alumno | `POST /announcements/create` | `novedad` |
+| Imagen adjunta a la actividad | docente | `POST /activities/upload-image` | `adjunto` |
+| Foto en la sala en vivo | docente y alumno | `POST /courses/:id/sala/adjuntos/imagen` | `sala` |
+| Foto en la entrega | alumno | `POST /activities/:id/upload-submission-image` | `adjunto` |
+
+**Los seis pasan por `middleware/image-upload.js`** (multer en memoria → sharp → WebP → disco).
+Cualquier camino nuevo va por ahí también: es lo que garantiza que la imagen se optimice, que
+un formato no aceptado deje **cartel y línea de log**, y que el original nunca toque el disco.
+
+⚠️ **Las dos reglas que se pagaron caro** (las dos están en el comentario del `fileFilter`):
+
+1. Un rechazo **nunca** se contesta con `cb(null, false)` a secas — descarta la imagen en
+   silencio y la ruta publica sin foto, con 201. Fue el bug que estuvo semanas sin poder
+   encontrarse, porque no dejaba rastro en ningún lado.
+2. Tampoco con `cb(err)` — aborta el cuerpo a mitad de subida y el pedido siguiente de ese
+   socket muere con "fetch failed". Se anota en `req.imagenRechazada` y contesta
+   `subirImagen()` cuando multer terminó.
+
+Los **documentos** (PDF, Word, Excel, ZIP) no pasan por ahí: siguen en `diskStorage` y enteros,
+tanto en la entrega del alumno como en los adjuntos del docente y de la sala.
 
 ## Notas / Issues Conocidos
 1. `GET /courses/create` existe en la ruta pero usa modal en dashboard — no tiene vista propia
