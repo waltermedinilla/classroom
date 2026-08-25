@@ -263,6 +263,23 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
         return obj;
       });
     } else {
+      // Sus propias entregas, en una sola consulta indexada por el índice único
+      // { activity, student } de Submission. Sin esto la solapa Actividades no puede
+      // distinguir "todavía la tengo que hacer" de "ya la entregué" y le pone "Pendiente"
+      // a las dos, y "Próximas entregas" le sigue mostrando lo que ya hizo. La regla que
+      // consume este campo es public/js/estadoActividad.js.
+      //
+      // Va la FECHA, no un booleano: es lo que hace falta para poder mostrar "Entregada el
+      // 14/8" sin pedirle al navegador una segunda vuelta por actividad.
+      const misEntregas = await Submission.find({
+        student:  userId,
+        activity: { $in: activities.map(a => a._id) },
+      }).select('activity firstSubmittedAt createdAt');
+      const entregaPorActividad = {};
+      misEntregas.forEach(s => {
+        entregaPorActividad[s.activity.toString()] = s.firstSubmittedAt || s.createdAt;
+      });
+
       result = activities.map(act => {
         const obj = act.toObject();
         // Para el alumno: extrae solo su propia calificación del array grades y borra el resto
@@ -270,6 +287,10 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
         // points puede venir null: es una devolución escrita sin nota. El front la muestra
         // como "Con devolución" (no como calificada) — ver renderStudentActivity en course.js.
         obj.myGrade = myGrade ? { points: myGrade.points ?? null, feedback: myGrade.feedback || '' } : null;
+        // Su propia entrega: { at } o null. Nunca los archivos ni el texto — para eso está
+        // GET /activities/:id/my-submission, que es lo que abre el modal de detalle.
+        const entregadaEl = entregaPorActividad[obj._id.toString()];
+        obj.mySubmission = entregadaEl ? { at: entregadaEl } : null;
         delete obj.grades; // No exponer notas de otros alumnos
         // Si es una actividad interactiva, filtrar las respuestas correctas del snapshot
         // (el autoGrader corre siempre server-side; el alumno nunca las necesita ver).

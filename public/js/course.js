@@ -537,6 +537,41 @@ function buildActivityStreamEl(act) {
   return div;
 }
 
+// Pinta la tarjeta "Próximas entregas" del sidebar a partir de la lista ya filtrada.
+// Está separada de loadStream() porque hay dos momentos en que hay que redibujarla: al
+// cargar la solapa Novedades y cuando el alumno entrega desde el modal (ahí la tarea deja
+// de ser una entrega próxima y tiene que irse de la lista sin recargar la página).
+function renderUpcoming(upcoming) {
+  const upcomingList = document.getElementById('upcomingList');
+  if (!upcomingList) return;
+  if (upcoming.length === 0) {
+    upcomingList.innerHTML = '<p class="stream-no-upcoming">No tenés tareas pendientes</p>';
+    return;
+  }
+  upcomingList.innerHTML = upcoming.slice(0, 3).map(a => `
+    <div class="upcoming-item" data-id="${a._id}" onclick="openActivityDetail('${a._id}')">
+      <div class="upcoming-item-title">${a.title}</div>
+      <div class="upcoming-item-due">${fmtShort(a.dueDate)}</div>
+    </div>
+  `).join('');
+}
+
+// Redibuja "Próximas entregas" con el cache de actividades, sin volver a pedir el stream.
+// Se llama cuando el alumno entrega: la tarea sale de la lista en el acto y, si había una
+// cuarta esperando afuera del tope de 3, entra sola.
+//
+// El cache alcanza porque al alumno el servidor le manda exactamente lo mismo que este
+// filtro necesita: window._activities lo llenan loadStream() y loadActivitiesTab(), y para
+// un alumno las dos traen el mismo conjunto (las que ya están publicadas).
+function refrescarProximasEntregas() {
+  const now = new Date();
+  const upcoming = Object.values(window._activities || {})
+    .filter(a => Visibilidad.esVisibleParaAlumno(a, now))
+    .filter(a => EstadoActividad.esProximaEntrega(a, now))
+    .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+  renderUpcoming(upcoming);
+}
+
 // Carga el stream (novedades + actividades) mezclados y ordenados cronológicamente
 // También llena el sidebar de "Próximas entregas" con las actividades con dueDate futuro
 async function loadStream() {
@@ -552,25 +587,15 @@ async function loadStream() {
   const annData = await annRes.json();
   const actData = await actRes.json();
 
-  // Próximas entregas en el sidebar: solo actividades con dueDate en el futuro, máx 3
+  // Próximas entregas en el sidebar: lo que TODAVÍA hay que hacer y tiene fecha por
+  // delante, máx 3. Lo ya entregado sale de acá (EstadoActividad.esProximaEntrega): esta
+  // tarjeta es la lista de lo que falta, no el índice de la materia.
   const now = new Date();
   const upcoming = (actData.activities || [])
     .filter(a => Visibilidad.esVisibleParaAlumno(a, now))
-    .filter(a => a.dueDate && new Date(a.dueDate) > now)
+    .filter(a => EstadoActividad.esProximaEntrega(a, now))
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-  const upcomingList = document.getElementById('upcomingList');
-  if (upcomingList) {
-    if (upcoming.length === 0) {
-      upcomingList.innerHTML = '<p class="stream-no-upcoming">No tenés tareas pendientes</p>';
-    } else {
-      upcomingList.innerHTML = upcoming.slice(0, 3).map(a => `
-        <div class="upcoming-item" onclick="openActivityDetail('${a._id}')">
-          <div class="upcoming-item-title">${a.title}</div>
-          <div class="upcoming-item-due">${fmtShort(a.dueDate)}</div>
-        </div>
-      `).join('');
-    }
-  }
+  renderUpcoming(upcoming);
 
   // Mezcla y ordena novedades + actividades por fecha (más recientes primero).
   //
@@ -1237,7 +1262,10 @@ function reemplazarTarjetaActividad(actId) {
   const vieja = document.querySelector(`.act-student-item[data-id="${actId}"]`);
   const act   = window._activities[actId];
   if (!vieja || !act) return;
-  addActivityTabCard(act);
+  // Cada rol tiene su constructora, igual que en loadActivitiesTab(). Antes esto llamaba
+  // siempre a la del docente: no se notaba porque solo lo usaban flujos de docente, pero
+  // desde que el alumno redibuja su tarjeta al entregar hay que respetar el rol.
+  window.IS_OWNER ? addActivityTabCard(act) : addStudentActivityCard(act);
   const nueva = document.getElementById('activitiesList').lastElementChild;
   vieja.replaceWith(nueva);
 }
@@ -1268,8 +1296,11 @@ async function toggleActivityVisibility(actId) {
 }
 
 /* ─── Vista alumno: tarjeta de actividad ─── */
-// Construye la tarjeta para el alumno con su estado personal (Pendiente / Calificada / Vencida / Tardía)
-// act.myGrade viene del servidor (solo la nota propia, sin las del resto de la clase)
+// Construye la tarjeta para el alumno con su estado personal
+// (Calificada / Entregada / Vencida / Tardía / Pendiente — el orden es la regla, ver
+// public/js/estadoActividad.js).
+// act.myGrade y act.mySubmission vienen del servidor y son solo suyos: su nota, sin las del
+// resto de la clase, y la fecha de su propia entrega.
 function addStudentActivityCard(act) {
   window._activities[act._id] = act;
   const container = document.getElementById('activitiesList');
@@ -1278,33 +1309,28 @@ function addStudentActivityCard(act) {
 
   const now       = new Date();
   const isOverdue = act.dueDate && new Date(act.dueDate) < now;
-  // Con points null hay devolución escrita pero todavía no hay nota: no es "Calificada"
-  const isGraded  = act.myGrade?.points != null;
 
-  // Lógica de estado: calificada > vencida cerrada > tardía abierta > pendiente
-  let statusChip, gradeText = '';
-  if (isGraded) {
-    statusChip = `<span class="act-status-chip status-graded">
-      <span class="material-symbols-outlined" style="font-size:12px">grade</span>Calificada
-    </span>`;
-    // Muestra la nota y el máximo si está definido
-    gradeText = `<span class="act-grade-text">${act.myGrade.points}${act.points != null ? ' / ' + act.points + ' pts' : ' pts'}</span>`;
-  } else if (isOverdue && !act.allowLateSubmissions) {
-    // Plazo vencido y sin opción de entrega tardía
-    statusChip = `<span class="act-status-chip status-overdue">
-      <span class="material-symbols-outlined" style="font-size:12px">lock</span>Vencida
-    </span>`;
-  } else if (isOverdue && act.allowLateSubmissions) {
-    // Plazo vencido pero el docente habilitó las tardías
-    statusChip = `<span class="act-status-chip status-late-open">
-      <span class="material-symbols-outlined" style="font-size:12px">lock_open</span>Tardía
-    </span>`;
-  } else {
-    statusChip = `<span class="act-status-chip status-pending">Pendiente</span>`;
-  }
+  // Estado del alumno: calificada > entregada > vencida > tardía > pendiente.
+  // La regla no está acá: vive en public/js/estadoActividad.js, porque "Próximas entregas"
+  // tiene que contestar lo mismo. Lo que sí se decide acá es cómo se dibuja.
+  const estado = EstadoActividad.estadoParaAlumno(act, now);
+
+  const icono = estado.icono
+    ? `<span class="material-symbols-outlined" style="font-size:12px">${estado.icono}</span>`
+    : '';
+  const statusChip = `<span class="act-status-chip ${estado.css}">${icono}${estado.etiqueta}</span>`;
+
+  // La nota, solo cuando la hay. Muestra el máximo si está definido.
+  const gradeText = estado.clave === 'calificada'
+    ? `<span class="act-grade-text">${act.myGrade.points}${act.points != null ? ' / ' + act.points + ' pts' : ' pts'}</span>`
+    : '';
 
   let dateText = '', dateClass = '';
-  if (act.dueDate) {
+  if (EstadoActividad.yaEntregada(act)) {
+    // Al que ya entregó no se le pone en rojo "Venció el 12/8": el plazo dejó de ser su
+    // problema. La fecha que le sirve es la de su entrega.
+    dateText = 'Entregado: ' + Fecha.diaMes(act.mySubmission.at);
+  } else if (act.dueDate) {
     const dueFmt = Fecha.diaMesHora(act.dueDate);
     dateText  = (isOverdue ? 'Venció: ' : 'Entrega: ') + dueFmt;
     dateClass = isOverdue ? ' date-overdue' : ''; // Clase CSS que pone el texto en rojo
@@ -2244,6 +2270,9 @@ function renderRunnerSection(activityId, act, submission, isBlocked) {
       templateId: act.templateSnapshot.templateId,
       questions:  act.templateSnapshot.questions,
       gradeUrl:   '/activities/' + activityId + '/submit',
+      // Para que el runner pueda avisar cuál actividad quedó entregada: enviar respuestas
+      // crea una Submission igual que subir un archivo, y la tarjeta tiene que enterarse.
+      activityId: activityId,
     });
   }
   // Si ya había respondido, mostrar el resultado guardado sin volver a enviar.
@@ -2588,6 +2617,23 @@ function removeUploadedSubFile(uid) {
   if (c) c.remove();
 }
 
+// La tarea deja de estar pendiente EN EL ACTO, sin recargar: el chip de la tarjeta pasa a
+// "Entregada" y la actividad se va de "Próximas entregas". Es el mismo campo que manda el
+// servidor en GET /activities/course/:id (`mySubmission`), puesto a mano sobre el cache —
+// si no, lo que el alumno acaba de hacer le seguía figurando como pendiente hasta que
+// apretara F5, que es exactamente el problema que vino a resolver esta feature.
+//
+// Va en window porque la llaman los DOS caminos de entrega: el formulario de archivos de
+// acá abajo y el runner de las actividades interactivas (public/js/task-runner.js).
+window.marcarActividadEntregada = function (actId, submission) {
+  const act = window._activities[actId];
+  if (!act) return;
+  const sub = submission || {};
+  act.mySubmission = { at: sub.firstSubmittedAt || sub.createdAt || new Date().toISOString() };
+  reemplazarTarjetaActividad(actId);
+  refrescarProximasEntregas();
+};
+
 // Envía la entrega del alumno (POST /activities/:id/submit como JSON con archivos ya subidos)
 // Después de éxito: re-renderiza la sección de entrega con los datos actualizados
 async function submitWork(actId) {
@@ -2635,6 +2681,8 @@ async function submitWork(actId) {
   window._subUploadedFiles = [];
   const act = window._activities[actId] || {};
   renderSubmissionSection(actId, data.submission, false, !!act.allowResubmission);
+
+  marcarActividadEntregada(actId, data.submission);
 
   const msg = document.getElementById('subMsg');
   if (msg) { msg.style.display = 'inline-flex'; setTimeout(() => { msg.style.display = 'none'; }, 3000); }

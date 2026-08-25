@@ -193,6 +193,14 @@ window.mountRunner = function (cfg, opts) {
     //   - Submit del alumno:      { submission: { autoGraded: {...} } }
     const result = data.result || (data.submission && data.submission.autoGraded) || data;
     showResult(result);
+
+    // Enviar respuestas ES entregar: crea una Submission igual que subir un archivo. Le
+    // avisamos a la pantalla de la materia para que la tarjeta pase a "Entregada" y la
+    // actividad salga de "Próximas entregas" sin recargar. En la preview del superadmin no
+    // hay ni submission ni activityId, así que esto no corre.
+    if (data.submission && cfg.activityId && window.marcarActividadEntregada) {
+      window.marcarActividadEntregada(cfg.activityId, data.submission);
+    }
   }
 
   function showResult(result) {

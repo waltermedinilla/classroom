@@ -1067,10 +1067,16 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
 }
 .act-status-chip.status-pending   { background: var(--bg); color: var(--text-secondary); border: 1px solid var(--border); }
 .act-status-chip.status-graded    { background: #e6f4ea; color: #1e8e3e; }
+/* Entregada: verde azulado, para que no se confunda con Calificada (verde) ni con Tardía
+   (celeste). Fondo Y color en hex, en los dos temas: una pastilla con fondo fijo que deja el
+   texto al tema hereda var(--text) y en oscuro queda ilegible — es el bug de 1,10:1 del chat
+   de la sala, y el test de contraste lo mide para que no vuelva. */
+.act-status-chip.status-submitted { background: #e0f2f1; color: #00695c; }
 .act-status-chip.status-overdue   { background: #fce8e6; color: #d93025; }
 .act-status-chip.status-late-open { background: #e8f0fe; color: #1a73e8; }
 .act-grade-text { font-size: 14px; font-weight: 700; color: var(--text); }
 [data-theme="dark"] .act-student-item:hover { background: rgba(255,255,255,0.04); }
+[data-theme="dark"] .act-status-chip.status-submitted { background: #193434; color: #7fd8cd; }
 [data-theme="dark"] .act-status-chip.status-graded    { background: rgba(52,168,83,.18);  color: #81c995; }
 [data-theme="dark"] .act-status-chip.status-overdue   { background: rgba(217,48,37,.18);  color: #f28b82; }
 [data-theme="dark"] .act-status-chip.status-late-open { background: rgba(26,115,232,.18); color: #8ab4f8; }

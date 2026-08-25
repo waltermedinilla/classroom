@@ -1303,6 +1303,58 @@ const specs = [
       });
     },
   },
+  /* ─── La entregada sale de lo pendiente ───
+     specs/entrega-sale-de-pendientes.spec.md. Se apoya en las actividades del bloque de
+     arriba: `pendTardiaVieja` ya viene entregada del spec anterior y `pendTardiaReciente`
+     se entrega acá. Sin el arreglo, GET /activities/course/:id no le manda al alumno nada
+     sobre su propia entrega y la tarjeta le sigue diciendo "Pendiente". */
+  {
+    id: 'entrega-sale-de-pendientes',
+    title: 'Entregar saca la tarea de lo pendiente y le pone su fecha',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const delCurso = async () => {
+        const res = await client.get('scopedStudent', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+        return Object.fromEntries(res.json.activities.map(a => [a._id, a]));
+      };
+
+      // Antes de entregar: el campo existe y viene vacío. Que exista importa tanto como su
+      // valor — si el servidor no lo manda, el navegador no puede distinguir nada.
+      const antes = await delCurso();
+      assert('mySubmission' in antes[state.pendTardiaReciente],
+        'el alumno tiene que recibir mySubmission en cada actividad del curso');
+      assert(antes[state.pendTardiaReciente].mySubmission === null,
+        'sin entregar, mySubmission tiene que venir en null');
+      assert(antes[state.pendTardiaVieja].mySubmission,
+        'la que entregó en el spec anterior tiene que venir con su entrega');
+      assert(antes[state.pendTardiaVieja].mySubmission.at,
+        'y con la fecha de la entrega, que es lo que se muestra en la tarjeta');
+
+      // Y no se filtra nada de nadie: solo la fecha propia, nunca los archivos ni el texto.
+      assert(!('files' in antes[state.pendTardiaVieja].mySubmission),
+        'mySubmission es solo la fecha; los archivos van por GET /activities/:id/my-submission');
+
+      // La que se va a entregar todavía figura como pendiente.
+      const listaAntes = await client.get('scopedStudent', '/activities/my-pending', { expectStatus: 200 });
+      assert(listaAntes.text.includes(state.pendTardiaRecienteTitulo),
+        'antes de entregar tiene que estar en "Mis pendientes"');
+
+      await client.post('scopedStudent', `/activities/${state.pendTardiaReciente}/submit`, {
+        body: { text: 'la entrego y no me tiene que figurar más como pendiente' },
+        expectStatus: 200,
+      });
+
+      const despues = await delCurso();
+      assert(despues[state.pendTardiaReciente].mySubmission,
+        'entregada, mySubmission tiene que venir cargada');
+      assert(despues[state.pendTardiaReciente].mySubmission.at,
+        'con su fecha: la tarjeta muestra "Entregado: <fecha>" en lugar de "Venció: ..."');
+
+      const listaDespues = await client.get('scopedStudent', '/activities/my-pending', { expectStatus: 200 });
+      assert(!listaDespues.text.includes(state.pendTardiaRecienteTitulo),
+        'entregada, no puede seguir en "Mis pendientes": es el pedido del usuario');
+    },
+  },
   {
     id: 'pendientes-caducidad-contador-coincide',
     title: 'El cartel del inicio dice el mismo número que "Mis pendientes"',

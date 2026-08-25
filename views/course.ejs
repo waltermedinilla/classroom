@@ -759,6 +759,10 @@
   <!-- Regla de visibilidad de actividades (la misma que aplica el servidor). Va ANTES de
        course.js, que la usa en addActivityTabCard() para el chip y el botón de ojo. -->
   <script src="/js/visibilidadActividad.js"></script>
+  <!-- Estado de la actividad para el alumno (Entregada / Pendiente / ...). Va ANTES de
+       course.js, que la usa en addStudentActivityCard() para el chip y en el sidebar de
+       "Próximas entregas". -->
+  <script src="/js/estadoActividad.js"></script>
   <!-- Diagnóstico de subidas fallidas. Va ANTES de course.js, que lo usa en uploadSubFile(). -->
   <script src="/js/subida-diagnostico.js"></script>
   <!-- Qué adjunto es una imagen (la misma regla que aplica el servidor). Va ANTES de

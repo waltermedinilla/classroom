@@ -69,7 +69,8 @@ El admin puede "ver como" cualquier otro usuario (excepto el admin protegido):
 
 ### 4. Curso (`/courses/:id`)
 - Header del curso con degradado, nombre, sección, código (badge)
-- Tab "Novedades": anuncios con imagen opcional
+- Tab "Novedades": anuncios con imagen opcional + sidebar "Próximas entregas" (solo lo que **falta** hacer: lo ya entregado no figura)
+- Tab "Actividades" (alumno): chip de estado personal — Calificada / **Entregada** / Vencida / Tardía / Pendiente. La regla vive en `public/js/estadoActividad.js`; el dato de la entrega propia llega en `mySubmission` desde `GET /activities/course/:id`
 - Tab "Personas": lista de docente y alumnos
 - JS: `public/js/course.js`
 - Variables globales: `window.COURSE_ID`, `window.IS_OWNER`
@@ -298,6 +299,7 @@ Variables CSS para colores, sombras, radios. Componentes:
 | `course.js` | Tabs, formulario anuncio colapsable, post/load announcements |
 | `adjuntosActividad.js` | Regla compartida navegador↔servidor: qué adjunto es una imagen (decide la ruta de subida y la miniatura) y qué URL puede guardarse como adjunto. La `require()` `routes/activities.js` |
 | `visibilidadActividad.js` | Regla única de "¿el alumno ve esta actividad?" (`availableFrom` + el ojo del docente). También la `require()` el servidor |
+| `estadoActividad.js` | Regla única de "¿en qué estado está esta actividad **para este alumno**?" (Calificada / Entregada / Vencida / Tardía / Pendiente) y qué va en "Próximas entregas". La usan el chip de la tarjeta y el sidebar; ver `specs/entrega-sale-de-pendientes.spec.md` |
 
 ---
 
