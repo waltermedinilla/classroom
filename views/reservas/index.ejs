@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reservas - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <%- include('../partials/recursos-styles') %>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content main-content-ancho">
+
+    <% if (sinConfigurar) { %>
+      <div class="dashboard-topbar"><div><h2>Reservas</h2></div></div>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">event_seat</span></div>
+        <% if (!horarioCargado) { %>
+          <p>La escuela todavía no cargó el horario</p>
+          <p style="color:var(--text-secondary);font-size:13px;margin-top:6px">
+            Sin los módulos del día no hay contra qué reservar. Avisale a administración.
+          </p>
+        <% } else { %>
+          <p>Todavía no hay recursos para reservar</p>
+          <p style="color:var(--text-secondary);font-size:13px;margin-top:6px">
+            Administración tiene que cargar la sala, el laboratorio o el equipamiento.
+          </p>
+        <% } %>
+      </div>
+    <% } else { %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Reservas</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Semana del <%= diaLargo(semana.lunes) %>
+        </p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/reservas/mias" class="btn btn-outline">
+          <span class="material-symbols-outlined">event_available</span> Mis reservas
+        </a>
+      </div>
+    </div>
+
+    <div class="res-panel">
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label for="selRecurso" style="font-size:12px;color:var(--text-secondary)">Recurso</label>
+          <select id="selRecurso" onchange="irA()" style="padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);background:var(--surface);color:var(--text)">
+            <% recursos.forEach(r => { %>
+              <option value="<%= r._id %>" <%= String(r._id) === String(recurso._id) ? 'selected' : '' %>>
+                <%= r.name %><%= r.divisible ? ` (${r.capacidad} unidades)` : '' %>
+              </option>
+            <% }) %>
+          </select>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <a class="btn btn-outline" href="/reservas?recurso=<%= recurso._id %>&semana=<%= semana.anterior %>">
+            <span class="material-symbols-outlined">chevron_left</span>
+          </a>
+          <a class="btn btn-outline" href="/reservas?recurso=<%= recurso._id %>">Esta semana</a>
+          <a class="btn btn-outline" href="/reservas?recurso=<%= recurso._id %>&semana=<%= semana.siguiente %>">
+            <span class="material-symbols-outlined">chevron_right</span>
+          </a>
+        </div>
+      </div>
+
+      <% if (recurso.requiereAutorizacion && !puedeDirecto) { %>
+        <div class="res-aviso" style="margin-top:14px;margin-bottom:0">
+          <span class="material-symbols-outlined">info</span>
+          <div>
+            Para este recurso todavía no estás autorizado: lo que pidas queda <b>pendiente</b>
+            hasta que administración lo apruebe. Una vez que te autoricen, reservás directo.
+          </div>
+        </div>
+      <% } %>
+      <% if (recurso.notas) { %>
+        <p style="margin:12px 0 0;font-size:13px;color:var(--text-secondary)">
+          <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px">sticky_note_2</span>
+          <%= recurso.notas %>
+        </p>
+      <% } %>
+    </div>
+
+    <% grilla.forEach(bloque => { %>
+      <% if (!bloque.filas.length) return; %>
+      <div class="res-panel">
+        <h3><span class="material-symbols-outlined">schedule</span> <%= bloque.turno.label %></h3>
+        <div class="tabla-scroll">
+          <table class="res-grilla">
+            <thead>
+              <tr>
+                <th></th>
+                <% dias.forEach(d => { %>
+                  <th class="<%= d.date === hoy ? 'hoy' : '' %>">
+                    <%= NOMBRE_DIA[d.dow] %><br>
+                    <span style="font-weight:400"><%= diaNum(d.date) %></span>
+                  </th>
+                <% }) %>
+              </tr>
+            </thead>
+            <tbody>
+              <% bloque.filas.forEach(fila => { %>
+                <% if (fila.franja.tipo === 'recreo') { %>
+                  <%# El recreo se pinta pero no se reserva. Está para que se entienda por qué
+                      un módulo termina 9:20 y el siguiente arranca 9:30. %>
+                  <tr class="res-fila-recreo">
+                    <td colspan="<%= dias.length + 1 %>">
+                      <%= fila.franja.label %> · <%= fila.franja.desde %>–<%= fila.franja.hasta %>
+                    </td>
+                  </tr>
+                <% } else { %>
+                  <tr>
+                    <td class="franja">
+                      <b><%= fila.franja.label %></b>
+                      <%= fila.franja.desde %>–<%= fila.franja.hasta %>
+                    </td>
+                    <% fila.celdas.forEach(c => { %>
+                      <td>
+                        <div class="res-celda <%=
+                          c.esMia ? 'mia'
+                          : c.tengoPendiente ? 'pendiente'
+                          : c.completo ? 'ocupada'
+                          : c.tomadas > 0 ? 'parcial' : '' %> <%= c.pasado ? 'pasado' : '' %>">
+                          <button
+                            <%= (c.pasado || c.completo || c.tengoPendiente || c.esMia) ? 'disabled' : '' %>
+                            onclick="abrirPedido('<%= bloque.turno.id %>', <%= fila.franja.orden %>, '<%= c.date %>', <%= c.maxPedible %>)">
+                            <% if (c.divisible) { %>
+                              <%= c.libres %> de <%= c.capacidad %>
+                              <span style="font-size:11px;opacity:.85">libres</span>
+                            <% } else if (c.completo) { %>
+                              Ocupado
+                            <% } else { %>
+                              Libre
+                            <% } %>
+                            <% c.confirmadas.forEach(r => { %>
+                              <span class="quien">
+                                <%= r.docente ? r.docente.name.split(' ')[0] : '' %><%= c.divisible ? ` (${r.unidades})` : '' %>
+                              </span>
+                            <% }) %>
+                            <% if (c.tengoPendiente) { %><span class="quien">tu pedido, en espera</span><% } %>
+                          </button>
+                        </div>
+                      </td>
+                    <% }) %>
+                  </tr>
+                <% } %>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    <% }) %>
+
+    <div class="res-leyenda">
+      <span class="m"><i style="background:var(--res-libre-bg)"></i> Libre</span>
+      <% if (recurso.divisible) { %>
+        <span class="m"><i style="background:var(--res-parcial-bg)"></i> Con lugar, parcialmente tomado</span>
+      <% } %>
+      <span class="m"><i style="background:var(--res-ocupado-bg)"></i> Sin lugar</span>
+      <span class="m"><i style="background:var(--res-pend-bg)"></i> Tu pedido en espera</span>
+      <span class="m"><i style="background:var(--res-mia-bg)"></i> Tuya</span>
+    </div>
+    <% } %>
+  </main>
+
+  <%# El modal y su script solo existen si hay recurso: con la escuela sin configurar,
+      `recurso` es null y cualquier referencia lo rompería. %>
+  <% if (!sinConfigurar) { %>
+  <!-- Pedir -->
+  <div class="modal-overlay" id="modalPedir">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">event_seat</span>
+          <h3>Reservar <%= recurso.name %></h3>
+        </div>
+        <button class="icon-btn" onclick="cerrarPedido()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="res-aviso malo" id="pedirError" style="display:none"></div>
+        <p id="pedirCuando" style="font-size:14px;margin:0 0 14px"></p>
+
+        <form onsubmit="return pedir(event)">
+          <input type="hidden" id="p_turno"><input type="hidden" id="p_modulo"><input type="hidden" id="p_fecha">
+
+          <div class="res-form-grid">
+            <% if (recurso.divisible) { %>
+              <div>
+                <label for="p_unidades">¿Cuántas necesitás?</label>
+                <input id="p_unidades" type="number" min="1" value="1" required>
+                <p style="color:var(--text-secondary);font-size:12px;margin-top:4px" id="p_maxAviso"></p>
+              </div>
+            <% } %>
+            <div>
+              <label for="p_course">Materia</label>
+              <select id="p_course">
+                <option value="">— sin materia —</option>
+                <% misCursos.forEach(c => { %>
+                  <option value="<%= c._id %>"><%= c.name %><%= c.division ? ` — ${c.division.name}` : '' %></option>
+                <% }) %>
+              </select>
+            </div>
+            <div>
+              <label for="p_repeticion">Repetir</label>
+              <select id="p_repeticion" onchange="alternarHasta()">
+                <% REPETICIONES.forEach(r => { %>
+                  <option value="<%= r.id %>"><%= r.label %></option>
+                <% }) %>
+              </select>
+            </div>
+            <div id="boxHasta" style="display:none">
+              <label for="p_hasta">Hasta</label>
+              <input id="p_hasta" type="date">
+            </div>
+          </div>
+
+          <div style="margin-top:12px">
+            <label for="p_motivo" style="font-size:12px;color:var(--text-secondary);display:block;margin-bottom:4px">Para qué (opcional)</label>
+            <input id="p_motivo" placeholder="Trabajo práctico de Excel"
+                   style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);background:var(--surface);color:var(--text)">
+          </div>
+
+          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px">
+            <button type="button" class="btn btn-outline" onclick="cerrarPedido()">Cancelar</button>
+            <button type="submit" class="btn btn-primary">
+              <%= puedeDirecto ? 'Reservar' : 'Pedir' %>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <%- include('../partials/footer') %>
+  <script>
+    const RECURSO   = '<%= recurso._id %>';
+    const DIVISIBLE = <%= recurso.divisible ? 'true' : 'false' %>;
+    const $ = (id) => document.getElementById(id);
+
+    function irA() { location.href = '/reservas?recurso=' + $('selRecurso').value; }
+
+    function alternarHasta() {
+      $('boxHasta').style.display = $('p_repeticion').value === 'unica' ? 'none' : 'block';
+    }
+
+    function abrirPedido(turno, modulo, fecha, maxPedible) {
+      $('pedirError').style.display = 'none';
+      $('p_turno').value = turno; $('p_modulo').value = modulo; $('p_fecha').value = fecha;
+      $('pedirCuando').textContent = `${fecha} · módulo ${modulo}`;
+      if (DIVISIBLE) {
+        $('p_unidades').max   = maxPedible;
+        $('p_unidades').value = Math.min(1, maxPedible) || 1;
+        $('p_maxAviso').textContent = `Podés pedir hasta ${maxPedible} en este módulo.`;
+      }
+      $('p_hasta').min = fecha;
+      alternarHasta();
+      $('modalPedir').classList.add('show');
+    }
+    function cerrarPedido() { $('modalPedir').classList.remove('show'); }
+
+    async function pedir(e) {
+      e.preventDefault();
+      const body = {
+        recurso: RECURSO, turno: $('p_turno').value, modulo: $('p_modulo').value,
+        fecha: $('p_fecha').value, repeticion: $('p_repeticion').value,
+        hasta: $('p_hasta').value || null, course: $('p_course').value || null,
+        motivo: $('p_motivo').value,
+        unidades: DIVISIBLE ? $('p_unidades').value : 1,
+      };
+      const res  = await fetch('/reservas/pedir', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        $('pedirError').textContent = data.error || 'No se pudo registrar el pedido';
+        $('pedirError').style.display = 'flex';
+        return false;
+      }
+
+      // La serie es PARCIAL a propósito: si pediste 30 martes y dos estaban tomados, se
+      // crearon los otros 28. Hay que decir cuáles no entraron y por qué — si no, el docente
+      // cree que reservó 30 y se entera el día que llega y la sala está ocupada.
+      if (data.omitidas && data.omitidas.length) {
+        alert(
+          `Se registraron ${data.creadas} fecha(s).\n\n` +
+          `No entraron ${data.omitidas.length}:\n` +
+          data.omitidas.slice(0, 10).map(o => `· ${o.date} — ${o.motivo}`).join('\n') +
+          (data.omitidas.length > 10 ? `\n… y ${data.omitidas.length - 10} más` : '')
+        );
+      } else if (data.pendientes > 0) {
+        alert(`Pedido registrado (${data.creadas} fecha/s). Queda esperando la aprobación de administración.`);
+      }
+      location.reload();
+      return false;
+    }
+  </script>
+  <% } %>
+</body>
+</html>

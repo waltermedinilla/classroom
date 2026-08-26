@@ -57,6 +57,15 @@ const SECTIONS = [
   { key: 'admin_theme',          panel: 'admin', label: 'Tema',       icon: 'palette',      path: '/admin/theme',          roles: ['admin', 'superadmin'], needsSchool: true },
   { key: 'admin_tasks',          panel: 'admin', label: 'Tareas',     icon: 'checklist',    path: '/admin/tasks',          roles: ['admin', 'superadmin'], needsSchool: true },
   { key: 'admin_task_templates', panel: 'admin', label: 'Plantillas', icon: 'assignment',   path: '/admin/task-templates', roles: ['admin', 'superadmin'], flag: 'taskTemplatesEnabled', needsSchool: true },
+  // Recursos y reservas. El `flag` acá NO sale de una variable de entorno como
+  // taskTemplatesEnabled: sale de School.modules (ver config/modulos.js), así que cambia de
+  // escuela en escuela. server.js lo publica en res.locals con este mismo nombre.
+  //
+  // ⚠️ El flag solo esconde la solapa. Quien BLOQUEA la ruta es requireModulo('recursos') en
+  // el propio router: sectionGuard es fail-open y dejaría pasar una URL escrita a mano, y el
+  // montaje condicional que usa /superadmin/tasks no sirve para un flag por escuela (el
+  // montaje ocurre al arrancar, cuando todavía no hay request del que sacar la escuela).
+  { key: 'admin_recursos',       panel: 'admin', label: 'Recursos',   icon: 'event_seat',   path: '/admin/recursos',       roles: ['admin', 'superadmin'], flag: 'recursosEnabled',     needsSchool: true },
 
   // ── Panel Directivo (base: middleware/directivo.js) ────────────────────────
   { key: 'directivo_dashboard', panel: 'directivo', label: 'Resumen',    icon: 'dashboard', path: '/directivo',           roles: ['directivo', 'admin', 'superadmin'], locked: true },
@@ -125,6 +134,17 @@ const SECTIONS = [
   { key: 'app_courses', panel: 'app', label: 'Mis clases',     icon: 'menu_book',       path: '/courses',               roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'student'], locked: true },
   { key: 'app_profile', panel: 'app', label: 'Mi perfil',      icon: 'account_circle',  path: '/courses/profile',       roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'student'] },
   { key: 'app_pending', panel: 'app', label: 'Mis pendientes', icon: 'pending_actions', path: '/activities/my-pending', roles: ['student'] },
+  // El calendario de reservas, del lado de quien las pide. Incluye a `preceptor` y
+  // `directivo` a propósito: el que organiza un acto o una jornada no siempre es docente.
+  // Como este catálogo es restrictivo, la escuela que no lo quiera se lo apaga por rol desde
+  // /superadmin/roles sin tocar una línea de código.
+  // El alumno NO está: reservar la sala de computación es una decisión institucional.
+  //
+  // needsSchool: el calendario es el de UNA escuela. El superadmin no tiene
+  // (school: null), así que no habría grilla que pintarle — mismo criterio que Tema, Tareas
+  // y Plantillas. La solapa no se le ofrece y requireModulo, que es fail-closed sin escuela,
+  // le contesta 403 si escribe la URL. Para ver el de una escuela concreta, impersona.
+  { key: 'app_reservas', panel: 'app', label: 'Reservas', icon: 'calendar_month', path: '/reservas', roles: ['teacher', 'preceptor', 'directivo', 'jefe', 'admin', 'superadmin'], flag: 'recursosEnabled', needsSchool: true },
 
   // ── Panel Superadministración: TODO locked ────────────────────────────────
   // Decisión del usuario: el superadministrador no se restringe nunca, para que no exista

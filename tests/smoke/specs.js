@@ -8488,6 +8488,473 @@ const specs = [
       }
     },
   },
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RECURSOS Y RESERVAS (módulo opcional por escuela — config/modulos.js)
+  //
+  // Lo que cubren y los unitarios no: que las TRES guardas encadenadas
+  // (requireAdmin → requireModulo → requireSection) dejen pasar a quien tiene que pasar, y
+  // que el cupo se descuente igual por las dos puertas que confirman una reserva — la del
+  // docente autorizado, que entra directo, y la del administrativo, que aprueba.
+  //
+  // La aritmética del cupo y las repeticiones NO se prueban acá: viven en
+  // tests/unit/cupoReservas.test.js y disponibilidadReservas.test.js, donde se puede lanzar
+  // la carrera con Promise.all y fijar el `hoy`.
+  //
+  // ⚠️ ESTE BLOQUE CREA SUS PROPIOS DOCENTES en vez de reusar `scopedTeacher`. No es por
+  // prolijidad: los specs de limpieza del curso base borran esas cuentas bastante antes del
+  // final de la lista, y cualquier spec que las use después recibe un 302 a /login. Con
+  // actores propios el bloque se puede mover de lugar sin que se rompa.
+  // ═══════════════════════════════════════════════════════════════════════════
+  {
+    id: 'recursos-setup',
+    title: 'Se prende el módulo de recursos y se crean dos docentes de prueba',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const lista = await client.get('superadmin', '/superadmin/schools', { expectStatus: 200 });
+      const ids = [...(lista.text || '').matchAll(/\/superadmin\/schools\/([a-f0-9]{24})\/edit/g)];
+      assert(ids.length, 'no hay ninguna escuela contra la cual probar');
+
+      // La escuela del admin de smoke es contra la que corre todo lo demás.
+      const perfil = await client.get('admin', '/admin', { expectStatus: 200 });
+      const propia = ids.map(m => m[1]).find(id => (perfil.text || '').includes(id));
+      state.recSchoolId = propia || ids[0][1];
+
+      // Se guarda el estado ANTERIOR para dejarlo como estaba: el smoke corre contra el
+      // espejo del usuario y no puede prenderle (ni apagarle) módulos a su escuela real.
+      const edit = await client.get('superadmin', `/superadmin/schools/${state.recSchoolId}/edit`, { expectStatus: 200 });
+      state.recModuloEstabaPrendido = /data-id="recursos"[^>]*checked/.test(edit.text || '');
+
+      await client.post('superadmin', `/superadmin/schools/${state.recSchoolId}/edit`, {
+        body: { modules: { recursos: { enabled: true } } },
+        expectStatus: 200,
+      });
+
+      // Dos docentes: uno pide y otro compite por el mismo módulo.
+      for (const [n, actor] of [[1, 'recDocente'], [2, 'recDocente2']]) {
+        const email = `rec.doc${n}.${RUN_ID}@example.com`;
+        const alta = await client.post('admin', '/admin/users/create', {
+          body: { name: `Smoke Recursos Doc${n} ${RUN_ID}`, email,
+                  password: 'SmokeTest1234', role: 'teacher', dni: dniSmoke(60 + n) },
+          expectStatus: 201,
+        });
+        state[`${actor}Id`] = alta.json.user._id;
+        await client.post(actor, '/login', { body: { email, password: 'SmokeTest1234' }, expectStatus: 200 });
+      }
+    },
+  },
+  {
+    id: 'recursos-modulo-apagado-cierra-la-puerta',
+    title: 'Con el módulo apagado, /admin/recursos y /reservas contestan 403',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Es lo que NO se puede probar con el catálogo de solapas: requireModulo es fail-closed
+      // y bloquea la RUTA, no solo el nav. Sin esto, apagar el módulo solo escondería el
+      // botón y la URL escrita a mano seguiría funcionando.
+      await client.post('superadmin', `/superadmin/schools/${state.recSchoolId}/edit`, {
+        body: { modules: { recursos: { enabled: false } } },
+        expectStatus: 200,
+      });
+
+      // Se MIDE primero y se vuelve a prender DESPUÉS, antes de cualquier assert: si un
+      // assert cortara acá, el módulo quedaría apagado y los diez specs siguientes fallarían
+      // en cascada por un motivo que no es el suyo.
+      const admin  = await client.get('admin', '/admin/recursos');
+      const docente = await client.get('recDocente', '/reservas');
+
+      await client.post('superadmin', `/superadmin/schools/${state.recSchoolId}/edit`, {
+        body: { modules: { recursos: { enabled: true } } },
+        expectStatus: 200,
+      });
+
+      // ⚠️ El doc de escuela va cacheado 45s (middleware/cache.js), pero invalidateSchool()
+      // limpia el worker que atendió el POST y el smoke corre contra un solo proceso: el
+      // cambio se ve en el request siguiente. En producción, con 2 workers, puede tardar.
+      assert(admin.status === 403, `/admin/recursos con el módulo apagado debería dar 403, dio ${admin.status}`);
+      assert(docente.status === 403, `/reservas con el módulo apagado debería dar 403, dio ${docente.status}`);
+    },
+  },
+  {
+    id: 'recursos-horario-rechaza-la-grilla-con-hueco',
+    title: 'El horario con un hueco se rechaza, y el completo se guarda',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const { PRESET_4118 } = require('../../services/recursos/horario');
+
+      // Sin la franja del recreo quedan 10 minutos sin cubrir entre 2ª y 3ª hora. La pantalla
+      // los dibujaría como contiguos y el docente llegaría 9:20 a una clase que arranca 9:30.
+      const conHueco = PRESET_4118();
+      conHueco.turnos[0].franjas.splice(2, 1);
+      const malo = await client.post('admin', '/admin/recursos/horario', {
+        body: { horario: JSON.stringify(conHueco) },
+      });
+      assert(malo.status === 400, `la grilla con hueco debería dar 400, dio ${malo.status}`);
+      assert(/hueco/i.test(malo.json?.error || ''), `el error tiene que nombrar el hueco: ${malo.json?.error}`);
+
+      // El bueno: los dos turnos de la escuela, 7 módulos de 40' y 2 recreos de 10'.
+      // `confirmar` va en 'si' porque el espejo local puede tener reservas previas de una
+      // corrida anterior; el guardado avisa antes de dejarlas sin módulo, y acá se acepta.
+      await client.post('admin', '/admin/recursos/horario', {
+        body: { horario: JSON.stringify(PRESET_4118()), confirmar: 'si' },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'recursos-admin-crea-los-dos-recursos',
+    title: 'El admin crea la sala (entera) y las netbooks (repartibles)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const sala = await client.post('admin', '/admin/recursos/crear', {
+        body: { name: `Sala Smoke ${RUN_ID}`, tipo: 'aula', capacidad: 20,
+                divisible: 'off', requiereAutorizacion: 'on' },
+        expectStatus: 200,
+      });
+      state.recSalaId = sala.json.id;
+
+      const net = await client.post('admin', '/admin/recursos/crear', {
+        body: { name: `Netbooks Smoke ${RUN_ID}`, tipo: 'equipamiento', capacidad: 30,
+                divisible: 'on', maxPorPedido: 15, requiereAutorizacion: 'on' },
+        expectStatus: 200,
+      });
+      state.recNetId = net.json.id;
+
+      // Un recurso "repartible" de una sola unidad no es repartible: es exclusivo con un
+      // nombre confuso, y elegiría el mecanismo de cupo equivocado.
+      const absurdo = await client.post('admin', '/admin/recursos/crear', {
+        body: { name: `Absurdo Smoke ${RUN_ID}`, capacidad: 1, divisible: 'on' },
+      });
+      assert(absurdo.status === 400, `un divisible de capacidad 1 debería dar 400, dio ${absurdo.status}`);
+    },
+  },
+  {
+    id: 'recursos-docente-pide-y-queda-pendiente',
+    title: 'El docente sin autorizar pide la sala y su reserva queda pendiente',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Una fecha futura que caiga en día de semana: dentro de dos semanas, corrida al lunes
+      // si cae fin de semana. Se calcula con diaEscolar() y no con new Date() por lo de
+      // siempre: producción corre en UTC y "hoy" a las 21:30 ya sería mañana.
+      const { sumarDias, diaSemana } = require('../../services/recursos/disponibilidad');
+      const { diaEscolar } = require('../../services/liveRoom');
+      let f = sumarDias(diaEscolar(), 14);
+      while (diaSemana(f) > 5) f = sumarDias(f, 1);
+      state.recFecha = f;
+
+      const r = await client.post('recDocente', '/reservas/pedir', {
+        body: { recurso: state.recSalaId, turno: 'manana', modulo: 3,
+                fecha: state.recFecha, repeticion: 'unica', motivo: `Smoke ${RUN_ID}` },
+        expectStatus: 200,
+      });
+      assert(r.json.creadas === 1, `debería crear 1, creó ${r.json.creadas}`);
+      assert(r.json.pendientes === 1, 'sin autorización tiene que quedar PENDIENTE, no confirmada');
+      assert(r.json.confirmadas === 0, 'no puede autoconfirmarse');
+
+      // El mismo casillero otra vez es un clic repetido, no un choque: se saltea sin ruido.
+      const otra = await client.post('recDocente', '/reservas/pedir', {
+        body: { recurso: state.recSalaId, turno: 'manana', modulo: 3,
+                fecha: state.recFecha, repeticion: 'unica' },
+        expectStatus: 200,
+      });
+      assert(otra.json.creadas === 0 && otra.json.omitidas.length === 1,
+        'el pedido repetido tiene que omitirse, no duplicarse');
+    },
+  },
+  {
+    id: 'recursos-un-pendiente-no-bloquea-el-casillero',
+    title: 'El pedido pendiente de uno no le cierra la puerta al otro docente',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Es la contracara del índice parcial de models/Reserva.js: los pendientes no ocupan el
+      // casillero. Si lo ocuparan, un pedido sin resolver le bloquearía el módulo a un
+      // docente ya autorizado, que es exactamente lo que el diseño evita.
+      const r = await client.post('recDocente2', '/reservas/pedir', {
+        body: { recurso: state.recSalaId, turno: 'manana', modulo: 3,
+                fecha: state.recFecha, repeticion: 'unica' },
+        expectStatus: 200,
+      });
+      assert(r.json.creadas === 1, `el segundo docente también tiene que poder pedir: ${JSON.stringify(r.json)}`);
+      assert(r.json.pendientes === 1, 'y queda pendiente, como el primero');
+    },
+  },
+  {
+    id: 'recursos-admin-aprueba-y-autoriza',
+    title: 'El admin aprueba el pedido y deja al docente autorizado para ese recurso',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const bandeja = await client.get('admin', '/admin/recursos/pedidos', { expectStatus: 200 });
+      const filas = [...(bandeja.text || '').matchAll(/id="fila-([a-f0-9]{24})"/g)].map(m => m[1]);
+      assert(filas.length >= 2, `los dos pedidos tienen que figurar en la bandeja, hay ${filas.length}`);
+
+      // Se aprueba el del PRIMER docente. El del segundo queda pendiente sobre el mismo
+      // casillero, que es lo que arma el spec siguiente.
+      // Los dos se buscan POR NOMBRE, nunca por posición ni por descarte: la bandeja es la
+      // de la escuela entera y puede tener pedidos de otras corridas o de uso real. Tomar
+      // "el que no es el primero" aprobaría el pedido de un tercero y el spec mediría otra
+      // cosa sin avisar.
+      const bandejaTxt = bandeja.text || '';
+      const porDocente = (n) => filas.find(id => {
+        const fila = (bandejaTxt.split(`id="fila-${id}"`)[1] || '').split('</tr>')[0];
+        return fila.includes(`Doc${n} ${RUN_ID}`);
+      });
+      const delPrimero = porDocente(1);
+      state.recPedidoDoc2 = porDocente(2);
+      assert(delPrimero, 'no se encontró el pedido del primer docente en la bandeja');
+      assert(state.recPedidoDoc2, 'no se encontró el pedido del segundo docente en la bandeja');
+
+      await client.post('admin', `/admin/recursos/pedidos/${delPrimero}/aprobar`, {
+        body: { autorizar: 'si' }, expectStatus: 200,
+      });
+
+      // Un pedido ya resuelto no se puede volver a aprobar: si no, dos clics del
+      // administrativo tomarían el cupo dos veces.
+      const otra = await client.post('admin', `/admin/recursos/pedidos/${delPrimero}/aprobar`, {
+        body: { autorizar: 'no' },
+      });
+      assert(otra.status === 404, `aprobar dos veces debería dar 404, dio ${otra.status}`);
+    },
+  },
+  {
+    id: 'recursos-el-perdedor-de-la-carrera-recibe-un-mensaje',
+    title: 'Aprobar el segundo pedido del mismo módulo exclusivo da 409, no 500',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // El casillero ya lo tiene el primer docente. Aprobar el segundo choca contra el índice
+      // único parcial de models/Reserva.js. Lo que se está probando es que ese E11000 llegue
+      // a la pantalla como una explicación y no como un 500 — es la peor cara del módulo.
+      assert(state.recPedidoDoc2, 'hacía falta el pedido del segundo docente');
+      const r = await client.post('admin', `/admin/recursos/pedidos/${state.recPedidoDoc2}/aprobar`, {
+        body: { autorizar: 'no' },
+      });
+      assert(r.status === 409, `esperaba 409, dio ${r.status}`);
+      assert(/otro docente/i.test(r.json?.error || ''),
+        `el mensaje tiene que explicar qué pasó, dijo: ${r.json?.error}`);
+
+      // Y el pedido perdedor tiene que SALIR de la bandeja. Ese módulo ya es de otro y no se
+      // va a liberar solo: dejarlo pendiente lo devolvería mañana, y pasado, para siempre —
+      // una fila que el administrativo no puede resolver y que le enseña a ignorar la bandeja.
+      assert(r.json.resuelto === true, 'el pedido perdedor tiene que quedar rechazado');
+      const despues = await client.get('admin', '/admin/recursos/pedidos', { expectStatus: 200 });
+      assert(!(despues.text || '').includes(`id="fila-${state.recPedidoDoc2}"`),
+        'el pedido rechazado no puede seguir en la bandeja');
+    },
+  },
+  {
+    id: 'recursos-el-alumno-no-entra',
+    title: 'El alumno no puede ver ni pedir reservas',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Reservar la sala de computación es una decisión institucional. El rol `student` no
+      // está en app_reservas (config/sections.js) y la ruta lo tiene que rechazar igual,
+      // aunque el nav nunca se lo haya ofrecido.
+      const email = `rec.alumno.${RUN_ID}@example.com`;
+      const alta = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke Recursos Alumno ${RUN_ID}`, email,
+                password: 'SmokeTest1234', role: 'student', dni: dniSmoke(63) },
+        expectStatus: 201,
+      });
+      state.recAlumnoId = alta.json.user._id;
+      await client.post('recAlumno', '/login', { body: { email, password: 'SmokeTest1234' }, expectStatus: 200 });
+
+      const ver = await client.get('recAlumno', '/reservas');
+      assert(ver.status === 403, `/reservas para el alumno debería dar 403, dio ${ver.status}`);
+
+      const pedir = await client.post('recAlumno', '/reservas/pedir', {
+        body: { recurso: state.recSalaId, turno: 'manana', modulo: 5, fecha: state.recFecha, repeticion: 'unica' },
+      });
+      assert(pedir.status === 403, `el alumno no puede pedir: esperaba 403, dio ${pedir.status}`);
+    },
+  },
+  {
+    id: 'recursos-autorizado-entra-directo',
+    title: 'Ya autorizado, el docente reserva sin pasar por la bandeja',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Es lo que hace que el calendario "se autocomplete": el primer pedido pasa por una
+      // persona y después el docente carga solo.
+      const r = await client.post('recDocente', '/reservas/pedir', {
+        body: { recurso: state.recSalaId, turno: 'manana', modulo: 5,
+                fecha: state.recFecha, repeticion: 'unica' },
+        expectStatus: 200,
+      });
+      assert(r.json.confirmadas === 1, `tenía que entrar CONFIRMADA, quedó ${JSON.stringify(r.json)}`);
+      assert(r.json.pendientes === 0, 'un docente autorizado no vuelve a la bandeja');
+
+      // La sala ya reservada no acepta a otro en el mismo módulo: la guarda es el índice
+      // único, y el que llega segundo lo ve como una fecha omitida, no como un error.
+      const choque = await client.post('recDocente2', '/reservas/pedir', {
+        body: { recurso: state.recSalaId, turno: 'manana', modulo: 5,
+                fecha: state.recFecha, repeticion: 'unica' },
+        expectStatus: 200,
+      });
+      assert(choque.json.creadas === 0, 'la sala ocupada no puede aceptar una segunda reserva');
+      assert(/reservado/i.test(choque.json.omitidas?.[0]?.motivo || ''),
+        `tendría que decir que ya está reservado: ${JSON.stringify(choque.json.omitidas)}`);
+    },
+  },
+  {
+    id: 'recursos-la-serie-semanal-es-parcial',
+    title: 'Una serie semanal crea las fechas libres y omite las tomadas',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Si pidió 4 martes y uno está tomado, se crean los otros 3 y se informa el que no.
+      // Cancelar el pedido entero por un choque sería castigar al docente por algo que no
+      // eligió, y obligarlo a volver a cargar tres fechas a mano.
+      const { sumarDias } = require('../../services/recursos/disponibilidad');
+      const hasta = sumarDias(state.recFecha, 21);
+
+      const r = await client.post('recDocente', '/reservas/pedir', {
+        body: { recurso: state.recSalaId, turno: 'tarde', modulo: 7,
+                fecha: state.recFecha, repeticion: 'semanal', hasta },
+        expectStatus: 200,
+      });
+      assert(r.json.creadas === 4, `4 semanas seguidas: esperaba 4, creó ${r.json.creadas}`);
+      state.recSerieFecha = state.recFecha;
+
+      // Ahora el segundo docente pide las mismas 4: todas omitidas, ninguna creada.
+      const choque = await client.post('recDocente2', '/reservas/pedir', {
+        body: { recurso: state.recSalaId, turno: 'tarde', modulo: 7,
+                fecha: state.recFecha, repeticion: 'semanal', hasta },
+        expectStatus: 200,
+      });
+      assert(choque.json.creadas === 0, 'ninguna tendría que entrar');
+      assert(choque.json.omitidas.length === 4, `esperaba 4 omitidas, hubo ${choque.json.omitidas.length}`);
+    },
+  },
+  {
+    id: 'recursos-netbooks-se-reparten',
+    title: 'Dos pedidos de 15 netbooks entran los dos; pedir 25 se rechaza',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // El docente ya está autorizado en la SALA, pero no en las netbooks: la autorización es
+      // por recurso, así que este pedido vuelve a quedar pendiente.
+      const p1 = await client.post('recDocente', '/reservas/pedir', {
+        body: { recurso: state.recNetId, turno: 'tarde', modulo: 1,
+                fecha: state.recFecha, repeticion: 'unica', unidades: 15 },
+        expectStatus: 200,
+      });
+      assert(p1.json.pendientes === 1, 'la autorización es POR RECURSO: acá vuelve a pedir permiso');
+
+      // La fila DE LAS NETBOOKS, buscada por el nombre del recurso. Tomar la primera de la
+      // bandeja aprobaría el pedido de otro —la bandeja es la de la escuela entera— y el
+      // spec mediría cualquier cosa menos el reparto del cupo.
+      const bandeja = await client.get('admin', '/admin/recursos/pedidos', { expectStatus: 200 });
+      const fila = (bandeja.text || '').split('id="fila-').find(f => f.includes(`Netbooks Smoke ${RUN_ID}`));
+      assert(fila, 'el pedido de netbooks tiene que estar en la bandeja');
+      const id = fila.slice(0, 24);
+      await client.post('admin', `/admin/recursos/pedidos/${id}/aprobar`, {
+        body: { unidades: 15, autorizar: 'si' }, expectStatus: 200,
+      });
+
+      // Quedan 15 de 30: el segundo docente se lleva la otra mitad. Es el reparto, y es lo
+      // que un recurso exclusivo NO permitiría.
+      const p2 = await client.post('recDocente2', '/reservas/pedir', {
+        body: { recurso: state.recNetId, turno: 'tarde', modulo: 1,
+                fecha: state.recFecha, repeticion: 'unica', unidades: 15 },
+        expectStatus: 200,
+      });
+      assert(p2.json.creadas === 1, `el segundo tiene que poder pedir su mitad: ${JSON.stringify(p2.json)}`);
+
+      // Pedir más que el tope del pedido se rechaza en la RUTA, no solo en el <input>: un
+      // `max` de un formulario se edita con el inspector en dos segundos.
+      const excedido = await client.post('recDocente', '/reservas/pedir', {
+        body: { recurso: state.recNetId, turno: 'tarde', modulo: 2,
+                fecha: state.recFecha, repeticion: 'unica', unidades: 25 },
+      });
+      assert(excedido.status === 400, `pedir 25 con tope 15 debería dar 400, dio ${excedido.status}`);
+      assert(/entre 1 y 15/.test(excedido.json?.error || ''), `el error tiene que decir el tope: ${excedido.json?.error}`);
+    },
+  },
+  {
+    id: 'recursos-la-celda-divisible-dice-cuantas-quedan',
+    title: 'El calendario de un recurso repartible muestra el cupo, no "ocupado"',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Una celda que dijera solo "ocupada" con 15 de 30 tomadas sería falsa, y el docente
+      // que necesita 10 se iría creyendo que no hay.
+      const g = await client.get('recDocente', `/reservas?recurso=${state.recNetId}&semana=${state.recFecha}`, { expectStatus: 200 });
+      assert(/de 30/.test(g.text || ''), 'la celda tiene que decir cuántas de 30 quedan');
+      assert(/libres/.test(g.text || ''), 'y la palabra "libres"');
+
+      // Y la grilla tiene que traer los recreos: sin ellos, 2ª y 3ª hora se leen contiguas.
+      assert(/Recreo/.test(g.text || ''), 'los recreos se pintan en la grilla');
+    },
+  },
+  {
+    id: 'recursos-cancelar-devuelve-el-cupo',
+    title: 'Cancelar una reserva de netbooks devuelve las unidades al carro',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const mias = await client.get('recDocente2', '/reservas/mias', { expectStatus: 200 });
+
+      // La fila de LAS NETBOOKS, no la primera de la lista: este docente tiene además una
+      // reserva de la sala, y cancelar aquélla no devolvería ninguna unidad — el spec pasaría
+      // a medir algo que no es el cupo.
+      const filaNet = (mias.text || '').split('<tr').find(f => f.includes(`Netbooks Smoke ${RUN_ID}`));
+      assert(filaNet, 'el docente tiene que ver su reserva de netbooks para poder cancelarla');
+      const idNet = (filaNet.match(/cancelar\('([a-f0-9]{24})'/) || [])[1];
+      assert(idNet, 'la fila de netbooks tiene que ofrecer el botón de cancelar');
+
+      // Se cancela su reserva de 15 netbooks y se vuelve a pedir la misma cantidad. Si el
+      // cupo no se devolviera, el segundo pedido no entraría: es el chequeo que atrapa el
+      // olvido de llamar a devolver() en un camino de salida.
+      const cancel = await client.post('recDocente2', `/reservas/${idNet}/cancelar`, { body: { serie: 'no' } });
+      assert(cancel.status === 200, `no se pudo cancelar: ${cancel.status} ${JSON.stringify(cancel.json)}`);
+
+      const otra = await client.post('recDocente2', '/reservas/pedir', {
+        body: { recurso: state.recNetId, turno: 'tarde', modulo: 1,
+                fecha: state.recFecha, repeticion: 'unica', unidades: 15 },
+        expectStatus: 200,
+      });
+      assert(otra.json.creadas === 1,
+        `las 15 canceladas tienen que volver al carro: ${JSON.stringify(otra.json)}`);
+    },
+  },
+  {
+    id: 'recursos-cancelar-la-serie-no-toca-lo-ajeno',
+    title: 'Cancelar una serie cancela solo las propias y solo las futuras',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const mias = await client.get('recDocente', '/reservas/mias', { expectStatus: 200 });
+      // La de la serie es la única que ofrece el botón "Cancelar la serie".
+      const m = (mias.text || '').match(/cancelar\('([a-f0-9]{24})', true\)/);
+      assert(m, 'la reserva de una serie tiene que ofrecer cancelar la serie entera');
+
+      const r = await client.post('recDocente', `/reservas/${m[1]}/cancelar`, { body: { serie: 'si' } });
+      assert(r.status === 200, `esperaba 200, dio ${r.status}`);
+      assert(r.json.canceladas === 4, `la serie eran 4 fechas, canceló ${r.json.canceladas}`);
+
+      // El otro docente no puede cancelar lo que no es suyo.
+      const mias2 = await client.get('recDocente', '/reservas/mias', { expectStatus: 200 });
+      const propia = (mias2.text || '').match(/cancelar\('([a-f0-9]{24})', false\)/);
+      if (propia) {
+        const ajena = await client.post('recDocente2', `/reservas/${propia[1]}/cancelar`, { body: { serie: 'no' } });
+        assert(ajena.status === 403, `cancelar la reserva de otro debería dar 403, dio ${ajena.status}`);
+      }
+    },
+  },
+  {
+    id: 'recursos-limpieza',
+    title: 'Limpieza: se dan de baja los recursos, las cuentas y se deja el módulo como estaba',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // Dar de baja cancela las reservas futuras por el camino normal (liberar), que es el que
+      // devuelve el cupo. Sin eso quedarían casilleros ocupados por reservas de un recurso que
+      // ya no existe — la fuga que describe models/SlotOcupacion.js.
+      for (const id of [state.recSalaId, state.recNetId]) {
+        if (id) await client.post('admin', `/admin/recursos/${id}/borrar`, {});
+      }
+      for (const id of [state.recDocenteId, state.recDocente2Id, state.recAlumnoId]) {
+        if (id) await client.post('admin', `/admin/users/${id}/delete`, {});
+      }
+      // El smoke corre contra el espejo del usuario: si el módulo estaba apagado, se lo deja
+      // apagado. Prenderle un módulo a su escuela real de rebote sería un efecto colateral.
+      if (state.recSchoolId && state.recModuloEstabaPrendido === false) {
+        await client.post('superadmin', `/superadmin/schools/${state.recSchoolId}/edit`, {
+          body: { modules: { recursos: { enabled: false } } },
+        });
+      }
+    },
+  },
   {
     // Los audit logs generados por esta corrida se identifican por dos vías:
     //  1. Los IDs reales de los recursos de smoke (curso, división, usuarios, actividad)
@@ -8528,6 +8995,21 @@ const specs = [
           state.soeId, state.soeDirId,
         ].filter(Boolean);
         const ids = idStrings.map(s => new ObjectId(s));
+
+        // Los recursos de este bloque se dan de baja por la ruta (activo:false), que es lo
+        // correcto para un recurso real —su historial de reservas tiene que sobrevivir— pero
+        // deja dos filas muertas en el panel del admin por cada corrida. Acá SÍ se borran de
+        // verdad, junto con lo que colgaba de ellos: son de prueba y no tienen historial que
+        // preservar.
+        const recursosSmoke = await client.db().collection('recursos')
+          .find({ name: { $regex: RUN_ID } }).project({ _id: 1 }).toArray();
+        if (recursosSmoke.length) {
+          const rids = recursosSmoke.map(r => r._id);
+          await client.db().collection('reservas').deleteMany({ recurso: { $in: rids } });
+          await client.db().collection('slotocupacions').deleteMany({ recurso: { $in: rids } });
+          await client.db().collection('recursoautorizacions').deleteMany({ recurso: { $in: rids } });
+          await client.db().collection('recursos').deleteMany({ _id: { $in: rids } });
+        }
 
         await client.db().collection('auditlogs').deleteMany({
           $or: [

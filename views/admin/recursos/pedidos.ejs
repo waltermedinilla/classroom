@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pedidos de reserva - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <%- include('../../partials/recursos-styles') %>
+</head>
+<body>
+  <%- include('../../partials/header') %>
+
+  <main class="main-content main-content-ancho">
+    <%- include('../../partials/admin-nav', { activePage: 'recursos' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Pedidos de reserva</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          <%= pedidos.length %> pedido(s) esperando respuesta.
+        </p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/admin/recursos" class="btn btn-outline">
+          <span class="material-symbols-outlined">arrow_back</span> Volver
+        </a>
+      </div>
+    </div>
+
+    <% if (!pedidos.length) { %>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">inbox</span></div>
+        <p>No hay pedidos pendientes</p>
+        <p style="color:var(--text-secondary);font-size:13px;margin-top:6px">
+          Los docentes que ya autorizaste reservan directo y no pasan por acá.
+        </p>
+      </div>
+    <% } else { %>
+      <div class="res-aviso">
+        <span class="material-symbols-outlined">lightbulb</span>
+        <div>
+          <b>"Aceptar y autorizar"</b> le confirma este pedido y además lo deja habilitado para
+          ese recurso: de ahí en más reserva solo, sin pasar por esta bandeja.
+        </div>
+      </div>
+
+      <div class="res-panel">
+        <div class="tabla-scroll">
+          <table class="res-tabla">
+            <thead>
+              <tr>
+                <th>Cuándo</th><th>Quién</th><th>Recurso</th><th>Para qué</th>
+                <th>Cantidad</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <% pedidos.forEach(p => { %>
+                <tr id="fila-<%= p._id %>">
+                  <td>
+                    <b><%= diaCorto(p.date) %></b><br>
+                    <span style="font-size:12px;color:var(--text-secondary)">
+                      <%= nombreTurno(p.turno) %> · <%= fmtModulo(p.turno, p.modulo) %>
+                    </span>
+                  </td>
+                  <td>
+                    <%= p.docente ? p.docente.name : '(cuenta eliminada)' %>
+                    <% if (p.serie) { %>
+                      <br><span style="font-size:11.5px;color:var(--text-secondary)">parte de una serie</span>
+                    <% } %>
+                  </td>
+                  <td><%= p.recurso ? p.recurso.name : '—' %></td>
+                  <td>
+                    <%= p.course ? p.course.name : '' %>
+                    <% if (p.division) { %> <span style="color:var(--text-secondary)"><%= p.division.name %></span><% } %>
+                    <% if (p.motivo) { %><br><span style="font-size:12px;color:var(--text-secondary)"><%= p.motivo %></span><% } %>
+                  </td>
+                  <td>
+                    <% if (p.recurso && p.recurso.divisible) { %>
+                      <%# El cupo se muestra AL MOMENTO DE MIRAR, no al del pedido: un pendiente
+                          no bloquea el casillero, así que pudo llenarse mientras tanto. %>
+                      <input type="number" id="u-<%= p._id %>" value="<%= p.unidadesPedidas %>"
+                             min="1" max="<%= p.capacidadAhora %>"
+                             style="width:74px;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-xs);background:var(--surface);color:var(--text)">
+                      <br><span style="font-size:11.5px;color:var(--text-secondary)">
+                        pidió <%= p.unidadesPedidas %> · quedan <%= p.libresAhora %> de <%= p.capacidadAhora %>
+                      </span>
+                    <% } else { %>
+                      El recurso entero
+                      <% if (p.libresAhora === 0) { %>
+                        <br><span class="res-chip rechazada">ya se ocupó</span>
+                      <% } %>
+                    <% } %>
+                  </td>
+                  <td style="text-align:right;white-space:nowrap">
+                    <button class="btn btn-primary" style="padding:5px 10px;font-size:12.5px"
+                            onclick="resolver('<%= p._id %>','aprobar',false)">Aceptar</button>
+                    <button class="btn btn-primary" style="padding:5px 10px;font-size:12.5px"
+                            onclick="resolver('<%= p._id %>','aprobar',true)"
+                            title="Aceptar y dejar autorizado para este recurso">Aceptar y autorizar</button>
+                    <button class="btn btn-outline" style="padding:5px 10px;font-size:12.5px"
+                            onclick="rechazar('<%= p._id %>')">Rechazar</button>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../../partials/footer') %>
+  <script>
+    async function resolver(id, accion, autorizar) {
+      const input = document.getElementById('u-' + id);
+      const body  = { autorizar: autorizar ? 'si' : 'no' };
+      if (input) body.unidades = input.value;
+
+      const res  = await fetch(`/admin/recursos/pedidos/${id}/${accion}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      // 409 = perdió la carrera contra otra aprobación mientras estaba pendiente. NO es un
+      // error del sistema: es la respuesta normal a algo que el diseño permite. Se explica y
+      // se ofrece la salida (confirmar por lo que quedó libre).
+      if (res.status === 409) {
+        // `resuelto` = el servidor ya rechazó el pedido perdedor (recurso exclusivo: ese
+        // módulo es de otro y no se libera). No hay nada que ofrecer, solo contar qué pasó.
+        if (data.resuelto) { alert(data.error); location.reload(); return; }
+        if (data.libres > 0 && input) {
+          if (confirm(`${data.error}\n\n¿Confirmar por ${data.libres}?`)) {
+            input.value = data.libres;
+            return resolver(id, accion, autorizar);
+          }
+          return;
+        }
+        alert(data.error);
+        location.reload();
+        return;
+      }
+      if (!res.ok) return alert(data.error || 'No se pudo resolver el pedido');
+      location.reload();
+    }
+
+    async function rechazar(id) {
+      const motivo = prompt('¿Por qué lo rechazás? (lo va a ver el docente)');
+      if (motivo === null) return;
+      const res  = await fetch(`/admin/recursos/pedidos/${id}/rechazar`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ motivo }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return alert(data.error || 'No se pudo rechazar');
+      location.reload();
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mis reservas - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <%- include('../partials/recursos-styles') %>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content main-content-ancho">
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Mis reservas</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Desde hace 30 días en adelante.
+        </p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/reservas" class="btn btn-outline">
+          <span class="material-symbols-outlined">calendar_month</span> Calendario
+        </a>
+      </div>
+    </div>
+
+    <% if (!reservas.length) { %>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">event_available</span></div>
+        <p>Todavía no reservaste nada</p>
+        <a href="/reservas" class="btn btn-primary" style="margin-top:20px">Ver el calendario</a>
+      </div>
+    <% } else { %>
+      <div class="res-panel">
+        <div class="tabla-scroll">
+          <table class="res-tabla">
+            <thead>
+              <tr><th>Cuándo</th><th>Recurso</th><th>Materia</th><th>Estado</th><th></th></tr>
+            </thead>
+            <tbody>
+              <% reservas.forEach(r => { %>
+                <tr<%= r.date < hoy ? ' style="opacity:.55"' : '' %>>
+                  <td>
+                    <b><%= diaCorto(r.date) %></b>
+                    <% if (r.date === hoy) { %> <span class="res-chip pendiente">hoy</span><% } %>
+                    <br>
+                    <span style="font-size:12px;color:var(--text-secondary)">
+                      <%= nombreTurno(r.turno) %> · <%= fmtModulo(r.turno, r.modulo) %>
+                    </span>
+                  </td>
+                  <td>
+                    <%= r.recurso ? r.recurso.name : '(dado de baja)' %>
+                    <% if (r.recurso && r.recurso.divisible) { %>
+                      <br><span style="font-size:12px;color:var(--text-secondary)">
+                        <%= r.unidades %> unidad(es)<%= r.unidades !== r.unidadesPedidas ? ` — pediste ${r.unidadesPedidas}` : '' %>
+                      </span>
+                    <% } %>
+                  </td>
+                  <td>
+                    <%= r.course ? r.course.name : '—' %>
+                    <% if (r.motivo) { %><br><span style="font-size:12px;color:var(--text-secondary)"><%= r.motivo %></span><% } %>
+                  </td>
+                  <td>
+                    <span class="res-chip <%= r.status %>"><%= r.status %></span>
+                    <% if (r.status === 'rechazada' && r.motivoRechazo) { %>
+                      <br><span style="font-size:12px;color:var(--text-secondary)"><%= r.motivoRechazo %></span>
+                    <% } %>
+                  </td>
+                  <td style="text-align:right;white-space:nowrap">
+                    <% if (['pendiente','confirmada'].includes(r.status) && r.date >= hoy) { %>
+                      <button class="btn btn-outline" style="padding:5px 10px;font-size:12.5px"
+                              onclick="cancelar('<%= r._id %>', false)">Cancelar</button>
+                      <% if (r.serie) { %>
+                        <button class="btn btn-outline" style="padding:5px 10px;font-size:12.5px"
+                                onclick="cancelar('<%= r._id %>', true)"
+                                title="Cancela ésta y todas las que vienen después en la misma serie">Cancelar la serie</button>
+                      <% } %>
+                    <% } %>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+  <script>
+    async function cancelar(id, serie) {
+      const msg = serie
+        ? '¿Cancelar ésta y todas las que vienen después en la misma serie?\n\nLas que ya pasaron no se tocan.'
+        : '¿Cancelar esta reserva?';
+      if (!confirm(msg)) return;
+
+      const res  = await fetch(`/reservas/${id}/cancelar`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serie: serie ? 'si' : 'no' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return alert(data.error || 'No se pudo cancelar');
+      location.reload();
+    }
+  </script>
+</body>
+</html>

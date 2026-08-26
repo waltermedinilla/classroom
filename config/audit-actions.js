@@ -64,6 +64,29 @@ const ACTIONS = {
   'attendance.change': { label: 'corrigió una asistencia',     icon: 'edit_note',  color: '#9334e6', category: 'division' },
   'attendance.reopen': { label: 'reabrió la toma de asistencia', icon: 'lock_open', color: '#ea8600', category: 'division' },
 
+  // ── Recursos y reservas (models/Recurso.js, models/Reserva.js) ────────────
+  // Categoría propia: no es del curso ni de la división, es de la ESCUELA — quién usa la
+  // sala de computación no depende de qué materia se dicta adentro.
+  //
+  // Los pedidos del docente NO se auditan uno por uno: en una escuela con dos recursos y
+  // repetición semanal son cientos por cuatrimestre, y llenarían la pantalla de auditoría
+  // tapando lo que sí importa. Quién pidió y cuándo ya vive en la propia Reserva
+  // (`docente`, `pedidaEl`). Lo que se audita es lo que una PERSONA DECIDE sobre otra.
+  'resource.create':        { label: 'creó un recurso',              icon: 'event_seat',   color: '#1a73e8', category: 'recurso' },
+  'resource.edit':          { label: 'editó un recurso',             icon: 'edit',         color: '#1a73e8', category: 'recurso' },
+  'resource.delete':        { label: 'eliminó un recurso',           icon: 'delete',       color: '#ea4335', category: 'recurso' },
+  'resource.schedule_edit': { label: 'editó el horario escolar',     icon: 'schedule',     color: '#0d7377', category: 'recurso' },
+  // Las tres decisiones del administrativo sobre un pedido. `booking.approve` guarda las DOS
+  // cifras (pedida y otorgada): es la única forma de responder después "¿por qué me dieron 8
+  // si pedí 15?".
+  'booking.approve':        { label: 'aprobó una reserva',           icon: 'check_circle', color: '#137333', category: 'recurso' },
+  'booking.reject':         { label: 'rechazó una reserva',          icon: 'cancel',       color: '#ea4335', category: 'recurso' },
+  'booking.cancel':         { label: 'canceló una reserva',          icon: 'event_busy',   color: '#ea8600', category: 'recurso' },
+  // El permiso que se otorga. Es lo que hace que el docente deje de pasar por la bandeja, así
+  // que tiene que quedar quién se lo dio y cuándo.
+  'booking.authorize':      { label: 'autorizó a un docente en un recurso', icon: 'key',   color: '#9334e6', category: 'recurso' },
+  'booking.revoke':         { label: 'revocó la autorización de un docente', icon: 'key_off', color: '#ea8600', category: 'recurso' },
+
   // ── Divisiones (Division = "1°1°", "2°A", etc.) ───────────────────────────
   'division.create':      { label: 'creó una división',        icon: 'add_box',              color: '#1a73e8', category: 'division' },
   'division.edit':        { label: 'editó una división',       icon: 'edit',                 color: '#1a73e8', category: 'division' },
@@ -183,6 +206,7 @@ const CATEGORIES = {
   course:       'Cursos',
   division:     'Divisiones',
   section:      'Secciones',
+  recurso:      'Recursos y reservas',
   user:         'Usuarios',
   subject:      'Materias',
   school:       'Escuelas',

@@ -54,6 +54,32 @@
             <input type="hidden" id="color" value="<%= activeColor %>">
           </div>
 
+          <% if (school) { %>
+            <%# Módulos opcionales. Los prende el SUPERADMIN y no el admin de la escuela: son
+                funcionalidades enteras (reservar recursos, cobrar cuotas) y quien las habilita
+                no puede ser quien las usa. Mismo razonamiento que rolePermissions y soeAccess
+                — ver el comentario en models/School.js. Catálogo: config/modulos.js. %>
+            <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:20px">
+              <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;font-weight:500">
+                Módulos opcionales
+              </p>
+              <% MODULOS.forEach(m => { %>
+                <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:14px;font-size:13.5px;cursor:pointer">
+                  <input type="checkbox" class="modulo" data-id="<%= m.id %>"
+                         <%= school.modules && school.modules[m.id] && school.modules[m.id].enabled ? 'checked' : '' %>>
+                  <span>
+                    <b><%= m.label %></b><br>
+                    <span style="color:var(--text-secondary);font-size:12.5px"><%= m.descripcion %></span>
+                  </span>
+                </label>
+              <% }) %>
+              <p style="color:var(--text-secondary);font-size:12px;margin-top:-4px">
+                Al prenderlo, las solapas del módulo aparecen para los roles que correspondan.
+                Puede tardar hasta 45 segundos en verse: el dato de la escuela va cacheado.
+              </p>
+            </div>
+          <% } %>
+
           <div class="form-error" id="formError" style="margin-top:16px"></div>
 
           <button type="submit" class="btn btn-primary btn-full" style="margin-top:24px">
@@ -91,6 +117,9 @@
           name: document.getElementById('name').value.trim(),
           description: document.getElementById('description').value.trim(),
           color: document.getElementById('color').value,
+          modules: Object.fromEntries(
+            [...document.querySelectorAll('.modulo')].map(c => [c.dataset.id, { enabled: c.checked }])
+          ),
         }),
       });
       const data = await res.json();

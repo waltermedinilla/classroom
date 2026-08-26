@@ -78,6 +78,17 @@
   <% } %>
   <%# El feature flag taskTemplatesEnabled ya está adentro de can('admin_task_templates')
       (ver el campo `flag` en config/sections.js), por eso acá no se vuelve a chequear. %>
+  <%# El módulo por escuela (School.modules.recursos) ya está adentro de can('admin_recursos')
+      vía el campo `flag` de config/sections.js, igual que las plantillas. %>
+  <% if (puede('admin_recursos')) { %>
+  <a href="/admin/recursos" class="admin-nav-item <%= activePage === 'recursos' ? 'active' : '' %>" style="position:relative">
+    <span class="material-symbols-outlined">event_seat</span>
+    Recursos
+    <% if (typeof pendingReservas !== 'undefined' && pendingReservas > 0) { %>
+      <span style="position:absolute;top:6px;right:6px;width:8px;height:8px;background:#ea4335;border-radius:50%" title="<%= pendingReservas %> pedido(s) sin resolver"></span>
+    <% } %>
+  </a>
+  <% } %>
   <% if (puede('admin_task_templates')) { %>
   <a href="/admin/task-templates" class="admin-nav-item <%= activePage === 'task-templates' ? 'active' : '' %>" style="position:relative">
     <span class="material-symbols-outlined">assignment</span>

@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Recursos - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <%- include('../../partials/recursos-styles') %>
+</head>
+<body>
+  <%- include('../../partials/header') %>
+
+  <main class="main-content main-content-ancho">
+    <%- include('../../partials/admin-nav', { activePage: 'recursos' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Recursos</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          La sala de computación, el laboratorio, las netbooks: lo que los docentes reservan.
+        </p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/admin/recursos/pedidos" class="btn btn-outline" style="position:relative">
+          <span class="material-symbols-outlined">inbox</span>
+          Pedidos
+          <% if (pendientes > 0) { %>
+            <span style="background:var(--danger);color:#fff;border-radius:999px;padding:0 6px;font-size:11px;margin-left:6px"><%= pendientes %></span>
+          <% } %>
+        </a>
+        <a href="/admin/recursos/horario" class="btn btn-outline">
+          <span class="material-symbols-outlined">schedule</span>
+          Horario escolar
+        </a>
+        <button class="btn btn-primary" onclick="abrirForm()">
+          <span class="material-symbols-outlined">add</span>
+          Nuevo recurso
+        </button>
+      </div>
+    </div>
+
+    <% if (!horarioCargado) { %>
+      <%# Sin horario no hay grilla contra la cual reservar: el docente entraría a /reservas y
+          vería una pantalla vacía sin entender por qué. Se dice acá, que es donde se arregla. %>
+      <div class="res-aviso malo">
+        <span class="material-symbols-outlined">warning</span>
+        <div>
+          <b>Todavía no cargaste el horario escolar.</b><br>
+          Hasta que lo hagas, los docentes no pueden reservar nada: no existen los módulos
+          contra los cuales pedir. <a href="/admin/recursos/horario">Cargarlo ahora</a>.
+        </div>
+      </div>
+    <% } %>
+
+    <div class="res-aviso" id="avisoCambios" style="display:none"></div>
+
+    <% if (!recursos.length) { %>
+      <div class="empty-state">
+        <div class="empty-icon"><span class="material-symbols-outlined">event_seat</span></div>
+        <p>No hay recursos cargados todavía</p>
+        <button class="btn btn-primary" style="margin-top:20px" onclick="abrirForm()">Cargar el primero</button>
+      </div>
+    <% } else { %>
+      <div class="res-panel">
+        <div class="tabla-scroll">
+          <table class="res-tabla">
+            <thead>
+              <tr>
+                <th>Recurso</th><th>Tipo</th><th>Capacidad</th><th>Cómo se reserva</th>
+                <th>Permiso</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <% recursos.forEach(r => { %>
+                <tr<%= r.activo ? '' : ' style="opacity:.5"' %>>
+                  <td>
+                    <b><%= r.name %></b>
+                    <% if (!r.activo) { %> <span class="res-chip cancelada">dado de baja</span><% } %>
+                    <% if (r.ubicacion) { %><br><span style="font-size:12px;color:var(--text-secondary)"><%= r.ubicacion %></span><% } %>
+                  </td>
+                  <td><%= r.tipo %></td>
+                  <td><%= r.capacidad %></td>
+                  <td>
+                    <% if (r.divisible) { %>
+                      Se reparte<br>
+                      <span style="font-size:12px;color:var(--text-secondary)">
+                        hasta <%= r.maxPorPedido || r.capacidad %> por pedido
+                      </span>
+                    <% } else { %>
+                      Entero<br>
+                      <span style="font-size:12px;color:var(--text-secondary)">un docente por módulo</span>
+                    <% } %>
+                  </td>
+                  <td>
+                    <% if (r.requiereAutorizacion) { %>
+                      <a href="/admin/recursos/<%= r._id %>/autorizaciones">Con autorización</a>
+                    <% } else { %>
+                      Libre para docentes
+                    <% } %>
+                  </td>
+                  <td style="text-align:right;white-space:nowrap">
+                    <button class="btn btn-outline" style="padding:5px 10px;font-size:12.5px" onclick='abrirForm(<%- JSON.stringify(r) %>)'>Editar</button>
+                    <% if (r.activo) { %>
+                      <button class="btn btn-outline" style="padding:5px 10px;font-size:12.5px" onclick="darDeBaja('<%= r._id %>','<%= r.name %>')">Dar de baja</button>
+                    <% } %>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    <% } %>
+  </main>
+
+  <!-- Alta / edición -->
+  <div class="modal-overlay" id="modalForm">
+    <div class="modal" style="max-width:640px">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="material-symbols-outlined modal-header-icon">event_seat</span>
+          <h3 id="formTitulo">Nuevo recurso</h3>
+        </div>
+        <button class="icon-btn" onclick="cerrarForm()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="res-aviso malo" id="formError" style="display:none"></div>
+        <form id="formRecurso" onsubmit="return guardar(event)">
+          <input type="hidden" name="id" id="f_id">
+          <div class="res-form-grid">
+            <div style="grid-column:1/-1">
+              <label for="f_name">Nombre</label>
+              <input id="f_name" name="name" required placeholder="Sala de Computación">
+            </div>
+            <div>
+              <label for="f_tipo">Tipo</label>
+              <select id="f_tipo" name="tipo">
+                <option value="aula">Aula / espacio</option>
+                <option value="laboratorio">Laboratorio</option>
+                <option value="equipamiento">Equipamiento</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
+            <div>
+              <label for="f_capacidad">Capacidad</label>
+              <input id="f_capacidad" name="capacidad" type="number" min="1" value="1" required>
+            </div>
+            <div>
+              <label for="f_ubicacion">Ubicación</label>
+              <input id="f_ubicacion" name="ubicacion" placeholder="Planta baja">
+            </div>
+          </div>
+
+          <label style="display:flex;gap:8px;align-items:flex-start;margin-top:14px;font-size:13.5px">
+            <input type="checkbox" id="f_divisible" name="divisible" onchange="alternarDivisible()">
+            <span>
+              <b>Se puede repartir entre varios docentes</b><br>
+              <span style="color:var(--text-secondary);font-size:12.5px">
+                Tildalo para las netbooks: dos docentes pueden llevarse una parte cada uno en el
+                mismo módulo. Sin tildar, reservarlo lo ocupa entero — es lo correcto para la
+                sala de computación.
+              </span>
+            </span>
+          </label>
+
+          <div id="boxMax" style="display:none;margin-top:10px">
+            <label for="f_max">Máximo por pedido</label>
+            <input id="f_max" name="maxPorPedido" type="number" min="1" placeholder="15">
+            <p style="color:var(--text-secondary);font-size:12.5px;margin-top:4px">
+              Lo máximo que un docente puede <b>pedir</b> de una vez. Al aprobar, vos podés darle
+              menos o más — este tope no te limita a vos.
+            </p>
+          </div>
+
+          <label style="display:flex;gap:8px;align-items:flex-start;margin-top:14px;font-size:13.5px">
+            <input type="checkbox" id="f_auth" name="requiereAutorizacion" checked>
+            <span>
+              <b>Necesita tu autorización</b><br>
+              <span style="color:var(--text-secondary);font-size:12.5px">
+                El docente pide y vos resolvés. Al aceptar podés dejarlo autorizado para las
+                próximas. Sin tildar, cualquier docente reserva directo.
+              </span>
+            </span>
+          </label>
+
+          <div style="margin-top:14px">
+            <label for="f_notas">Notas</label>
+            <input id="f_notas" name="notas" placeholder="Ej: pedir la llave en preceptoría">
+          </div>
+
+          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px">
+            <button type="button" class="btn btn-outline" onclick="cerrarForm()">Cancelar</button>
+            <button type="submit" class="btn btn-primary">Guardar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <%- include('../../partials/footer') %>
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function alternarDivisible() {
+      $('boxMax').style.display = $('f_divisible').checked ? 'block' : 'none';
+    }
+
+    function abrirForm(r) {
+      $('formError').style.display = 'none';
+      $('formTitulo').textContent = r ? 'Editar recurso' : 'Nuevo recurso';
+      $('f_id').value        = r ? r._id : '';
+      $('f_name').value      = r ? r.name : '';
+      $('f_tipo').value      = r ? r.tipo : 'aula';
+      $('f_capacidad').value = r ? r.capacidad : 1;
+      $('f_ubicacion').value = r ? (r.ubicacion || '') : '';
+      $('f_notas').value     = r ? (r.notas || '') : '';
+      $('f_divisible').checked = r ? !!r.divisible : false;
+      $('f_auth').checked      = r ? r.requiereAutorizacion !== false : true;
+      $('f_max').value       = r && r.maxPorPedido ? r.maxPorPedido : '';
+      alternarDivisible();
+      $('modalForm').classList.add('show');
+    }
+    function cerrarForm() { $('modalForm').classList.remove('show'); }
+
+    async function guardar(e, confirmar) {
+      e.preventDefault();
+      const id  = $('f_id').value;
+      const url = id ? `/admin/recursos/${id}/editar` : '/admin/recursos/crear';
+      const body = {
+        name: $('f_name').value, tipo: $('f_tipo').value,
+        capacidad: $('f_capacidad').value, ubicacion: $('f_ubicacion').value,
+        notas: $('f_notas').value,
+        divisible: $('f_divisible').checked ? 'on' : 'off',
+        requiereAutorizacion: $('f_auth').checked ? 'on' : 'off',
+        maxPorPedido: $('f_max').value,
+      };
+      if (confirmar) body.confirmar = 'si';
+
+      const res  = await fetch(url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok) { location.reload(); return false; }
+
+      // 409 = el servidor pide confirmación explícita (cambiar el modo de un recurso con
+      // reservas vivas). Se pregunta en vez de aplicarlo callado.
+      if (res.status === 409 && data.requiereConfirmacion) {
+        if (confirm(data.error + '\n\n¿Guardar igual?')) return guardar(e, true);
+        return false;
+      }
+      $('formError').textContent = data.error || 'No se pudo guardar';
+      $('formError').style.display = 'flex';
+      return false;
+    }
+
+    async function darDeBaja(id, nombre) {
+      if (!confirm(`¿Dar de baja "${nombre}"?\n\nSe cancelan sus reservas futuras y deja de ofrecerse. El historial se conserva.`)) return;
+      const res  = await fetch(`/admin/recursos/${id}/borrar`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return alert(data.error || 'No se pudo dar de baja');
+      location.reload();
+    }
+  </script>
+</body>
+</html>

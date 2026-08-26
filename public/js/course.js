@@ -1019,7 +1019,8 @@ document.getElementById('activityModal')?.addEventListener('click', function (e)
 
 // Crea una actividad (POST /activities/create como multipart/form-data)
 // Links se serializa como JSON string porque FormData no soporta objetos anidados
-// Después de crear: añade tarjeta al tab actividades Y elemento al stream si ya está disponible
+// Después de crear: refresca la solapa Actividades desde el servidor Y agrega el elemento al
+// stream si ya está disponible
 async function createActivity() {
   const title   = document.getElementById('activityTitle').value.trim();
   const errorEl = document.getElementById('activityError');
@@ -1073,7 +1074,6 @@ async function createActivity() {
   // Limpia el buscador para que la nueva actividad sea visible
   const searchInput = document.getElementById('activitySearch');
   if (searchInput && searchInput.value) { searchInput.value = ''; filterActivities(''); }
-  addActivityTabCard(data.activity); // Agrega la tarjeta al tab de actividades del docente
 
   // En el stream (el muro de la materia) va solo si ya está publicada: la programada aparece
   // en la solapa Actividades con su chip, y recién cae al muro cuando llega su fecha.
@@ -1083,6 +1083,36 @@ async function createActivity() {
     const empty     = container.querySelector('.empty-state');
     if (empty) empty.remove();
     container.prepend(streamEl);
+  }
+
+  // La solapa Actividades se rearma desde el servidor en vez de insertarle la tarjeta a mano.
+  //
+  // Antes acá iba addActivityTabCard(), que hace appendChild: la tarjeta quedaba ÚLTIMA. Pero la
+  // lista va de la más NUEVA a la más vieja (GET /activities/course/:id ordena createdAt:-1), así
+  // que la recién creada aterrizaba al fondo, debajo de todo lo del año. El docente la creaba
+  // desde la sala en vivo, la veía aparecer arriba de todo en Novedades —ahí sí va prepend— y al
+  // entrar a Actividades no la encontraba: "me aparece solo en novedades". Medido el 2026-08-25
+  // con 8 actividades previas: la nueva salía novena de nueve.
+  //
+  // Pedirle la lista al servidor y no ordenar acá es a propósito: el orden lo decide un solo lado.
+  // De paso la tarjeta sale con los chips de entregas y vistas, que la respuesta de POST /create
+  // no trae (no tiene submittedCount/viewedCount/totalStudents) y quedaban en blanco.
+  //
+  // Va DESPUÉS del muro y no antes: buildActivityStreamEl() también cachea en
+  // window._activities, y con el objeto pelado de la respuesta. Yendo último, el que queda en
+  // el cache es el del servidor, con los contadores — si no, tocar el ojo redibuja la tarjeta
+  // recién creada y le borra los chips.
+  //
+  // Si la solapa todavía no se cargó no hay nada que hacer: su carga lazy la va a traer del
+  // servidor, ya en su lugar.
+  if (window._activitiesTabLoaded) {
+    try {
+      await loadActivitiesTab();
+    } catch {
+      // La actividad YA está creada; que falle este refresco no puede dejar la solapa clavada en
+      // "Cargando actividades…". Marcarla como no cargada hace que el próximo click la reintente.
+      window._activitiesTabLoaded = false;
+    }
   }
 
   // El aviso en el chat lo escribe el servidor al crear la actividad; esto solo adelanta el poll

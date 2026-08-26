@@ -1,6 +1,8 @@
 const express = require('express');
 const multer  = require('multer');
 const XLSX    = require('xlsx');
+// Catálogo de módulos opcionales por escuela; los prende el superadmin desde /schools/:id/edit.
+const { MODULOS } = require('../config/modulos');
 const os       = require('os');
 const fs       = require('fs');
 const path     = require('path');
@@ -172,18 +174,41 @@ router.get('/schools/:id/edit', async (req, res) => {
   if (idMalo(req, res, 'Escuela no encontrada')) return;
   const school = await School.findById(req.params.id);
   if (!school) return res.status(404).send('Escuela no encontrada');
-  res.render('superadmin/school-form', { school });
+  res.render('superadmin/school-form', { school, MODULOS });
 });
 
 router.post('/schools/:id/edit', async (req, res) => {
   if (idMalo(req, res, 'Escuela no encontrada')) return;
   try {
     const { name, description, color } = req.body;
+
+    // Módulos opcionales (config/modulos.js). Se arma la actualización a mano en vez de pasar
+    // req.body.modules crudo: así una llave inventada en el request no puede escribir nada en
+    // School.modules, y el catálogo sigue siendo el único lugar que decide qué existe.
+    // Solo se pisa lo que vino. Un request que trae únicamente `modules` —prender o apagar un
+    // módulo sin abrir el formulario entero— no puede vaciar el nombre de la escuela de paso.
+    const cambios = {};
+    if (name        !== undefined) cambios.name        = name;
+    if (description !== undefined) cambios.description = description;
+    if (color       !== undefined) cambios.color       = color;
+
+    const modulosPedidos = req.body.modules;
+    if (modulosPedidos && typeof modulosPedidos === 'object') {
+      for (const m of MODULOS) {
+        if (m.id in modulosPedidos) {
+          cambios[`modules.${m.id}.enabled`] = modulosPedidos[m.id]?.enabled === true;
+        }
+      }
+    }
+
     const school = await School.findByIdAndUpdate(
-      req.params.id, { name, description, color },
+      req.params.id, cambios,
       { new: true, runValidators: true }
     );
     if (!school) return res.status(404).json({ error: 'Escuela no encontrada' });
+    // ⚠️ Solo limpia el cache de ESTE worker. Con 2 workers de PM2, el otro sigue con el doc
+    // viejo hasta 45s (middleware/cache.js). Por eso la pantalla lo avisa: prender un módulo
+    // y no verlo al instante es lo esperado, no un bug.
     invalidateSchool(req.params.id);
 
     logAudit(req, 'school.edit',

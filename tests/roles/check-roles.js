@@ -35,6 +35,8 @@ try { require('dotenv').config({ path: '.env.test', override: true }); } catch {
 
 const { SmokeClient } = require('../smoke/lib');
 const { SECTIONS, isAllowed } = require('../../config/sections');
+// Módulos opcionales por escuela: la solapa de un módulo apagado no tiene que pintarse.
+const { MODULOS } = require('../../config/modulos');
 
 const BASE = process.env.SMOKE_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
 if (!/^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(BASE)) {
@@ -86,6 +88,11 @@ function linksVisibles(html, panel) {
 // lado y no repartido por el archivo.
 function deberiaVerla(sec, rol, escuela, tieneEscuela) {
   if (sec.flag === 'taskTemplatesEnabled' && process.env.TASK_TEMPLATES_ENABLED === 'false') return false;
+  // Los flags que salen de config/modulos.js dependen de la ESCUELA, no del entorno: si el
+  // módulo está apagado, la solapa NO se pinta y eso es lo correcto. Sin esta rama, cualquier
+  // módulo opcional apagado se reportaría como "falta en el menú".
+  const mod = MODULOS.find(m => m.localsKey === sec.flag);
+  if (mod && !escuela.modules?.[mod.id]?.enabled) return false;
   if (sec.needsSchool && !tieneEscuela) return false;
   return isAllowed(escuela, rol, sec.key);
 }
@@ -191,7 +198,15 @@ async function main() {
           continue;
         }
         if (!abierto && s.ownerOnly)                { ok++; notas.push(`${s.key}: ${r.status} (ownerOnly)`); continue; }
-        if (!abierto && s.flag && r.status === 404) { ok++; notas.push(`${s.key}: 404 (flag ${s.flag} apagado)`); continue; }
+        // Un `flag` apagado bloquea de dos formas distintas según de dónde salga el flag, y
+        // las dos son correctas:
+        //   404 → flag GLOBAL de variable de entorno (taskTemplatesEnabled): server.js no
+        //         monta el router, así que no hay ruta que contestar.
+        //   403 → flag POR ESCUELA (config/modulos.js): el router está montado siempre y
+        //         requireModulo rechaza, porque la escuela decide recién en el request.
+        if (!abierto && s.flag && [403, 404].includes(r.status)) {
+          ok++; notas.push(`${s.key}: ${r.status} (flag ${s.flag} apagado)`); continue;
+        }
         if (!abierto && s.needsSchool && !a.tieneEscuela) {
           ok++; notas.push(`${s.key}: ${r.status} (needsSchool y este usuario no tiene escuela)`); continue;
         }
@@ -207,7 +222,15 @@ async function main() {
           continue;
         }
 
-        const esperado = s.panel === 'app' ? true : s.roles.includes(rol);
+        // El panel 'app' son los accesos del menú lateral y, salvo excepción, los ve todo el
+        // mundo: `app_courses` no lista al superadmin en `roles` y sin embargo entra.
+        //
+        // La excepción son las secciones de un MÓDULO opcional (las que declaran `flag`, ver
+        // config/modulos.js): esas no son universales ni por asomo — reservar la sala de
+        // computación es de quien da clase, no del alumno ni del gabinete. Ahí manda `roles`,
+        // igual que en cualquier panel.
+        const universal = s.panel === 'app' && !s.flag;
+        const esperado = universal ? true : s.roles.includes(rol);
         if (abierto === esperado) { ok++; continue; }
         if (abierto) { fugas++; anotar('FUGA', rol, `${s.path} devolvió 200 y ese rol no debería entrar`); }
         else { rotas++; anotar('ROTO', rol, `${s.path} devolvió ${r.status} y ese rol sí debería entrar`); }
@@ -218,7 +241,22 @@ async function main() {
 
     // ── 4) Menú ──────────────────────────────────────────────────────────────
     console.log('\n4) Solapas del menú (espejo de res.locals.can)\n');
-    const escuela = { _id: schoolId, rolePermissions: {} };
+    // Qué módulos opcionales tiene prendidos ESTA escuela. Se MIDE contra el servidor en vez
+    // de leerse de la base: un 403 en la primera sección del módulo es exactamente lo que
+    // hace requireModulo cuando está apagado, así que la sonda mide lo mismo que el usuario
+    // va a ver. `admin0` es el admin real de la escuela, con el que corre todo el chequeo.
+    const modules = {};
+    for (const m of MODULOS) {
+      const primera = SECTIONS.find(s => s.key === m.secciones[0]);
+      if (!primera) continue;
+      const r = await c.get('admin0', primera.path);
+      modules[m.id] = { enabled: r.status !== 403 };
+    }
+    const prendidos = MODULOS.filter(m => modules[m.id]?.enabled).map(m => m.id);
+    console.log(`   módulos opcionales prendidos en esta escuela: ${prendidos.join(', ') || '(ninguno)'}
+`);
+
+    const escuela = { _id: schoolId, rolePermissions: {}, modules };
     for (const [rol, a] of Object.entries(actores)) {
       const home = await c.get(a.actor, LANDING[rol]);
       if (home.status !== 200) {

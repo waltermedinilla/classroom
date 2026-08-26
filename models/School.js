@@ -101,6 +101,31 @@ const schoolSchema = new Schema({
     preceptor: { type: String, enum: ['none', 'resumen'],             default: 'none' },
     teacher:   { type: String, enum: ['none', 'resumen'],             default: 'none' },
   },
+
+  // Módulos OPCIONALES prendidos para esta escuela. Catálogo en config/modulos.js,
+  // enforcement en middleware/modulos.js, y lo prende el SUPERADMIN desde
+  // /superadmin/schools.
+  //
+  // Un módulo es una funcionalidad entera que no existe para la escuela que no la usa
+  // (reservas de recursos; más adelante cuotas y conectores externos). Es otra cosa que
+  // `rolePermissions`, que reparte entre roles lo que ya existe para todos.
+  //
+  // Por qué NO va adentro de `settings`: mismo motivo que rolePermissions acá arriba y que
+  // soeAccess acá abajo. `settings` lo edita el ADMIN de la escuela desde /admin/tasks
+  // (lista blanca TASK_SETTINGS en routes/admin.js); si esto viviera ahí, sumar una key a
+  // esa lista por error le daría al admin la llave para prenderse sus propios módulos.
+  //
+  // Escuela sin el campo (todas las que existen hoy) = todos apagados, que es exactamente
+  // el comportamiento de antes de que el módulo existiera. Sin migración.
+  //
+  // ⚠️ Mismo caveat que los tres campos de arriba: está en el .select() de server.js que
+  // arma res.locals.school. Si se saca de ahí, moduloActivo() lee undefined, contesta que
+  // no —es fail-closed— y el módulo queda invisible sin que nadie lo haya apagado.
+  modules: {
+    recursos: {
+      enabled: { type: Boolean, default: false },
+    },
+  },
 }, { timestamps: true });
 
 // Índice único sparse: solo indexa las escuelas donde el campo EXISTE.

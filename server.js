@@ -23,14 +23,18 @@ const { logAudit } = require('./middleware/audit');
 const rateLimitStats = require('./services/rateLimitStats');
 // Zona horaria de la escuela: services/liveRoom.js es el UNICO duenio de la hora (ver el
 // comentario de su bloque TZ). Se importa aca solo para publicarlo en res.locals.
-const { fmt: schoolFmt } = require('./services/liveRoom');
+const { fmt: schoolFmt, diaEscolar } = require('./services/liveRoom');
 const School     = require('./models/School');
 const Suggestion = require('./models/Suggestion');
 const MessageRecipient   = require('./models/MessageRecipient');
 const TemplateAssignment = require('./models/TemplateAssignment');
+const Reserva            = require('./models/Reserva');
 const APP_VERSION = require('./package.json').version;
 const { INTEREST_LABELS, INTEREST_ICONS } = require('./config/interests');
 const { SECTIONS_BY_KEY, isAllowed, sectionForPath, normalizePath } = require('./config/sections');
+// Módulos opcionales por escuela: acá solo se publican en res.locals para que los navs y
+// res.locals.can() los vean. El enforcement vive en middleware/modulos.js.
+const { MODULOS, moduloActivo } = require('./config/modulos');
 
 // Log del deploy automático (POST /deploy). Va a un archivo propio y no al logger de
 // winston a propósito: el proceso que escribe acá sobrevive al worker que lo lanzó
@@ -49,6 +53,8 @@ const announcementRoutes = require('./routes/announcements');
 const activityRoutes     = require('./routes/activities');
 const adminRoutes        = require('./routes/admin');
 const sectionsRoutes     = require('./routes/sections');
+const recursosRoutes     = require('./routes/recursos');
+const reservasRoutes     = require('./routes/reservas');
 const superadminRoutes   = require('./routes/superadmin');
 const directivoRoutes    = require('./routes/directivo');
 const preceptorRoutes    = require('./routes/preceptor');
@@ -386,7 +392,7 @@ app.use('*', async (req, res, next) => {
     const key = schoolId.toString();
     let school = schoolCache.get(key);
     if (!school) {
-      school = await School.findById(schoolId).select('name color slug _id themes settings rolePermissions soeAccess').lean();
+      school = await School.findById(schoolId).select('name color slug _id themes settings rolePermissions soeAccess modules').lean();
       if (school) schoolCache.set(key, school);
     }
     res.locals.school = school || null;
@@ -425,6 +431,18 @@ app.use((req, res, next) => {
   // por request para que las vistas puedan condicionar UI sin releer env vars.
   res.locals.taskTemplatesEnabled        = process.env.TASK_TEMPLATES_ENABLED !== 'false';
   res.locals.taskTemplatesTeacherEnabled = process.env.TASK_TEMPLATES_TEACHER_ENABLED === 'true';
+  // ── Módulos opcionales por escuela (config/modulos.js) ──────────────────────
+  // A diferencia de los dos flags de arriba, éstos NO salen del entorno sino de
+  // School.modules: son por escuela. Se publican con el mismo nombre que el campo `flag`
+  // de sus secciones en config/sections.js, que es lo que hace que res.locals.can() los
+  // respete y esconda la solapa sola.
+  //
+  // ⚠️ El `!!` no es cosmético: can() compara `res.locals[flag] === false`, así que un
+  // `undefined` —que es lo que devolvería el optional chaining de una escuela sin el
+  // campo— NO esconde nada. Tiene que ser el booleano false, literal.
+  for (const m of MODULOS) {
+    res.locals[m.localsKey] = moduloActivo(res.locals.school, m.id);
+  }
   // Helper único para las vistas: ¿este usuario ve esta solapa? Resuelve de una sola vez
   // el rol, los permisos que la escuela configuró en /superadmin/roles y el feature flag,
   // para que los *-nav.ejs no tengan que combinar tres condiciones distintas y se puedan
@@ -592,6 +610,29 @@ app.use(async (req, res, next) => {
   next();
 });
 
+// ── Reservas de recursos esperando resolución ───────────────────────────────
+// Inyecta res.locals.pendingReservas para el punto rojo de la solapa "Recursos". Mismo patrón
+// que el de arriba, con las mismas dos condiciones: solo para el admin de una escuela, y solo
+// si el módulo está prendido para esa escuela (si no, la solapa ni existe).
+//
+// Se cuentan solo los pedidos de HOY EN ADELANTE: un pendiente de la semana pasada ya no se
+// puede aprobar —la clase pasó— y un badge que nunca baja deja de significar algo.
+// Índice {school:1, status:1, date:1} en Reserva: la query es sub-milisegundo.
+app.use(async (req, res, next) => {
+  res.locals.pendingReservas = 0;
+  const u = res.locals.user;
+  if (u && u.role === 'admin' && u.school && res.locals.recursosEnabled) {
+    try {
+      res.locals.pendingReservas = await Reserva.countDocuments({
+        school: u.school, status: 'pendiente', date: { $gte: diaEscolar() },
+      });
+    } catch {
+      // Si falla el conteo, el badge no aparece y listo. Nunca puede tirar la request.
+    }
+  }
+  next();
+});
+
 // ── Rutas ────────────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
   if (!res.locals.user) return res.redirect('/login');
@@ -638,6 +679,10 @@ app.use('/',            auditRoutes);
 // exige rol admin para todo el panel; este deja entrar además al Jefe de Sección, acotado
 // a las secciones que tiene a cargo. Si se montara después, nunca llegaría un request.
 app.use('/admin/secciones', sectionsRoutes);
+// Recursos: mismo criterio que /admin/secciones — va ANTES de /admin porque gana el primero
+// que matchea, y este router tiene su propia guarda de módulo (requireModulo) que el panel de
+// admin no conoce. Montado después, adminRoutes se comería el request y contestaría su 404.
+app.use('/admin/recursos', recursosRoutes);
 app.use('/admin',      adminRoutes);
 // Montado ANTES de /superadmin para que Express lo intercepte primero sin ambigüedad
 // (aunque hoy superadmin.js no tiene rutas que choquen con /backup/*).
@@ -671,6 +716,9 @@ app.use('/preceptor',   preceptorRoutes);
 app.use('/asistencia',  attendanceRoutes.alumnoRouter);
 app.use('/jefatura',    jefaturaRoutes);
 app.use('/soe',         soeRoutes);
+// El lado del docente del módulo de recursos. Va suelto en la raíz (y no bajo /admin) porque
+// no es una pantalla de administración: la usa quien da clase.
+app.use('/reservas',    reservasRoutes);
 app.use('/suggestions', suggestionRoutes);
 // Bandeja del destinatario de los mensajes del superadmin. El panel del que ENVÍA se monta
 // más arriba, junto al resto de los sub-routers de /superadmin.

@@ -479,6 +479,74 @@ inferido. Lo funcional que ya figura en el Roadmap no se repite.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-25 — La tarea creada en vivo se iba al fondo de la solapa Actividades
+
+Reporte del usuario: *"los docentes presentan problemas al agregar tareas cuando están en
+vivo, dice que les aparece en novedades únicamente, y debe aparecer también en actividades"*.
+
+**Sí aparecía en Actividades — última de la lista.** Reproducido en el navegador con 8
+actividades previas: la recién creada salía **novena de nueve**. La solapa va de la más nueva
+a la más vieja, así que el docente miraba arriba, donde siempre está lo último, y no la veía.
+Con un año de tareas cargadas es indistinguible de "no se guardó".
+
+**La causa: dos reglas que se contradecían.** `GET /activities/course/:id` ordena
+`createdAt: -1` (la más nueva primero), pero `createActivity()` insertaba la tarjeta con
+`addActivityTabCard()`, que hace `appendChild` — o sea, al final. En Novedades no pasaba
+porque ahí se usa `prepend`, y de ahí el síntoma exacto que reportó el usuario: aparecía en
+un lado y "no" en el otro.
+
+**El arreglo**: `createActivity()` ya no arma la tarjeta a mano. Si la solapa Actividades ya
+estaba cargada, le vuelve a pedir la lista al servidor (`loadActivitiesTab()`), que es el
+único que sabe el orden. Si todavía no se cargó, no se toca: su carga lazy la va a traer ya
+ordenada. Una sola línea de comportamiento, pero **el orden pasa a decidirlo un solo lado** y
+deja de poder divergir.
+
+**De regalo, los chips.** La respuesta de `POST /activities/create` no trae
+`submittedCount` / `viewedCount` / `totalStudents`, así que la tarjeta armada a mano salía sin
+los chips de entregas y de vistas que tienen todas las demás. Al pedir la lista al servidor
+sale igual que sus vecinas (verificado: `0/2` en las dos).
+
+**El try/catch no es de más**: la actividad YA está creada cuando corre el refresco. Si falla
+la red justo ahí, se desmarca `_activitiesTabLoaded` para que el próximo click reintente —
+sin eso la solapa quedaba clavada en "Cargando actividades…" hasta un F5. Es el mismo criterio
+que ya usa el servidor con el aviso en el chat de la sala.
+
+#### La otra mitad: el alumno que está en clase
+
+Mismo día, mismo pedido (*"si que se le refresque sola"*). El alumno estaba en la sala cuando
+la docente creó la tarea: veía el aviso en el chat y **sus dos solapas seguían mostrando la
+lista de antes** hasta que recargara la página. Lo único que la traía era el botón "Ver
+actividad".
+
+Ahora el poll de la sala, al ver un aviso **nuevo** con id de actividad, pone al día la materia
+que está debajo: `loadStream()` (el muro, que de paso recalcula "Próximas entregas") y
+`loadActivitiesTab()` si la solapa ya estaba abierta. Se refrescan **las dos**: hacer solo una
+sería el mismo bug al revés.
+
+**La trampa que obliga al `Set`**: una actividad **programada** le manda el aviso al alumno,
+pero el servidor se la filtra de la lista — nunca va a entrar en `window._activities`.
+Preguntando solo por el cache, cada poll dispararía un refresco nuevo, **para siempre**. Por
+eso cada id se atiende una sola vez. Medido: 10 polls con una programada anunciada → **1 solo
+refresco**. Y el que la creó no pide la lista dos veces (6 polls tras crear → 1 sola consulta,
+la de `createActivity`).
+
+**Las otras tres guardas**: no corre en la sala suelta (`EN_MATERIA`, la única página sin
+`course.js` — ahí sería un `ReferenceError` por poll); el arranque anota los avisos ya
+pintados, o un repintado completo tomaría el chat entero por nuevo; y los refrescos van sin
+`await` y con `.catch()`, porque el poll de la sala es lo que mantiene viva la presencia de la
+clase y no puede quedar colgado de otra solapa.
+
+**Verificado con dos sesiones de verdad**: el alumno en el navegador, la docente creando por
+HTTP desde afuera. Las dos pantallas del alumno se pusieron al día solas, sin recargar y sin
+que tocara nada.
+
+**Piezas**: `public/js/course.js` (`createActivity`) · `views/partials/live-room.ejs`
+(`ponerLaMateriaAlDia` / `anotarActividades`) · `tests/unit/actividadEnVivo.test.js`
+(18 casos; 4 caen si se vuelve a insertar la tarjeta a mano).
+
+**Lo que NO se tocó**: nada del servidor, ninguna colección, ningún índice. Es un arreglo del
+navegador solo — con un F5 la actividad ya aparecía en su lugar.
+
 ### 2026-08-23 — El Funnel se repara solo: guardián cada minuto + sección en el monitor
 
 Pedido del usuario: *"como siempre tengo problemas por los dns del funnel, me gustaría que
@@ -3987,6 +4055,98 @@ La primera es la actividad **sin fecha de entrega**; la segunda, la **vencida co
 
 **Spec**: `specs/pendientes-vencidos.spec.md`.
 
+## Recursos y Reservas — el primer módulo OPCIONAL por escuela (2026-08-25)
+
+**Qué es**: la escuela carga su horario y sus recursos (la sala de computación de 20 máquinas, el
+carro de 30 netbooks Novatech), y los docentes reservan un módulo desde un calendario semanal. El
+personal administrativo resuelve los pedidos y, con el mismo clic, puede dejar autorizado al
+docente para las próximas.
+
+**Spec**: `specs/recursos-reservas.spec.md`.
+
+### Lo que es NUEVO en el proyecto y no solo una feature más
+
+Es el primer **módulo opcional por escuela**: una funcionalidad entera que no existe para la
+escuela que no la usa. `config/modulos.js` es el hermano de `config/sections.js` y contesta otra
+pregunta — aquél reparte entre roles lo que ya existe para todos (restrictivo, fail-open); éste
+decide si algo existe para la escuela (aditivo, **fail-closed**). Vive en `School.modules`, fuera de
+`settings`, por el mismo motivo que `rolePermissions` y `soeAccess`: lo prende el **superadmin**, lo
+opera el admin.
+
+⚠️ **El campo `flag` de `config/sections.js` no alcanzaba.** Se resuelve contra `res.locals[flag]`,
+que sale de una variable de entorno, y el enforcement real era el montaje condicional del router
+(`/superadmin/tasks`). Eso sirve para un flag global y no para uno por escuela: el montaje ocurre
+una vez al arrancar, cuando todavía no hay request del que sacar la escuela. Hicieron falta las dos
+mitades — `res.locals.<id>Enabled` esconde la solapa y `requireModulo()` bloquea la ruta.
+
+### La decisión que parte el módulo en dos
+
+`Recurso.divisible` no es una preferencia de pantalla: decide **con qué se garantiza el cupo**.
+
+- **Sala de Computación** (20, `divisible: false`) → se reserva entera. La guarda es un **índice
+  único parcial** con `{ status: 'confirmada', exclusiva: true }`. Las dos condiciones hacen falta:
+  sin la primera una reserva cancelada mataría el módulo para siempre; sin la segunda, la reserva
+  legítima de netbooks chocaría contra la de al lado. `partialFilterExpression`, nunca `sparse` —
+  es la lección de `School.inviteToken`.
+- **Netbooks Novatech** (30, `divisible: true`, hasta 15 por pedido) → se reparten. "No pasarse de
+  30" es una **suma**, y una suma no cabe en un índice: la guarda es un `findOneAndUpdate` atómico
+  sobre un contador por casillero (`models/SlotOcupacion.js`). Con 2 workers de PM2, leer-comparar-
+  crear es una carrera abierta: los dos leen 20 y los dos confirman 15.
+
+**El contador es estado derivado y nace con su antídoto**: el diagnóstico `ocupacion-descuadrada`
+de `/superadmin/otros` lo recalcula desde las reservas confirmadas. Si un camino de salida se
+olvidara de devolver, el cupo se filtra para siempre — las netbooks figuran ocupadas y no las tiene
+nadie. La verdad vive en las reservas; el contador solo decide rápido.
+
+### El horario, tal como lo dictó el usuario
+
+7 módulos de 40′ y 2 recreos de 10′ por turno, patrón *2 · recreo · 2 · recreo · 3*.
+**Mañana 08:00–13:00**, **Tarde 14:00–19:00**, sin sábado. Los dos cierran **clavados** contra su
+rango (7 × 40 + 2 × 10 = 5 h), y por eso la validación puede ser estricta: las franjas cubren el
+turno entero, sin huecos ni sobrantes.
+
+**Los recreos van EN la grilla** (`tipo: 'recreo'`, `orden: null`, no reservables). Sin ellos el
+calendario salta de 2ª —termina 9:20— a 3ª —arranca 9:30— y las dos filas se leen contiguas; y la
+validación de continuidad sería falsa justo donde sirve.
+
+### Un pendiente no bloquea el casillero, y eso tiene consecuencias
+
+Ni el índice ni el contador miran los pendientes: un pedido sin aprobar no puede cerrarle la puerta
+a un docente ya autorizado. La contracara son dos carreras que el administrativo se come apretando
+"Aceptar", y se resuelven distinto:
+
+- **exclusivo** → el pedido perdedor se **auto-rechaza**. Ese módulo ya es de otro y no se libera
+  solo; dejarlo pendiente lo devolvería a la bandeja para siempre y le enseñaría al administrativo
+  a ignorarla.
+- **divisible** → quedan N unidades y la pantalla le ofrece confirmar por ese número.
+
+Ninguna de las dos es un 500.
+
+### Fechas
+
+`Reserva.date` es un **String `'YYYY-MM-DD'`**, igual que `AttendanceSession.date` y por los mismos
+tres motivos. Y mostrar un día tampoco puede correrlo: ahí `fmt` de `liveRoom.js` **no sirve**
+—formatea instantes en la zona de la escuela, y `new Date('2026-08-25')` es medianoche UTC, o sea
+el 24 a las 21:00—. Los helpers `diaCorto`/`diaLargo`/`diaNum` arman el instante en UTC y lo
+formatean en UTC: las dos mitades se cancelan.
+
+### Qué se probó
+
+**59 unitarios nuevos** (`horarioEscolar`, `disponibilidadReservas`, `cupoReservas`) y **16 specs de
+smoke**. Los de concurrencia van con `Promise.all`: verificado que, reemplazando `tomar()` por la
+versión ingenua, **caen exactamente los 4 tests de carrera y ninguno de los otros 17**.
+
+Suites completas en verde: **377 smoke · 623 unitarios · matriz de roles sin hallazgos**.
+
+De paso salieron tres arreglos que no eran del módulo:
+- `POST /superadmin/schools/:id/edit` pisaba `name`, `description` y `color` con `undefined` cuando
+  el request solo traía otra cosa. Ahora solo escribe lo que vino.
+- `tests/roles/check-roles.js` daba por sentado que TODA sección del panel `app` la ve cualquier
+  rol, y que un flag apagado siempre contesta 404. Ninguna de las dos era cierta con un módulo por
+  escuela.
+- El smoke dejaba dos recursos dados de baja por corrida; ahora los borra de verdad en su limpieza
+  final de Mongo.
+
 ## Plan de Futuras Actualizaciones (Roadmap)
 
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`).
@@ -4057,6 +4217,20 @@ La primera es la actividad **sin fecha de entrega**; la segunda, la **vencida co
 - Vista "Mis entregas" consolidada cross-curso para el alumno.
 - Link al perfil del alumno desde el tab Personas.
 - ~~Impersonación desde el superadmin.~~ **Ya existe**: `POST /admin/users/:id/impersonate` (el superadmin pasa el chequeo de escuela porque la suya es `null`) y se sale con `GET /exit-impersonate`. Verificado el 2026-08-17. Lo que nunca existió es una ruta bajo `/superadmin`, que era lo que buscaba la auditoría original.
+
+### Pendientes de Recursos y Reservas — decididos fuera de alcance el 2026-08-25
+- **Calendario de feriados**: la expansión semanal crea reservas en feriados y actos, y hay que
+  cancelarlas a mano. Un calendario escolar de verdad lo piden también las actividades y la
+  asistencia — conviene hacerlo una sola vez para los tres.
+- **Unificar `Course.room`** (texto libre) con los recursos nuevos. Es la convergencia natural:
+  hoy el aula de una materia es un string y el recurso reservable es otra cosa. Tocar `Course`
+  arrastra medio sistema.
+- **Reserva por rango libre de horario** ("de 9:15 a 10:40") para actos y jornadas. Decisión del
+  usuario: la v1 es por módulos. Exige un segundo camino de reserva y el chequeo cruzado entre
+  ambos, porque un rango no se puede vigilar con un índice.
+- **Préstamo con devolución** (llaves, notebooks que salen del edificio).
+- **Vista del recurso para preceptoría**: hoy el calendario es por recurso y por semana; falta el
+  "qué hay hoy en la sala" de un vistazo.
 
 ### Funcionalidades faltantes — mayor complejidad
 - Notificaciones (in-app / email / push).

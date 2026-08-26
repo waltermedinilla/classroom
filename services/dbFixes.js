@@ -59,6 +59,10 @@ const Announcement = require('../models/Announcement');
 const Subject      = require('../models/Subject');
 const ActivityView = require('../models/ActivityView');
 const Suggestion   = require('../models/Suggestion');
+// Módulo de Recursos y reservas. Se importan solo para el diagnóstico de abajo; la lógica del
+// cupo vive entera en services/recursos/cupo.js, que es el único que lo escribe.
+const Recurso      = require('../models/Recurso');
+const cupoRecursos = require('./recursos/cupo');
 
 // Cuántas filas se mandan a la vista previa. El resto queda en el conteo.
 const MUESTRA_MAX = 50;
@@ -1854,8 +1858,60 @@ const FIXES = [
       };
     },
   },
-];
+  /* ─────────────────────────────────────────────────────────────────────── */
+  {
+    id: 'ocupacion-descuadrada',
+    titulo: 'Netbooks (u otro recurso repartible) ocupadas por nadie',
+    descripcion:
+      'El cupo de un recurso que se reparte entre varios docentes se lleva en un contador aparte ' +
+      '(models/SlotOcupacion.js), porque "no pasarse de 30" es una suma y una suma no cabe en un ' +
+      'índice. Ese contador es un dato DERIVADO: la verdad son las reservas confirmadas. Si algún ' +
+      'camino de salida —cancelar, rechazar, editar la cantidad, dar de baja el recurso— dejara de ' +
+      'devolver lo que tomó, el contador quedaría alto para siempre: el recurso figuraría ocupado y ' +
+      'no lo tendría nadie. El arreglo lo recalcula sumando las reservas confirmadas.',
+    icono: 'exposure',
+    severidad: 'media',
+    aplicable: true,
+    parametros: [],
 
+    async diagnosticar() {
+      const { diferencias } = await cupoRecursos.recalcular({ aplicar: false });
+      if (!diferencias.length) return { total: 0, muestra: [], nota: null };
+
+      const ids = [...new Set(diferencias.map(d => d.recurso))];
+      const recursos = await Recurso.find({ _id: { $in: ids } }).select('name capacidad').lean();
+      const nombre = Object.fromEntries(recursos.map(r => [r._id.toString(), r.name]));
+
+      const filas = diferencias
+        .sort((a, b) => Math.abs(b.guardado - b.real) - Math.abs(a.guardado - a.real))
+        .map(d => ({
+          principal: nombre[d.recurso] || '(recurso borrado)',
+          secundario: `${d.date} · ${d.turno} · módulo ${d.modulo}`,
+          extra: `figura ${d.guardado}, en realidad hay ${d.real}`,
+          fecha: null,
+        }));
+
+      return {
+        total: diferencias.length,
+        muestra: filas.slice(0, MUESTRA_MAX),
+        nota:
+          'Cada fila es un casillero (recurso × día × módulo) donde el contador y las reservas no ' +
+          'coinciden. Aplicar el arreglo pone el contador en el número real; no toca ninguna reserva.',
+      };
+    },
+
+    async aplicar() {
+      const { diferencias } = await cupoRecursos.recalcular({ aplicar: true });
+      return {
+        afectados: diferencias.length,
+        mensaje: diferencias.length
+          ? `${diferencias.length} casillero(s) recalculados desde las reservas confirmadas. ` +
+            'El cupo que estaba retenido vuelve a estar disponible.'
+          : 'No había ningún casillero descuadrado.',
+      };
+    },
+  },
+];
 const getFix = (id) => FIXES.find(f => f.id === id) || null;
 
 // Resuelve los parámetros de un arreglo para poder pintarlos (las opciones de un select

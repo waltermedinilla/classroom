@@ -1,0 +1,135 @@
+<%# Estilos compartidos por las pantallas de Recursos y Reservas. Una sola vez, como en
+    partials/soe-styles.ejs y partials/jefatura-styles.ejs.
+
+    ⚠️ LOS COLORES DE ESTADO VAN POR VARIABLE, NUNCA EN HEX SUELTO. La regla que dejó el bug
+    de contraste 1,10:1 en la sala en vivo: un fondo en hex obliga a declarar su color de
+    texto también en hex, y entonces el modo oscuro hereda un texto invisible. Acá cada
+    estado define su par (fondo + texto) y los dos se redefinen juntos para [data-theme="dark"].
+
+    Móvil: la grilla semanal es una tabla ancha y va SIEMPRE adentro de .tabla-scroll, que
+    scrollea sola. El body no scrollea de costado nunca — es uno de los patrones que fijó
+    tests/unit/movil.test.js y que no hay que reintroducir. %>
+<style>
+  :root {
+    --res-libre-bg:   #e6f4ea;  --res-libre-tx:   #137333;
+    --res-ocupado-bg: #fce8e6;  --res-ocupado-tx: #a50e0e;
+    --res-pend-bg:    #fef7e0;  --res-pend-tx:    #8a5300;
+    --res-mia-bg:     #e8f0fe;  --res-mia-tx:     #1557b0;
+    --res-recreo-bg:  #f1f3f4;  --res-recreo-tx:  #5f6368;
+    --res-parcial-bg: #e8f5e9;  --res-parcial-tx: #2e7d32;
+  }
+  [data-theme="dark"] {
+    --res-libre-bg:   #14301f;  --res-libre-tx:   #7ee2a8;
+    --res-ocupado-bg: #3a1614;  --res-ocupado-tx: #ff9d94;
+    --res-pend-bg:    #3a2e10;  --res-pend-tx:    #ffd37a;
+    --res-mia-bg:     #16294a;  --res-mia-tx:     #9dc0ff;
+    --res-recreo-bg:  #24272b;  --res-recreo-tx:  #9aa0a6;
+    --res-parcial-bg: #14301f;  --res-parcial-tx: #7ee2a8;
+  }
+
+  .res-panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px; margin-bottom: 18px;
+  }
+  .res-panel > h3 {
+    margin: 0 0 14px; font-size: 14px; text-transform: uppercase;
+    letter-spacing: .4px; color: var(--text-secondary);
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  .res-aviso {
+    display: flex; gap: 10px; align-items: flex-start;
+    background: var(--primary-light); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 10px 14px; margin-bottom: 16px; font-size: 13px; line-height: 1.5;
+  }
+  .res-aviso .material-symbols-outlined { font-size: 20px; color: var(--primary); flex-shrink: 0; }
+  .res-aviso.malo { background: var(--res-ocupado-bg); color: var(--res-ocupado-tx); }
+  .res-aviso.malo .material-symbols-outlined { color: var(--res-ocupado-tx); }
+
+  .tabla-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* ── La grilla semanal ─────────────────────────────────────────────── */
+  .res-grilla { width: 100%; border-collapse: separate; border-spacing: 3px; min-width: 640px; }
+  .res-grilla th {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .3px;
+    color: var(--text-secondary); font-weight: 600; padding: 6px 4px; text-align: center;
+  }
+  .res-grilla th.hoy { color: var(--primary); }
+  .res-grilla td.franja {
+    font-size: 12px; color: var(--text-secondary); white-space: nowrap;
+    padding: 6px 10px 6px 2px; text-align: right; width: 1%;
+  }
+  .res-grilla td.franja b { display: block; color: var(--text); font-size: 13px; }
+
+  .res-celda {
+    border-radius: var(--radius-xs); padding: 7px 6px; font-size: 12px;
+    text-align: center; line-height: 1.35; min-width: 92px;
+    background: var(--res-libre-bg); color: var(--res-libre-tx);
+    border: 1px solid transparent;
+  }
+  .res-celda.ocupada { background: var(--res-ocupado-bg); color: var(--res-ocupado-tx); }
+  .res-celda.parcial { background: var(--res-parcial-bg); color: var(--res-parcial-tx); }
+  .res-celda.mia     { background: var(--res-mia-bg);     color: var(--res-mia-tx); border-color: var(--primary); }
+  .res-celda.pendiente { background: var(--res-pend-bg);  color: var(--res-pend-tx); }
+  .res-celda.pasado  { opacity: .45; }
+  .res-celda .quien  { display: block; font-weight: 600; margin-top: 2px; }
+  .res-celda button {
+    background: none; border: 0; color: inherit; font: inherit; cursor: pointer;
+    width: 100%; padding: 0; text-align: center;
+  }
+  .res-celda button:disabled { cursor: default; }
+  .res-fila-recreo td {
+    background: var(--res-recreo-bg); color: var(--res-recreo-tx);
+    font-size: 11.5px; text-align: center; padding: 3px; border-radius: var(--radius-xs);
+  }
+
+  .res-leyenda { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 12px; color: var(--text-secondary); }
+  .res-leyenda span.m { display: inline-flex; align-items: center; gap: 5px; }
+  .res-leyenda i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+  /* ── Tablas de listado ─────────────────────────────────────────────── */
+  .res-tabla { width: 100%; border-collapse: collapse; min-width: 560px; }
+  .res-tabla th, .res-tabla td {
+    padding: 10px 12px; text-align: left; font-size: 13.5px;
+    border-bottom: 1px solid var(--border); vertical-align: middle;
+  }
+  .res-tabla th {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .3px;
+    color: var(--text-secondary); font-weight: 600;
+  }
+  .res-tabla tr:last-child td { border-bottom: 0; }
+
+  .res-chip {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 600; white-space: nowrap;
+  }
+  .res-chip.confirmada { background: var(--res-libre-bg);   color: var(--res-libre-tx); }
+  .res-chip.pendiente  { background: var(--res-pend-bg);    color: var(--res-pend-tx); }
+  .res-chip.rechazada  { background: var(--res-ocupado-bg); color: var(--res-ocupado-tx); }
+  .res-chip.cancelada  { background: var(--res-recreo-bg);  color: var(--res-recreo-tx); }
+
+  /* ── Editor del horario ────────────────────────────────────────────── */
+  .res-turno { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 14px; }
+  .res-turno header { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-bottom: 12px; }
+  .res-turno header label { font-size: 12px; color: var(--text-secondary); display: block; }
+  .res-turno input[type="text"], .res-turno input[type="time"], .res-turno input[type="number"] {
+    padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius-xs);
+    background: var(--surface); color: var(--text); font-size: 13px;
+  }
+  .res-franja { display: grid; grid-template-columns: 1fr 110px 110px 90px 40px; gap: 8px; align-items: center; margin-bottom: 6px; }
+  .res-franja.recreo { opacity: .8; }
+
+  .res-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .res-form-grid label { font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px; }
+  .res-form-grid input, .res-form-grid select, .res-form-grid textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--border);
+    border-radius: var(--radius-xs); background: var(--surface); color: var(--text); font-size: 13.5px;
+  }
+
+  @media (max-width: 700px) {
+    .res-franja { grid-template-columns: 1fr 1fr; }
+    .res-form-grid { grid-template-columns: 1fr; }
+    .res-turno header { flex-direction: column; align-items: stretch; }
+  }
+</style>

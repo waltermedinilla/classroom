@@ -349,6 +349,14 @@ const _activeTheme = (function() {
           <span>Mis pendientes</span>
         </a>
       <% } %>
+      <%# Reservas de recursos. Solo aparece si la escuela tiene el módulo prendido: el flag
+          `recursosEnabled` ya está adentro de can('app_reservas') vía config/sections.js. %>
+      <% if (puede('app_reservas')) { %>
+        <a href="/reservas" class="drawer-item">
+          <span class="material-symbols-outlined">calendar_month</span>
+          <span>Reservas</span>
+        </a>
+      <% } %>
       <% if (typeof user !== 'undefined' && user && user.role === 'directivo' && !impersonating && puede('directivo_dashboard')) { %>
         <a href="/directivo" class="drawer-item">
           <span class="material-symbols-outlined">supervisor_account</span>

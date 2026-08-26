@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Horario escolar - Admin - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <%- include('../../partials/recursos-styles') %>
+</head>
+<body>
+  <%- include('../../partials/header') %>
+
+  <main class="main-content main-content-ancho">
+    <%- include('../../partials/admin-nav', { activePage: 'recursos' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Horario escolar</h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          En qué turnos y módulos se divide el día. Es la grilla contra la que se reserva.
+        </p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/admin/recursos" class="btn btn-outline">
+          <span class="material-symbols-outlined">arrow_back</span> Volver
+        </a>
+        <button class="btn btn-primary" onclick="guardar()">
+          <span class="material-symbols-outlined">save</span> Guardar
+        </button>
+      </div>
+    </div>
+
+    <% if (esPreset) { %>
+      <div class="res-aviso">
+        <span class="material-symbols-outlined">info</span>
+        <div>
+          <b>Esto es una propuesta, todavía no está guardada.</b><br>
+          Viene precargada con dos turnos de 7 módulos de 40 minutos y dos recreos.
+          Ajustá lo que haga falta y apretá <b>Guardar</b>.
+        </div>
+      </div>
+    <% } %>
+
+    <div class="res-aviso malo" id="err" style="display:none"></div>
+
+    <div class="res-panel">
+      <h3><span class="material-symbols-outlined">calendar_view_week</span> Días con actividad</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:14px">
+        <% [1,2,3,4,5,6].forEach(d => { %>
+          <label style="display:flex;gap:6px;align-items:center;font-size:13.5px">
+            <input type="checkbox" class="dia" value="<%= d %>" <%= (horario.dias || []).map(Number).includes(d) ? 'checked' : '' %>>
+            <%= NOMBRE_DIA[d] %>
+          </label>
+        <% }) %>
+      </div>
+    </div>
+
+    <div id="turnos"></div>
+
+    <button class="btn btn-outline" onclick="agregarTurno()">
+      <span class="material-symbols-outlined">add</span> Agregar turno
+    </button>
+  </main>
+
+  <%- include('../../partials/footer') %>
+  <script>
+    // El horario vive en memoria como un objeto y se re-pinta entero en cada cambio. Es una
+    // grilla chica (2 turnos × 9 filas) y la simplicidad gana: armar inputs con nombres tipo
+    // `turnos[0].franjas[3].desde` sería más difícil de mantener que esto.
+    let horario = <%- JSON.stringify({ turnos: horario.turnos || [], dias: horario.dias || [1,2,3,4,5] }) %>;
+
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+
+    function pintar() {
+      document.getElementById('turnos').innerHTML = horario.turnos.map((t, i) => `
+        <div class="res-turno">
+          <header>
+            <div style="flex:1;min-width:160px">
+              <label>Nombre del turno</label>
+              <input type="text" value="${esc(t.label)}" oninput="setTurno(${i},'label',this.value)" style="width:100%">
+            </div>
+            <div>
+              <label>Empieza</label>
+              <input type="time" value="${esc(t.desde)}" oninput="setTurno(${i},'desde',this.value)">
+            </div>
+            <div>
+              <label>Termina</label>
+              <input type="time" value="${esc(t.hasta)}" oninput="setTurno(${i},'hasta',this.value)">
+            </div>
+            <button class="btn btn-outline" onclick="regenerar(${i})" title="Rehace las filas desde el rango y el patrón">
+              <span class="material-symbols-outlined">auto_fix_high</span> Generar filas
+            </button>
+            ${i > 0 ? `<button class="btn btn-outline" onclick="copiarDe(${i})">Copiar del anterior</button>` : ''}
+            <button class="btn btn-outline" onclick="borrarTurno(${i})">
+              <span class="material-symbols-outlined">delete</span>
+            </button>
+          </header>
+
+          ${t.franjas.map((f, j) => `
+            <div class="res-franja ${f.tipo === 'recreo' ? 'recreo' : ''}">
+              <input type="text" value="${esc(f.label)}" oninput="setFranja(${i},${j},'label',this.value)">
+              <input type="time" value="${esc(f.desde)}" oninput="setFranja(${i},${j},'desde',this.value)">
+              <input type="time" value="${esc(f.hasta)}" oninput="setFranja(${i},${j},'hasta',this.value)">
+              <select onchange="setTipo(${i},${j},this.value)">
+                <option value="clase"  ${f.tipo !== 'recreo' ? 'selected' : ''}>Módulo</option>
+                <option value="recreo" ${f.tipo === 'recreo' ? 'selected' : ''}>Recreo</option>
+              </select>
+              <button class="btn btn-outline" onclick="borrarFranja(${i},${j})" style="padding:4px 8px">
+                <span class="material-symbols-outlined">close</span>
+              </button>
+            </div>`).join('')}
+
+          <button class="btn btn-outline" style="margin-top:8px" onclick="agregarFranja(${i})">
+            <span class="material-symbols-outlined">add</span> Agregar fila
+          </button>
+        </div>`).join('');
+    }
+
+    const setTurno  = (i, k, v) => { horario.turnos[i][k] = v; };
+    const setFranja = (i, j, k, v) => { horario.turnos[i].franjas[j][k] = v; };
+
+    // Al cambiar de módulo a recreo (o al revés) hay que renumerar: `orden` es lo que guarda
+    // cada reserva, y tiene que quedar 1, 2, 3… sin saltos sobre las filas de clase.
+    function setTipo(i, j, v) {
+      horario.turnos[i].franjas[j].tipo = v;
+      if (v === 'recreo' && !/recreo/i.test(horario.turnos[i].franjas[j].label)) {
+        horario.turnos[i].franjas[j].label = 'Recreo';
+      }
+      renumerar(i); pintar();
+    }
+
+    function renumerar(i) {
+      let n = 1;
+      for (const f of horario.turnos[i].franjas) {
+        if (f.tipo === 'recreo') { f.orden = null; continue; }
+        f.orden = n;
+        if (/^\d+ª hora$/.test(f.label) || !f.label) f.label = n + 'ª hora';
+        n++;
+      }
+    }
+
+    function agregarFranja(i) {
+      const ult = horario.turnos[i].franjas[horario.turnos[i].franjas.length - 1];
+      horario.turnos[i].franjas.push({
+        tipo: 'clase', orden: null, label: '',
+        desde: ult ? ult.hasta : horario.turnos[i].desde, hasta: horario.turnos[i].hasta,
+      });
+      renumerar(i); pintar();
+    }
+    function borrarFranja(i, j) { horario.turnos[i].franjas.splice(j, 1); renumerar(i); pintar(); }
+
+    // Regenera las filas desde el rango del turno y un patrón. Es el atajo que evita tipear
+    // nueve filas; lo que se guarda es el resultado, y se puede corregir fila por fila.
+    function regenerar(i) {
+      const t = horario.turnos[i];
+      const dur = Number(prompt('¿Cuántos minutos dura cada módulo?', '40'));
+      if (!dur) return;
+      const rec = Number(prompt('¿Cuántos minutos dura el recreo? (0 = sin recreos)', '10'));
+      const desp = rec > 0
+        ? (prompt('¿Después de qué módulos va un recreo? (separados por coma)', '2,4') || '')
+          .split(',').map(x => Number(x.trim())).filter(Boolean)
+        : [];
+
+      const aMin = (h) => { const [a, b] = h.split(':').map(Number); return a * 60 + b; };
+      const aHM  = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+
+      const fin = aMin(t.hasta);
+      let cur = aMin(t.desde), n = 1;
+      const franjas = [];
+      while (cur + dur <= fin && n <= 24) {
+        franjas.push({ tipo: 'clase', orden: n, label: n + 'ª hora', desde: aHM(cur), hasta: aHM(cur + dur) });
+        cur += dur;
+        if (desp.includes(n) && rec > 0 && cur + rec <= fin) {
+          franjas.push({ tipo: 'recreo', orden: null, label: 'Recreo', desde: aHM(cur), hasta: aHM(cur + rec) });
+          cur += rec;
+        }
+        n++;
+      }
+      t.franjas = franjas;
+      pintar();
+    }
+
+    // "Copiar del anterior": los dos turnos de la escuela tienen forma idéntica y solo cambia
+    // a qué hora arrancan. Cargar el segundo a mano es tipear lo mismo dos veces.
+    function copiarDe(i) {
+      const origen = horario.turnos[i - 1];
+      const aMin = (h) => { const [a, b] = h.split(':').map(Number); return a * 60 + b; };
+      const aHM  = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+      const delta = aMin(horario.turnos[i].desde) - aMin(origen.desde);
+      horario.turnos[i].hasta = aHM(aMin(origen.hasta) + delta);
+      horario.turnos[i].franjas = origen.franjas.map(f => ({
+        ...f, desde: aHM(aMin(f.desde) + delta), hasta: aHM(aMin(f.hasta) + delta),
+      }));
+      pintar();
+    }
+
+    function agregarTurno() {
+      // El id NO sale de la posición: borrar el turno 2 y agregar otro daría "turno2" dos
+      // veces, y ese id es lo que guarda cada reserva. Con la base 36 del reloj no colisiona
+      // y además no cambia nunca aunque después se renombre o se reordene el turno.
+      horario.turnos.push({
+        id: 't' + Date.now().toString(36), label: 'Turno nuevo',
+        desde: '08:00', hasta: '13:00', franjas: [],
+      });
+      pintar();
+    }
+    function borrarTurno(i) {
+      if (!confirm('¿Borrar este turno y todas sus filas?')) return;
+      horario.turnos.splice(i, 1); pintar();
+    }
+
+    async function guardar(confirmar) {
+      horario.dias = [...document.querySelectorAll('.dia:checked')].map(c => Number(c.value));
+      horario.turnos.forEach((t, i) => renumerar(i));
+
+      const err = document.getElementById('err');
+      err.style.display = 'none';
+
+      const res = await fetch('/admin/recursos/horario', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ horario: JSON.stringify(horario), confirmar: confirmar ? 'si' : '' }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok) { location.href = '/admin/recursos?ok=horario'; return; }
+
+      // 409 = el cambio deja reservas confirmadas apuntando a un módulo que ya no existe. No
+      // se bloquea (la escuela puede tener un motivo) pero NO puede pasar en silencio.
+      if (res.status === 409 && data.requiereConfirmacion) {
+        if (confirm(data.error + '\n\nEsas reservas van a quedar sin módulo. ¿Guardar igual?')) return guardar(true);
+        return;
+      }
+      err.innerHTML = '<span class="material-symbols-outlined">error</span><div>'
+        + (data.errores || [data.error || 'No se pudo guardar']).map(e => esc(e)).join('<br>') + '</div>';
+      err.style.display = 'flex';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    pintar();
+  </script>
+</body>
+</html>

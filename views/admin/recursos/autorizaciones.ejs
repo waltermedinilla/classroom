@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Autorizaciones - <%= recurso.name %> - Classroom</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <%- include('../../partials/recursos-styles') %>
+</head>
+<body>
+  <%- include('../../partials/header') %>
+
+  <main class="main-content main-content-ancho">
+    <%- include('../../partials/admin-nav', { activePage: 'recursos' }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2><%= recurso.name %></h2>
+        <p style="color:var(--text-secondary);font-size:14px;margin-top:4px">
+          Quién puede reservarlo sin que vos tengas que aprobar cada vez.
+        </p>
+      </div>
+      <div class="dashboard-actions">
+        <a href="/admin/recursos" class="btn btn-outline">
+          <span class="material-symbols-outlined">arrow_back</span> Volver
+        </a>
+      </div>
+    </div>
+
+    <% if (!recurso.requiereAutorizacion) { %>
+      <div class="res-aviso">
+        <span class="material-symbols-outlined">info</span>
+        <div>
+          Este recurso está marcado como <b>libre para docentes</b>: cualquiera de la escuela lo
+          reserva directo y esta lista no se usa. Se conserva por si volvés a exigir autorización.
+        </div>
+      </div>
+    <% } %>
+
+    <div class="res-panel">
+      <h3><span class="material-symbols-outlined">person_add</span> Autorizar a alguien</h3>
+      <% if (!candidatos.length) { %>
+        <p style="color:var(--text-secondary);font-size:13.5px">
+          Ya están todos autorizados.
+        </p>
+      <% } else { %>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <select id="quien" style="flex:1;min-width:220px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);background:var(--surface);color:var(--text)">
+            <% candidatos.forEach(c => { %>
+              <option value="<%= c._id %>"><%= c.name %> — <%= roleNames[c.role] || c.role %></option>
+            <% }) %>
+          </select>
+          <button class="btn btn-primary" onclick="otorgar()">Autorizar</button>
+        </div>
+      <% } %>
+    </div>
+
+    <div class="res-panel">
+      <h3><span class="material-symbols-outlined">key</span> Autorizados (<%= autorizaciones.length %>)</h3>
+      <% if (!autorizaciones.length) { %>
+        <p style="color:var(--text-secondary);font-size:13.5px">
+          Todavía nadie. Cada pedido va a pasar por tu bandeja hasta que autorices a alguien —
+          también podés hacerlo desde ahí, con el botón <b>"Aceptar y autorizar"</b>.
+        </p>
+      <% } else { %>
+        <div class="tabla-scroll">
+          <table class="res-tabla">
+            <thead>
+              <tr><th>Docente</th><th>Rol</th><th>Desde</th><th>Autorizó</th><th></th></tr>
+            </thead>
+            <tbody>
+              <% autorizaciones.forEach(a => { %>
+                <tr>
+                  <td><%= a.docente ? a.docente.name : '(cuenta eliminada)' %></td>
+                  <td><%= a.docente ? (roleNames[a.docente.role] || a.docente.role) : '—' %></td>
+                  <td><%= fmt.fechaCorta(a.otorgadaEl) %></td>
+                  <td><%= a.otorgadaPor ? a.otorgadaPor.name : '—' %></td>
+                  <td style="text-align:right">
+                    <button class="btn btn-outline" style="padding:5px 10px;font-size:12.5px"
+                            onclick="revocar('<%= a.docente && a.docente._id %>')">Revocar</button>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+        <p style="color:var(--text-secondary);font-size:12.5px;margin-top:12px">
+          Revocar le quita la llave para los <b>próximos</b> pedidos. Las reservas que ya tenía
+          confirmadas siguen en pie — sacarle la clase de la semana que viene sin avisar sería
+          otra decisión, y se toma desde el pedido.
+        </p>
+      <% } %>
+    </div>
+  </main>
+
+  <%- include('../../partials/footer') %>
+  <script>
+    const RECURSO = '<%= recurso._id %>';
+
+    async function otorgar() {
+      const docente = document.getElementById('quien').value;
+      const res  = await fetch(`/admin/recursos/${RECURSO}/autorizaciones/otorgar`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docente }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return alert(data.error || 'No se pudo autorizar');
+      location.reload();
+    }
+
+    async function revocar(docente) {
+      if (!confirm('¿Revocar la autorización?\n\nSus reservas ya confirmadas siguen en pie; solo va a tener que pedir permiso para las próximas.')) return;
+      const res  = await fetch(`/admin/recursos/${RECURSO}/autorizaciones/revocar`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docente }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return alert(data.error || 'No se pudo revocar');
+      location.reload();
+    }
+  </script>
+</body>
+</html>

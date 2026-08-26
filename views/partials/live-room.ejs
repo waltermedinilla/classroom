@@ -556,6 +556,58 @@
              '<span class="material-symbols-outlined">assignment</span>Ver actividad</a>';
   }
 
+  // ── La materia se pone al día sola cuando nace una actividad en clase ──────
+  //
+  // El aviso de sistema trae el id de la actividad (m.actividad). Cuando entra uno NUEVO por el
+  // poll, se refrescan las dos pantallas de la materia que está debajo de esta sala: el muro
+  // (Novedades, que de paso recalcula "Próximas entregas") y la solapa Actividades.
+  //
+  // EL BUG QUE ARREGLA (2026-08-25): el alumno estaba en clase cuando la docente creó la tarea,
+  // veía el aviso en el chat, y sus dos solapas seguían mostrando la lista de antes hasta que
+  // recargara la página. Lo único que la traía era el botón "Ver actividad".
+  //
+  // POR QUÉ UN Set Y NO "¿la actividad está en el cache?": si se creó PROGRAMADA (con
+  // "disponible desde" a futuro), el alumno no la va a recibir NUNCA en su lista —el servidor
+  // se la filtra— pero el aviso en el chat le llega igual. Preguntando solo por el cache, cada
+  // poll dispararía un refresco nuevo, para siempre. Con el Set, cada actividad se atiende una
+  // sola vez y se acabó.
+  const actividadesAvisadas = new Set();
+
+  // Anota sin refrescar. Lo usan el arranque (lo que ya vino pintado del servidor no es
+  // novedad) y el propio ponerLaMateriaAlDia(). Es lo que evita que un repintado completo
+  // —sala reabierta, o `forzarRepintado`— tome por nuevo todo el chat, porque en ese caso el
+  // poll lo trae entero de nuevo.
+  function anotarActividades(msgs) {
+    msgs.forEach(m => {
+      if (m.actividad && m.actividad.id) actividadesAvisadas.add(m.actividad.id);
+    });
+  }
+
+  function ponerLaMateriaAlDia(msgs) {
+    // En la sala suelta (dirección y preceptoría) no hay materia debajo que actualizar; encima
+    // es la única página donde no está cargado public/js/course.js.
+    if (!EN_MATERIA) return;
+
+    const nuevas = msgs
+      .map(m => m.actividad && m.actividad.id)
+      .filter(id => id && !actividadesAvisadas.has(id));
+    anotarActividades(msgs);
+    if (!nuevas.length) return;
+
+    // Quien la creó ya refrescó por su cuenta (createActivity, en public/js/course.js) y la
+    // tiene en el cache: no tiene por qué pedir la lista dos veces.
+    const cache = window._activities || {};
+    if (nuevas.every(id => cache[id])) return;
+
+    // A la que salga: un refresco que falle no puede cortar el poll de la sala. Si el que falla
+    // es el de la solapa, se la desmarca para que el próximo click la reintente — mismo
+    // criterio que createActivity().
+    loadStream().catch(() => {});
+    if (window._activitiesTabLoaded) {
+      loadActivitiesTab().catch(() => { window._activitiesTabLoaded = false; });
+    }
+  }
+
   // ── Responder a un mensaje ─────────────────────────────────────────────────
 
   // Cómo se nombra un mensaje cuando hay que mostrarlo EN CHICO (la barra de respuesta). Un
@@ -776,6 +828,9 @@
       } else if (reinicio) {
         pintarMensajes([], true);
       }
+      // Va afuera del if a propósito: si algún día el poll trae una tanda vacía, esto tiene que
+      // seguir siendo un no-op y no quedar salteado a medias.
+      ponerLaMateriaAlDia(s.mensajes || []);
       if (s.seq > seq) seq = s.seq;
     } catch (e) { /* un poll perdido no rompe nada: el próximo trae lo mismo */ }
   }
@@ -1127,6 +1182,9 @@
   pintarEstado(SALA);
   pintarPresencia(SALA.presencia);
   pintarMensajes(SALA.mensajes || [], true);
+  // Los avisos que ya vinieron pintados del servidor no son novedad: la página se acaba de
+  // cargar con todo al día. Se anotan para que el primer poll no los tome por nuevos.
+  anotarActividades(SALA.mensajes || []);
   arrancar();
 })();
 </script>
