@@ -320,6 +320,41 @@ lista para que la pantalla de `/superadmin/roles` pueda pintarles la celda.
     `/directivo`, `/preceptor`, `/jefatura` ni `/superadmin`.
 31. Las tres suites en verde: `npm run test:smoke`, `npm run test:roles` y los unitarios.
 
+### Fecha de repaso del legajo (agregado el 2026-08-26)
+
+Hasta acá, la única fecha que hacía sonar una alarma era `referrals[].proximoSeguimiento`: es
+lo que alimenta el panel *"necesitan que alguien pregunte"*. Un chico al que el gabinete
+acompaña **sin derivarlo a ningún lado** no tenía ninguna fecha, así que se enfriaba sin que
+nada avisara — el legajo quedaba abierto y en silencio. `SoeCase.proximoRepaso` cierra ese
+hueco reusando la misma regla y el mismo panel.
+
+32. **`SoeCase.proximoRepaso`** (`Date`, default `null`): cuándo volver a mirar este legajo.
+    Un documento sin el campo es un legajo sin repaso pedido — **no hay migración**, los
+    legajos que ya existen siguen comportándose igual que antes.
+33. **`legajoNecesitaRepaso(legajo, ahora)`** vive en `services/soeAcceso.js` y es pura: `true`
+    solo si el legajo **no** está cerrado y `proximoRepaso <= ahora`. Sin fecha, `false`.
+    Es la hermana de `derivacionNecesitaAtencion` y compara igual que ella (una fecha de hoy
+    ya cuenta como vencida: un `<input type="date">` llega como medianoche).
+34. El campo es de nivel **`completo`**: `sanitizarLegajo` no lo expone en `'resumen'`. La
+    agenda interna del gabinete no es lo que un docente necesita para dar clase, y el
+    criterio 7 (nada clínico en el HTML del nivel resumen) se mide sobre el objeto
+    serializado.
+35. Se carga desde **dos formularios, con reglas distintas y a propósito**:
+    - **Situación** es el editor completo del legajo: el campo vacío **borra** la fecha, igual
+      que el resto de los campos de ese formulario;
+    - **una entrada del seguimiento** solo la **pisa si viene con fecha**. Ahí vacío significa
+      "no cambies nada": es el campo que más se va a dejar en blanco, porque se anota una
+      entrevista sin querer tocar la agenda. Que anotar una observación borre la fecha de
+      repaso sería una pérdida de dato silenciosa.
+36. El resumen (`GET /soe`) lista los legajos con el repaso vencido **en el mismo panel** que
+    las derivaciones, en su propia tabla, y suma la tarjeta *"Para volver a ver"*. Las dos
+    cosas **solo en nivel `completo`**, por el criterio 34.
+37. La ficha muestra la fecha como chip en la cabecera: en aviso si todavía falta, en alerta
+    si ya venció. En el formulario de Situación se edita con un `<input type="date">`.
+38. **Cerrar un legajo no borra la fecha**, pero un legajo cerrado nunca aparece en el panel
+    (criterio 33). Si se reabre con la fecha ya vencida, vuelve a la lista — que es
+    exactamente lo que se quiere: alguien tiene que mirarlo.
+
 ## Archivos
 
 **Nuevos**: `models/SoeCase.js` · `middleware/soe.js` · `routes/soe.js` ·

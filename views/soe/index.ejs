@@ -29,60 +29,107 @@
       <% } %>
     </div>
 
+    <%# Los íconos son decorativos: el número y su rótulo ya dicen todo. Van con aria-hidden
+        para que un lector de pantalla no lea "carpeta abierta" antes de cada cifra. %>
     <div class="soe-cards">
       <div class="soe-card">
+        <span class="material-symbols-outlined ico" aria-hidden="true">folder_open</span>
         <div class="n"><%= totales.activos %></div>
         <div class="t">Legajos activos</div>
       </div>
       <div class="soe-card">
+        <span class="material-symbols-outlined ico" aria-hidden="true">timeline</span>
         <div class="n"><%= totales.seguimiento %></div>
         <div class="t">En seguimiento</div>
       </div>
       <div class="soe-card">
+        <span class="material-symbols-outlined ico" aria-hidden="true">share</span>
         <div class="n"><%= totales.derivacionesActivas %></div>
         <div class="t">Con derivación en curso</div>
       </div>
-      <%# Solo con acceso completo: en nivel resumen este número siempre sería 0 (la ruta ni
-          arma la lista) y mentiría por omisión. %>
+      <%# Solo con acceso completo: en nivel resumen estos números siempre serían 0 (la ruta
+          ni arma las listas) y mentirían por omisión. %>
       <% if (totales.veDerivaciones) { %>
         <div class="soe-card <%= totales.atencion ? 'alerta' : '' %>">
+          <span class="material-symbols-outlined ico" aria-hidden="true">priority_high</span>
           <div class="n"><%= totales.atencion %></div>
           <div class="t">Derivaciones que piden atención</div>
+        </div>
+        <div class="soe-card <%= totales.repasos ? 'alerta' : '' %>">
+          <span class="material-symbols-outlined ico" aria-hidden="true">event_repeat</span>
+          <div class="n"><%= totales.repasos %></div>
+          <div class="t">Para volver a ver</div>
         </div>
       <% } %>
     </div>
 
-    <% if (pendientes.length) { %>
-      <%# Lo primero de la pantalla, antes que los legajos: el hueco entre "se lo derivó" y
-          "el lugar nunca contestó" es exactamente donde un chico se pierde. %>
+    <% if (pendientes.length || repasos.length) { %>
+      <%# Lo primero de la pantalla, antes que los legajos. Dos listas en un solo panel
+          porque son el mismo problema: el hueco entre "se lo derivó" y "el lugar nunca
+          contestó", y el chico al que se acompaña sin derivar y se enfría en silencio. %>
       <div class="soe-panel">
         <h3><span class="material-symbols-outlined" style="color:#ea4335">priority_high</span> Necesitan que alguien pregunte</h3>
-        <div class="tabla-scroll">
-          <table class="soe-tabla">
-            <thead>
-              <tr><th>Alumno</th><th>Derivado a</th><th>Estado</th><th>Desde</th><th>Volver a preguntar</th></tr>
-            </thead>
-            <tbody>
-              <% pendientes.forEach(p => { %>
-                <tr>
-                  <td><a href="/soe/legajo/<%= p.legajo.student._id %>"><%= p.legajo.student.name %></a></td>
-                  <td><%= p.referral.destino %></td>
-                  <td>
-                    <span class="chip <%= acceso.ESTADOS_DERIVACION_ALERTA.includes(p.referral.estado) ? 'chip-alerta' : 'chip-aviso' %>">
-                      <%= acceso.ESTADO_DERIVACION_LABELS[p.referral.estado] %>
-                    </span>
-                  </td>
-                  <td><%= fmt.fechaCorta(p.referral.fecha) %></td>
-                  <td>
-                    <% if (p.referral.proximoSeguimiento) { %>
-                      <span class="chip chip-alerta"><%= fmt.fechaCorta(p.referral.proximoSeguimiento) %></span>
-                    <% } else { %>—<% } %>
-                  </td>
-                </tr>
-              <% }) %>
-            </tbody>
-          </table>
-        </div>
+
+        <% if (pendientes.length) { %>
+          <% if (repasos.length) { %>
+            <div class="sub-lista">Derivaciones sin novedad</div>
+          <% } %>
+          <div class="tabla-scroll">
+            <table class="soe-tabla">
+              <thead>
+                <tr><th>Alumno</th><th>Derivado a</th><th>Estado</th><th>Desde</th><th>Volver a preguntar</th></tr>
+              </thead>
+              <tbody>
+                <% pendientes.forEach(p => { %>
+                  <tr>
+                    <td><a href="/soe/legajo/<%= p.legajo.student._id %>"><%= p.legajo.student.name %></a></td>
+                    <td><%= p.referral.destino %></td>
+                    <td>
+                      <span class="chip <%= acceso.ESTADOS_DERIVACION_ALERTA.includes(p.referral.estado) ? 'chip-alerta' : 'chip-aviso' %>">
+                        <%= acceso.ESTADO_DERIVACION_LABELS[p.referral.estado] %>
+                      </span>
+                    </td>
+                    <td><%= fmt.fechaCorta(p.referral.fecha) %></td>
+                    <td>
+                      <% if (p.referral.proximoSeguimiento) { %>
+                        <span class="chip chip-alerta"><%= fmt.fechaCorta(p.referral.proximoSeguimiento) %></span>
+                      <% } else { %>—<% } %>
+                    </td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          </div>
+        <% } %>
+
+        <% if (repasos.length) { %>
+          <%# El repaso vencido de un legajo. No dice por qué hay que volver a verlo —eso está
+              en el legajo—, dice que la fecha que puso el gabinete ya pasó. %>
+          <div class="sub-lista" style="<%= pendientes.length ? 'margin-top:18px' : '' %>">Para volver a ver</div>
+          <div class="tabla-scroll">
+            <table class="soe-tabla">
+              <thead>
+                <tr><th>Alumno</th><th>Curso</th><th>Prioridad</th><th>Última novedad</th><th>Había que verlo</th></tr>
+              </thead>
+              <tbody>
+                <% repasos.forEach(r => { %>
+                  <tr>
+                    <td><a href="/soe/legajo/<%= r.student._id %>"><%= r.student.name %></a></td>
+                    <td><%= r.division ? r.division.name : '—' %></td>
+                    <td>
+                      <span class="chip chip-neutro">
+                        <span class="punto" style="background:<%= acceso.PRIORIDAD_COLORS[r.prioridad] %>"></span>
+                        <%= acceso.PRIORIDAD_LABELS[r.prioridad] %>
+                      </span>
+                    </td>
+                    <td><%= r.lastEntryAt ? fmt.fechaCorta(r.lastEntryAt) : '—' %></td>
+                    <td><span class="chip chip-alerta"><%= fmt.fechaCorta(r.proximoRepaso) %></span></td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          </div>
+        <% } %>
       </div>
     <% } %>
 

@@ -92,7 +92,7 @@ const CAMPOS_RESUMEN = ['estado', 'prioridad', 'fortalezas', 'estrategias', 'tie
 
 const CAMPOS_COMPLETO = [
   ...CAMPOS_RESUMEN,
-  'motivo', 'dificultades', 'entries', 'referrals',
+  'motivo', 'dificultades', 'entries', 'referrals', 'proximoRepaso',
   'openedBy', 'openedAt', 'closedBy', 'closedAt', 'cierreMotivo', 'lastEntryAt',
 ];
 
@@ -145,6 +145,10 @@ function sanitizarLegajo(legajo, nivel) {
     closedAt:     plano.closedAt,
     cierreMotivo: plano.cierreMotivo || '',
     lastEntryAt:  plano.lastEntryAt,
+
+    // La agenda del gabinete: va en el bloque de completo y no en `base`, por el criterio 34.
+    // Que un docente sepa que al chico lo vuelven a ver el martes no le sirve para dar clase.
+    proximoRepaso: plano.proximoRepaso || null,
   };
 }
 
@@ -291,6 +295,20 @@ function derivacionNecesitaAtencion(ref, ahora = new Date()) {
   return !!ref.proximoSeguimiento && new Date(ref.proximoSeguimiento) <= ahora;
 }
 
+
+// ¿Hay que volver a mirar este legajo hoy? La hermana de la de arriba, para el chico al que
+// se acompaña SIN derivarlo a ningún lado: hasta que existió `proximoRepaso`, ese legajo no
+// tenía ninguna fecha que hiciera sonar una alarma y se enfriaba en silencio.
+//
+// Un legajo CERRADO nunca pide repaso, aunque le haya quedado la fecha vencida: cerrar no
+// borra el dato (reabrirlo lo devuelve tal cual), pero mientras está cerrado no molesta.
+//
+// La comparación es `<=` igual que en las derivaciones: un <input type="date"> llega como
+// medianoche, así que el repaso pedido para hoy tiene que contar hoy y no mañana.
+function legajoNecesitaRepaso(legajo, ahora = new Date()) {
+  if (!legajo || legajo.estado === 'cerrado') return false;
+  return !!legajo.proximoRepaso && new Date(legajo.proximoRepaso) <= ahora;
+}
 module.exports = {
   // niveles
   NINGUNO, RESUMEN, COMPLETO, NIVELES, NIVEL_LABELS,
@@ -307,5 +325,5 @@ module.exports = {
   ANIMOS, ANIMO_LABELS, ANIMO_COLORS,
   TIPOS_DERIVACION, TIPO_DERIVACION_LABELS,
   ESTADOS_DERIVACION, ESTADO_DERIVACION_LABELS, ESTADOS_DERIVACION_ALERTA,
-  DERIVACION_TERMINADA, derivacionNecesitaAtencion,
+  DERIVACION_TERMINADA, derivacionNecesitaAtencion, legajoNecesitaRepaso,
 };

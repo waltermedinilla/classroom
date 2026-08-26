@@ -9,24 +9,59 @@
   <link rel="stylesheet" href="/css/style.css">
   <%- include('../partials/soe-styles') %>
   <style>
+    /* Cabecera de la ficha. La franja de color de arriba es la PRIORIDAD del legajo: el
+       mismo dato que el chip, pero legible de un vistazo antes de leer una palabra. */
+    .ficha { position: relative; overflow: hidden; }
+    .ficha .franja { position: absolute; inset: 0 0 auto 0; height: 4px; }
     .ficha-cabecera { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
     .ficha-avatar {
       width: 60px; height: 60px; border-radius: 50%; flex-shrink: 0;
       display: flex; align-items: center; justify-content: center;
-      background: #0d7377; color: #fff; font-size: 26px; font-weight: 600;
-      object-fit: cover;
+      background: linear-gradient(135deg, #0d7377, #14919b);
+      color: #ffffff;                 /* fondo en hex ⇒ texto en hex */
+      font-size: 26px; font-weight: 600; object-fit: cover;
+      box-shadow: 0 2px 6px rgba(13, 115, 119, .28);
     }
+
     .anclas { display: flex; gap: 6px; flex-wrap: wrap; margin: 16px 0; }
     .anclas a {
+      display: inline-flex; align-items: center; gap: 5px;
       padding: 7px 14px; border-radius: 20px; font-size: 13px; font-weight: 500;
       text-decoration: none; color: var(--text-secondary);
       background: var(--surface); border: 1px solid var(--border);
+      transition: color .12s ease, border-color .12s ease, transform .12s ease;
     }
-    .anclas a:hover { color: var(--primary); border-color: var(--primary); }
+    .anclas a .material-symbols-outlined { font-size: 16px; }
+    .anclas a:hover { color: var(--primary); border-color: var(--primary); transform: translateY(-1px); }
+
+    /* Indicadores de "Cómo viene". El color lo pone la vista según el propio número: no es
+       un semáforo de riesgo, es el mismo dato pintado para que salte a la vista. */
     .indicadores { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
-    .ind { background: var(--bg); border-radius: var(--radius-sm); padding: 12px 14px; }
+    .ind { position: relative; background: var(--bg); border-radius: var(--radius-sm); padding: 12px 14px; }
     .ind .n { font-size: 22px; font-weight: 700; }
     .ind .t { font-size: 11.5px; color: var(--text-secondary); margin-top: 2px; line-height: 1.35; }
+    .ind .ico { position: absolute; top: 10px; right: 10px; font-size: 18px; color: var(--text-hint); opacity: .6; }
+    .ind.bien   .n { color: #137333; }
+    .ind.aviso  .n { color: #b06000; }
+    .ind.alerta .n { color: #c5221f; }
+    .ind .barra { height: 4px; border-radius: 2px; background: var(--border); margin-top: 9px; overflow: hidden; }
+    .ind .barra > i { display: block; height: 100%; border-radius: 2px; background: var(--text-hint); }
+    .ind.bien   .barra > i { background: #137333; }
+    .ind.aviso  .barra > i { background: #ea8600; }
+    .ind.alerta .barra > i { background: #ea4335; }
+
+    /* Los tres colores de arriba están pensados para fondo claro: sobre --bg oscuro (#111418)
+       el verde da 2:1 y el número deja de leerse. En oscuro van los tonos claros de la misma
+       familia. Misma razón por la que la franja de prioridad —que sí viene en línea desde
+       PRIORIDAD_COLORS— se levanta con un filtro en vez de con un color nuevo. */
+    [data-theme="dark"] .ind.bien   .n { color: #81c995; }
+    [data-theme="dark"] .ind.aviso  .n { color: #fdd663; }
+    [data-theme="dark"] .ind.alerta .n { color: #f28b82; }
+    [data-theme="dark"] .ind.bien   .barra > i { background: #81c995; }
+    [data-theme="dark"] .ind.aviso  .barra > i { background: #fdd663; }
+    [data-theme="dark"] .ind.alerta .barra > i { background: #f28b82; }
+    [data-theme="dark"] .ficha .franja { filter: brightness(1.35); }
+
     .lectura { font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
     .lectura.vacia { color: var(--text-hint); font-style: italic; }
     .campo-lectura { margin-bottom: 16px; }
@@ -34,6 +69,29 @@
       display: block; font-size: 11px; font-weight: 700; text-transform: uppercase;
       letter-spacing: .4px; color: var(--text-secondary); margin-bottom: 5px;
     }
+
+    /* Lo que cargó el alumno en su propio perfil. Va en su propia caja para que se lea como
+       lo que es: la voz del chico, no una observación del gabinete. */
+    .perfil { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 16px; }
+    .perfil .rotulo {
+      display: flex; align-items: center; gap: 6px; margin-bottom: 10px;
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .4px; color: var(--text-secondary);
+    }
+    .perfil .rotulo .material-symbols-outlined { font-size: 16px; }
+    .perfil .caja { background: var(--bg); border-radius: var(--radius-sm); padding: 14px 16px; }
+    .perfil .meta { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary); font-weight: 700; }
+    .perfil .dato { font-size: 14px; line-height: 1.55; margin-top: 3px; word-break: break-word; }
+    .perfil .sep { border-top: 1px solid var(--border); margin: 12px 0; }
+
+    .red-fila { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    .red-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 13px; border-radius: 20px; font-size: 13px; font-weight: 500;
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--text); text-decoration: none;
+    }
+    .red-chip:hover { border-color: var(--primary); color: var(--primary); }
   </style>
 </head>
 <body>
@@ -46,7 +104,10 @@
       <span class="material-symbols-outlined" style="font-size:18px">arrow_back</span> Volver al resumen
     </a>
 
-    <div class="soe-panel">
+    <div class="soe-panel ficha">
+      <% if (legajo) { %>
+        <div class="franja" style="background:<%= acceso.PRIORIDAD_COLORS[legajo.prioridad] %>"></div>
+      <% } %>
       <div class="ficha-cabecera">
         <% if (alumno.avatar) { %>
           <img src="<%= alumno.avatar %>" alt="" class="ficha-avatar">
@@ -72,6 +133,16 @@
               <% if (legajo.tieneDerivacionActiva) { %>
                 <span class="chip chip-aviso">
                   <span class="material-symbols-outlined" style="font-size:13px">share</span> con derivación en curso
+                </span>
+              <% } %>
+              <%# La fecha de repaso. En aviso mientras falta, en alerta cuando ya pasó: es
+                  el mismo dato que pone al legajo en el panel del resumen. Solo llega hasta
+                  acá en nivel completo, así que en resumen el chip no existe. %>
+              <% if (legajo.proximoRepaso) { %>
+                <% const vencido = acceso.legajoNecesitaRepaso(legajo); %>
+                <span class="chip <%= vencido ? 'chip-alerta' : 'chip-aviso' %>">
+                  <span class="material-symbols-outlined" style="font-size:13px">event_repeat</span>
+                  <%= vencido ? 'Había que verlo el' : 'Volver a verlo el' %> <%= fmt.fechaCorta(legajo.proximoRepaso) %>
                 </span>
               <% } %>
             </div>
@@ -119,12 +190,14 @@
     </div>
 
     <div class="anclas">
-      <% if (legajo) { %><a href="#situacion">Situación</a><% } %>
-      <% if (legajo && nivel === 'completo') { %>
-        <a href="#seguimiento">Seguimiento</a>
-        <a href="#derivaciones">Derivaciones</a>
+      <% if (legajo) { %>
+        <a href="#situacion"><span class="material-symbols-outlined">assignment_ind</span> Situación</a>
       <% } %>
-      <a href="#como-viene">Cómo viene</a>
+      <% if (legajo && nivel === 'completo') { %>
+        <a href="#seguimiento"><span class="material-symbols-outlined">timeline</span> Seguimiento</a>
+        <a href="#derivaciones"><span class="material-symbols-outlined">share</span> Derivaciones</a>
+      <% } %>
+      <a href="#como-viene"><span class="material-symbols-outlined">insights</span> Cómo viene</a>
     </div>
 
     <%# ── Situación ──────────────────────────────────────────────────────── %>
@@ -167,6 +240,11 @@
                   <option value="abierto"     <%= legajo.estado === 'abierto'     ? 'selected' : '' %>>Abierto</option>
                   <option value="seguimiento" <%= legajo.estado === 'seguimiento' ? 'selected' : '' %>>En seguimiento</option>
                 </select>
+              </div>
+              <div>
+                <label for="s-repaso">Volver a verlo el</label>
+                <input type="date" id="s-repaso" name="proximoRepaso" value="<%= paraInput(legajo.proximoRepaso) %>">
+                <div class="ayuda">Cuando la fecha pasa, el legajo aparece en el resumen. Vacío la borra.</div>
               </div>
               <div style="display:flex;align-items:flex-end">
                 <button type="submit" class="btn btn-primary">
@@ -262,6 +340,14 @@
                   <% }) %>
                 </select>
               </div>
+              <div>
+                <%# Acá se decide de verdad cuándo volver a verlo: recién termina la entrevista
+                    y el gabinete sabe si hay que citarlo en dos semanas. Vacío NO borra la
+                    fecha que ya tenga — para eso está el formulario de Situación. %>
+                <label for="e-repaso">Volver a verlo el</label>
+                <input type="date" id="e-repaso" name="proximoRepaso">
+                <div class="ayuda">Opcional. En blanco deja la fecha que ya tenga el legajo.</div>
+              </div>
             </div>
             <div>
               <label for="e-texto">Qué pasó</label>
@@ -285,7 +371,12 @@
           <ul class="linea">
             <% entradas.forEach(e => { const autor = autores.get(String(e.autor)); %>
               <li>
-                <div class="icono">
+                <%# El círculo toma el color de CÓMO SE LO VIO, no del tipo de entrada: leída
+                    de arriba abajo, la columna de círculos es el pulso del chico.
+                    El color va por CLASE y no por `style=` con ANIMO_COLORS: un color inline
+                    le gana a la variante de modo oscuro, y estos verdes/rojos sobre fondo
+                    oscuro quedan ilegibles. La clase tiene su par en soe-styles.ejs. %>
+                <div class="icono<%= e.animo ? ' animo-' + e.animo : '' %>">
                   <span class="material-symbols-outlined"><%= acceso.TIPO_ENTRADA_ICONS[e.tipo] || 'sticky_note_2' %></span>
                 </div>
                 <div class="cuerpo">
@@ -456,21 +547,47 @@
         de riesgo: son los números, el juicio es tuyo.
       </p>
 
+      <%
+        // El color de cada indicador sale del propio número, no de ninguna fórmula de riesgo:
+        // es el mismo dato pintado para que salte a la vista. Los cortes son los que ya usa la
+        // escuela para hablar (85% de asistencia, 6 de nota).
+        //
+        // Sin días cargados la asistencia da 0% por definición, y pintar eso de rojo diría
+        // "faltó a todo" cuando lo que pasa es que nadie tomó lista. Ese caso va sin color.
+        const _dias   = (a) => a.presentes + a.tarde + a.ausentes + a.justificados;
+        const _colorA = (a) => (!_dias(a) ? '' : a.porcentaje >= 90 ? 'bien' : a.porcentaje >= 85 ? 'aviso' : 'alerta');
+        const _a30    = indicadores.asistencia.ultimos30;
+        const _aCiclo = indicadores.asistencia.ciclo;
+        const _prom   = indicadores.promedioGeneral;
+        const _colorP = _prom === null ? '' : (_prom >= 7 ? 'bien' : _prom >= 6 ? 'aviso' : 'alerta');
+        const _pend   = indicadores.entregas.pendientes;
+        const _colorE = !_pend ? 'bien' : (indicadores.entregas.pendientesVencidas ? 'alerta' : 'aviso');
+        const _ancho  = (n) => Math.max(0, Math.min(100, Number(n) || 0));
+      %>
       <div class="indicadores" style="margin-bottom:18px">
-        <div class="ind">
-          <div class="n"><%= indicadores.asistencia.ultimos30.porcentaje %>%</div>
+        <div class="ind <%= _colorA(_a30) %>">
+          <span class="material-symbols-outlined ico" aria-hidden="true">event_available</span>
+          <div class="n"><%= _a30.porcentaje %>%</div>
           <div class="t">Asistencia, últimos <%= indicadores.asistencia.ventana %> días</div>
+          <div class="barra"><i style="width:<%= _ancho(_a30.porcentaje) %>%"></i></div>
         </div>
-        <div class="ind">
-          <div class="n"><%= indicadores.asistencia.ciclo.porcentaje %>%</div>
-          <div class="t">Asistencia del ciclo (<%= indicadores.asistencia.ciclo.ausentes %> faltas)</div>
+        <div class="ind <%= _colorA(_aCiclo) %>">
+          <span class="material-symbols-outlined ico" aria-hidden="true">calendar_month</span>
+          <div class="n"><%= _aCiclo.porcentaje %>%</div>
+          <div class="t">Asistencia del ciclo (<%= _aCiclo.ausentes %> faltas)</div>
+          <div class="barra"><i style="width:<%= _ancho(_aCiclo.porcentaje) %>%"></i></div>
         </div>
-        <div class="ind">
-          <div class="n"><%= indicadores.promedioGeneral === null ? '—' : indicadores.promedioGeneral %></div>
+        <div class="ind <%= _colorP %>">
+          <span class="material-symbols-outlined ico" aria-hidden="true">grade</span>
+          <div class="n"><%= _prom === null ? '—' : _prom %></div>
           <div class="t">Promedio general sobre 10</div>
+          <% if (_prom !== null) { %>
+            <div class="barra"><i style="width:<%= _ancho(_prom * 10) %>%"></i></div>
+          <% } %>
         </div>
-        <div class="ind">
-          <div class="n"><%= indicadores.entregas.pendientes %></div>
+        <div class="ind <%= _colorE %>">
+          <span class="material-symbols-outlined ico" aria-hidden="true">assignment_late</span>
+          <div class="n"><%= _pend %></div>
           <div class="t">Actividades sin entregar (<%= indicadores.entregas.pendientesVencidas %> vencidas)</div>
         </div>
       </div>
@@ -506,33 +623,83 @@
         </div>
       <% } %>
 
-      <% if (alumno.futureGoal || alumno.bio || (alumno.interests || []).length) { %>
-        <div style="border-top:1px solid var(--border);margin-top:18px;padding-top:14px">
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text-secondary);margin-bottom:8px">
+      <%
+        // Lo que cargó el alumno en su propio perfil. Las REDES van aparte y SOLO en nivel
+        // completo: la bio, los intereses y el proyecto son lo que el chico eligió contar de
+        // sí mismo dentro de la escuela, pero un usuario de Instagram es su identidad real
+        // fuera de ella. El nivel 'resumen' existe justamente para no repartir eso.
+        const _redes = [];
+        if (alumno.instagram) {
+          _redes.push({ label: '@' + alumno.instagram, url: 'https://instagram.com/' + alumno.instagram,
+                        icono: 'photo_camera', color: '#e1306c' });
+        }
+        if (alumno.facebook) {
+          _redes.push({ label: 'Facebook', url: 'https://facebook.com/' + alumno.facebook,
+                        icono: 'group', color: '#1877f2' });
+        }
+        const _verRedes  = nivel === 'completo' && _redes.length > 0;
+        const _hayPerfil = alumno.futureGoal || alumno.bio || (alumno.interests || []).length || _verRedes;
+      %>
+      <% if (_hayPerfil) { %>
+        <div class="perfil">
+          <div class="rotulo">
+            <span class="material-symbols-outlined">badge</span>
             Lo que cargó el alumno en su perfil
           </div>
-          <% if (alumno.futureGoal) { %>
-            <div class="campo-lectura">
-              <label>A qué le gustaría dedicarse</label>
-              <div class="lectura"><%= alumno.futureGoal %></div>
-            </div>
-          <% } %>
-          <% if (alumno.bio) { %>
-            <div class="campo-lectura">
-              <label>Su presentación</label>
-              <div class="lectura"><%= alumno.bio %></div>
-            </div>
-          <% } %>
-          <% if ((alumno.interests || []).length) { %>
-            <div style="display:flex;gap:6px;flex-wrap:wrap">
-              <% alumno.interests.forEach(i => { %>
-                <span class="chip chip-neutro">
-                  <span class="material-symbols-outlined" style="font-size:13px"><%= INTEREST_ICONS[i] || 'star' %></span>
-                  <%= INTEREST_LABELS[i] || i %>
-                </span>
+          <div class="caja">
+            <% if (alumno.futureGoal) { %>
+              <div class="meta">A qué le gustaría dedicarse</div>
+              <div class="dato"><%= alumno.futureGoal %></div>
+            <% } %>
+
+            <% if (alumno.bio) { %>
+              <% if (alumno.futureGoal) { %><div class="sep"></div><% } %>
+              <div class="meta">Su presentación</div>
+              <div class="dato"><%= alumno.bio %></div>
+            <% } %>
+
+            <% if ((alumno.interests || []).length) { %>
+              <% if (alumno.futureGoal || alumno.bio) { %><div class="sep"></div><% } %>
+              <div class="meta">Le interesa</div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px">
+                <% alumno.interests.forEach(i => { %>
+                  <span class="chip chip-neutro">
+                    <span class="material-symbols-outlined" style="font-size:13px"><%= INTEREST_ICONS[i] || 'star' %></span>
+                    <%= INTEREST_LABELS[i] || i %>
+                  </span>
+                <% }) %>
+              </div>
+            <% } %>
+
+            <% if (_verRedes) { %>
+              <% if (alumno.futureGoal || alumno.bio || (alumno.interests || []).length) { %><div class="sep"></div><% } %>
+              <div class="meta">Redes que dejó en su perfil</div>
+              <% _redes.forEach(r => { %>
+                <div class="red-fila">
+                  <a class="red-chip" href="<%= r.url %>" target="_blank" rel="noopener noreferrer">
+                    <span class="material-symbols-outlined" style="font-size:16px;color:<%= r.color %>"><%= r.icono %></span>
+                    <%= r.label %>
+                  </a>
+                  <%# Analizar con IA: todavía no existe, así que el botón va apagado. La pista
+                      cuelga del <span> y NO del <button>: un control deshabilitado no dispara
+                      eventos de mouse, ni siquiera para mostrar su propio `title`. %>
+                  <span class="pista" tabindex="0"
+                        title="La implementación de la IA todavía no se encuentra disponible."
+                        data-pista="La implementación de la IA todavía no se encuentra disponible.">
+                    <button type="button" class="btn-ia" disabled aria-disabled="true">
+                      <span class="material-symbols-outlined" style="font-size:14px">auto_awesome</span>
+                      Analizar
+                    </button>
+                  </span>
+                  <div class="pista-nota">La implementación de la IA todavía no se encuentra disponible.</div>
+                </div>
               <% }) %>
-            </div>
-          <% } %>
+              <div style="font-size:11.5px;color:var(--text-hint);margin-top:9px;line-height:1.45">
+                El enlace abre el perfil público y nada más: la plataforma no lo sigue, no lo
+                guarda y no lo lee.
+              </div>
+            <% } %>
+          </div>
         </div>
       <% } %>
     </div>

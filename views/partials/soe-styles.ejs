@@ -33,6 +33,13 @@
     display: flex; align-items: center; gap: 8px;
   }
 
+  /* Rótulo de una lista adentro de un panel que tiene más de una (el resumen apila las
+     derivaciones sin novedad y los repasos vencidos bajo el mismo título). */
+  .sub-lista {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+    color: var(--text-secondary); margin-bottom: 8px;
+  }
+
   .tabla-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .soe-tabla { width: 100%; border-collapse: collapse; min-width: 520px; }
   .soe-tabla th, .soe-tabla td {
@@ -99,5 +106,93 @@
     .soe-panel { padding: 14px; }
     .soe-cards { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
     .soe-card .n { font-size: 22px; }
+  }
+
+  /* ── El hilo de la línea de tiempo ──────────────────────────────────────────
+     Une los hitos entre sí para que el seguimiento se lea como un recorrido y no
+     como cuatro notas sueltas. Arranca donde termina el círculo (padding 14 + 34)
+     y muere en el último, que no tiene a quién unirse. */
+  .linea li { position: relative; }
+  .linea li::before {
+    content: ''; position: absolute; left: 17px; top: 48px; bottom: 0;
+    width: 2px; background: var(--border); border-radius: 1px;
+  }
+  .linea li:last-child::before { display: none; }
+  .linea .icono { transition: transform .12s ease; }
+  .linea li:hover .icono { transform: scale(1.06); }
+
+  /* El círculo pintado según CÓMO SE LO VIO. Los ids son los de acceso.ANIMOS; un ánimo
+     nuevo sin su regla acá simplemente sale sin tinte, no rompe nada.
+     Los tonos oscuros son para fondo claro: sobre --bg oscuro no se leen, así que el modo
+     oscuro los levanta. Por eso el color NO puede ir inline desde la vista. */
+  .linea .icono.animo-bien        { border-color: #137333; background: #13733314; }
+  .linea .icono.animo-altibajos   { border-color: #ea8600; background: #ea860014; }
+  .linea .icono.animo-preocupante { border-color: #ea4335; background: #ea433514; }
+  .linea .icono.animo-bien        .material-symbols-outlined { color: #137333; }
+  .linea .icono.animo-altibajos   .material-symbols-outlined { color: #b06000; }
+  .linea .icono.animo-preocupante .material-symbols-outlined { color: #c5221f; }
+
+  [data-theme="dark"] .linea .icono.animo-bien        { border-color: #81c995; }
+  [data-theme="dark"] .linea .icono.animo-altibajos   { border-color: #fdd663; }
+  [data-theme="dark"] .linea .icono.animo-preocupante { border-color: #f28b82; }
+  [data-theme="dark"] .linea .icono.animo-bien        .material-symbols-outlined { color: #81c995; }
+  [data-theme="dark"] .linea .icono.animo-altibajos   .material-symbols-outlined { color: #fdd663; }
+  [data-theme="dark"] .linea .icono.animo-preocupante .material-symbols-outlined { color: #f28b82; }
+
+  /* ── Pista al pasar el mouse ────────────────────────────────────────────────
+     Va en el CONTENEDOR, nunca en el control: un `<button disabled>` no recibe
+     eventos de mouse (Chrome los descarta), así que ni el atributo `title` ni un
+     `:hover` propio llegan a dispararse. El envoltorio va con tabindex para que también
+     aparezca al llegar con el teclado (en móvil no flota: ver el bloque de abajo). */
+  .pista { position: relative; display: inline-flex; }
+  .pista:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 18px; }
+  .pista::after {
+    content: attr(data-pista);
+    position: absolute; bottom: calc(100% + 9px); left: 50%; transform: translateX(-50%);
+    background: #202124; color: #ffffff;   /* fondo en hex ⇒ el texto también, o se pierde en oscuro */
+    padding: 7px 10px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.28);
+    font-size: 11.5px; font-weight: 500; line-height: 1.4;
+    width: max-content; max-width: 230px; text-align: center; white-space: normal;
+    opacity: 0; visibility: hidden; transition: opacity .13s ease;
+    pointer-events: none; z-index: 30;
+  }
+  .pista::before {
+    content: ''; position: absolute; bottom: calc(100% + 3px); left: 50%;
+    transform: translateX(-50%); border: 6px solid transparent; border-top-color: #202124;
+    opacity: 0; visibility: hidden; transition: opacity .13s ease; z-index: 30;
+  }
+  .pista:hover::after, .pista:hover::before,
+  .pista:focus::after, .pista:focus::before { opacity: 1; visibility: visible; }
+
+  /* Acción de IA que todavía no existe. Se dibuja apagada y con el borde punteado a
+     propósito: que se vea dónde va a estar es la mitad del punto. */
+  .btn-ia {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 12px; border-radius: 16px;
+    border: 1px dashed var(--border); background: var(--bg);
+    color: var(--text-secondary); font-family: inherit;
+    font-size: 11.5px; font-weight: 600; letter-spacing: .2px;
+    cursor: not-allowed;
+  }
+
+  /* Ícono de fondo de las tarjetas del resumen. Decorativo: aria-hidden en el marcado. */
+  .soe-card { position: relative; overflow: hidden; }
+  .soe-card .ico {
+    position: absolute; top: 12px; right: 12px;
+    font-size: 20px; color: var(--text-hint); opacity: .6;
+  }
+  .soe-card.alerta .ico { color: #ea4335; opacity: .9; }
+  .soe-card .n, .soe-card .t { position: relative; }
+
+  /* En un teléfono no hay mouse que pasar, y una burbuja flotante cerca del borde queda
+     recortada (el body lleva overflow-x:hidden, así que ni se puede arrastrar para verla).
+     Bajo 700 px la pista deja de flotar y se lee como una nota debajo del botón. */
+  .pista-nota { display: none; }
+  @media (max-width: 700px) {
+    .pista::after, .pista::before { display: none; }
+    .pista-nota {
+      display: block; flex-basis: 100%;
+      font-size: 11px; line-height: 1.4; color: var(--text-hint); margin-top: 2px;
+    }
   }
 </style>

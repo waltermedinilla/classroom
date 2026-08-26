@@ -152,6 +152,26 @@ router.get('/', async (req, res) => {
       }
     }
 
+    // Los legajos a los que hay que volver a mirar hoy. Misma idea y mismo panel que las
+    // derivaciones de arriba, pero para el chico al que se acompaña SIN derivarlo a ningún
+    // lado: ese es el que se enfriaba en silencio.
+    //
+    // Solo nivel COMPLETO (criterio 34): la fecha no sobrevive al sanitizado en 'resumen',
+    // así que la lista quedaría vacía igual — se corta acá para que la tarjeta tampoco se
+    // dibuje y no mienta un 0.
+    //
+    // Se arma con los campos justos y no con el legajo crudo: la tabla solo necesita el
+    // alumno, el curso, la prioridad y las dos fechas.
+    const repasos = !completo ? [] : abiertos
+      .filter(l => acceso.legajoNecesitaRepaso(l, ahora))
+      .map(l => ({
+        student:       l.student,
+        division:      l.division,
+        prioridad:     l.prioridad,
+        proximoRepaso: l.proximoRepaso,
+        lastEntryAt:   l.lastEntryAt,
+      }));
+
     // Misma regla que la ficha: el legajo llega a la vista SOLO por el sanitizado, nunca
     // crudo. Acá la lista no dibuja nada clínico, pero mandar el documento entero deja el
     // motivo y las entrevistas a un `<%=` de distancia de terminar en el HTML. `student` y
@@ -168,6 +188,7 @@ router.get('/', async (req, res) => {
       legajos: paraLaVista,
       cerrados: legajos.filter(l => l.estado === 'cerrado').length,
       pendientes,
+      repasos,
       totales: {
         // "Activos" y no "abiertos": tiene que coincidir con lo que lista la tabla de abajo,
         // que son todos los no cerrados. Contar solo estado === 'abierto' daba la tarjeta en
@@ -177,6 +198,7 @@ router.get('/', async (req, res) => {
         seguimiento: legajos.filter(l => l.estado === 'seguimiento').length,
         derivacionesActivas: legajos.filter(l => acceso.tieneDerivacionActiva(l.referrals)).length,
         atencion: pendientes.length,
+        repasos:  repasos.length,
         // La tarjeta de "piden atención" solo se dibuja en nivel completo: en resumen
         // siempre valdría 0 y mentiría por omisión.
         veDerivaciones: completo,
@@ -386,7 +408,13 @@ router.post('/legajo/:id/situacion', async (req, res) => {
     legajo.fortalezas   = txt(req.body.fortalezas, 1000);
     legajo.dificultades = txt(req.body.dificultades, 1000);
     legajo.estrategias  = txt(req.body.estrategias, 2000);
+
+    // Este formulario es el EDITOR COMPLETO del legajo: el campo vacío borra la fecha de
+    // repaso, igual que cualquier otro campo de acá. En el formulario de una entrada del
+    // seguimiento la regla es la contraria, y es a propósito (criterio 35).
+    legajo.proximoRepaso = fecha(req.body.proximoRepaso);
     legajo.prioridad    = deLista(req.body.prioridad, acceso.PRIORIDADES, legajo.prioridad);
+
     // El estado se cambia acá salvo 'cerrado', que tiene su propia ruta porque exige motivo.
     const estado = deLista(req.body.estado, ['abierto', 'seguimiento'], null);
     if (estado) legajo.estado = estado;
@@ -428,6 +456,13 @@ router.post('/legajo/:id/entrada', async (req, res) => {
     // debería mandar el legajo al fondo de la lista ni traerlo al frente.
     legajo.lastEntryAt = legajo.entries.reduce(
       (max, e) => (!max || new Date(e.fecha) > new Date(max) ? e.fecha : max), null);
+
+    // El repaso, si vino. Acá vacío significa "no cambies nada" y NO "borrala": es el campo
+    // que más se va a dejar en blanco —se anota una entrevista sin querer tocar la agenda—
+    // y que anotar una observación borrara la fecha sería una pérdida de dato silenciosa.
+    // Para sacarla está el formulario de Situación (criterio 35).
+    const repaso = fecha(req.body.proximoRepaso);
+    if (repaso) legajo.proximoRepaso = repaso;
 
     await legajo.save();
 

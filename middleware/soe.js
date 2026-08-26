@@ -97,8 +97,12 @@ async function divisionesDelAlumno(studentId) {
 async function alumnoEnScope(req, studentId) {
   if (!studentId || !req.soeSchoolId) return null;
 
+  // `instagram` y `facebook` viajan para el bloque de perfil de la ficha. Traerlos acá no
+  // los muestra: la vista los dibuja SOLO en nivel completo (views/soe/legajo.ejs), porque
+  // son el dato más identificable de un menor y el nivel resumen existe justamente para no
+  // dárselo a medio colegio.
   const alumno = await User.findOne({ _id: studentId, role: 'student' })
-    .select('name email dni avatar school lastSeen bio interests futureGoal active')
+    .select('name email dni avatar school lastSeen bio interests futureGoal instagram facebook active')
     .lean();
   if (!alumno) return null;
 

@@ -8309,6 +8309,70 @@ const specs = [
     },
   },
   {
+    id: 'soe-repaso-del-legajo',
+    title: 'SOE: la fecha de repaso vencida sube el legajo al resumen (criterios 32 a 38)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Una fecha ya pasada: el legajo tiene que aparecer en el panel de arriba de /soe.
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/situacion`, {
+        body: {
+          motivo: state.soeMotivo, fortalezas: state.soeFortaleza || '',
+          dificultades: state.soeDificultad || '', estrategias: state.soeEstrategia || '',
+          prioridad: 'alta', estado: 'seguimiento', proximoRepaso: '2026-01-15',
+        },
+        expectStatus: 302,
+      });
+
+      let ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(/Había que verlo el/.test(ficha.text),
+        'con la fecha vencida, la ficha debería avisar que había que verlo');
+      // La fecha del hecho no puede correrse un día: es la trampa de zona horaria del
+      // proyecto (un <input type="date"> llega como medianoche UTC y producción corre en UTC).
+      assert(/15\/01|15 de ene/i.test(ficha.text), 'la fecha de repaso se está mostrando corrida');
+
+      const resumen = await client.get('soe', '/soe', { expectStatus: 200 });
+      assert(resumen.text.includes('Para volver a ver'),
+        'el resumen debería listar los legajos con el repaso vencido');
+
+      // Criterio 35: anotar una entrada SIN fecha no puede borrar el repaso que ya estaba.
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/entrada`, {
+        body: { fecha: '2026-08-20', tipo: 'nota', texto: `SIN-TOCAR-REPASO-${RUN_ID}`, proximoRepaso: '' },
+        expectStatus: 302,
+      });
+      ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(/Había que verlo el/.test(ficha.text),
+        'anotar una entrada con el campo vacío borró la fecha de repaso');
+
+      // Pero con fecha, sí la pisa.
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/entrada`, {
+        body: { fecha: '2026-08-20', tipo: 'nota', texto: `MUEVE-REPASO-${RUN_ID}`, proximoRepaso: '2099-03-04' },
+        expectStatus: 302,
+      });
+      ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      // Se mide por la FECHA y no por el rótulo: "Volver a verlo el" también es el label de
+      // los dos formularios, así que buscarlo daría verde siempre. "Había que verlo el", en
+      // cambio, existe solo en el chip de vencido.
+      assert(/04\/03\/2099|4 de mar/i.test(ficha.text),
+        'la entrada con fecha debería mover el repaso al futuro');
+      assert(!/Había que verlo el/.test(ficha.text),
+        'con la fecha en el futuro el chip no debería decir que ya venció');
+
+      // Y el formulario de Situación sí la borra con el campo vacío.
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/situacion`, {
+        body: {
+          motivo: state.soeMotivo, prioridad: 'alta', estado: 'seguimiento', proximoRepaso: '',
+        },
+        expectStatus: 302,
+      });
+      ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(!/04\/03\/2099|4 de mar/i.test(ficha.text) && !/Había que verlo el/.test(ficha.text),
+        'el formulario de Situación con el campo vacío tiene que borrar la fecha');
+      const sinFecha = ficha.text.match(/id="s-repaso"[^>]*value="([^"]*)"/);
+      assert(sinFecha && sinFecha[1] === '',
+        'el input de Situación debería quedar vacío después de borrar la fecha');
+    },
+  },
+  {
     id: 'soe-resumen-no-filtra-lo-clinico',
     title: 'SOE: el directivo en nivel "resumen" no recibe lo clínico en el HTML (criterios 15, 16 y 25)',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
@@ -8326,7 +8390,7 @@ const specs = [
         body: {
           motivo: state.soeMotivo, fortalezas: state.soeFortaleza,
           dificultades: state.soeDificultad, estrategias: state.soeEstrategia,
-          prioridad: 'alta', estado: 'seguimiento',
+          prioridad: 'alta', estado: 'seguimiento', proximoRepaso: '2026-09-15',
         },
         expectStatus: 302,
       });
@@ -8345,6 +8409,11 @@ const specs = [
         // Lo que SÍ tiene que ver.
         assert(ficha.text.includes(state.soeFortaleza),  'el resumen debería incluir las fortalezas');
         assert(ficha.text.includes(state.soeEstrategia), 'el resumen debería incluir las estrategias de aula');
+
+        // La agenda del gabinete tampoco es del resumen (criterio 34): la fecha de repaso no
+        // sobrevive al sanitizado, así que no puede estar ni como texto ni en un value=.
+        assert(!/15\/09\/2026|Volver a verlo el|Había que verlo el/.test(ficha.text),
+          'el nivel resumen recibió la fecha de repaso del legajo');
 
         // Lo que NO puede aparecer NUNCA en el HTML, ni escondido en un atributo.
         for (const secreto of [state.soeMotivo, state.soeDificultad, state.soeEntrada, state.soeDestino, state.soeDevolucion]) {

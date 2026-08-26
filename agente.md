@@ -479,6 +479,115 @@ inferido. Lo funcional que ya figura en el Roadmap no se repite.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-26 — Fecha de repaso del legajo: el chico que no se derivó también avisa
+
+Primera de las propuestas para fortalecer el SOE, elegida por el usuario. Hasta acá la única
+fecha que hacía sonar una alarma era `referrals[].proximoSeguimiento`, la de las derivaciones.
+**Un chico al que el gabinete acompaña sin derivarlo a ningún lado no tenía ninguna fecha**:
+el legajo quedaba abierto y en silencio hasta que alguien se acordaba solo.
+
+`SoeCase.proximoRepaso` (Date, default `null`) cierra ese hueco con la regla y el panel que ya
+existían. **No hace falta migrar nada**: un legajo sin el campo es un legajo sin repaso pedido.
+
+**La regla**, pura y testeable, en `services/soeAcceso.js` al lado de su hermana
+`derivacionNecesitaAtencion`:
+
+```js
+legajoNecesitaRepaso(legajo, ahora)  // no cerrado && proximoRepaso <= ahora
+```
+
+Compara con `<=` por la misma razón que las derivaciones: un `<input type="date">` llega como
+medianoche, así que el repaso pedido para hoy tiene que contar **hoy** y no mañana.
+
+**Se carga desde dos formularios, con reglas opuestas y a propósito** (criterio 35):
+
+| Dónde | Campo vacío |
+|---|---|
+| **Situación** — el editor completo del legajo | **borra** la fecha, igual que el resto de los campos |
+| **Una entrada del seguimiento** | **no toca nada** |
+
+El segundo es el que importa: ahí se decide de verdad cuándo volver a ver al chico (recién
+termina la entrevista y el gabinete sabe si hay que citarlo en dos semanas), y es el campo que
+más se va a dejar en blanco. Si anotar una observación borrara la fecha, sería una pérdida de
+dato silenciosa. El smoke prueba las dos mitades.
+
+**Dónde se ve**:
+
+- **Resumen de `/soe`**: tarjeta *"Para volver a ver"* y una segunda tabla dentro del panel
+  "Necesitan que alguien pregunte", que ahora apila las derivaciones sin novedad y los repasos
+  vencidos bajo el mismo título — son el mismo problema.
+- **Ficha**: chip con la fecha, en aviso mientras falta y en alerta cuando ya pasó.
+
+**Confidencialidad** (criterio 34): el campo es de nivel `completo`. No sobrevive a
+`sanitizarLegajo` en `'resumen'` y la ruta ni arma la lista, así que la tarjeta tampoco se
+dibuja — un 0 ahí mentiría por omisión. La agenda interna del gabinete no es lo que un docente
+necesita para dar clase.
+
+**Cerrar no borra la fecha**, pero un legajo cerrado nunca aparece en el panel. Reabrirlo con
+la fecha vencida lo devuelve a la lista, que es exactamente lo que se quiere.
+
+**Tests**: 9 unitarios nuevos en `tests/unit/soeAcceso.test.js` (la regla y el sanitizado) y el
+spec `soe-repaso-del-legajo` en el smoke, que recorre el ciclo entero: cargar vencida → chip y
+panel → entrada sin fecha que NO la borra → entrada con fecha que sí la mueve → Situación vacía
+que la borra. Verificado que el smoke falla al sacar la asimetría del criterio 35. Criterios 32
+a 38 agregados a `specs/soe-orientacion.spec.md`. Las tres suites en verde: 659 unitarios,
+roles sin hallazgos, 378 smoke.
+
+
+### 2026-08-26 — La ficha del SOE se lee mejor, y "Analizar" queda a la vista apagado
+
+Pedido del usuario: *"embellecer un poco más la forma de presentación"* de la ficha del
+alumno, y sumar en el bloque de intereses **un botón "Analizar" deshabilitado** al lado de la
+red social que el alumno haya cargado, con una pista al pasar el mouse avisando que la IA
+todavía no está.
+
+**Lo visual** (`views/soe/legajo.ejs`, `views/soe/index.ejs`, `views/partials/soe-styles.ejs`):
+
+- La cabecera de la ficha lleva una franja de 4 px con el **color de la prioridad**: el mismo
+  dato del chip, legible antes de leer una palabra.
+- El seguimiento dejó de ser una lista de notas sueltas: los círculos se unen con un hilo
+  vertical y **cada uno toma el color de "cómo se lo vio"**. Leída de arriba abajo, esa
+  columna es el pulso del chico a lo largo del tiempo.
+- Los cuatro indicadores de "Cómo viene" ganaron ícono, **color según el propio número** y una
+  barra de progreso en los dos de asistencia. Los cortes son los que ya usa la escuela (85 %
+  de asistencia, 6 de nota); no arman ningún índice de riesgo. Sin días cargados la asistencia
+  da 0 % por definición, y ese caso va **sin color**: pintarlo de rojo diría "faltó a todo"
+  cuando lo que pasa es que nadie tomó lista.
+- Las anclas de sección llevan ícono, y las tarjetas del resumen también.
+- El perfil que carga el alumno se separó en su propia caja, para que se lea como lo que es:
+  la voz del chico, no una observación del gabinete.
+
+**El botón Analizar**: aparece al lado de cada red que el alumno haya dejado en su perfil,
+deshabilitado, con borde punteado. Al pasar el mouse avisa *"La implementación de la IA
+todavía no se encuentra disponible."*.
+
+Tres decisiones que no hay que "simplificar" después:
+
+1. **La pista cuelga del `<span>` que envuelve al botón, no del `<button>`.** Un control
+   deshabilitado no recibe eventos de mouse: puesto en el botón, ni el `title` ni un `:hover`
+   propio se dispararían nunca y el aviso no aparecería.
+2. **En móvil la burbuja se apaga** y el aviso pasa a ser una nota estática debajo. No hay
+   mouse que pasar, y una burbuja flotante cerca del borde queda recortada por el
+   `overflow-x: hidden` del body — el patrón que dejó pantallas inalcanzables en la revisión
+   móvil.
+3. **Las redes solo se ven en nivel `completo`.** `instagram` y `facebook` se agregaron al
+   `.select()` de `alumnoEnScope` (`middleware/soe.js`), pero la vista las dibuja únicamente
+   con acceso completo: la bio y los intereses son lo que el chico eligió contar dentro de la
+   escuela; su usuario de Instagram es su identidad real fuera de ella, y el nivel `resumen`
+   existe justamente para no repartir eso. El enlace abre el perfil público y nada más: la
+   plataforma no lo sigue, no lo guarda y no lo lee.
+
+**Modo oscuro**: el color del ánimo pasó de `style=` inline a clases con su par
+`[data-theme="dark"]`, y los números de colores de los indicadores también. Un color en línea
+le gana a la variante oscura — es el bug de contraste que ya salió una vez en la sala.
+
+**Tests**: `tests/unit/soeFichaPerfil.test.js` (9 casos de marcado, en la línea de
+`movil.test.js`). Cubren los cuatro modos de romper esto sin darse cuenta: sacar los campos
+del `select`, sacar el bloque del `nivel === 'completo'`, mudar la pista al botón
+deshabilitado y volver a poner el color del ánimo en línea. Verificado que fallan sin el
+cambio. Las tres suites en verde: 650 unitarios, roles sin hallazgos, 377 smoke.
+
+
 ### 2026-08-25 — La tarea creada en vivo se iba al fondo de la solapa Actividades
 
 Reporte del usuario: *"los docentes presentan problemas al agregar tareas cuando están en
@@ -4246,5 +4355,54 @@ De paso salieron tres arreglos que no eran del módulo:
 - **Alertas automáticas**: sugerir alumnos en riesgo (ausentismo, materias bajas, sin
   entregar) que todavía no tienen legajo. Los datos ya están en `services/soeIndicadores.js`.
 - **Export del legajo a PDF** para el pase de escuela o el pedido de un organismo.
+
+### Para fortalecer el rol SOE — propuestas del 2026-08-26, SIN decidir
+
+Salieron de revisar el módulo entero con el usuario. **Ninguna está aprobada**; el orden es de
+"más valor por menos trabajo" hacia abajo. Las cuatro de arriba (adjuntos, derivar al SOE,
+alertas, PDF) siguen siendo las que ya estaban anotadas y no se repiten acá.
+
+1. ✅ **HECHA el 2026-08-26 — "Volver a ver a este chico el …" en el legajo.** Era la única
+   parte del módulo sin fecha propia: un chico al que se acompañaba sin derivarlo se enfriaba
+   en silencio. `SoeCase.proximoRepaso` + `legajoNecesitaRepaso()`, con su tarjeta y su tabla
+   en el resumen. Ver el changelog del 2026-08-26 y los criterios 32 a 38 de la spec.
+
+2. **Quién miró este legajo.** Las lecturas ajenas ya se auditan (`soe.view_case`), pero el
+   dato no se ve en ningún lado. Un bloque al pie del legajo leyendo `AuditLog` convierte una
+   promesa de confidencialidad en algo comprobable, y no necesita ningún modelo nuevo.
+
+3. **Legajo de GRUPO, no solo de alumno.** El modelo entero asume un chico. Buena parte del
+   trabajo del gabinete es grupal: un conflicto de convivencia de 2° 3°, un taller de ESI, una
+   jornada. Hoy eso se anota en el legajo de uno de los involucrados o no se anota. Es el hueco
+   conceptual más grande que quedó.
+
+4. **Tablero de orientación vocacional.** `User.futureGoal` e `interests` ya están cargados por
+   los propios alumnos. Agregarlos por curso ("a qué quieren dedicarse los de 6° 2°") le da al
+   gabinete la pantalla que hoy arma a mano en una encuesta de papel, con datos que la
+   plataforma ya tiene. Cero modelos nuevos.
+
+5. **El adulto responsable.** Hay entradas de tipo "contacto con la familia" pero no hay ficha
+   de con quién. `User.phone` es del alumno. Un bloque de referentes (nombre, vínculo,
+   teléfono) es lo primero que busca cualquiera que abre un legajo a las 8 de la mañana.
+
+6. **La vuelta del acuerdo con el docente.** Las estrategias de aula ya le llegan al docente si
+   la escuela habilitó el nivel `resumen`. Falta el camino inverso: que el docente marque "lo
+   apliqué / no funcionó", como el acuse de lectura de actividades. Sin eso, el acuerdo es un
+   papel que el gabinete no sabe si se cumplió.
+
+7. **Informe anual del gabinete.** Cuántas intervenciones, de qué tipo, cuánto tarda en llegar
+   una devolución externa. Es un reporte que la escuela tiene que presentar y que hoy se arma
+   contando a mano.
+
+8. **Retención: qué pasa cuando el chico egresa.** No hay regla de cuánto se guarda un legajo
+   psicopedagógico ni qué se hace al egreso o al pase. Es una decisión normativa antes que
+   técnica, y conviene tomarla antes de que haya cinco años de legajos.
+
+9. **El botón "Analizar" de verdad.** Existe apagado en la ficha desde el 2026-08-26. Lo
+   defendible es que resuma el propio legajo o sugiera preguntas para la entrevista con lo que
+   ya está escrito adentro. **Analizar la red social de un menor es otra cosa**: sale de la
+   plataforma, no hay consentimiento y el resultado sería una inferencia sobre un chico. Si se
+   hace, que sea con la decisión tomada explícitamente y escrita. Ver el backlog de IA.
+
 
 > ⚠️ **Nota de mantenimiento**: `agente.md` conserva desactualizaciones anteriores a esta revisión en las secciones de Pantallas, Rutas y Vistas (ej: no documenta los modelos School/Division/Activity/Submission/Suggestion, ni las rutas de superadmin, actividades y sugerencias). Pendiente una pasada completa de actualización del documento.

@@ -108,6 +108,15 @@ const soeCaseSchema = new Schema({
   // alta o baja de entrada — si alguna vez se desincroniza, lo peor que pasa es que la
   // lista se ordene raro; ninguna decisión de acceso depende de este campo.
   lastEntryAt: { type: Date, default: null },
+
+  // Cuándo volver a mirar este legajo. Es la hermana de referrals[].proximoSeguimiento, pero
+  // para el chico al que se acompaña SIN derivarlo a ningún lado: hasta que existió este
+  // campo, ese legajo no tenía ninguna fecha que hiciera sonar una alarma y se enfriaba en
+  // silencio. Vencida, el legajo se resalta en el resumen de /soe.
+  //
+  // null / ausente = no hay repaso pedido. Los legajos que ya existían siguen igual: el
+  // campo no necesita migración. Ver criterios 32 a 38 de specs/soe-orientacion.spec.md.
+  proximoRepaso: { type: Date, default: null },
 }, { timestamps: true });
 
 // UN legajo por alumno. Es la última red del "abrir dos veces": la ruta ya devuelve el

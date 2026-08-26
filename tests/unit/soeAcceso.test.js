@@ -20,6 +20,7 @@ const {
   camposVisibles,
   sanitizarLegajo,
   tieneDerivacionActiva,
+  legajoNecesitaRepaso,
 } = require('../../services/soeAcceso');
 
 // Una escuela como las que hay hoy en producción: sin el campo soeAccess, porque nació
@@ -128,6 +129,7 @@ const LEGAJO = {
   fortalezas: 'Muy buena con las manos, la respetan los compañeros',
   dificultades: SECRETO_DIFICULTADES,
   estrategias: 'Consignas cortas, que las lea en voz alta antes de arrancar',
+  proximoRepaso: new Date('2026-09-10'),
   entries: [
     { _id: 'e1', fecha: new Date('2026-08-10'), tipo: 'entrevista', animo: 'preocupante', texto: SECRETO_ENTRADA, autor: 'soe1' },
   ],
@@ -232,5 +234,72 @@ describe('tieneDerivacionActiva', () => {
     assert.strictEqual(tieneDerivacionActiva([{ estado: 'sin_respuesta' }]), true);
     assert.strictEqual(tieneDerivacionActiva([]), false);
     assert.strictEqual(tieneDerivacionActiva(undefined), false);
+  });
+});
+
+// ── La fecha de repaso del legajo (criterios 32 a 38) ────────────────────────
+//
+// La hermana de derivacionNecesitaAtencion, para el chico al que se acompaña SIN derivarlo
+// a ningún lado: hasta que existió este campo, ese legajo no tenía ninguna fecha que hiciera
+// sonar una alarma y se enfriaba en silencio.
+
+describe('legajoNecesitaRepaso', () => {
+  const AYER = new Date('2026-08-25T10:00:00Z');
+  const HOY  = new Date('2026-08-26T10:00:00Z');
+  const MANANA = new Date('2026-08-27T10:00:00Z');
+
+  test('sin fecha de repaso no pide nada', () => {
+    assert.strictEqual(legajoNecesitaRepaso({ estado: 'abierto' }, HOY), false);
+    assert.strictEqual(legajoNecesitaRepaso({ estado: 'abierto', proximoRepaso: null }, HOY), false);
+  });
+
+  test('la fecha vencida lo pone en la lista', () => {
+    assert.strictEqual(legajoNecesitaRepaso({ estado: 'abierto', proximoRepaso: AYER }, HOY), true);
+    assert.strictEqual(legajoNecesitaRepaso({ estado: 'seguimiento', proximoRepaso: AYER }, HOY), true);
+  });
+
+  test('la fecha futura todavía no molesta', () => {
+    assert.strictEqual(legajoNecesitaRepaso({ estado: 'abierto', proximoRepaso: MANANA }, HOY), false);
+  });
+
+  test('la fecha de HOY ya cuenta como vencida', () => {
+    // Un <input type="date"> llega como medianoche: si "hoy" no contara, el repaso pedido
+    // para hoy recién aparecería mañana. Misma regla que derivacionNecesitaAtencion.
+    const medianoche = new Date('2026-08-26T00:00:00Z');
+    assert.strictEqual(legajoNecesitaRepaso({ estado: 'abierto', proximoRepaso: medianoche }, HOY), true);
+  });
+
+  test('un legajo cerrado no vuelve solo, aunque tenga la fecha vencida (criterio 38)', () => {
+    assert.strictEqual(legajoNecesitaRepaso({ estado: 'cerrado', proximoRepaso: AYER }, HOY), false);
+  });
+
+  test('tolera basura sin romper', () => {
+    assert.strictEqual(legajoNecesitaRepaso(null, HOY), false);
+    assert.strictEqual(legajoNecesitaRepaso(undefined, HOY), false);
+    assert.strictEqual(legajoNecesitaRepaso({ estado: 'abierto', proximoRepaso: '' }, HOY), false);
+  });
+});
+
+describe('el repaso es dato de nivel completo (criterio 34)', () => {
+  test('resumen no recibe la fecha de repaso', () => {
+    const visto = sanitizarLegajo(LEGAJO, RESUMEN);
+    assert.strictEqual(visto.proximoRepaso, undefined,
+      'la agenda del gabinete no es lo que un docente necesita para dar clase');
+    assert.ok(!JSON.stringify(visto).includes('2026-09-10'),
+      'la fecha se coló igual en el objeto serializado');
+    assert.ok(!camposVisibles(RESUMEN).includes('proximoRepaso'));
+  });
+
+  test('completo sí la recibe', () => {
+    const visto = sanitizarLegajo(LEGAJO, COMPLETO);
+    assert.ok(visto.proximoRepaso, 'el gabinete tiene que ver su propia fecha');
+    assert.strictEqual(new Date(visto.proximoRepaso).toISOString().slice(0, 10), '2026-09-10');
+    assert.ok(camposVisibles(COMPLETO).includes('proximoRepaso'));
+  });
+
+  test('un legajo sin la fecha no rompe el sanitizado', () => {
+    // El caso de TODOS los legajos que ya existían antes del campo.
+    const viejo = { _id: 'c3', student: 'a3', estado: 'abierto', prioridad: 'media' };
+    assert.strictEqual(sanitizarLegajo(viejo, COMPLETO).proximoRepaso, null);
   });
 });
