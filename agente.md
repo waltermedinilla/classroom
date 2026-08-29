@@ -488,6 +488,49 @@ inferido. Lo funcional que ya figura en el Roadmap no se repite.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-30 — Cartel de mudanza: el servidor viejo manda al nuevo
+
+La plataforma se muda al VPS con dominio propio (`escuela.site`), y el servidor viejo tiene que
+decirle a la gente adónde ir. Se agrega una pantalla de mudanza que reemplaza a TODA la
+aplicación y redirige sola a los 4 segundos.
+
+**Se prende con `MUDANZA_URL` en el `.env`** (la dirección nueva) y un reload de los workers.
+Sin esa variable no hace absolutamente nada: se despliega apagado, semanas antes de usarse, sin
+alterarle el comportamiento a nadie.
+
+Por qué una variable de entorno y no un archivo de estado como `maintenance.json`: el modo
+mantenimiento se prende y se apaga seguido desde el panel, así que necesita algo tocable en
+caliente. La mudanza pasa **una vez en la vida del servidor** y es definitiva — conviene que
+exija entrar por SSH y sea imposible de disparar por accidente desde una pantalla.
+
+**No es el modo mantenimiento y no había que reusarlo.** Mantenimiento dice "volvemos en un
+rato" y hace esperar; la mudanza dice "ya no es acá" y manda a otro lado. Prometer una vuelta
+que no va a pasar es peor que no poner nada. El middleware va **antes** del de mantenimiento
+justamente para eso: durante el corte los dos van a estar prendidos y lo que tiene que verse es
+el cartel de mudanza.
+
+Decisiones que valen la pena:
+
+- **`/deploy` y `/health` quedan exentos.** El primero es el que más importa y el menos obvio:
+  es el webhook que aplica los despliegues, así que taparlo dejaría a este mismo servidor sin
+  forma de recibir el cambio que APAGUE la mudanza. Es la escalera que uno deja apoyada antes
+  de subir al techo. El segundo, para que el watchdog siga distinguiendo "vivo" de "caído".
+- **Se conserva el path**: quien tenía guardado el enlace a una materia aterriza en esa misma
+  materia del servidor nuevo. La query se descarta, porque puede traer tokens de un solo uso
+  emitidos por el servidor viejo.
+- **410 Gone para POST y para clientes JSON**, no 302: un POST redirigido llega al destino como
+  GET y el dato que traía se pierde en silencio. Mejor que la escritura falle con un mensaje
+  claro a que parezca que se guardó en algún lado.
+- **Cartel con cuenta regresiva y no un 301 seco**: el usuario tiene que LEER la dirección
+  nueva y guardarla. Un redirect instantáneo lo deja en otro dominio sin haber entendido qué
+  pasó. Hay `meta refresh` además del JS, para que nadie quede varado si el script no corre.
+- El dueño mantiene bypass, igual que en mantenimiento: después de prenderla todavía hace falta
+  poder entrar a verificar cómo quedó el servidor viejo.
+
+Piezas: `config/mudanza.js` (destino y exentas, 8 tests en `tests/unit/mudanza.test.js`) ·
+`views/mudanza.ejs` · el middleware en `server.js`, arriba del de mantenimiento.
+
+
 ### 2026-08-29 — El backup guardaba 14 colecciones de 29, y entre las ausentes estaban los legajos del SOE
 
 Salió revisando si el backup servía como mecanismo para mudar producción al VPS nuevo. **El

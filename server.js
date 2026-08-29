@@ -16,6 +16,7 @@ const { schoolCache } = require('./middleware/cache');
 const {
   readRawState, getPendingState, promotePending, SYSTEM_OWNER_EMAIL,
 } = require('./config/maintenance');
+const { destinoMudanza, estaExenta, urlDestino } = require('./config/mudanza');
 const {
   countActiveUsers, shouldPromote, minutesAgo, CHECK_INTERVAL_MS,
 } = require('./services/maintenanceWindow');
@@ -475,6 +476,47 @@ app.use((req, res, next) => {
   const _sec = sectionForPath(req.originalUrl);
   res.locals.screenKey = _sec ? _sec.key : normalizePath(req.originalUrl);
   next();
+});
+
+// ── Cartel de mudanza ────────────────────────────────────────────────────────
+// La plataforma se mudó de servidor y ESTA instalación ya no es la buena. Se prende poniendo
+// MUDANZA_URL en el .env (la dirección nueva) y recargando los workers. Sin esa variable no
+// hace absolutamente nada: se despliega apagado.
+//
+// Va ANTES del modo mantenimiento a propósito. Durante el corte los dos van a estar
+// prendidos —el mantenimiento para congelar las escrituras mientras se saca el último
+// backup, la mudanza para mandar a la gente al servidor nuevo— y lo que tiene que ver el
+// visitante es "nos mudamos", no "volvemos en un rato". La segunda es una promesa que este
+// servidor ya no puede cumplir.
+//
+// El dueño mantiene el bypass, igual que en mantenimiento: después de prender la mudanza
+// todavía hace falta poder entrar a verificar que el servidor viejo quedó como se esperaba.
+//
+// Ver config/mudanza.js para las rutas exentas y por qué /deploy es la más importante.
+app.use((req, res, next) => {
+  const destino = destinoMudanza();
+  if (!destino) return next();
+  if (estaExenta(req.path)) return next();
+  if (res.locals.user?.email === SYSTEM_OWNER_EMAIL) return next();
+
+  const url = urlDestino(destino, req.path);
+
+  // Marca para el access log: estas respuestas son DELIBERADAS. Sin esto, el día de la
+  // mudanza cada visita quedaría anotada como un error y error.log se llenaría de alarmas
+  // falsas. Mismo motivo que en el modo mantenimiento, ver middleware/request-log.js.
+  res.locals.mantenimiento = true;
+
+  // 410 Gone y no 302 para todo lo que no sea una navegación: un POST redirigido llega al
+  // servidor nuevo como GET y el dato que traía se pierde en silencio. Es preferible que la
+  // escritura falle con un mensaje claro a que parezca que se guardó en algún lado.
+  if (req.method !== 'GET' || (req.accepts('json') && !req.accepts('html'))) {
+    return res.status(410).json({ mudanza: true, url, error: `La plataforma se mudó a ${url}` });
+  }
+
+  // Navegación normal: la pantalla con el cartel, que redirige sola a los 4 segundos. No es
+  // un 301 directo porque el usuario tiene que LEER la dirección nueva y guardarla — un
+  // redirect instantáneo lo deja en otro dominio sin haber entendido qué pasó.
+  res.status(200).render('mudanza', { destino: url });
 });
 
 // ── Modo mantenimiento ───────────────────────────────────────────────────────
