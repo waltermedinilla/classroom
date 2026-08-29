@@ -65,9 +65,9 @@
       <div class="creator-card">
         <div class="creator-card-section-title">Adjuntar</div>
         <div class="creator-att-row">
-          <label class="creator-att-btn" title="Subir archivo (PDF, Word, Excel) o imagen">
+          <label class="creator-att-btn" title="Subir archivo (PDF, Word, Excel, plano DWG o DXF) o imagen">
             <input type="file" id="fileInput"
-                   accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.jfif,.png,.webp,.gif,.avif,.tif,.tiff"
+                   accept=".pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf,.jpg,.jpeg,.jfif,.png,.webp,.gif,.avif,.tif,.tiff"
                    multiple hidden>
             <div class="creator-att-circle">
               <span class="material-symbols-outlined">upload</span>
@@ -249,7 +249,9 @@
         // Sin conectividad al endpoint: mostramos el form clásico sin selector.
       }
     })();
-    const EXT_COLOR = { PDF: '#ea4335', DOC: '#1a73e8', DOCX: '#1a73e8', XLS: '#34a853', XLSX: '#34a853' };
+    // Los planos llevan color propio para no confundirse con el gris de "formato que no
+    // conozco". Copia de la de public/js/course.js — ver el comentario de allá.
+    const EXT_COLOR = { PDF: '#ea4335', DOC: '#1a73e8', DOCX: '#1a73e8', XLS: '#34a853', XLSX: '#34a853', DWG: '#8430ce', DXF: '#8430ce' };
 
     // Precarga "Disponible desde" con ahora y "Fecha de entrega" con una semana después
     (function () {
@@ -317,7 +319,10 @@
     });
 
     /* ─── Adjuntos: archivos — sube de inmediato al seleccionar ─── */
-    const DOC_EXTS       = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
+    // Espejo de EXT_ALLOWED (routes/activities.js), sin el punto. Si las dos se separan, el
+    // navegador deja elegir un archivo que el servidor rechaza (o al revés) y nadie se entera
+    // hasta que una docente no puede subir su plano: lo ata tests/unit/subidaDwg.test.js.
+    const DOC_EXTS       = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'dwg', 'dxf'];
     // Las de Adjuntos.EXT_IMAGEN vienen con punto ('.jpg'); acá se compara sin él.
     const IMG_EXTS       = Adjuntos.EXT_IMAGEN.map(e => e.slice(1));
     const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB — PDF, Word, Excel
@@ -341,7 +346,7 @@
       if (!esImagen && !DOC_EXTS.includes(extRaw)) {
         showUploadErrModal(
           'Tipo de archivo no permitido',
-          `"${file.name}" no es un formato aceptado.\nPodés subir archivos PDF, Word (.doc, .docx), Excel (.xls, .xlsx) o imágenes (${IMG_EXTS.join(', ')}).`
+          `"${file.name}" no es un formato aceptado.\nPodés subir archivos PDF, Word (.doc, .docx), Excel (.xls, .xlsx), planos de AutoCAD (.dwg, .dxf) o imágenes (${IMG_EXTS.join(', ')}).`
         );
         return;
       }

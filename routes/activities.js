@@ -57,8 +57,21 @@ const ARCHIVOS_BASE = path.join(__dirname, '../public/archivos');
 // Estructura: archivos/entregas/{schoolId}/{activityId}/{studentId}/{filename}
 const ENTREGAS_BASE = path.join(__dirname, '../archivos/entregas');
 
-// Extensiones permitidas para adjuntos del docente
-const EXT_ALLOWED     = ['.pdf', '.doc', '.docx', '.xls', '.xlsx'];
+// Extensiones permitidas para adjuntos del docente.
+//
+// `.dwg` y `.dxf` son los planos de AutoCAD (pedido del 2026-08-29, para las materias
+// técnicas). Entran como un documento más y no hay nada adentro que el navegador pueda
+// ejecutar. Lo que NO tienen es visor —el previsualizador los manda derecho al botón
+// "Descargar"— así que no se los agrega a ninguna lista de "ver en línea".
+//
+// Ojo con la diferencia entre los dos, que no es evidente: el DWG es binario y el DXF es
+// TEXTO plano. Un archivo de texto que la escuela sirve de vuelta es justo la familia de la
+// que hay que desconfiar, pero acá no llega a ser un problema: `mime-types` lo declara
+// `image/vnd.dxf`, helmet manda `nosniff` en toda la aplicación, y ningún navegador
+// promueve un `image/*` a HTML. Lo que sí importa es que eso NO se apoye en el contenido:
+// la lista cerrada sigue siendo la primera defensa. Ver tests/unit/subidaPlanos.test.js,
+// que ata los nueve lugares donde vive "qué se puede subir".
+const EXT_ALLOWED     = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.dwg', '.dxf'];
 // Tope de un adjunto del docente: holgado a propósito, son PDFs escolares escaneados. Una
 // sola constante para los dos multer que lo usan (crear la actividad y el pre-upload) y para
 // los mensajes de error, que antes repetían el número a mano.
@@ -69,7 +82,7 @@ const ADJUNTO_MAX_MB  = 50;
 // recomprime a WebP. Las de imagen se dejan igual en esta lista a propósito, como red: un
 // navegador con el JS viejo en cache sigue mandando la foto a esta ruta, y es mejor que se
 // guarde entera a que le rebote. Cuando el cache ya no importe se pueden sacar.
-const EXT_SUBMISSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png', '.gif', '.zip'];
+const EXT_SUBMISSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.zip', '.dwg', '.dxf', '.jpg', '.jpeg', '.png', '.gif'];
 
 // Genera un nombre único para evitar colisiones en disco: timestamp + random + extensión original
 function uniqueFilename(originalname) {
@@ -545,7 +558,12 @@ router.post('/upload-attachment', requireAuth, uploadLimiter, exigirGestorDelCur
   });
 }, async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'Tipo de archivo no permitido (PDF, Word, Excel)' });
+    // El cartel sale de la LISTA y no de un texto a mano: escrito a mano decía "(PDF, Word,
+    // Excel)" y quedaba desactualizado en cuanto la lista cambiaba —es la misma forma de
+    // mentir que tenía el cartel de la entrega antes del 2026-08-24—.
+    if (!req.file) {
+      return res.status(400).json({ error: `Ese archivo no se puede subir. Aceptamos ${EXT_ALLOWED.join(', ')}. Las fotos van por su propio botón.` });
+    }
     const schoolId = res.locals.user.school?.toString() || 'general';
     const courseId = req.cursoDestino._id.toString();
     const url = `/archivos/${schoolId}/actividades/${courseId}/${req.file.filename}`;

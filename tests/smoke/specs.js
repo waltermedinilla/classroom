@@ -4436,6 +4436,73 @@ const specs = [
     },
   },
   {
+    id: 'planos-dwg-y-dxf-docente-y-alumno',
+    title: 'Los planos de AutoCAD entran por los dos lados: los adjunta la docente y los entrega el alumno',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Pedido del 2026-08-29 (materias técnicas): primero el .dwg y en seguida el .dxf.
+      //
+      // Los dos formatos Y los dos caminos van juntos en un solo spec a propósito: el bug que
+      // esto previene no es "el plano no entra", es "entra por uno de los dos" —el .heic del
+      // 2026-08-24 fue exactamente eso, la lista de la entrega quedó atrás de la del resto de
+      // la aplicación y nadie lo vio hasta que una persona no pudo entregar—. Un spec por
+      // camino habría dejado pasar la mitad del problema.
+      assert(state.courseId, 'falta el curso de prueba');
+
+      // Los dos formatos, con contenido de verdad. El servidor no mira adentro de los
+      // documentos —no hay nada que decodificar, van enteros a disco— pero archivos con la
+      // forma correcta dejan el spec parecido al caso real. Y son dos cosas distintas: el DWG
+      // es binario (cabecera AC1032 = AutoCAD 2018) y el DXF es texto plano.
+      const PLANOS = [
+        ['.dwg', 'image/vnd.dwg',
+         Buffer.concat([Buffer.from('AC1032\x00\x00\x00\x00\x00', 'binary'), Buffer.alloc(32 * 1024, 0x00)])],
+        ['.dxf', 'image/vnd.dxf',
+         Buffer.from('  0\nSECTION\n  2\nHEADER\n  0\nENDSEC\n  0\nEOF\n', 'utf8')],
+      ];
+
+      for (const [ext, mime, contenido] of PLANOS) {
+        // ── La docente lo adjunta a la actividad ───────────────────────────
+        const fd = new FormData();
+        fd.append('file', new Blob([contenido], { type: mime }), `corte transversal${ext}`);
+        const adj = await client.post('scopedTeacher', `/activities/upload-attachment?courseId=${state.courseId}`, {
+          form: fd, expectStatus: 200, timeoutMs: 30000,
+        });
+        assert(new RegExp(`^/archivos/.+\\${ext}$`).test(adj.json?.url || ''),
+          `el plano ${ext} debería conservar su extensión; devolvió ${JSON.stringify(adj.json)}`);
+        // El espacio del nombre sobrevive al multipart, igual que en el PDF.
+        assert(adj.json.name === `corte transversal${ext}`,
+          `debería conservar el nombre original; devolvió ${adj.json.name}`);
+
+        // ── El alumno lo entrega ───────────────────────────────────────────
+        // Por la ruta de ARCHIVOS y no por la de imágenes: un plano no es una foto, así que no
+        // pasa por sharp. Si algún día alguien lo metiera en la lista de imágenes, esto falla
+        // con el "no se puede decodificar" del optimizador, que es justo lo que queremos saber.
+        const fd2 = new FormData();
+        fd2.append('file', new Blob([contenido], { type: mime }), `tp5 plano${ext}`);
+        const ent = await client.post('scopedStudent', `/activities/${state.activityId}/upload-submission-file`, {
+          form: fd2, expectStatus: 200, timeoutMs: 30000,
+        });
+        assert(ent.json.filename.endsWith(ext),
+          `la entrega debería conservar la extensión, quedó: ${ent.json.filename}`);
+
+        const submit = await client.post('scopedStudent', `/activities/${state.activityId}/submit`, {
+          body: { text: `Plano del TP5 (${ext})`, uploadedFiles: [ent.json] }, expectStatus: 200,
+        });
+        assert(submit.json.submission.files.some(f => f.filename === ent.json.filename),
+          `el plano ${ext} debería quedar en la entrega`);
+
+        // ── Y se BAJA, no se intenta mostrar ───────────────────────────────
+        // mime-types los mapea a `image/vnd.dwg` y `image/vnd.dxf`: servidos inline, el
+        // navegador se queda con una pestaña en blanco creyendo que le pasamos una imagen
+        // rota. El previsualizador del alumno pide el archivo con ?dl=1 justamente por eso.
+        const bajada = await client.get('scopedTeacher',
+          `/activities/submission-file/${ent.json.filename}?dl=1`, { expectStatus: 200 });
+        assert((bajada.headers.get('content-disposition') || '').startsWith('attachment'),
+          `un plano ${ext} se descarga: no hay visor de AutoCAD en el navegador`);
+      }
+    },
+  },
+  {
     id: 'actividad-adjunto-imagen',
     title: 'La docente adjunta una foto a la actividad, se guarda en WebP y el alumno la ve',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
@@ -7510,6 +7577,26 @@ const specs = [
       const bajArch = await client.get('scopedStudent', arch.json.mensaje.adjunto.url, { expectStatus: 200 });
       assert((bajArch.headers.get('content-disposition') || '').startsWith('attachment'),
         'un .txt se descarga, no se abre en el navegador');
+
+      // Los planos de AutoCAD comparten la puerta con el resto del material de clase (pedido
+      // del 2026-08-29, para las materias técnicas) y salen por donde salen los documentos:
+      // como descarga. Que VER_EN_LINEA no los nombre es deliberado — ningún navegador dibuja
+      // un plano. Van los DOS formatos: el .dxf es texto plano y el .dwg binario, y es
+      // justamente el de texto el que no puede terminar sirviéndose en línea.
+      for (const [ext, mime, contenido] of [
+        ['dwg', 'image/vnd.dwg', Buffer.from('AC1032\x00\x00\x00', 'binary')],
+        ['dxf', 'image/vnd.dxf', Buffer.from('  0\nSECTION\n  2\nHEADER\n  0\nEOF\n', 'utf8')],
+      ]) {
+        const plano = await client.post('scopedTeacher', `${base}/adjuntos/archivo`, {
+          form: formCon('archivo', contenido, `plano corte.${ext}`, mime),
+          expectStatus: 201, headers: json,
+        });
+        assert(plano.json.mensaje.adjunto.ext === ext.toUpperCase(),
+          `la card debería mostrar la extensión del plano, fue "${plano.json.mensaje.adjunto.ext}"`);
+        const bajPlano = await client.get('scopedStudent', plano.json.mensaje.adjunto.url, { expectStatus: 200 });
+        assert((bajPlano.headers.get('content-disposition') || '').startsWith('attachment'),
+          `un plano .${ext} se descarga: no hay visor de AutoCAD en el navegador`);
+      }
 
       // Extensión fuera de la lista: se rechaza con un mensaje que dice qué sí se puede.
       const malo = await client.post('scopedTeacher', `${base}/adjuntos/archivo`, {

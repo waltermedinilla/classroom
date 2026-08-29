@@ -400,8 +400,17 @@ un formato no aceptado deje **cartel y línea de log**, y que el original nunca 
    socket muere con "fetch failed". Se anota en `req.imagenRechazada` y contesta
    `subirImagen()` cuando multer terminó.
 
-Los **documentos** (PDF, Word, Excel, ZIP) no pasan por ahí: siguen en `diskStorage` y enteros,
-tanto en la entrega del alumno como en los adjuntos del docente y de la sala.
+Los **documentos** (PDF, Word, Excel, ZIP, planos DWG y DXF) no pasan por ahí: siguen en
+`diskStorage` y enteros, tanto en la entrega del alumno como en los adjuntos del docente y de la
+sala.
+
+⚠️ **"Qué se puede subir" vive en NUEVE lugares**, no en uno: tres listas del servidor
+(`EXT_ALLOWED` y `EXT_SUBMISSIONS` en `routes/activities.js`, `EXT_ARCHIVOS` en
+`services/liveRoom.js`), dos del navegador (`DOC_EXTS` en `views/activities/new.ejs`,
+`SUB_ALLOWED_EXTS` en `public/js/course.js`) y cuatro `accept=` (`#fileInput`,
+`#activityFileInput`, `#subFileInput`, `#lrFileArchivo`). Agregar una extensión en ocho de los
+nueve es el bug del `.heic` del 2026-08-24 con otra fecha. `tests/unit/subidaPlanos.test.js` los
+compara a los nueve y falla si se separan.
 
 ## Notas / Issues Conocidos
 1. `GET /courses/create` existe en la ruta pero usa modal en dashboard — no tiene vista propia
@@ -4381,6 +4390,73 @@ De paso salieron tres arreglos que no eran del módulo:
   escuela.
 - El smoke dejaba dos recursos dados de baja por corrida; ahora los borra de verdad en su limpieza
   final de Mongo.
+
+## Planos de AutoCAD (.dwg y .dxf) en todas las subidas (2026-08-29)
+
+Pedido: *"quiero que incluyas archivos DWG para la carga de los docentes, y de los alumnos, en
+todas sus acciones"*, y en seguida *"agregá también el .dxf"*. Las materias técnicas trabajan con
+planos y hasta ahora había que subirlos a Drive y pegar el enlace.
+
+Los dos entran como **un documento más**: sin nada adentro que el navegador ejecute, en
+`diskStorage` y enteros. Quedaron habilitados en los **cinco caminos donde hoy entra un
+documento**:
+
+| Camino | Quién | Dónde |
+|---|---|---|
+| Adjunto de la actividad (crear/editar) | docente | `EXT_ALLOWED` |
+| Pre-subida del adjunto (`/upload-attachment`) | docente | idem `EXT_ALLOWED` |
+| Archivo de la sala en vivo | docente | `EXT_ARCHIVOS` |
+| Entrega (`/upload-submission-file`) | alumno | `EXT_SUBMISSIONS` |
+| Los cuatro selectores de archivo | los dos | `accept=` |
+
+### Las cuatro decisiones
+
+1. **No se agregan a ninguna lista de "ver en línea".** `mime-types` los mapea a
+   `image/vnd.dwg` y `image/vnd.dxf`: servidos *inline*, el navegador se queda con una pestaña
+   en blanco creyendo que le pasamos una imagen rota. `VER_EN_LINEA` (`routes/rooms.js`) no los
+   nombra y el previsualizador del alumno cae en la rama "no se puede previsualizar" con su
+   botón **Descargar** — que es lo correcto: no hay visor de AutoCAD en ningún navegador.
+2. **No cuentan como imagen.** Si estuvieran en `EXT_IMAGEN`, la entrega los mandaría a
+   `/upload-submission-image` y sharp los rebotaría con un "no se puede decodificar".
+3. **El cartel del adjunto del docente ahora sale de la lista**, no de un texto a mano. Decía
+   `"(PDF, Word, Excel)"` y se quedaba viejo apenas la lista cambiaba: la misma forma de mentir
+   que tenía el cartel de la entrega antes del 2026-08-24.
+4. **DWG y DXF comparten color en la tarjeta** (violeta, 6,4:1 contra el blanco del recuadro).
+   Son el mismo plano guardado de dos maneras; colores distintos sugerirían una diferencia que a
+   quien mira la tarjeta no le importa.
+
+⚠️ **La diferencia entre los dos que no es evidente**: el DWG es **binario** y el DXF es **texto
+plano**. Un archivo de texto que la escuela guarda y sirve de vuelta es la familia de la que hay
+que desconfiar —es lo que hace peligroso a un `.html` o a un `.svg`—. Acá no llega a serlo: el
+tipo declarado es `image/vnd.dxf`, helmet manda `nosniff` en toda la aplicación y ningún
+navegador promueve un `image/*` a HTML. Pero si algún día alguien sirviera estos archivos como
+`text/*`, **el `.dxf` es el que hay que volver a mirar**.
+
+### Lo que quedó afuera, a propósito
+
+- **El alumno en la sala en vivo sigue compartiendo solo fotos** (RN-A1 de
+  `specs/sala-en-vivo.spec.md`): `/adjuntos/archivo` pide `esGestor`. Abrirle los documentos al
+  alumno ahí no es agregar una extensión, es cambiar quién puede subir qué en la sala — es una
+  decisión aparte y no se tomó sola.
+- **Los macros de AutoCAD siguen prohibidos**: `.lsp`, `.fas`, `.vlx`, `.dvb`, `.scr`. Están en
+  la lista negra del test y no por completismo — AutoLISP es el lenguaje de macros de AutoCAD y
+  es por donde se movieron los gusanos de esta familia de archivos. El plano se acepta; el
+  script que lo acompaña, no.
+- **Los topes de tamaño no se tocaron**: 50 MB el adjunto del docente, 20 MB la entrega y el
+  archivo de la sala. Un plano escolar entra cómodo; si algún día no entra, el número está en
+  `ADJUNTO_MAX_MB` / `SUBMISSION_MAX_SIZE` / `MAX_ARCHIVO_BYTES`.
+
+### Tests
+
+`tests/unit/subidaPlanos.test.js` (16) compara los nueve lugares entre sí en vez de revisarlos
+de a uno — que es como se ven los problemas de esta familia. Verificado que **8 de los 16 caen**
+sin el DWG y **7 de los 16** sin el DXF. Más el spec de smoke
+`planos-dwg-y-dxf-docente-y-alumno` (los dos formatos por los dos caminos en un solo spec, a
+propósito) y los dos planos agregados al spec de la sala.
+
+⭐ **El `.dxf` se pidió un día después que el `.dwg`, y ahí se vio para qué sirve la suite**: la
+segunda extensión entró por los nueve lugares sin tener que salir a buscarlos de nuevo, y los
+siete tests que fallaron dijeron exactamente cuáles faltaban.
 
 ## Plan de Futuras Actualizaciones (Roadmap)
 

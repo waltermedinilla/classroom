@@ -89,7 +89,12 @@ const MSG_PER_MIN = 10;    // mensajes por usuario por minuto
 // nada que el navegador pueda interpretar como HTML con scripts adentro (.html, .svg). El
 // servidor sirve estos archivos con `nosniff`, pero la lista cerrada es la primera defensa
 // y no depende de que un header viaje bien.
-const EXT_ARCHIVOS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.csv', '.txt', '.zip'];
+//
+// `.dwg` y `.dxf` (los planos de AutoCAD) entran por la misma puerta que el resto: sin nada
+// adentro que el navegador ejecute, y VER_EN_LINEA de routes/rooms.js no los nombra, así que
+// se descargan en vez de intentar abrirse. El DXF es texto plano y aun así se sirve como
+// `image/vnd.dxf` + `nosniff` + `attachment`. Ver tests/unit/subidaPlanos.test.js.
+const EXT_ARCHIVOS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.csv', '.txt', '.zip', '.dwg', '.dxf'];
 
 // 20 MB por archivo, el mismo techo que las entregas de alumnos (routes/activities.js). Las
 // imágenes tienen el suyo, más bajo (MAX_INPUT_BYTES, 8 MB), porque se recomprimen: lo que

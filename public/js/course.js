@@ -3,8 +3,12 @@
 let selectedImage = null;
 window._activities = {};
 
-// Mapa de colores por extensión de archivo para los iconos de adjuntos
-const EXT_COLOR = { PDF: '#ea4335', DOC: '#1a73e8', DOCX: '#1a73e8', XLS: '#34a853', XLSX: '#34a853' };
+// Mapa de colores por extensión de archivo para los iconos de adjuntos.
+// El recuadro lleva el texto en BLANCO, así que un color nuevo tiene que contrastar contra
+// blanco: el violeta de los planos da 6,4:1. El gris de fallback es para lo que no está acá.
+// DWG y DXF comparten color a propósito: son el mismo plano guardado de dos maneras, y darles
+// colores distintos sugeriría una diferencia que a quien mira la tarjeta no le importa.
+const EXT_COLOR = { PDF: '#ea4335', DOC: '#1a73e8', DOCX: '#1a73e8', XLS: '#34a853', XLSX: '#34a853', DWG: '#8430ce', DXF: '#8430ce' };
 
 // Configuración visual por tipo de actividad: etiqueta, ícono Material Symbols, color del thumb
 // color=null → usa el color del curso (window.COURSE_COLOR)
@@ -2333,7 +2337,7 @@ window._subFiles = [];
 // recomprime. Tenerlas duplicadas fue el bug del 2026-08-24: esta lista se quedó sin .heic ni
 // .webp cuando el resto de la aplicación ya los aceptaba, así que la foto del iPhone rebotaba
 // con un cartel que nombraba a las imágenes entre los formatos permitidos.
-const SUB_ALLOWED_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'zip'];
+const SUB_ALLOWED_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'zip', 'dwg', 'dxf'];
 const SUB_MAX_SIZE     = 20 * 1024 * 1024; // 20 MB
 
 function renderSubmissionSection(actId, submission, isBlocked = false, allowResubmission = false) {
@@ -2420,9 +2424,9 @@ function renderSubmissionSection(actId, submission, isBlocked = false, allowResu
     <div class="creator-card" style="margin-bottom:16px">
       <div class="creator-card-section-title">Adjuntar</div>
       <div class="creator-att-row">
-        <label class="creator-att-btn" title="Subir archivo (PDF, Word, Excel, imágenes o ZIP)">
+        <label class="creator-att-btn" title="Subir archivo (PDF, Word, Excel, plano DWG o DXF, imágenes o ZIP)">
           <input type="file" id="subFileInput" multiple hidden
-            accept=".pdf,.doc,.docx,.xls,.xlsx,.zip,image/*,.jfif,.avif,.tif,.tiff">
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.zip,.dwg,.dxf,image/*,.jfif,.avif,.tif,.tiff">
           <div class="creator-att-circle">
             <span class="material-symbols-outlined">upload</span>
           </div>
@@ -2480,7 +2484,7 @@ function uploadSubFile(actId, file) {
   if (!esFoto && !SUB_ALLOWED_EXTS.includes(extRaw)) {
     showUploadErrModal(
       'Tipo de archivo no permitido',
-      `"${file.name}" no es un formato aceptado.\nPodés subir PDF, Word, Excel, ZIP o una foto (jpg, png, webp, heic...).`
+      `"${file.name}" no es un formato aceptado.\nPodés subir PDF, Word, Excel, ZIP, un plano de AutoCAD (.dwg, .dxf) o una foto (jpg, png, webp, heic...).`
     );
     return;
   }
