@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Derivaciones al SOE — Preceptoría</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0..200&display=swap" />
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .aviso {
+      display: flex; gap: 10px; align-items: flex-start;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 16px;
+      font-size: 13px; line-height: 1.5; color: var(--text-secondary);
+    }
+    .aviso .material-symbols-outlined { font-size: 19px; flex-shrink: 0; color: var(--text-hint); }
+
+    .tabla-scroll { overflow-x: auto; }
+    .p-tabla { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    .p-tabla th {
+      text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border);
+      font-size: 11px; text-transform: uppercase; letter-spacing: .4px;
+      color: var(--text-secondary); white-space: nowrap;
+    }
+    .p-tabla td { padding: 11px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .p-tabla tr:last-child td { border-bottom: none; }
+    .p-tabla .motivo { max-width: 320px; white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
+    .p-tabla .respuesta {
+      max-width: 280px; white-space: pre-wrap; word-break: break-word; line-height: 1.5;
+      border-left: 3px solid var(--primary); padding-left: 9px;
+    }
+
+    .chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 500;
+      background: var(--bg); border: 1px solid var(--border); color: var(--text); white-space: nowrap;
+    }
+    .chip .punto { width: 7px; height: 7px; border-radius: 50%; }
+
+    .vacio { text-align: center; padding: 40px 16px; color: var(--text-hint); font-size: 14px; }
+    .vacio .material-symbols-outlined { font-size: 42px; display: block; margin-bottom: 8px; }
+
+    @media (max-width: 700px) {
+      .p-tabla .motivo, .p-tabla .respuesta { max-width: 200px; }
+    }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content main-content-ancho">
+    <%- include('../partials/preceptor-nav', { activePage }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Derivaciones al SOE</h2>
+        <div style="font-size:12.5px;color:var(--text-secondary);margin-top:2px">
+          Los alumnos que derivaste al gabinete y en qué quedó cada pedido.
+        </div>
+      </div>
+    </div>
+
+    <%# La expectativa, escrita antes de que la pregunte. Es la pantalla donde alguien va a
+        buscar "y qué le pasó al chico" — y la respuesta es que eso no se ve desde acá. %>
+    <div class="aviso">
+      <span class="material-symbols-outlined">lock</span>
+      <div>
+        Acá ves el pedido que hiciste y la respuesta del gabinete. El legajo del alumno
+        —entrevistas, derivaciones, informes— lo ven únicamente Orientación Escolar y el
+        equipo directivo.
+      </div>
+    </div>
+
+    <% if (!pedidos.length) { %>
+      <div class="card">
+        <div class="vacio">
+          <span class="material-symbols-outlined">psychology</span>
+          Todavía no derivaste a ningún alumno.<br>
+          <span style="font-size:12.5px">El botón está en la ficha de cada alumno, dentro de tus cursos.</span>
+        </div>
+      </div>
+    <% } else { %>
+      <div class="card">
+        <div class="tabla-scroll">
+          <table class="p-tabla">
+            <thead>
+              <tr>
+                <th>Alumno</th><th>Curso</th><th>Enviado</th>
+                <th>Urgencia</th><th>Lo que informé</th><th>Estado</th><th>Respuesta del gabinete</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% pedidos.forEach(p => { %>
+                <tr>
+                  <td>
+                    <% if (p.student) { %>
+                      <a href="/preceptor/students/<%= p.student._id %>#soe"><%= p.student.name %></a>
+                    <% } else { %>—<% } %>
+                  </td>
+                  <td><%= p.division ? p.division.name : '—' %></td>
+                  <td style="white-space:nowrap"><%= fmt.fechaCorta(p.createdAt) %></td>
+                  <td>
+                    <span class="chip">
+                      <span class="punto" style="background:<%= soeAcceso.URGENCIA_COLORS[p.urgencia] %>"></span>
+                      <%= soeAcceso.URGENCIA_LABELS[p.urgencia] %>
+                    </span>
+                  </td>
+                  <td class="motivo"><%= p.motivo %></td>
+                  <td>
+                    <span class="chip"><%= soeAcceso.ESTADO_PEDIDO_LABELS[p.estado] %></span>
+                    <% if (p.resueltaEl) { %>
+                      <div style="font-size:11.5px;color:var(--text-hint);margin-top:4px">
+                        <%= fmt.fechaCorta(p.resueltaEl) %>
+                      </div>
+                    <% } %>
+                  </td>
+                  <td>
+                    <% if (p.respuesta) { %>
+                      <div class="respuesta"><%= p.respuesta %></div>
+                    <% } else if (p.estado === 'pendiente') { %>
+                      <span style="color:var(--text-hint);font-size:12.5px">El gabinete todavía no lo miró.</span>
+                    <% } else { %>
+                      <span style="color:var(--text-hint);font-size:12.5px">Sin respuesta.</span>
+                    <% } %>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

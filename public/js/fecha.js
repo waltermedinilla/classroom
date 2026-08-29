@@ -38,6 +38,7 @@
   var F_DML    = opts({ day: 'numeric', month: 'long', year: 'numeric' });
   var F_DMLH   = opts({ day: 'numeric', month: 'long', year: 'numeric',
                         hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  var F_ANIO   = opts({ year: 'numeric' });
 
   // Una fecha nula o basura devuelve '' y no "Invalid Date": estos textos van directo a la
   // pantalla. Mismo criterio que el `formatear` del servidor.
@@ -61,6 +62,7 @@
     diaMesAnioHora:  function (d) { return fmtear(F_DMAH, d); },    // 6 de ago de 2026, 14:05
     diaMesLargo:     function (d) { return fmtear(F_DML, d); },     // 6 de agosto de 2026
     diaMesLargoHora: function (d) { return fmtear(F_DMLH, d); },    // 6 de agosto de 2026 a las 14:05
+    anio:            function (d) { return fmtear(F_ANIO, d); },    // 2026
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 

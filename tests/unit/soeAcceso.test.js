@@ -21,6 +21,9 @@ const {
   sanitizarLegajo,
   tieneDerivacionActiva,
   legajoNecesitaRepaso,
+  ROLES_CONFIGURABLES,
+  TECHO_POR_ROL,
+  nivelesPara,
 } = require('../../services/soeAcceso');
 
 // Una escuela como las que hay hoy en producción: sin el campo soeAccess, porque nació
@@ -69,13 +72,49 @@ describe('nivelAcceso', () => {
   });
 
   test('el techo del rol gana sobre lo guardado en la base (criterio 4)', () => {
-    // 'completo' para preceptor o docente NO se puede guardar desde la pantalla (el enum
-    // del schema no lo admite), pero sí se puede escribir a mano con mongosh o quedar de
-    // una importación vieja. La regla no confía en que la validación de arriba haya andado.
-    assert.strictEqual(nivelAcceso(conAcceso({ preceptor: COMPLETO }), 'preceptor'), RESUMEN);
-    assert.strictEqual(nivelAcceso(conAcceso({ teacher:   COMPLETO }), 'teacher'),   RESUMEN);
-    // Y el directivo sí puede llegar a completo: su techo es ese.
+    // El techo no confía en que la validación de arriba haya andado: un valor imposible se
+    // puede escribir a mano con mongosh o quedar de una importación vieja.
+    // El directivo es el único que puede llegar a completo, y su techo es ese.
     assert.strictEqual(nivelAcceso(conAcceso({ directivo: COMPLETO }), 'directivo'), COMPLETO);
+    assert.strictEqual(nivelAcceso(conAcceso({ directivo: RESUMEN }),  'directivo'), RESUMEN);
+  });
+
+  // ── El recorte del 2026-08-27 ──────────────────────────────────────────────
+  // Hasta esa fecha el legajo lo podían ver, configurándolo por escuela, `admin` (hasta
+  // completo) y `preceptor`/`teacher` (hasta resumen). Pedido del usuario: solo el SOE y el
+  // equipo directivo. Ver la decisión D5 de specs/soe-derivacion-y-linea-de-tiempo.spec.md.
+  //
+  // Estos tests valen sobre el valor VIEJO todavía escrito en la base, que es el caso real
+  // al desplegar: la escuela que hoy tiene soeAccess.admin = 'completo' lo conserva en Mongo.
+  describe('recorte a soe + directivo (D5)', () => {
+    test('admin queda en none aunque la base diga completo (criterio 8)', () => {
+      assert.strictEqual(nivelAcceso(conAcceso({ admin: COMPLETO }), 'admin'), NINGUNO);
+      assert.strictEqual(nivelAcceso(conAcceso({ admin: RESUMEN }),  'admin'), NINGUNO);
+    });
+
+    test('preceptor y docente quedan en none aunque la base diga resumen (criterio 9)', () => {
+      assert.strictEqual(nivelAcceso(conAcceso({ preceptor: RESUMEN }),  'preceptor'), NINGUNO);
+      assert.strictEqual(nivelAcceso(conAcceso({ teacher:   RESUMEN }),  'teacher'),   NINGUNO);
+      assert.strictEqual(nivelAcceso(conAcceso({ preceptor: COMPLETO }), 'preceptor'), NINGUNO);
+      assert.strictEqual(nivelAcceso(conAcceso({ teacher:   COMPLETO }), 'teacher'),   NINGUNO);
+    });
+
+    test('el directivo es el único rol configurable (criterio 10)', () => {
+      assert.deepStrictEqual(ROLES_CONFIGURABLES, ['directivo']);
+      assert.deepStrictEqual(Object.keys(TECHO_POR_ROL), ['directivo']);
+      // La pantalla de /superadmin/roles itera esto: sin la entrada, no dibuja la fila.
+      assert.deepStrictEqual(nivelesPara('admin'),     []);
+      assert.deepStrictEqual(nivelesPara('preceptor'), []);
+      assert.deepStrictEqual(nivelesPara('directivo'), [NINGUNO, RESUMEN, COMPLETO]);
+    });
+
+    test('el SOE y el superadmin no se tocaron (criterio 11)', () => {
+      // La regresión que hay que evitar: recortar de más y dejar al gabinete afuera de su
+      // propio panel.
+      assert.strictEqual(nivelAcceso(ESCUELA_VIEJA, 'soe'),        COMPLETO);
+      assert.strictEqual(nivelAcceso(ESCUELA_VIEJA, 'superadmin'), COMPLETO);
+      assert.strictEqual(nivelAcceso(null,          'superadmin'), COMPLETO);
+    });
   });
 
   test('un valor basura en la base se lee como none, no como acceso', () => {

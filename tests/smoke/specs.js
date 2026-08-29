@@ -8233,15 +8233,22 @@ const specs = [
   },
   {
     id: 'soe-otros-roles-403',
-    title: 'SOE: alumno, docente y directivo NO entran con la escuela en su default (criterios 14 y 15)',
+    title: 'SOE: alumno, docente, admin y directivo NO entran con la escuela en su default (criterios 14, 15 y 27)',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client }) {
       // El default de School.soeAccess es 'none' para todos. Que el directivo esté listado
       // en config/sections.js no le abre nada: la puerta la abre la escuela, no el catálogo.
-      for (const actor of ['scopedStudent', 'scopedTeacher', 'soeDir']) {
+      //
+      // El `admin` está en la lista desde el recorte del 2026-08-27 (decisión D5 de
+      // specs/soe-derivacion-y-linea-de-tiempo.spec.md): antes podía llegar a 'completo'
+      // configurándolo por escuela, y ahora NO puede desde ninguna pantalla. Acá se prueba
+      // con la escuela en su default; que tampoco entre con el valor viejo escrito a mano en
+      // Mongo lo cubre tests/unit/soeAcceso.test.js, que puede fabricar ese estado.
+      for (const actor of ['scopedStudent', 'scopedTeacher', 'soeDir', 'admin']) {
         await client.get(actor, '/soe',              { expectStatus: 403 });
         await client.get(actor, '/soe/alumnos',      { expectStatus: 403 });
         await client.get(actor, '/soe/derivaciones', { expectStatus: 403 });
+        await client.get(actor, '/soe/pedidos',      { expectStatus: 403 });
       }
     },
   },
@@ -8484,6 +8491,270 @@ const specs = [
       assert(ficha.text.includes(state.soeDestino), 'reabrir debe devolver las derivaciones');
     },
   },
+  // ── Derivación de Preceptoría al gabinete ─────────────────────────────────
+  // Cubren los criterios 15 a 26 de specs/soe-derivacion-y-linea-de-tiempo.spec.md.
+  //
+  // Preceptor y alumno PROPIOS: los del bloque de preceptoría (state.preceptorId,
+  // state.preceptorStudentId) ya los borró `cleanup-preceptor`, que corre mucho antes.
+  {
+    id: 'soe-deriv-crear-actores',
+    title: 'Derivación: un preceptor con división a cargo y dos alumnos suyos',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // ⚠️ Materia PROPIA, y no la de la suite: `cleanup-course` corre unos specs más arriba
+      // y deja `state.divisionId` sin ninguna. Sin materia no hay matrícula, y sin matrícula
+      // el alumno queda FUERA del alcance del preceptor (routes/preceptor.js resuelve el
+      // alcance contra Course.students — no existe User.division). El síntoma es un 403 al
+      // derivar que parece un bug de permisos y es un problema de datos del test.
+      const mat = await client.post('admin', '/admin/courses/create', {
+        body: {
+          name: `Materia Deriv ${RUN_ID}`, divisionId: state.divisionId,
+          teacherId: state.scopedTeacherId, room: '303',
+        },
+        expectStatus: 201,
+      });
+      state.soeDerivCourseId = mat.json.course._id;
+
+      const email = `smoke.soeprec.${RUN_ID}@test.local`;
+      const res = await client.post('admin', '/admin/users/create', {
+        body: {
+          name: `Smoke Preceptor SOE ${RUN_ID}`, email, password: 'SmokeTest1234',
+          role: 'preceptor', dni: dniSmoke(93),
+          allDivisions: false, divisionIds: [state.divisionId],
+        },
+        expectStatus: 201,
+      });
+      state.soePrecId = res.json.user._id;
+      await client.post('soePrec', '/login', { body: { email, password: 'SmokeTest1234' }, expectStatus: 200 });
+
+      // Los alumnos se crean por la ruta del PROPIO preceptor: así quedan matriculados en
+      // las materias de su división y, por lo tanto, dentro de su alcance sin trucos.
+      for (const [clave, n] of [['soeDerivAlumnoId', 1], ['soeDerivAlumno2Id', 2]]) {
+        const alu = await client.post('soePrec', `/preceptor/divisions/${state.divisionId}/students`, {
+          body: {
+            name: `Smoke Alumno Deriv ${n} ${RUN_ID}`,
+            email: `smoke.soederiv${n}.${RUN_ID}@test.local`,
+            password: 'SmokeTest1234', dni: dniSmoke(93 + n),
+          },
+          expectStatus: 201,
+        });
+        state[clave] = alu.json.user._id;
+      }
+    },
+  },
+  {
+    id: 'soe-deriv-preceptor-deriva',
+    title: 'Derivación: el preceptor deriva, y un segundo pedido no se duplica (criterios 15 y 17)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert, env }) {
+      state.soeDerivMotivo = `DERIV-MOTIVO-${RUN_ID}`;
+
+      await client.post('soePrec', `/preceptor/students/${state.soeDerivAlumnoId}/derivar-soe`, {
+        body: { motivo: state.soeDerivMotivo, urgencia: 'alta' }, expectStatus: 302,
+      });
+
+      // Segunda vez con uno pendiente: no crea otro. Es la guarda de los dos preceptores de
+      // turnos distintos derivando al mismo chico la misma semana.
+      await client.post('soePrec', `/preceptor/students/${state.soeDerivAlumnoId}/derivar-soe`, {
+        body: { motivo: 'SEGUNDO-PEDIDO-QUE-NO-VA', urgencia: 'baja' }, expectStatus: 302,
+      });
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const pedidos = await mongo.db().collection('soerequests')
+          .find({ student: new ObjectId(state.soeDerivAlumnoId) }).toArray();
+        assert(pedidos.length === 1, `debería haber UN pedido, hay ${pedidos.length}`);
+        assert(pedidos[0].motivo === state.soeDerivMotivo, 'el segundo intento no puede pisar el motivo del primero');
+        assert(pedidos[0].urgencia === 'alta', 'ni la urgencia');
+        assert(pedidos[0].estado === 'pendiente', 'el pedido nace pendiente');
+        state.soePedidoId = pedidos[0]._id.toString();
+      } finally {
+        await mongo.close();
+      }
+
+      // Y la ficha del alumno le muestra en qué quedó.
+      const ficha = await client.get('soePrec', `/preceptor/students/${state.soeDerivAlumnoId}`, { expectStatus: 200 });
+      assert(ficha.text.includes(state.soeDerivMotivo), 'el preceptor debería ver el motivo que mandó');
+      assert(ficha.text.includes('Esperando al gabinete'), 'debería ver que el pedido está pendiente');
+    },
+  },
+  {
+    id: 'soe-deriv-fuera-de-alcance',
+    title: 'Derivación: no se puede derivar a un alumno de otra división (criterio 16)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert, env }) {
+      // scopedStudent está en la escuela pero NO en la división de este preceptor. Sin la
+      // guarda de alcance, conocer su _id alcanzaría para meterle una observación en su legajo.
+      await client.post('soePrec', `/preceptor/students/${state.scopedStudentId}/derivar-soe`, {
+        body: { motivo: `NO-DEBERIA-EXISTIR-${RUN_ID}`, urgencia: 'alta' }, expectStatus: 403,
+      });
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const n = await mongo.db().collection('soerequests')
+          .countDocuments({ student: new ObjectId(state.scopedStudentId) });
+        assert(n === 0, 'el 403 no puede haber dejado el pedido creado igual');
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'soe-deriv-preceptor-no-ve-el-legajo',
+    title: 'Derivación: derivar NO le abre el legajo al preceptor (criterio 25)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // El punto entero del recorte: el preceptor avisa, y ahí se termina lo que ve.
+      await client.get('soePrec', `/soe/legajo/${state.soeDerivAlumnoId}`, { expectStatus: 403 });
+      await client.get('soePrec', '/soe/pedidos', { expectStatus: 403 });
+
+      // Su propia solapa sí, y ahí no puede haber nada del legajo.
+      const mias = await client.get('soePrec', '/preceptor/soe', { expectStatus: 200 });
+      assert(mias.text.includes(state.soeDerivMotivo), 'debería ver su propio pedido');
+      assert(!mias.text.includes(state.soeMotivo),
+        'no puede filtrarse el motivo de intervención de NINGÚN legajo');
+    },
+  },
+  {
+    id: 'soe-deriv-gabinete-toma',
+    title: 'Derivación: el gabinete la toma, se abre el legajo y queda el hito firmado por el preceptor (criterios 19, 20 y 21)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert, env }) {
+      const bandeja = await client.get('soe', '/soe/pedidos', { expectStatus: 200 });
+      assert(bandeja.text.includes(state.soeDerivMotivo), 'el pedido debería estar en la bandeja del gabinete');
+
+      state.soeDerivRespuesta = `RESPUESTA-AL-PRECEPTOR-${RUN_ID}`;
+      await client.post('soe', `/soe/pedidos/${state.soePedidoId}/tomar`, {
+        body: { respuesta: state.soeDerivRespuesta }, expectStatus: 302,
+      });
+      // Tomarlo de nuevo no puede empujar un segundo hito (dos pestañas abiertas, o el
+      // celular reenviando el POST al recuperar la señal).
+      await client.post('soe', `/soe/pedidos/${state.soePedidoId}/tomar`, {
+        body: { respuesta: 'no debería aplicarse' }, expectStatus: 302,
+      });
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const pedido = await mongo.db().collection('soerequests')
+          .findOne({ _id: new ObjectId(state.soePedidoId) });
+        assert(pedido.estado === 'tomada', `el pedido debería quedar tomada, quedó ${pedido.estado}`);
+        assert(pedido.respuesta === state.soeDerivRespuesta, 'la respuesta del primer POST es la que vale');
+        assert(pedido.soeCase, 'el pedido tiene que apuntar al legajo que abrió');
+
+        const legajo = await mongo.db().collection('soecases')
+          .findOne({ student: new ObjectId(state.soeDerivAlumnoId) });
+        assert(legajo, 'tomar el pedido tiene que haber abierto el legajo');
+        assert(String(legajo._id) === String(pedido.soeCase), 'y el pedido tiene que apuntar a ESE legajo');
+
+        const hitos = (legajo.entries || []).filter(e => e.tipo === 'derivacion');
+        assert(hitos.length === 1, `debería haber UN hito de derivación, hay ${hitos.length}`);
+        assert(hitos[0].texto === state.soeDerivMotivo, 'el hito lleva el texto tal cual lo escribió el preceptor');
+        // ⚠️ El corazón de la decisión D3: la firma es del PRECEPTOR, no del gabinete que lo
+        // tomó. Es lo que deja la entrada inmutable — la ruta de edición solo permite la
+        // propia entrada, y el preceptor no entra a este panel.
+        assert(String(hitos[0].autor) === String(state.soePrecId),
+          'el hito tiene que quedar firmado por el preceptor que derivó, no por el SOE');
+      } finally {
+        await mongo.close();
+      }
+
+      // Y el preceptor ve en qué quedó, más la respuesta. Nada más.
+      const mias = await client.get('soePrec', '/preceptor/soe', { expectStatus: 200 });
+      assert(mias.text.includes('Tomada por el gabinete'), 'el preceptor debería ver que se lo tomaron');
+      assert(mias.text.includes(state.soeDerivRespuesta), 'y la respuesta que le dejaron');
+      await client.get('soePrec', `/soe/legajo/${state.soeDerivAlumnoId}`, { expectStatus: 403 });
+    },
+  },
+  {
+    id: 'soe-deriv-descartar',
+    title: 'Derivación: descartar exige motivo y no abre ningún legajo (criterios 18, 22, 23 y 24)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert, env }) {
+      const { MongoClient, ObjectId } = require('mongodb');
+
+      // Con el primero ya resuelto, el mismo alumno se puede volver a derivar: el índice
+      // único es PARCIAL, solo choca entre pendientes (criterio 18).
+      await client.post('soePrec', `/preceptor/students/${state.soeDerivAlumnoId}/derivar-soe`, {
+        body: { motivo: `SEGUNDA-VUELTA-${RUN_ID}`, urgencia: 'media' }, expectStatus: 302,
+      });
+
+      // El que se va a descartar es el del segundo alumno, que no tiene legajo.
+      const motivo2 = `DERIV-DESCARTE-${RUN_ID}`;
+      await client.post('soePrec', `/preceptor/students/${state.soeDerivAlumno2Id}/derivar-soe`, {
+        body: { motivo: motivo2, urgencia: 'baja' }, expectStatus: 302,
+      });
+
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const reqs = mongo.db().collection('soerequests');
+
+        const segunda = await reqs.countDocuments({ student: new ObjectId(state.soeDerivAlumnoId) });
+        assert(segunda === 2, `resuelto el primero, el segundo pedido sí se crea (hay ${segunda})`);
+
+        const p2 = await reqs.findOne({ student: new ObjectId(state.soeDerivAlumno2Id) });
+        assert(p2, 'debería existir el pedido del segundo alumno');
+
+        // Sin respuesta no se descarta: un pedido descartado en silencio le enseña al
+        // preceptor a no volver a avisar.
+        await client.post('soe', `/soe/pedidos/${p2._id}/descartar`, {
+          body: { respuesta: '' }, expectStatus: 302,
+        });
+        let vuelto = await reqs.findOne({ _id: p2._id });
+        assert(vuelto.estado === 'pendiente', 'sin motivo no puede haber cambiado de estado');
+
+        const explicacion = `NO-ABRO-PORQUE-${RUN_ID}`;
+        await client.post('soe', `/soe/pedidos/${p2._id}/descartar`, {
+          body: { respuesta: explicacion }, expectStatus: 302,
+        });
+        vuelto = await reqs.findOne({ _id: p2._id });
+        assert(vuelto.estado === 'descartada', `debería quedar descartada, quedó ${vuelto.estado}`);
+        assert(!vuelto.soeCase, 'descartar no puede dejar un legajo colgado');
+
+        const legajo = await mongo.db().collection('soecases')
+          .findOne({ student: new ObjectId(state.soeDerivAlumno2Id) });
+        assert(!legajo, 'descartar NO puede abrir el legajo del alumno');
+
+        const mias = await client.get('soePrec', '/preceptor/soe', { expectStatus: 200 });
+        assert(mias.text.includes(explicacion), 'el preceptor tiene que leer por qué no se lo tomaron');
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'soe-entrada-no-se-puede-disfrazar-de-derivacion',
+    title: 'SOE: el gabinete no puede fabricar a mano una derivación de Preceptoría (criterio 26)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert, env }) {
+      // El <select> del formulario no ofrece 'derivacion', pero el POST se puede escribir a
+      // mano. La lista blanca de la ruta es TIPOS_ENTRADA_MANUALES, así que el tipo se
+      // descarta y la entrada cae en 'nota' — queda guardada, pero no disfrazada.
+      const texto = `ENTRADA-DISFRAZADA-${RUN_ID}`;
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/entrada`, {
+        body: { texto, tipo: 'derivacion', fecha: '' }, expectStatus: 302,
+      });
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const legajo = await mongo.db().collection('soecases')
+          .findOne({ _id: new ObjectId(state.soeCaseId) });
+        const entrada = (legajo.entries || []).find(e => e.texto === texto);
+        assert(entrada, 'la entrada tiene que haberse guardado igual');
+        assert(entrada.tipo === 'nota', `el tipo debería caer en 'nota', quedó '${entrada.tipo}'`);
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
   {
     id: 'soe-cleanup',
     title: 'Limpieza: borra el legajo y los usuarios del SOE',
@@ -8494,15 +8765,25 @@ const specs = [
       try {
         await mongo.connect();
         // No hay ruta para borrar un legajo (a propósito: un legajo se cierra, no se borra).
-        // El smoke lo saca por la base, igual que hace con los audit logs.
-        if (state.scopedStudentId) {
-          await mongo.db().collection('soecases').deleteMany({ student: new ObjectId(state.scopedStudentId) });
+        // El smoke lo saca por la base, igual que hace con los audit logs. Tampoco la hay
+        // para borrar un pedido de derivación, y por el mismo motivo.
+        const alumnos = [state.scopedStudentId, state.soeDerivAlumnoId, state.soeDerivAlumno2Id]
+          .filter(Boolean).map(id => new ObjectId(id));
+        if (alumnos.length) {
+          await mongo.db().collection('soecases').deleteMany({ student: { $in: alumnos } });
+          await mongo.db().collection('soerequests').deleteMany({ student: { $in: alumnos } });
         }
       } finally {
         await mongo.close();
       }
-      if (state.soeId)    await client.post('admin', `/admin/users/${state.soeId}/delete`,    { expectStatus: 200 });
-      if (state.soeDirId) await client.post('admin', `/admin/users/${state.soeDirId}/delete`, { expectStatus: 200 });
+      if (state.soeId)             await client.post('admin', `/admin/users/${state.soeId}/delete`,             { expectStatus: 200 });
+      if (state.soeDirId)          await client.post('admin', `/admin/users/${state.soeDirId}/delete`,          { expectStatus: 200 });
+      if (state.soeDerivAlumnoId)  await client.post('admin', `/admin/users/${state.soeDerivAlumnoId}/delete`,  { expectStatus: 200 });
+      if (state.soeDerivAlumno2Id) await client.post('admin', `/admin/users/${state.soeDerivAlumno2Id}/delete`, { expectStatus: 200 });
+      if (state.soePrecId)         await client.post('admin', `/admin/users/${state.soePrecId}/delete`,         { expectStatus: 200 });
+      // La materia va DESPUÉS de los alumnos: `cleanup-users-and-division` no puede borrar la
+      // división mientras tenga una materia adentro.
+      if (state.soeDerivCourseId)  await client.post('admin', `/admin/courses/${state.soeDerivCourseId}/delete`, { expectStatus: 200 });
     },
   },
   {
@@ -9076,6 +9357,7 @@ const specs = [
           state.dupConMateriaId, state.dupVaciaId, state.dupCourseId,
           state.dupMailViejaId, state.dupMailNuevaId,
           state.soeId, state.soeDirId,
+          state.soePrecId, state.soeDerivAlumnoId, state.soeDerivAlumno2Id, state.soeDerivCourseId,
         ].filter(Boolean);
         const ids = idStrings.map(s => new ObjectId(s));
 

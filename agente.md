@@ -479,6 +479,132 @@ inferido. Lo funcional que ya figura en el Roadmap no se repite.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-29 — El backup guardaba 14 colecciones de 29, y entre las ausentes estaban los legajos del SOE
+
+Salió revisando si el backup servía como mecanismo para mudar producción al VPS nuevo. **El
+backup no es un `mongodump`**: respalda una lista escrita a mano en `routes/backup.js`, y esa
+lista se había quedado 15 modelos atrás. Comparándola contra `models/`: **14 de 29**.
+
+Lo que no viajaba en la copia, con los documentos que tenía el espejo de producción:
+`soecases` (2) y `soerequests` — **los legajos del gabinete** —, `recursos` (2), `reservas`,
+`slotocupacions`, `recursoautorizacions`, `sections` (3), `horarios` (1), `messages` (1),
+`messagerecipients` (1.418), `activityviews` (22), `activitytemplates`, `templateassignments`
+y `auditlogs` (10.011).
+
+⚠️ **El modo de falla era silencioso en las dos puntas.** El backup se genera sin error y pesa
+lo que tiene que pesar; y el restore tampoco se queja, porque su bucle recorre **esa misma
+lista**, así que una colección ausente ni se toca. Es decir: los legajos **no se borraban** en
+un restore, pero **tampoco estaban en la copia**. Perdido el servidor, se perdían para
+siempre — y eso se descubre el único día en que ya no se puede hacer nada.
+
+**Se agregaron las 14**, todas con `optional: true` porque los backups YA generados no las
+traen: sin ese flag, el preview de cualquier backup viejo diría "faltan colecciones
+requeridas" y se negaría a restaurar. `ratelimitsamples` queda **excluida a propósito** (es
+telemetría del monitor: se regenera sola y se purga sola) y ahora esa decisión vive escrita en
+`EXCLUIDAS_DEL_BACKUP`, con su motivo.
+
+> ⚠️ **Consecuencia para producción, a tener presente el día que haya que restaurar:** a partir
+> de este cambio, restaurar un backup **generado antes** de hoy **vacía** esas 14 colecciones
+> — incluidos los legajos. No es un bug nuevo: es la regla que el restore ya tenía
+> (*"una colección que el backup no trae se vacía; un restore es un viaje a una fecha"*), que
+> ahora alcanza a más colecciones. El preview lo avisa antes de aplicar, listándolas, y el
+> restore lo deja escrito en el log y en la auditoría. **Conviene generar un backup nuevo y
+> descartar los viejos.**
+
+La causa de fondo es estructural y va a volver: cada feature nueva trae su modelo, y sumarlo a
+la lista es un paso que nada obligaba a dar. Por eso el arreglo no es solo la lista sino
+`tests/unit/backupCobertura.test.js`, que fija la **regla**: todo modelo de `models/` tiene que
+estar respaldado o excluido a propósito. Un modelo nuevo rompe el test hasta que alguien decida
+cuál de las dos cosas es. Verificado que el test discrimina: contra la lista vieja reporta las
+14 que faltaban.
+
+
+### 2026-08-27 — Preceptoría deriva al gabinete, y el legajo se lee como una línea de tiempo
+
+Tres cosas en una tanda, pedidas juntas por el usuario. Spec:
+`specs/soe-derivacion-y-linea-de-tiempo.spec.md`.
+
+**1. Derivación `preceptor → SOE`.** El preceptor es el que ve al chico todos los días y hasta
+hoy no tenía forma de avisarle al gabinete dentro de la plataforma: el aviso viajaba por
+WhatsApp o en un pasillo, y se perdía. Ahora, desde la ficha del alumno, manda un **pedido**
+con motivo y urgencia. Colección nueva `SoeRequest` — no un campo de `SoeCase`, porque el
+pedido llega *antes* de que el legajo exista y embeberlo obligaría a crear el legajo para
+poder recibirlo, que es justo el filtro que se quiere conservar.
+
+El gabinete lo **toma** (se abre el legajo) o lo **descarta** (con motivo obligatorio), desde
+`/soe/pedidos`. Un solo pedido pendiente por alumno, garantizado con un índice único
+**parcial** (`{ student: 1 }` con `partialFilterExpression: { estado: 'pendiente' }`) — mismo
+patrón que `Reserva`: resuelto el pedido, se puede volver a derivar al mismo chico.
+
+> ⚠️ **El hito que deja el pedido va firmado por EL PRECEPTOR, no por el SOE que lo tomó.** No
+> es estético: la ruta de edición de entradas solo deja tocar la *propia* entrada, y el
+> preceptor no entra al panel del gabinete — así la entrada queda **inmutable para todo el
+> mundo**. Es lo que el preceptor dijo, no lo que el gabinete interpretó.
+
+> ⚠️ **`TIPOS_ENTRADA` se partió en dos.** El enum del schema ahora incluye `'derivacion'`;
+> `TIPOS_ENTRADA_MANUALES` (lo que ofrece el `<select>` y lo que valida `deLista()` en
+> `POST /soe/legajo/:id/entrada`) **no**. Sin esa separación, el gabinete podría fabricar a
+> mano una derivación de Preceptoría que nunca existió, y la línea de tiempo la mostraría
+> igual de firme que la real.
+
+Del lado del preceptor: solapa `/preceptor/soe` con sus propios pedidos y su estado. Ve el
+motivo que él escribió, en qué quedó, y el campo `respuesta` del gabinete — **el único texto
+del SOE que llega hasta él**, y el formulario lo rotula así para que nadie escriba ahí un dato
+clínico creyendo que queda adentro. Del legajo no ve nada, ni si existe.
+
+**2. Línea de tiempo unificada en la ficha del legajo.** El panel "Seguimiento" se reemplazó
+por un solo hilo cronológico que mezcla apertura, entradas, derivaciones, devoluciones y
+cierre. Antes eran dos listas que no se cruzaban y no se veía el RECORRIDO. La lógica vive en
+`services/soeLinea.js`, pura y testeable sin base, y **recibe el legajo ya sanitizado**: es lo
+que garantiza que la línea no pueda abrir una puerta nueva a lo clínico — en nivel `resumen`
+ese objeto no trae `entries` ni `referrals` y la función devuelve `[]` sola.
+
+La **devolución es un hito propio** y no un renglón adentro de su derivación: llega meses
+después, y dibujada adentro desaparece del hilo la fecha en que el servicio finalmente
+contestó — que es el dato que esto venía a rescatar.
+
+Orden por defecto: lo último arriba. Un botón lo invierte sin recargar.
+
+> ⚠️ **La trampa del hilo.** El hilo que une los hitos se dibuja **por ítem**, de su propio
+> círculo 27px dentro del siguiente. No sobre el contenedor: desde ahí el extremo de abajo
+> tendría que caer en el centro del último círculo, y la última tarjeta es más alta que su
+> círculo — el hilo quedaba colgando unos 80px. Y la inversión cambia **cuál** es el ítem que
+> no tiene a nadie abajo: en orden normal es el último del DOM, con `column-reverse` es el
+> primero. Sin las dos reglas de `.invertida`, el hilo cuelga de un extremo apenas se toca el
+> botón.
+
+> ⚠️ **Un override en una media query NO le gana a la regla base que está más abajo en el
+> archivo.** Una media query no suma especificidad: gana la última del documento. El
+> reposicionamiento del hilo en móvil quedó sin efecto hasta que se movió *detrás* de la regla
+> base. Vale para todo el proyecto.
+
+Del `Screenshot_5.jpg` que mandó el usuario se adaptaron dos cosas a propósito: las tarjetas
+**no** son pastel saturado (un fondo en hex obliga a fijar el texto en hex, y el par legible en
+claro da 1,10:1 en oscuro — el bug de la sala en vivo); el color entra por un borde de acento y
+por el círculo. Y la fecha **no** va rotada: el texto vertical se recorta contra el
+`overflow-x: hidden` del body en pantallas chicas. Medido en el navegador: 14,6:1 el texto de
+las tarjetas en los dos modos.
+
+**3. El legajo quedó restringido a `soe` + `directivo`** (más el superadmin, auditado). Pedido
+explícito del usuario. `TECHO_POR_ROL` y `ROLES_CONFIGURABLES` en `services/soeAcceso.js`
+perdieron `admin`, `preceptor` y `teacher`, y `School.soeAccess` perdió esos tres subcampos.
+Todo lo demás se acomoda solo porque lee del catálogo: `/superadmin/roles` deja de pintar esas
+filas y el endpoint que las guardaba las rechaza con 400.
+
+> ⚠️ **Es un recorte de permisos sobre producción.** Una escuela que hoy tenga
+> `soeAccess.admin = 'completo'` lo pierde al desplegar. **No hace falta migrar**: el valor
+> viejo queda en Mongo y simplemente deja de leerse, porque el schema ya no declara esas rutas
+> y porque la tabla que manda tampoco las tiene. Verificado en el navegador con el valor viejo
+> escrito a mano: 403 igual.
+
+**Tests**: `tests/unit/soeLinea.test.js` y `tests/unit/soePedido.test.js` nuevos,
+`soeAcceso.test.js` y `soeFichaPerfil.test.js` adecuados, 7 specs nuevos en el smoke
+(`soe-deriv-*`) y la excepción documentada de `check-roles.js` actualizada. Las tres suites en
+verde: **681 unitarios, 385 smoke, 48/48 secciones × 8 roles sin fugas**.
+
+Se sumó `fmt.anio` (y su gemelo `Fecha.anio` en el navegador, que el test de zona horaria
+exige) para la columna de fecha del hilo.
+
 ### 2026-08-26 — Fecha de repaso del legajo: el chico que no se derivó también avisa
 
 Primera de las propuestas para fortalecer el SOE, elegida por el usuario. Hasta acá la única

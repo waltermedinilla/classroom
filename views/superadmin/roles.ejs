@@ -230,9 +230,12 @@
         <% }) %>
       </div>
       <p style="font-size:11.5px;color:var(--text-hint);margin:12px 0 0;line-height:1.5">
-        Preceptor y docente topean en «Solo resumen»: no se les puede dar el legajo completo
-        desde ninguna pantalla, y tampoco ven la solapa Derivaciones, que nombra a dónde se
-        derivó a cada chico.
+        Ningún otro rol se puede agregar acá. Hasta agosto de 2026 también figuraban
+        <%= roleNames.admin %>, <%= roleNames.preceptor %> y <%= roleNames.teacher %>; el legajo
+        quedó restringido al <%= roleNames.soe %> y al <%= roleNames.directivo %>, y a esos tres
+        roles no se les puede dar acceso desde ninguna pantalla.
+        <%= roleNames.preceptor %> sí puede <strong>derivar</strong> un alumno al gabinete desde
+        la ficha del alumno, y ve en qué quedó su pedido — pero no el legajo.
       </p>
     </div>
 

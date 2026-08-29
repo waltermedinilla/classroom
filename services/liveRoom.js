@@ -162,6 +162,11 @@ const F_DMH    = opts({ day: 'numeric', month: 'short', hour: '2-digit', minute:
 const F_DMAH   = opts({ day: 'numeric', month: 'short', year: 'numeric',
                         hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const F_DML    = opts({ day: 'numeric', month: 'long', year: 'numeric' });
+// El anio solo, para la columna de fecha de la linea de tiempo del legajo (soe/legajo.ejs),
+// que lo imprime en su propio renglon debajo del dia. Va aca y no en la vista por la regla
+// del archivo: un segundo Intl.DateTimeFormat en otro lado es como vuelve el bug de las tres
+// horas de mas.
+const F_ANIO   = opts({ year: 'numeric' });
 const F_DMLH   = opts({ day: 'numeric', month: 'long', year: 'numeric',
                         hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
@@ -202,12 +207,13 @@ const diaMesHora      = (d) => formatear(F_DMH, d);    // 6 sept, 14:05
 const diaMesAnioHora  = (d) => formatear(F_DMAH, d);   // 6 sept 2026, 14:05
 const diaMesLargo     = (d) => formatear(F_DML, d);    // 6 de agosto de 2026
 const diaMesLargoHora = (d) => formatear(F_DMLH, d);   // 6 de agosto de 2026, 14:05
+const anio            = (d) => formatear(F_ANIO, d);   // 2026
 
 // Se pasa entero a las vistas como `fmt` (ver routes/rooms.js): así ninguna plantilla vuelve a
 // llamar a toLocaleTimeString por su cuenta.
 const fmt = { TZ, hora, fechaDia, fechaLarga, fechaCorta, fechaHora,
               horaSegundos, diaMes, diaMesAnio, diaMesHora, diaMesAnioHora,
-              diaMesLargo, diaMesLargoHora };
+              diaMesLargo, diaMesLargoHora, anio };
 
 // Etiqueta que acompaña al círculo de quien no es alumno.
 const ROLE_LABELS = {
@@ -908,6 +914,7 @@ module.exports = {
   // hora (zona fija de la escuela)
   fmt, hora, fechaDia, fechaLarga, fechaCorta, fechaHora, diaEscolar,
   horaSegundos, diaMes, diaMesAnio, diaMesHora, diaMesAnioHora, diaMesLargo, diaMesLargoHora,
+  anio,
   // puras
   isOnline, presenceSummary, shouldAutoClose, horaDeCierre, gestorEnLinea, sanitizeText,
   minutosPresente, initial, pesoLegible, etiquetaExt, textoAdjunto,

@@ -26,4 +26,10 @@
     Actividades del día
   </a>
   <% } %>
+  <% if (puede('preceptor_soe')) { %>
+  <a href="/preceptor/soe" class="admin-nav-item <%= activePage === 'soe' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">psychology</span>
+    Derivaciones al SOE
+  </a>
+  <% } %>
 </nav>

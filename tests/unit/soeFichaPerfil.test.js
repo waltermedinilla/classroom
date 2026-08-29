@@ -115,7 +115,10 @@ test('en el teléfono el aviso se lee como nota, no como burbuja flotante', () =
 // ── 4. Modo oscuro ───────────────────────────────────────────────────────────
 
 test('el color del ánimo va por clase y no en línea', () => {
-  assert.ok(legajo.includes(`class="icono<%= e.animo ? ' animo-' + e.animo : '' %>"`),
+  // Desde el 2026-08-27 el círculo lo dibuja la línea de tiempo unificada, así que la
+  // variable es el HITO (`h`) y ya no la entrada (`e`). La regla que este test protege no
+  // cambió: el tinte va por clase.
+  assert.ok(legajo.includes(`class="icono<%= h.animo ? ' animo-' + h.animo : '' %>"`),
     'el tinte del círculo va por clase');
 
   // El círculo NO puede llevar style=: un color inline le gana a la variante oscura.

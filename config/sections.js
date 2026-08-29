@@ -100,6 +100,11 @@ const SECTIONS = [
   // y por el mismo motivo que Asistencia: es seguimiento de la producción docente, y hay escuelas
   // donde eso lo mira dirección y no preceptoría.
   { key: 'preceptor_actividades', panel: 'preceptor', label: 'Actividades del día', icon: 'calendar_month', path: '/preceptor/actividades', roles: ['preceptor', 'directivo', 'admin', 'superadmin'] },
+  // Los pedidos de derivación al gabinete hechos por ESTE preceptor, con su estado.
+  // ⚠️ No es una ventana al legajo y no puede convertirse en una: acá se ve el motivo que él
+  // mismo escribió, en qué quedó el pedido y la respuesta que el SOE le haya dejado. Nada
+  // más. Ver la decisión D4 de specs/soe-derivacion-y-linea-de-tiempo.spec.md.
+  { key: 'preceptor_soe', panel: 'preceptor', label: 'Derivaciones al SOE', icon: 'psychology', path: '/preceptor/soe', roles: ['preceptor', 'directivo', 'admin', 'superadmin'] },
 
   // ── Panel Jefatura de Sección (base: middleware/jefatura.js ROLES_CON_ACCESO) ──
   // 'Actividades' es la pantalla de entrada del panel, por eso va locked (ver la INVARIANTE
@@ -108,27 +113,26 @@ const SECTIONS = [
   { key: 'jefe_teachers',  panel: 'jefatura', label: 'Docentes',    icon: 'badge',      path: '/jefatura/docentes', roles: ['jefe', 'directivo', 'admin', 'superadmin'] },
 
   // ── Panel Orientación Escolar (base: middleware/soe.js requireSoe) ─────────
-  // ⚠️ ATENCIÓN, ACÁ LA REGLA ES DISTINTA. Que `directivo` y `admin` figuren en `roles` NO
-  // les da acceso: este catálogo solo puede QUITAR (ver el encabezado del archivo), y quien
-  // CONCEDE la entrada al panel es requireSoe leyendo School.soeAccess, que arranca cerrado
-  // para todos menos el propio SOE. Están listados para que /superadmin/roles pueda pintar
-  // la celda, y para que una escuela que les dio acceso pueda además apagarles una solapa.
+  // ⚠️ ATENCIÓN, ACÁ LA REGLA ES DISTINTA. Que `directivo` figure en `roles` NO le da acceso:
+  // este catálogo solo puede QUITAR (ver el encabezado del archivo), y quien CONCEDE la
+  // entrada al panel es requireSoe leyendo School.soeAccess, que arranca cerrado para todos
+  // menos el propio SOE. Está listado para que /superadmin/roles pueda pintar la celda, y
+  // para que una escuela que le dio acceso pueda además apagarle una solapa.
   //
-  // Preceptor y docente SÍ figuran en las dos primeras: su techo es 'resumen' (las fortalezas
-  // del alumno y las estrategias acordadas para el aula), y si una escuela se lo habilita
-  // tienen que tener dónde leerlo. En 'Derivaciones' NO están, porque esa pantalla nombra el
-  // destino de cada derivación y 'resumen' está definido como "sabe que hay una en curso, sin
-  // saber a dónde".
-  //
-  // ⚠️ Que estén o no en `roles` NO es lo que cierra esa puerta —sectionGuard es fail-open y
-  // solo deniega lo explícitamente denegado—: la cierra `requireCompleto` en routes/soe.js.
-  // Esta lista decide qué solapa se PINTA; aquella, a qué se puede ENTRAR.
+  // ⚠️ Recorte del 2026-08-27: `admin`, `preceptor` y `teacher` salieron de estas tres listas.
+  // Pedido del usuario — el legajo lo ven solo el gabinete y el equipo directivo. Sacarlos de
+  // acá es COSMÉTICO (sectionGuard es fail-open y no cierra nada); lo que de verdad les cierra
+  // la puerta es que salieron de TECHO_POR_ROL en services/soeAcceso.js. Pero el catálogo no
+  // puede mentir sobre quién entra: es lo que lee la pantalla de permisos por rol.
   //
   // 'soe_dashboard' va locked por la INVARIANTE del archivo: es el destino del redirect de
   // "/" para el rol `soe` (server.js).
-  { key: 'soe_dashboard',    panel: 'soe', label: 'Resumen',      icon: 'psychology', path: '/soe',              roles: ['soe', 'directivo', 'admin', 'superadmin', 'preceptor', 'teacher'], locked: true },
-  { key: 'soe_alumnos',      panel: 'soe', label: 'Alumnos',      icon: 'group',      path: '/soe/alumnos',      roles: ['soe', 'directivo', 'admin', 'superadmin', 'preceptor', 'teacher'] },
-  { key: 'soe_derivaciones', panel: 'soe', label: 'Derivaciones', icon: 'share',      path: '/soe/derivaciones', roles: ['soe', 'directivo', 'admin', 'superadmin'] },
+  { key: 'soe_dashboard',    panel: 'soe', label: 'Resumen',      icon: 'psychology',   path: '/soe',              roles: ['soe', 'directivo', 'superadmin'], locked: true },
+  // La bandeja de pedidos de Preceptoría. Nivel completo, igual que Derivaciones: el motivo
+  // que escribe el preceptor es una observación sobre un menor, no un dato de aula.
+  { key: 'soe_pedidos',      panel: 'soe', label: 'Pedidos',      icon: 'move_to_inbox', path: '/soe/pedidos',     roles: ['soe', 'directivo', 'superadmin'] },
+  { key: 'soe_alumnos',      panel: 'soe', label: 'Alumnos',      icon: 'group',        path: '/soe/alumnos',      roles: ['soe', 'directivo', 'superadmin'] },
+  { key: 'soe_derivaciones', panel: 'soe', label: 'Derivaciones', icon: 'share',        path: '/soe/derivaciones', roles: ['soe', 'directivo', 'superadmin'] },
 
   // ── General: los accesos del menú lateral (header.ejs) ─────────────────────
   { key: 'app_courses', panel: 'app', label: 'Mis clases',     icon: 'menu_book',       path: '/courses',               roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'student'], locked: true },

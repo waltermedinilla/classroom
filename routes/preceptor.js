@@ -19,6 +19,10 @@ const Course   = require('../models/Course');
 const Division = require('../models/Division');
 const Activity   = require('../models/Activity');
 const Submission = require('../models/Submission');
+// Los pedidos de derivación al gabinete. El preceptor escribe acá y NO en el legajo: el
+// legajo no lo ve ni antes ni después de derivar (ver services/soeAcceso.js).
+const SoeRequest = require('../models/SoeRequest');
+const soeAcceso  = require('../services/soeAcceso');
 const { requireAuth } = require('../middleware/auth');
 const { requirePreceptor, loadPreceptorScope, inScope } = require('../middleware/preceptor');
 // Permisos por solapa configurados en /superadmin/roles (ver middleware/sections.js).
@@ -289,6 +293,20 @@ router.get('/students/:id', async (req, res) => {
       .filter(d => !yaCursa.has(d._id.toString()))
       .map(d => ({ _id: d._id.toString(), name: d.name }));
 
+    // El último pedido de derivación al gabinete para este alumno, sea de quien sea.
+    //
+    // ⚠️ Es TODO lo que este panel sabe del SOE, y tiene que seguir siendo así: acá NO se
+    // consulta si el alumno tiene legajo. Que el preceptor pueda deducir "a este chico lo
+    // están siguiendo" mirando la ficha sería exactamente la filtración que el recorte de
+    // acceso evita (decisión D4 de specs/soe-derivacion-y-linea-de-tiempo.spec.md).
+    //
+    // Se trae el último y no solo el pendiente: con el pedido ya resuelto, el preceptor
+    // tiene que poder leer en qué quedó y la respuesta que le dejó el gabinete.
+    const pedidoSoe = await SoeRequest.findOne({ student: student._id })
+      .populate('solicitadaPor', 'name')
+      .sort({ createdAt: -1 })
+      .lean();
+
     res.render('preceptor/student-detail', {
       student,
       courses: courses.map(c => ({
@@ -299,6 +317,8 @@ router.get('/students/:id', async (req, res) => {
       matriculacion,
       destinos,
       entries,
+      pedidoSoe,
+      soeAcceso,
       stats: {
         totalActividades: entries.length,
         entregadas: entries.filter(e => e.submitted).length,
@@ -306,6 +326,97 @@ router.get('/students/:id', async (req, res) => {
         avg,
       },
       activePage: 'dashboard',
+    });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+/* ─── Derivar un alumno al gabinete ──────────────────────────────────────── */
+//
+// El preceptor es el que ve al chico todos los días. Hasta el 2026-08-27 no tenía ninguna
+// forma de avisarle al SOE dentro de la plataforma: el aviso viajaba por WhatsApp.
+//
+// Lo que crea acá es un PEDIDO, no un legajo. El gabinete lo toma o lo descarta — ese filtro
+// es deliberado (decisión D2 de specs/soe-derivacion-y-linea-de-tiempo.spec.md): el legajo
+// psicopedagógico lo abre quien lo va a escribir.
+router.post('/students/:id/derivar-soe', async (req, res) => {
+  if (idMalo(req, res, 'Alumno no encontrado')) return;
+  try {
+    const student = await User.findById(req.params.id).select('_id name role school');
+    if (!student) return res.status(404).send('Alumno no encontrado');
+    if (student.role !== 'student') return res.status(404).send('El usuario no es alumno');
+    // La misma guarda que el resto de /students/:id. Sin esto alcanzaría con conocer el _id
+    // de cualquier alumno de la escuela para meterle una observación en su legajo.
+    if (!await alumnoEnAlcance(student._id, req.scopeDivisionIds)) {
+      return res.status(403).send('Acceso denegado');
+    }
+
+    const motivo = (req.body.motivo || '').trim().slice(0, 2000);
+    if (!motivo) return res.redirect(`/preceptor/students/${student._id}#soe`);
+
+    // Un solo pedido pendiente por alumno: dos preceptores de turnos distintos pueden
+    // derivar al mismo chico la misma semana. El chequeo es la primera barrera y da un
+    // mensaje claro; el índice único parcial de SoeRequest es la red del click doble.
+    const yaHay = await SoeRequest.findOne({ student: student._id, estado: 'pendiente' }).lean();
+    if (yaHay) return res.redirect(`/preceptor/students/${student._id}#soe`);
+
+    // La división para la bandeja del gabinete. Snapshot, como en SoeCase: es para listar
+    // sin joins, y la autorización del otro lado no lo lee.
+    const curso = await Course.findOne({
+      students: student._id,
+      division: { $in: req.scopeDivisionIds.map(oid) },
+    }).select('division').lean();
+
+    const pedido = await SoeRequest.create({
+      student:  student._id,
+      school:   res.locals.user.school,
+      division: curso ? curso.division : null,
+      motivo,
+      urgencia: soeAcceso.URGENCIAS.includes(req.body.urgencia) ? req.body.urgencia : 'media',
+      solicitadaPor: res.locals.user._id,
+    });
+
+    logAudit(req, 'soe.request_in',
+      [{ type: 'user', id: student._id, name: student.name }],
+      { urgencia: pedido.urgencia });
+
+    res.redirect(`/preceptor/students/${student._id}#soe`);
+  } catch (err) {
+    // Choque del índice único parcial: alguien ganó la carrera. No es un error para el
+    // usuario — el pedido que quería mandar ya está.
+    if (err && err.code === 11000) return res.redirect(`/preceptor/students/${req.params.id}#soe`);
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+/* ─── Mis derivaciones al SOE ────────────────────────────────────────────── */
+//
+// ⚠️ Esta pantalla NO es una ventana al legajo, y no puede convertirse en una. Muestra el
+// motivo que escribió el propio preceptor, en qué quedó el pedido, y la `respuesta` que el
+// gabinete le haya dejado — que es el único texto del SOE que llega hasta acá.
+//
+// El filtro es por `solicitadaPor`, no por división: son SUS pedidos. Un preceptor no tiene
+// por qué ver a quién derivó el colega del otro turno.
+//
+// Sin sectionGuard propio: el del router (línea 50) resuelve solo qué sección corresponde al
+// path, y 'preceptor_soe' está en el catálogo con path /preceptor/soe. Apagar la solapa desde
+// /superadmin/roles apaga también esta ruta.
+router.get('/soe', async (req, res) => {
+  try {
+    const pedidos = await SoeRequest.find({ solicitadaPor: res.locals.user._id })
+      .populate('student', 'name avatar dni')
+      .populate('division', 'name')
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean();
+
+    res.render('preceptor/soe', {
+      activePage: 'soe',
+      pedidos,
+      soeAcceso,
     });
   } catch (err) {
     logDeRuta(err, res);

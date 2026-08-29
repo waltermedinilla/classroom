@@ -18,8 +18,8 @@
 //   3. Matriz de acceso: GET a todas las secciones de config/sections.js. 200 donde el rol
 //      figura en `roles` (que es el espejo de los middlewares de rol) y bloqueo en el resto.
 //      Un 200 de más es una FUGA de permisos; un bloqueo de más, algo ROTO. Única excepción
-//      documentada: el panel del SOE, donde la puerta la abre School.soeAccess y no el
-//      catálogo (ver el comentario en el paso 3).
+//      documentada: el panel del SOE con el rol `directivo`, donde la puerta la abre
+//      School.soeAccess y no el catálogo (ver el comentario en el paso 3).
 //   4. Menú: el <nav> del panel (o el drawer del header, para docente y alumno) pinta
 //      exactamente las solapas permitidas. Replica la lógica de res.locals.can.
 //   5. El header muestra el rol EN ESPAÑOL (res.locals.roleNames).
@@ -212,11 +212,24 @@ async function main() {
         }
 
         // El panel del SOE es la ÚNICA excepción a la regla "figura en `roles` → entra".
-        // `directivo` y `admin` están en el catálogo para que /superadmin/roles pueda
-        // pintarles la celda, pero la puerta la abre School.soeAccess, que arranca en 'none'
-        // para todos (models/School.js). Con una escuela recién creada —que es lo que arma
-        // este chequeo— lo CORRECTO es que reciban 403.
-        if (s.panel === 'soe' && !['soe', 'superadmin'].includes(rol)) {
+        // `directivo` está en el catálogo para que /superadmin/roles pueda pintarle la celda,
+        // pero la puerta la abre School.soeAccess, que arranca en 'none' (models/School.js).
+        // Con una escuela recién creada —que es lo que arma este chequeo— lo CORRECTO es que
+        // reciba 403.
+        //
+        // ⚠️ Desde el recorte del 2026-08-27 (decisión D5 de
+        // specs/soe-derivacion-y-linea-de-tiempo.spec.md), `admin`, `preceptor` y `teacher`
+        // ya ni figuran en `roles`: el legajo quedó restringido al gabinete y al equipo
+        // directivo. Para ellos esto no es una excepción — la regla general ya dice 403.
+        // Este bloque sigue existiendo por `directivo`, que sí figura y aun así no entra.
+        //
+        // La excepción se aplica SOLO al rol que figura en `roles` (hoy, `directivo`). A
+        // `admin`, `preceptor` y `teacher` los resuelve la regla general de más abajo: no
+        // están en el catálogo, así que un 403 es lo esperado y punto. Si pasaran por acá,
+        // la nota diría "soeAccess en 'none'" y sería falso — el 403 que reciben no depende
+        // de la configuración de la escuela, y esa nota mandaría a cualquiera a buscar el
+        // problema al lugar equivocado.
+        if (s.panel === 'soe' && !['soe', 'superadmin'].includes(rol) && s.roles.includes(rol)) {
           if (!abierto) { ok++; notas.push(`${s.key}: ${r.status} (soeAccess en 'none', el default)`); }
           else { fugas++; anotar('FUGA', rol, `${s.path} devolvió 200 sin que la escuela le diera soeAccess`); }
           continue;

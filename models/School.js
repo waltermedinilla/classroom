@@ -95,11 +95,13 @@ const schoolSchema = new Schema({
   //
   // ⚠️ Mismo caveat que `settings` y `rolePermissions`: está en el .select() de server.js.
   // Si se saca de ahí, el campo no llega a las vistas y la guarda queda muda.
+  // ⚠️ Recorte del 2026-08-27: acá había además `admin`, `preceptor` y `teacher`. Pedido
+  // explícito del usuario — el legajo lo ven SOLO el gabinete y el equipo directivo.
+  // El valor viejo que haya quedado en Mongo NO se migra ni se borra: simplemente deja de
+  // leerse, porque el schema ya no declara esas rutas y porque TECHO_POR_ROL (que es la
+  // tabla que manda, en services/soeAcceso.js) tampoco las tiene. Doble cierre.
   soeAccess: {
     directivo: { type: String, enum: ['none', 'resumen', 'completo'], default: 'none' },
-    admin:     { type: String, enum: ['none', 'resumen', 'completo'], default: 'none' },
-    preceptor: { type: String, enum: ['none', 'resumen'],             default: 'none' },
-    teacher:   { type: String, enum: ['none', 'resumen'],             default: 'none' },
   },
 
   // Módulos OPCIONALES prendidos para esta escuela. Catálogo en config/modulos.js,

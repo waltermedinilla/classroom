@@ -66,6 +66,45 @@
     .enroll-result { font-size: 13px; margin-top: 12px; padding: 10px 12px; border-radius: 8px; display: none; }
     .enroll-result.ok    { background: #e6f4ea; color: #137333; }
     .enroll-result.error { background: #fce8e6; color: #c5221f; }
+
+    /* Derivación al gabinete */
+    .soe-box { margin-top: 20px; }
+    .soe-box h3 { display: flex; align-items: center; gap: 7px; font-size: 15px; margin: 0 0 4px; }
+    .soe-box h3 .material-symbols-outlined { font-size: 19px; color: var(--text-secondary); }
+    .soe-box .bajada { font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 14px; }
+    .soe-box label { display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 5px; }
+    .soe-box textarea, .soe-box select {
+      width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface); color: var(--text); font-size: 13.5px; font-family: inherit;
+    }
+    .soe-box textarea { min-height: 92px; resize: vertical; line-height: 1.5; }
+    .soe-box .campos { display: grid; grid-template-columns: 1fr 190px; gap: 12px; align-items: start; }
+    .soe-box .ayuda { font-size: 11.5px; color: var(--text-hint); margin-top: 5px; line-height: 1.45; }
+    .soe-box summary { cursor: pointer; font-size: 13.5px; color: var(--primary); font-weight: 500; }
+
+    /* El estado de un pedido ya enviado. La franja es la urgencia; el color entra por el
+       borde y nunca por un fondo saturado, que obligaría a fijar también el texto en hex. */
+    .soe-estado {
+      border: 1px solid var(--border); border-left: 4px solid var(--urgencia, var(--border));
+      border-radius: 8px; padding: 12px 14px; background: var(--bg);
+    }
+    .soe-estado.u-alta  { --urgencia: #ea4335; }
+    .soe-estado.u-media { --urgencia: #ea8600; }
+    .soe-estado.u-baja  { --urgencia: #137333; }
+    [data-theme="dark"] .soe-estado.u-alta  { --urgencia: #f28b82; }
+    [data-theme="dark"] .soe-estado.u-media { --urgencia: #fdd663; }
+    [data-theme="dark"] .soe-estado.u-baja  { --urgencia: #81c995; }
+    .soe-estado .lo-que-dije { font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; margin-top: 8px; }
+    .soe-estado .respuesta {
+      border-left: 3px solid var(--primary); padding: 8px 11px; margin-top: 12px;
+      background: var(--surface); border-radius: 0 8px 8px 0;
+      font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+    }
+    .soe-estado .rotulo { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary); font-weight: 700; }
+
+    @media (max-width: 700px) {
+      .soe-box .campos { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -294,6 +333,88 @@
         </table>
       </div>
     <% } %>
+
+    <%# ── Derivar al gabinete ───────────────────────────────────────────────
+        ⚠️ Este bloque NO dice, ni puede llegar a decir, si el alumno tiene legajo abierto.
+        Lo único que consulta la ruta es el último PEDIDO. Que el preceptor pudiera deducir
+        "a este chico lo están siguiendo" mirando la ficha sería exactamente la filtración
+        que evita el recorte de acceso. Ver la decisión D4 de
+        specs/soe-derivacion-y-linea-de-tiempo.spec.md. %>
+    <div class="card soe-box" id="soe">
+      <h3><span class="material-symbols-outlined">psychology</span> Orientación Escolar</h3>
+
+      <% const pendiente = pedidoSoe && pedidoSoe.estado === 'pendiente'; %>
+
+      <% if (pedidoSoe) { %>
+        <div class="soe-estado u-<%= pedidoSoe.urgencia %>">
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <span class="badge <%= pendiente ? '' : 'badge-ok' %>">
+              <%= pendiente ? 'Esperando al gabinete' : soeAcceso.ESTADO_PEDIDO_LABELS[pedidoSoe.estado] %>
+            </span>
+            <span style="font-size:12.5px;color:var(--text-secondary)">
+              Enviado el <%= fmt.fechaCorta(pedidoSoe.createdAt) %>
+              <% if (pedidoSoe.solicitadaPor) { %> por <%= pedidoSoe.solicitadaPor.name %><% } %>
+              · <%= soeAcceso.URGENCIA_LABELS[pedidoSoe.urgencia] %>
+            </span>
+          </div>
+
+          <div class="rotulo" style="margin-top:11px">Lo que informé</div>
+          <div class="lo-que-dije"><%= pedidoSoe.motivo %></div>
+
+          <% if (pedidoSoe.respuesta) { %>
+            <div class="respuesta">
+              <div class="rotulo" style="margin-bottom:4px">Respuesta del gabinete</div>
+              <%= pedidoSoe.respuesta %>
+            </div>
+          <% } %>
+        </div>
+      <% } %>
+
+      <% if (!pendiente) { %>
+        <details<%= pedidoSoe ? '' : ' open' %> style="margin-top:<%= pedidoSoe ? '16px' : '0' %>">
+          <summary><%= pedidoSoe ? 'Derivar de nuevo' : 'Derivar al SOE' %></summary>
+
+          <div class="bajada" style="margin-top:12px">
+            El gabinete recibe el pedido y decide si abre el seguimiento. Vas a ver en qué quedó
+            y la respuesta que te dejen — el legajo no, lo ven solo Orientación Escolar y el
+            equipo directivo.
+          </div>
+
+          <form method="POST" action="/preceptor/students/<%= student._id %>/derivar-soe">
+            <div class="campos">
+              <div>
+                <label for="soe-motivo">Qué viste</label>
+                <textarea id="soe-motivo" name="motivo" maxlength="2000" required
+                          placeholder="Lo concreto: faltas seguidas, cambios de ánimo, algo que contó, una situación en el recreo…"></textarea>
+                <div class="ayuda">
+                  Esto queda escrito en el legajo con tu nombre, tal como lo redactes, si el
+                  gabinete toma el pedido.
+                </div>
+              </div>
+              <div>
+                <label for="soe-urgencia">Urgencia</label>
+                <select id="soe-urgencia" name="urgencia">
+                  <% soeAcceso.URGENCIAS.forEach(u => { %>
+                    <option value="<%= u %>" <%= u === 'media' ? 'selected' : '' %>><%= soeAcceso.URGENCIA_LABELS[u] %></option>
+                  <% }) %>
+                </select>
+                <div class="ayuda">Ordena la bandeja del gabinete.</div>
+              </div>
+            </div>
+            <div style="margin-top:14px">
+              <button type="submit" class="btn btn-primary">
+                <span class="material-symbols-outlined">send</span> Enviar al gabinete
+              </button>
+            </div>
+          </form>
+        </details>
+      <% } else { %>
+        <div class="ayuda" style="margin-top:12px">
+          Ya hay un pedido esperando para este alumno. Cuando el gabinete lo resuelva vas a
+          poder mandar uno nuevo si hace falta.
+        </div>
+      <% } %>
+    </div>
   </main>
 
   <%- include('../partials/footer') %>

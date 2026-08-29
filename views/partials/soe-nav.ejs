@@ -12,6 +12,12 @@
     Resumen
   </a>
   <% } %>
+  <% if (puede('soe_pedidos')) { %>
+  <a href="/soe/pedidos" class="admin-nav-item <%= activePage === 'pedidos' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">move_to_inbox</span>
+    Pedidos
+  </a>
+  <% } %>
   <% if (puede('soe_alumnos')) { %>
   <a href="/soe/alumnos" class="admin-nav-item <%= activePage === 'alumnos' ? 'active' : '' %>">
     <span class="material-symbols-outlined">group</span>

@@ -76,19 +76,91 @@
   .soe-form .fila { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
   .soe-form .ayuda { font-size: 11.5px; color: var(--text-hint); margin-top: 3px; line-height: 1.45; }
 
-  /* La línea de tiempo del seguimiento */
-  .linea { list-style: none; margin: 0; padding: 0; }
-  .linea li { display: flex; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--border); }
-  .linea li:last-child { border-bottom: none; }
+  /* ── La línea de tiempo del legajo ─────────────────────────────────────────
+     Un solo hilo con TODAS las actuaciones del gabinete: la apertura, las entradas
+     del seguimiento, las derivaciones, las devoluciones de los servicios y el
+     cierre. Antes eran dos listas que no se cruzaban y no se veía el recorrido.
+
+     Tres columnas: la fecha, el círculo sobre el hilo, y la tarjeta del hito.
+     El ancho de la primera y el diámetro del círculo son los que fijan dónde cae
+     el hilo (ver .linea::before más abajo): si se tocan, se toca también ese left. */
+  .linea { list-style: none; margin: 0; padding: 0; position: relative; display: flex; flex-direction: column; }
+  .linea li {
+    display: grid; grid-template-columns: 56px 34px 1fr; gap: 12px;
+    align-items: start; padding: 10px 0; position: relative;
+  }
+
+  /* La fecha, afuera de la tarjeta, como en la referencia visual. Dos renglones para
+     que el año no empuje el ancho de la columna. */
+  .linea .hito-fecha {
+    text-align: right; padding-top: 7px; line-height: 1.25;
+    font-size: 12.5px; font-weight: 600; color: var(--text-secondary);
+  }
+  .linea .hito-fecha .anio { display: block; font-size: 11px; font-weight: 500; color: var(--text-hint); }
+  /* El gemelo que aparece solo en pantallas chicas, cuando la columna se pliega. */
+  .linea .hito-fecha-inline { display: none; font-size: 11.5px; color: var(--text-hint); margin-bottom: 3px; }
+
   .linea .icono {
     width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
     background: var(--bg); border: 1px solid var(--border);
+    /* Por encima del hilo, que pasa por atrás del centro del círculo. */
+    position: relative; z-index: 1;
   }
   .linea .icono .material-symbols-outlined { font-size: 18px; color: var(--text-secondary); }
-  .linea .cuerpo { flex: 1; min-width: 0; }
-  .linea .meta { font-size: 11.5px; color: var(--text-hint); margin-top: 4px; }
+  .linea .cuerpo { min-width: 0; }
+  /* --text-secondary y no --text-hint: este renglón lleva la fecha y quién firmó el hito,
+     que es información y no decoración. Sobre el fondo de la tarjeta, hint da 2,39:1 en modo
+     claro (por debajo del 4,5:1 que pide la pauta); secondary da 5,47:1 en claro y 9,21:1 en
+     oscuro. Medido en el navegador el 2026-08-27. */
+  .linea .meta { font-size: 11.5px; color: var(--text-secondary); margin-top: 4px; }
   .linea .texto { font-size: 14px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+
+  /* La tarjeta del hito.
+     ⚠️ El fondo es var(--bg) y NO un pastel como el de la referencia visual. Un fondo
+     saturado en hex obliga a declarar su color de texto también en hex, y el par que
+     se lee en claro da 1,10:1 en oscuro (ya pasó en la sala en vivo). Acá el color
+     del tipo de hito entra por el BORDE y por el círculo, que no llevan texto encima,
+     y el texto sigue en los tokens del tema: legible en los dos modos sin duplicar
+     una sola declaración. */
+  .linea .tarjeta {
+    background: var(--bg); border-radius: var(--radius-sm);
+    border-left: 4px solid var(--acento, var(--border));
+    padding: 11px 14px;
+  }
+  .linea .hito-titulo { font-size: 13.5px; font-weight: 600; }
+  .linea .hito-cab { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 5px; }
+
+  /* El acento por tipo de hito. Es una variable y no un color suelto para que el borde
+     de la tarjeta y el círculo no se puedan desincronizar. */
+  .linea li.hito-apertura   { --acento: #1a73e8; }
+  .linea li.hito-entrada    { --acento: #0d7377; }
+  .linea li.hito-derivacion { --acento: #9334e6; }
+  .linea li.hito-devolucion { --acento: #188038; }
+  .linea li.hito-cierre     { --acento: #5f6368; }
+  .linea li .icono { border-color: var(--acento, var(--border)); }
+  .linea li .icono .material-symbols-outlined { color: var(--acento, var(--text-secondary)); }
+
+  /* Los cinco acentos están elegidos para fondo claro. Sobre --bg oscuro pierden
+     contraste, así que el modo oscuro levanta la misma familia — misma razón por la
+     que el color no puede ir inline desde la vista. */
+  [data-theme="dark"] .linea li.hito-apertura   { --acento: #8ab4f8; }
+  [data-theme="dark"] .linea li.hito-entrada    { --acento: #4db6bb; }
+  [data-theme="dark"] .linea li.hito-derivacion { --acento: #d7aefb; }
+  [data-theme="dark"] .linea li.hito-devolucion { --acento: #81c995; }
+  [data-theme="dark"] .linea li.hito-cierre     { --acento: #9aa0a6; }
+
+  /* La barra de arriba del hilo: cuántos hitos hay y el botón que invierte el orden. */
+  .linea-barra { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+  .linea-barra .cuenta { font-size: 12.5px; color: var(--text-secondary); }
+  .btn-orden {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 6px 12px; border-radius: 20px; font-size: 12.5px; font-weight: 500;
+    background: var(--surface); border: 1px solid var(--border); color: var(--text-secondary);
+    cursor: pointer; font-family: inherit;
+  }
+  .btn-orden:hover { color: var(--primary); border-color: var(--primary); }
+  .btn-orden .material-symbols-outlined { font-size: 16px; }
 
   .deriv { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 12px; }
   .deriv.atencion { border-color: #ea4335; background: #fce8e610; }
@@ -106,18 +178,63 @@
     .soe-panel { padding: 14px; }
     .soe-cards { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
     .soe-card .n { font-size: 22px; }
+
+    /* La columna de fecha se pliega: en 360px de ancho, 56px de fecha + 34 de círculo
+       dejan la tarjeta en nada y el texto largo empuja el ancho del body (que tiene
+       overflow-x:hidden y lo recortaría en silencio). La fecha pasa adentro de la
+       tarjeta, arriba del título. */
+    .linea li { grid-template-columns: 28px 1fr; gap: 10px; }
+    .linea .hito-fecha { display: none; }
+    .linea .hito-fecha-inline { display: block; }
+    .linea .icono { width: 28px; height: 28px; }
+    .linea .icono .material-symbols-outlined { font-size: 15px; }
+    .linea .tarjeta { padding: 10px 12px; }
+    /* ⚠️ El hilo NO se recoloca acá: su regla base está más abajo en este mismo archivo y,
+       con la misma especificidad, la que gana es la última del documento — una media query
+       no suma especificidad. El override vive pegado a la regla base. */
   }
 
-  /* ── El hilo de la línea de tiempo ──────────────────────────────────────────
-     Une los hitos entre sí para que el seguimiento se lea como un recorrido y no
-     como cuatro notas sueltas. Arranca donde termina el círculo (padding 14 + 34)
-     y muere en el último, que no tiene a quién unirse. */
-  .linea li { position: relative; }
+  /* ── El hilo ────────────────────────────────────────────────────────────────
+     Une los hitos entre sí para que el legajo se lea como un recorrido y no como
+     ocho notas sueltas.
+
+     Cada ítem dibuja el tramo que va de SU círculo al del vecino de abajo. No un hilo
+     único sobre el contenedor: ese tendría que terminar en el centro del último
+     círculo, y desde el contenedor ese punto no se puede expresar — la última tarjeta
+     es más alta que su círculo, así que un `bottom` fijo deja el hilo colgando por
+     debajo del último hito (unos 80px con una entrada larga).
+
+     Los números: `left` es el centro de la columna del círculo — 56 (fecha) + 12 (gap)
+     + 17 (medio círculo) = 85. `top: 27` es el centro del círculo dentro del ítem —
+     10 (padding) + 17. Y `bottom: -27` estira el tramo 27px DENTRO del ítem siguiente,
+     que es donde cae el centro del próximo círculo (los ítems no tienen gap entre sí).
+     Si cambia el ancho de la fecha, el diámetro del círculo o el padding, cambia acá.
+
+     ⚠️ Y ACÁ ESTÁ LA TRAMPA DE LA INVERSIÓN. La geometría de arriba funciona igual con
+     la lista dada vuelta —"27px más abajo" sigue cayendo en el centro del círculo
+     vecino, que ahora es el ítem anterior del DOM—, pero cambia CUÁL es el ítem que no
+     tiene a nadie abajo: en orden normal es el último del DOM, y con
+     `column-reverse` es el PRIMERO. Sin las dos reglas de abajo, el hilo queda colgando
+     de un extremo apenas se toca el botón de orden. */
   .linea li::before {
-    content: ''; position: absolute; left: 17px; top: 48px; bottom: 0;
+    content: ''; position: absolute; left: 85px; top: 27px; bottom: -27px;
     width: 2px; background: var(--border); border-radius: 1px;
   }
   .linea li:last-child::before { display: none; }
+
+  /* La inversión, sin recargar la página. */
+  .linea.invertida { flex-direction: column-reverse; }
+  .linea.invertida li:last-child::before  { display: block; }
+  .linea.invertida li:first-child::before { display: none; }
+
+  /* El hilo en pantalla chica. Va acá, inmediatamente después de la regla base y no en el
+     bloque de móvil de más arriba: con la misma especificidad gana la última regla del
+     documento, y una media query no cambia eso. Ahí arriba quedaba sin efecto.
+     Los números: círculo de 28 ⇒ centro en 14 (left) y en 10 (padding) + 14 = 24 (top). */
+  @media (max-width: 700px) {
+    .linea li::before { left: 14px; top: 24px; bottom: -24px; }
+  }
+
   .linea .icono { transition: transform .12s ease; }
   .linea li:hover .icono { transform: scale(1.06); }
 

@@ -21,10 +21,11 @@
 const express  = require('express');
 const mongoose = require('mongoose');
 
-const User     = require('../models/User');
-const Course   = require('../models/Course');
-const Division = require('../models/Division');
-const SoeCase  = require('../models/SoeCase');
+const User       = require('../models/User');
+const Course     = require('../models/Course');
+const Division   = require('../models/Division');
+const SoeCase    = require('../models/SoeCase');
+const SoeRequest = require('../models/SoeRequest');
 
 const { requireAuth }  = require('../middleware/auth');
 const { sectionGuard } = require('../middleware/sections');
@@ -36,6 +37,7 @@ const { logDeRuta } = require('../middleware/route-log');
 const { idMalo }    = require('../middleware/objectId');
 
 const acceso = require('../services/soeAcceso');
+const { construirLinea } = require('../services/soeLinea');
 const { indicadoresDeAlumno } = require('../services/soeIndicadores');
 // diaEscolar resuelve el día en la zona de la escuela (producción corre en UTC).
 const { diaEscolar } = require('../services/liveRoom');
@@ -172,6 +174,18 @@ router.get('/', async (req, res) => {
         lastEntryAt:   l.lastEntryAt,
       }));
 
+    // Los pedidos de Preceptoría sin atender. Es el aviso: el rol `soe` aterriza en esta
+    // pantalla (server.js redirige "/" acá), así que es donde tiene que enterarse de que
+    // alguien le derivó un chico. Solo el CONTEO — el motivo, que es una observación sobre
+    // un menor, se lee en /soe/pedidos y no en una tarjeta de resumen.
+    //
+    // Solo nivel COMPLETO, por el mismo criterio que las derivaciones de arriba.
+    const pedidosSinAtender = !completo ? 0 : await SoeRequest.countDocuments({
+      school: res.locals.user.school,
+      estado: 'pendiente',
+      ...(req.soeAlcance.todas ? {} : { division: { $in: req.soeAlcance.divisionIds.map(oid) } }),
+    });
+
     // Misma regla que la ficha: el legajo llega a la vista SOLO por el sanitizado, nunca
     // crudo. Acá la lista no dibuja nada clínico, pero mandar el documento entero deja el
     // motivo y las entrevistas a un `<%=` de distancia de terminar en el HTML. `student` y
@@ -199,6 +213,7 @@ router.get('/', async (req, res) => {
         derivacionesActivas: legajos.filter(l => acceso.tieneDerivacionActiva(l.referrals)).length,
         atencion: pendientes.length,
         repasos:  repasos.length,
+        pedidos:  pedidosSinAtender,
         // La tarjeta de "piden atención" solo se dibuja en nivel completo: en resumen
         // siempre valdría 0 y mentiría por omisión.
         veDerivaciones: completo,
@@ -307,6 +322,46 @@ router.get('/derivaciones', requireCompleto, async (req, res) => {
   }
 });
 
+// ── Pedidos de Preceptoría: GET /soe/pedidos ─────────────────────────────────
+//
+// La bandeja del gabinete: lo que le derivó Preceptoría y todavía no resolvió, más el
+// historial de lo ya resuelto.
+//
+// requireCompleto por el mismo motivo que /soe/derivaciones: el motivo que escribe el
+// preceptor es una observación sobre un menor ("se peleó en el recreo", "la madre no
+// aparece"), no un dato de aula. No es algo que un nivel intermedio deba leer.
+router.get('/pedidos', requireCompleto, async (req, res) => {
+  try {
+    const filtro = { school: res.locals.user.school };
+    if (!req.soeAlcance.todas) filtro.division = { $in: req.soeAlcance.divisionIds.map(oid) };
+
+    const todos = await SoeRequest.find(filtro)
+      .populate('student', 'name avatar dni')
+      .populate('division', 'name')
+      .populate('solicitadaPor', 'name')
+      .populate('resueltaPor', 'name')
+      .sort({ createdAt: -1 })
+      .limit(300)
+      .lean();
+
+    // Los pendientes con el orden de bandeja (urgente primero, y dentro de cada urgencia lo
+    // más viejo arriba); los resueltos con el orden natural de un historial, lo último
+    // primero.
+    const pendientes = acceso.ordenarPedidos(todos.filter(p => p.estado === 'pendiente'));
+    const resueltos  = todos.filter(p => p.estado !== 'pendiente');
+
+    res.render('soe/pedidos', {
+      activePage: 'pedidos',
+      pendientes,
+      resueltos,
+      acceso,
+    });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
 // ── La ficha: GET /soe/legajo/:id ────────────────────────────────────────────
 router.get('/legajo/:id', async (req, res) => {
   if (idMalo(req, res, 'Alumno no encontrado')) return;
@@ -326,12 +381,23 @@ router.get('/legajo/:id', async (req, res) => {
     // los ve cualquiera que tenga acceso al panel, con legajo abierto o sin él.
     const indicadores = await indicadoresDeAlumno(alumno._id);
 
-    // Quién escribió cada entrada, resuelto de una sola vez.
-    const autores = visto && visto.entries
-      ? await User.find({
-          _id: { $in: visto.entries.map(e => e.autor).filter(Boolean) },
-        }).select('name avatar').lean()
-      : [];
+    // La línea de tiempo: todas las actuaciones en un solo hilo cronológico. Se arma sobre
+    // el legajo YA SANITIZADO, nunca sobre el crudo — es lo que hace que la línea no pueda
+    // abrir una puerta nueva a lo clínico (ver services/soeLinea.js).
+    //
+    // El orden por defecto es "lo último arriba"; el botón de la vista lo invierte del lado
+    // del navegador, sin recargar. El query param existe para poder linkear la vista
+    // cronológica y para que la preferencia funcione con JS apagado.
+    const orden = req.query.orden === 'cronologico' ? 'cronologico' : 'reciente';
+    const linea = construirLinea(visto, { orden });
+
+    // Quién firmó cada hito, resuelto de una sola vez. Sale de la LÍNEA y no solo de
+    // `entries`: las derivaciones y las devoluciones también tienen autor, y sin ellos el
+    // hilo mostraría media firma. `filter(Boolean)` porque los hitos de apertura y cierre de
+    // un legajo viejo pueden no tener a nadie.
+    const autores = await User.find({
+      _id: { $in: [...new Set(linea.map(h => h.autor).filter(Boolean).map(String))] },
+    }).select('name avatar').lean();
 
     // ⚠️ Solo la lectura AJENA se audita. La del propio SOE es su trabajo diario y llenaría
     // la auditoría de ruido hasta volverla inútil; la de un directivo o un superadmin es
@@ -346,6 +412,8 @@ router.get('/legajo/:id', async (req, res) => {
       activePage: 'alumnos',
       alumno,
       legajo: visto,
+      linea,
+      orden,
       indicadores,
       autores: new Map(autores.map(a => [a._id.toString(), a])),
       nivel,
@@ -360,6 +428,120 @@ router.get('/legajo/:id', async (req, res) => {
 
 // ── A partir de acá, TODO es escritura: solo el rol `soe` ────────────────────
 router.use(requireEscrituraSoe);
+
+// El pedido de Preceptoría + la validación de alcance. Devuelve null si no existe o si el
+// alumno no le corresponde a este usuario: la ruta contesta 403 sin distinguir cuál de las
+// dos cosas fue, igual que legajoEnScope.
+//
+// Revalida contra el alumno y NO contra el snapshot `pedido.division`: si al chico lo
+// cambiaron de curso entre que lo derivaron y hoy, el que tiene que atenderlo es el gabinete
+// del curso nuevo. Es la misma regla que en el resto del panel.
+async function pedidoEnScope(req, pedidoId) {
+  const pedido = await SoeRequest.findById(pedidoId);
+  if (!pedido) return null;
+  const alumno = await alumnoEnScope(req, pedido.student);
+  return alumno ? { alumno, pedido } : null;
+}
+
+// Tomar el pedido: se abre el legajo (si no lo tenía) y lo que escribió el preceptor entra
+// como primer hito de la línea de tiempo.
+router.post('/pedidos/:id/tomar', async (req, res) => {
+  if (idMalo(req, res, 'Pedido no encontrado')) return;
+  try {
+    const par = await pedidoEnScope(req, req.params.id);
+    if (!par) return res.status(403).send('Acceso denegado');
+    const { alumno, pedido } = par;
+
+    // Idempotente: tomar dos veces el mismo pedido no puede duplicar el hito en el legajo.
+    // Pasa de verdad — el gabinete abre la bandeja en dos pestañas, o el celular reenvía el
+    // POST al recuperar la señal.
+    if (pedido.estado !== 'pendiente') return res.redirect('/soe/pedidos');
+
+    let legajo = await SoeCase.findOne({ student: alumno._id });
+    if (!legajo) {
+      legajo = await SoeCase.create({
+        student:   alumno._id,
+        school:    res.locals.user.school,
+        division:  primeraDivision(alumno),
+        motivo:    `Derivado por Preceptoría: ${txt(pedido.motivo, 400)}`,
+        // La urgencia que puso el preceptor arranca siendo la prioridad del legajo. El
+        // gabinete la cambia después si no coincide con lo que ve.
+        prioridad: deLista(pedido.urgencia, acceso.PRIORIDADES, 'media'),
+        openedBy:  res.locals.user._id,
+        openedAt:  new Date(),
+      });
+    }
+
+    // ⚠️ El hito va firmado por EL PRECEPTOR (`pedido.solicitadaPor`), no por el SOE que lo
+    // tomó. No es un detalle estético: la ruta de edición de entradas solo deja tocar la
+    // PROPIA entrada, y el preceptor no entra a este panel — así que la entrada queda
+    // inmutable para todo el mundo. Es lo que el preceptor dijo, no lo que el gabinete
+    // interpretó, y tiene que poder leerse dentro de un año tal como se escribió.
+    legajo.entries.push({
+      fecha: pedido.createdAt || new Date(),
+      tipo:  'derivacion',
+      animo: null,
+      texto: txt(pedido.motivo, 4000),
+      autor: pedido.solicitadaPor,
+    });
+    legajo.lastEntryAt = legajo.entries.reduce(
+      (max, e) => (!max || new Date(e.fecha) > new Date(max) ? e.fecha : max), null);
+    // Tomar un pedido es, por definición, empezar a seguir al chico.
+    if (legajo.estado === 'abierto') legajo.estado = 'seguimiento';
+    await legajo.save();
+
+    pedido.estado      = 'tomada';
+    pedido.resueltaPor = res.locals.user._id;
+    pedido.resueltaEl  = new Date();
+    pedido.soeCase     = legajo._id;
+    pedido.respuesta   = txt(req.body.respuesta, 500);
+    await pedido.save();
+
+    logAudit(req, 'soe.request_take',
+      [{ type: 'user', id: alumno._id, name: alumno.name }],
+      { urgencia: pedido.urgencia });
+
+    res.redirect(`/soe/legajo/${alumno._id}#linea`);
+  } catch (err) {
+    // Choque del índice único de SoeCase: alguien abrió el legajo en paralelo. No es un
+    // error para el usuario — se vuelve a la bandeja y el pedido sigue pendiente.
+    if (err && err.code === 11000) return res.redirect('/soe/pedidos');
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+// Descartar el pedido: no se abre ningún legajo y no se toca el que hubiera.
+router.post('/pedidos/:id/descartar', async (req, res) => {
+  if (idMalo(req, res, 'Pedido no encontrado')) return;
+  try {
+    const par = await pedidoEnScope(req, req.params.id);
+    if (!par) return res.status(403).send('Acceso denegado');
+    const { alumno, pedido } = par;
+
+    if (pedido.estado !== 'pendiente') return res.redirect('/soe/pedidos');
+
+    // La respuesta es OBLIGATORIA acá y opcional al tomar: un pedido que se descarta sin
+    // decir por qué le enseña al preceptor a no volver a derivar. Es el único texto del
+    // gabinete que él llega a leer.
+    const respuesta = txt(req.body.respuesta, 500);
+    if (!respuesta) return res.redirect('/soe/pedidos');
+
+    pedido.estado      = 'descartada';
+    pedido.resueltaPor = res.locals.user._id;
+    pedido.resueltaEl  = new Date();
+    pedido.respuesta   = respuesta;
+    await pedido.save();
+
+    logAudit(req, 'soe.request_drop',
+      [{ type: 'user', id: alumno._id, name: alumno.name }], {});
+
+    res.redirect('/soe/pedidos');
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
 
 // Abrir el legajo. IDEMPOTENTE: si ya existe, redirige al que hay en vez de crear otro.
 // El índice único de SoeCase es la última red (dos clicks simultáneos llegarían los dos
@@ -437,7 +619,7 @@ router.post('/legajo/:id/entrada', async (req, res) => {
     const { alumno, legajo } = par;
 
     const texto = txt(req.body.texto, 4000);
-    if (!texto) return res.redirect(`/soe/legajo/${alumno._id}#seguimiento`);
+    if (!texto) return res.redirect(`/soe/legajo/${alumno._id}#linea`);
 
     // La fecha del HECHO. Si no la cargan, hoy — pero el campo está en el formulario porque
     // las entrevistas se anotan después, no en el momento.
@@ -445,7 +627,12 @@ router.post('/legajo/:id/entrada', async (req, res) => {
 
     legajo.entries.push({
       fecha: cuando,
-      tipo:  deLista(req.body.tipo, acceso.TIPOS_ENTRADA, 'nota'),
+      // ⚠️ Contra TIPOS_ENTRADA_MANUALES, NO contra TIPOS_ENTRADA. El enum del modelo acepta
+      // además 'derivacion', que es el hito que empuja POST /soe/pedidos/:id/tomar con el
+      // texto del preceptor. Validar acá contra el enum completo dejaría que el gabinete
+      // fabrique a mano una derivación de Preceptoría que nunca existió, y la línea de tiempo
+      // la mostraría igual de firme que la real. Un tipo fuera de la lista cae en 'nota'.
+      tipo:  deLista(req.body.tipo, acceso.TIPOS_ENTRADA_MANUALES, 'nota'),
       animo: deLista(req.body.animo, acceso.ANIMOS, null),
       texto,
       autor: res.locals.user._id,
@@ -470,7 +657,7 @@ router.post('/legajo/:id/entrada', async (req, res) => {
       [{ type: 'user', id: alumno._id, name: alumno.name }],
       { tipo: req.body.tipo || 'nota' });
 
-    res.redirect(`/soe/legajo/${alumno._id}#seguimiento`);
+    res.redirect(`/soe/legajo/${alumno._id}#linea`);
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).send('Error del servidor');
@@ -500,7 +687,7 @@ router.post('/legajo/:id/entrada/:entryId/editar', async (req, res) => {
       entrada.editedAt = new Date();
       await legajo.save();
     }
-    res.redirect(`/soe/legajo/${alumno._id}#seguimiento`);
+    res.redirect(`/soe/legajo/${alumno._id}#linea`);
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).send('Error del servidor');

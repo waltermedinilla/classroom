@@ -194,7 +194,7 @@
         <a href="#situacion"><span class="material-symbols-outlined">assignment_ind</span> Situación</a>
       <% } %>
       <% if (legajo && nivel === 'completo') { %>
-        <a href="#seguimiento"><span class="material-symbols-outlined">timeline</span> Seguimiento</a>
+        <a href="#linea"><span class="material-symbols-outlined">timeline</span> Línea de tiempo</a>
         <a href="#derivaciones"><span class="material-symbols-outlined">share</span> Derivaciones</a>
       <% } %>
       <a href="#como-viene"><span class="material-symbols-outlined">insights</span> Cómo viene</a>
@@ -312,8 +312,8 @@
 
     <%# ── Seguimiento ────────────────────────────────────────────────────── %>
     <% if (legajo && nivel === 'completo') { %>
-      <div class="soe-panel" id="seguimiento">
-        <h3><span class="material-symbols-outlined">timeline</span> Seguimiento</h3>
+      <div class="soe-panel" id="linea">
+        <h3><span class="material-symbols-outlined">timeline</span> Línea de tiempo</h3>
 
         <% if (soeEscribe) { %>
           <form method="POST" action="/soe/legajo/<%= legajo._id %>/entrada" class="soe-form" style="margin-bottom:20px">
@@ -326,7 +326,11 @@
               <div>
                 <label for="e-tipo">Tipo</label>
                 <select id="e-tipo" name="tipo">
-                  <% acceso.TIPOS_ENTRADA.forEach(t => { %>
+                  <%# TIPOS_ENTRADA_MANUALES y NO TIPOS_ENTRADA: el enum del modelo acepta
+                      ademas `derivacion`, que es el hito que escribe la bandeja de pedidos
+                      firmado por el preceptor. Ofrecerlo aca dejaria fabricar a mano una
+                      derivacion de Preceptoria que nunca existio. Ver la trampa del D3. %>
+                  <% acceso.TIPOS_ENTRADA_MANUALES.forEach(t => { %>
                     <option value="<%= t %>" <%= t === 'entrevista' ? 'selected' : '' %>><%= acceso.TIPO_ENTRADA_LABELS[t] %></option>
                   <% }) %>
                 </select>
@@ -355,50 +359,95 @@
             </div>
             <div>
               <button type="submit" class="btn btn-primary">
-                <span class="material-symbols-outlined">add</span> Agregar al seguimiento
+                <span class="material-symbols-outlined">add</span> Agregar a la línea de tiempo
               </button>
             </div>
           </form>
         <% } %>
 
-        <% const entradas = (legajo.entries || []).slice().sort((a, b) => new Date(b.fecha) - new Date(a.fecha)); %>
-        <% if (!entradas.length) { %>
+        <%# ── El hilo ──────────────────────────────────────────────────────────
+            `linea` viene armada por services/soeLinea.js sobre el legajo YA SANITIZADO.
+            La vista no decide qué entra: solo dibuja. Ver la decisión D6 de
+            specs/soe-derivacion-y-linea-de-tiempo.spec.md. %>
+        <% if (!linea.length) { %>
           <div class="vacio">
             <span class="material-symbols-outlined">timeline</span>
-            Todavía no hay nada registrado en el seguimiento.
+            Todavía no hay nada registrado en el legajo.
           </div>
         <% } else { %>
-          <ul class="linea">
-            <% entradas.forEach(e => { const autor = autores.get(String(e.autor)); %>
-              <li>
-                <%# El círculo toma el color de CÓMO SE LO VIO, no del tipo de entrada: leída
-                    de arriba abajo, la columna de círculos es el pulso del chico.
+          <div class="linea-barra">
+            <span class="cuenta">
+              <%= linea.length %> <%= linea.length === 1 ? 'actuación registrada' : 'actuaciones registradas' %>
+            </span>
+            <%# El botón invierte el hilo del lado del navegador. El <noscript> de más abajo
+                deja el mismo camino por query param para quien tenga JS apagado. %>
+            <button type="button" class="btn-orden" id="btn-orden" aria-pressed="false"
+                    aria-controls="hilo" title="Invertir el orden de la línea">
+              <span class="material-symbols-outlined">swap_vert</span>
+              <span id="btn-orden-txt">Lo último arriba</span>
+            </button>
+          </div>
+
+          <ol class="linea" id="hilo">
+            <% linea.forEach(h => { const autor = autores.get(String(h.autor)); %>
+              <li class="hito-<%= h.tipo %>">
+                <div class="hito-fecha">
+                  <%= fmt.diaMes(h.fecha) %>
+                  <span class="anio"><%= fmt.anio(h.fecha) %></span>
+                </div>
+
+                <%# El círculo toma el color de CÓMO SE LO VIO cuando el hito lo tiene; si no,
+                    el del tipo de hito. Leída de arriba abajo, la columna de círculos es el
+                    pulso del chico.
                     El color va por CLASE y no por `style=` con ANIMO_COLORS: un color inline
                     le gana a la variante de modo oscuro, y estos verdes/rojos sobre fondo
                     oscuro quedan ilegibles. La clase tiene su par en soe-styles.ejs. %>
-                <div class="icono<%= e.animo ? ' animo-' + e.animo : '' %>">
-                  <span class="material-symbols-outlined"><%= acceso.TIPO_ENTRADA_ICONS[e.tipo] || 'sticky_note_2' %></span>
+                <div class="icono<%= h.animo ? ' animo-' + h.animo : '' %>">
+                  <span class="material-symbols-outlined"><%= h.icono %></span>
                 </div>
+
                 <div class="cuerpo">
-                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:5px">
-                    <strong style="font-size:13.5px"><%= acceso.TIPO_ENTRADA_LABELS[e.tipo] || 'Nota' %></strong>
-                    <% if (e.animo) { %>
-                      <span class="chip chip-neutro">
-                        <span class="punto" style="background:<%= acceso.ANIMO_COLORS[e.animo] %>"></span>
-                        <%= acceso.ANIMO_LABELS[e.animo] %>
-                      </span>
-                    <% } %>
-                  </div>
-                  <div class="texto"><%= e.texto %></div>
-                  <div class="meta">
-                    <%= fmt.fechaCorta(e.fecha) %>
-                    <% if (autor) { %> · <%= autor.name %><% } %>
-                    <% if (e.editedAt) { %> · editado<% } %>
+                  <div class="tarjeta">
+                    <div class="hito-fecha-inline"><%= fmt.diaMesAnio(h.fecha) %></div>
+                    <div class="hito-cab">
+                      <span class="hito-titulo"><%= h.titulo %></span>
+                      <% if (h.animo) { %>
+                        <span class="chip chip-neutro">
+                          <span class="punto" style="background:<%= acceso.ANIMO_COLORS[h.animo] %>"></span>
+                          <%= acceso.ANIMO_LABELS[h.animo] %>
+                        </span>
+                      <% } %>
+                      <% if (h.meta && h.tipo === 'derivacion') { %>
+                        <span class="chip chip-neutro"><%= h.meta %></span>
+                      <% } %>
+                    </div>
+
+                    <% if (h.texto) { %><div class="texto"><%= h.texto %></div><% } %>
+
+                    <div class="meta">
+                      <%= fmt.fechaCorta(h.fecha) %>
+                      <% if (autor) { %> · <%= autor.name %><% } %>
+                      <% if (h.meta && h.tipo === 'entrada') { %> · <%= h.meta %><% } %>
+                      <%# La derivación y su devolución linkean al panel de gestión de abajo,
+                          que es donde se les cambia el estado y se les carga la respuesta. %>
+                      <% if (h.refId) { %>
+                        · <a href="#deriv-<%= h.refId %>" style="color:var(--primary);text-decoration:none">ver la derivación</a>
+                      <% } %>
+                    </div>
                   </div>
                 </div>
               </li>
             <% }) %>
-          </ul>
+          </ol>
+
+          <noscript>
+            <div style="margin-top:10px">
+              <a href="/soe/legajo/<%= alumno._id %>?orden=<%= orden === 'cronologico' ? 'reciente' : 'cronologico' %>#linea"
+                 style="font-size:12.5px;color:var(--primary)">
+                Ver <%= orden === 'cronologico' ? 'lo último arriba' : 'del comienzo al presente' %>
+              </a>
+            </div>
+          </noscript>
         <% } %>
       </div>
     <% } %>
@@ -417,7 +466,7 @@
         <% } %>
 
         <% derivaciones.forEach(r => { const atencion = acceso.derivacionNecesitaAtencion(r); %>
-          <div class="deriv <%= atencion ? 'atencion' : '' %>">
+          <div class="deriv <%= atencion ? 'atencion' : '' %>" id="deriv-<%= r._id %>">
             <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
               <div style="min-width:200px;flex:1">
                 <h4><%= r.destino %></h4>
@@ -706,5 +755,54 @@
   </main>
 
   <%- include('../partials/footer') %>
+
+  <script>
+    // El orden de la línea de tiempo.
+    //
+    // Por defecto lo último arriba: para el trabajo diario importa la última actuación.
+    // Invertido se lee como historia, del comienzo al presente. La inversión es CSS pura
+    // (`flex-direction: column-reverse`) — no se reordena el DOM ni se vuelve al servidor,
+    // así que no se pierde el scroll ni un formulario a medio llenar.
+    //
+    // El hilo que une los hitos está dibujado sobre el CONTENEDOR y no sobre cada ítem,
+    // justamente para que sobreviva a esto (ver views/partials/soe-styles.ejs).
+    (function () {
+      var hilo  = document.getElementById('hilo');
+      var boton = document.getElementById('btn-orden');
+      var texto = document.getElementById('btn-orden-txt');
+      if (!hilo || !boton) return;
+
+      var CLAVE = 'soe:orden-linea';
+      // Cómo lo mandó el servidor. Si vino por query param ya está en el orden pedido y la
+      // preferencia guardada no tiene que volver a darlo vuelta.
+      var ordenServidor = '<%= orden %>';
+
+      // localStorage puede tirar excepción, no solo devolver null: en una ventana privada o
+      // con el almacenamiento del sitio bloqueado, el acceso mismo falla. Envuelto, porque
+      // la lista tiene que dibujarse igual — en el orden por defecto.
+      function leer() {
+        try { return localStorage.getItem(CLAVE); } catch (e) { return null; }
+      }
+      function guardar(v) {
+        try { localStorage.setItem(CLAVE, v); } catch (e) { /* sin persistencia, y ya */ }
+      }
+
+      function pintar(cronologico) {
+        hilo.classList.toggle('invertida', cronologico !== (ordenServidor === 'cronologico'));
+        boton.setAttribute('aria-pressed', cronologico ? 'true' : 'false');
+        texto.textContent = cronologico ? 'Del comienzo al presente' : 'Lo último arriba';
+      }
+
+      var guardado = leer();
+      var cronologico = guardado ? guardado === 'cronologico' : ordenServidor === 'cronologico';
+      pintar(cronologico);
+
+      boton.addEventListener('click', function () {
+        cronologico = !cronologico;
+        guardar(cronologico ? 'cronologico' : 'reciente');
+        pintar(cronologico);
+      });
+    })();
+  </script>
 </body>
 </html>

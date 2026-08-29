@@ -23,23 +23,34 @@ const ORDEN = { [NINGUNO]: 0, [RESUMEN]: 1, [COMPLETO]: 2 };
 
 // TECHO por rol: hasta dónde puede llegar, aunque la base diga otra cosa.
 //
-// Preceptor y docente no pueden pasar de 'resumen' ni escribiéndolo a mano en la base. El
-// enum de models/School.js ya lo impide del lado del guardado, pero esta tabla es la que
-// vale: un documento viejo, una importación o un mongosh no pasan por la validación de
+// ⚠️ ESTA TABLA ES LA QUE VALE. El enum de models/School.js filtra del lado del guardado,
+// pero un documento viejo, una importación o un mongosh no pasan por la validación de
 // Mongoose, y la guarda no puede depender de que arriba haya andado todo bien.
+//
+// **Recorte del 2026-08-27** (decisión D5 de specs/soe-derivacion-y-linea-de-tiempo.spec.md):
+// hasta esa fecha la tabla tenía además `admin: COMPLETO` y `preceptor`/`teacher: RESUMEN`.
+// Pedido explícito del usuario: el legajo lo ven SOLO el gabinete y el equipo directivo.
+//
+// Sacarlos de acá es lo que cierra la puerta de verdad: un rol sin entrada en esta tabla
+// recibe NINGUNO más abajo, aunque la escuela conserve el valor viejo escrito en Mongo (que
+// es exactamente lo que pasa al desplegar: el dato no se migra, deja de leerse).
 const TECHO_POR_ROL = {
   directivo: COMPLETO,
-  admin:     COMPLETO,
-  preceptor: RESUMEN,
-  teacher:   RESUMEN,
 };
 
 // Los roles que aparecen en la pantalla de configuración de /superadmin/roles, en ese orden.
-const ROLES_CONFIGURABLES = ['directivo', 'admin', 'preceptor', 'teacher'];
+// La vista itera esta lista: un rol que sale de acá deja de tener fila, sin tocar el .ejs.
+const ROLES_CONFIGURABLES = ['directivo'];
 
 // Qué niveles se le ofrecen a cada rol en esa pantalla (nunca por encima de su techo).
-const nivelesPara = (role) =>
-  NIVELES.filter(n => ORDEN[n] <= ORDEN[TECHO_POR_ROL[role] || NINGUNO]);
+//
+// Un rol SIN techo no devuelve ['none'] sino [] — lista vacía. La diferencia importa: con
+// ['none' ] una pantalla que dibujara el <select> sin chequear antes ROLES_CONFIGURABLES le
+// mostraría al admin una fila con una sola opción, como si fuera configurable y alguien se
+// la hubiera puesto en "Sin acceso". Vacío dice la verdad: ese rol no se configura acá.
+const nivelesPara = (role) => (TECHO_POR_ROL[role]
+  ? NIVELES.filter(n => ORDEN[n] <= ORDEN[TECHO_POR_ROL[role]])
+  : []);
 
 const NIVEL_LABELS = {
   [NINGUNO]:  'Sin acceso',
@@ -230,7 +241,24 @@ const PRIORIDADES = ['baja', 'media', 'alta'];
 const PRIORIDAD_LABELS = { baja: 'Baja', media: 'Media', alta: 'Alta' };
 const PRIORIDAD_COLORS = { baja: '#137333', media: '#ea8600', alta: '#ea4335' };
 
-const TIPOS_ENTRADA = ['entrevista', 'observacion', 'familia', 'acuerdo_docente', 'seguimiento', 'nota'];
+// ⚠️ DOS LISTAS, y la diferencia importa (decisión D3 de
+// specs/soe-derivacion-y-linea-de-tiempo.spec.md):
+//
+//   TIPOS_ENTRADA          → el enum del schema: todo lo que el modelo acepta guardar.
+//   TIPOS_ENTRADA_MANUALES → lo que ofrece el <select> del formulario, y contra lo que
+//                            valida deLista() en POST /soe/legajo/:id/entrada.
+//
+// `derivacion` está en la primera y NO en la segunda. Lo escribe únicamente
+// POST /soe/pedidos/:id/tomar, con el motivo que redactó el preceptor y firmado por él. Si
+// estuviera en la lista manual, el gabinete podría fabricar a mano una derivación de
+// preceptoría que nunca existió, y la línea de tiempo la mostraría igual de firme que la
+// real. Es el mismo razonamiento por el que deLista() no confía en el <select> del cliente.
+const TIPOS_ENTRADA = [
+  'entrevista', 'observacion', 'familia', 'acuerdo_docente', 'seguimiento', 'nota',
+  'derivacion',
+];
+const TIPOS_ENTRADA_MANUALES = TIPOS_ENTRADA.filter(t => t !== 'derivacion');
+
 const TIPO_ENTRADA_LABELS = {
   entrevista:      'Entrevista',
   observacion:     'Observación en el aula',
@@ -238,6 +266,7 @@ const TIPO_ENTRADA_LABELS = {
   acuerdo_docente: 'Acuerdo con docentes',
   seguimiento:     'Seguimiento',
   nota:            'Nota',
+  derivacion:      'Derivación de Preceptoría',
 };
 const TIPO_ENTRADA_ICONS = {
   entrevista:      'record_voice_over',
@@ -246,6 +275,7 @@ const TIPO_ENTRADA_ICONS = {
   acuerdo_docente: 'handshake',
   seguimiento:     'update',
   nota:            'sticky_note_2',
+  derivacion:      'move_to_inbox',
 };
 
 // "Cómo se lo vio" — el pulso a lo largo del tiempo, que es lo que una foto no muestra.
@@ -309,6 +339,34 @@ function legajoNecesitaRepaso(legajo, ahora = new Date()) {
   if (!legajo || legajo.estado === 'cerrado') return false;
   return !!legajo.proximoRepaso && new Date(legajo.proximoRepaso) <= ahora;
 }
+
+// ── El pedido de derivación de Preceptoría ───────────────────────────────────
+// Catálogos de models/SoeRequest.js. Viven acá por el mismo motivo que los de arriba: si el
+// <select> del preceptor y el enum del schema se escriben en dos archivos, tarde o temprano
+// la pantalla ofrece un valor que la base rechaza.
+
+const URGENCIAS = ['baja', 'media', 'alta'];
+const URGENCIA_LABELS = { baja: 'Puede esperar', media: 'Normal', alta: 'Urgente' };
+const URGENCIA_COLORS = { baja: '#137333', media: '#ea8600', alta: '#ea4335' };
+// Peso para ordenar la bandeja: lo urgente primero.
+const URGENCIA_PESO = { alta: 0, media: 1, baja: 2 };
+
+const ESTADOS_PEDIDO = ['pendiente', 'tomada', 'descartada'];
+const ESTADO_PEDIDO_LABELS = {
+  pendiente:  'Esperando al gabinete',
+  tomada:     'Tomada por el gabinete',
+  descartada: 'No se abrió seguimiento',
+};
+
+// El orden de la bandeja: primero lo urgente y, dentro de cada urgencia, LO MÁS VIEJO
+// arriba. Al revés que el resto del proyecto, y a propósito: en una bandeja lo que hay que
+// evitar es que un pedido se quede abajo para siempre.
+function ordenarPedidos(pedidos) {
+  return (pedidos || []).slice().sort((a, b) =>
+    (URGENCIA_PESO[a.urgencia] ?? 1) - (URGENCIA_PESO[b.urgencia] ?? 1)
+    || new Date(a.createdAt) - new Date(b.createdAt));
+}
+
 module.exports = {
   // niveles
   NINGUNO, RESUMEN, COMPLETO, NIVELES, NIVEL_LABELS,
@@ -321,8 +379,11 @@ module.exports = {
   // catálogos
   ESTADOS, ESTADO_LABELS,
   PRIORIDADES, PRIORIDAD_LABELS, PRIORIDAD_COLORS,
-  TIPOS_ENTRADA, TIPO_ENTRADA_LABELS, TIPO_ENTRADA_ICONS,
+  TIPOS_ENTRADA, TIPOS_ENTRADA_MANUALES, TIPO_ENTRADA_LABELS, TIPO_ENTRADA_ICONS,
   ANIMOS, ANIMO_LABELS, ANIMO_COLORS,
+  // pedidos de derivación (Preceptoría → SOE)
+  URGENCIAS, URGENCIA_LABELS, URGENCIA_COLORS, URGENCIA_PESO,
+  ESTADOS_PEDIDO, ESTADO_PEDIDO_LABELS, ordenarPedidos,
   TIPOS_DERIVACION, TIPO_DERIVACION_LABELS,
   ESTADOS_DERIVACION, ESTADO_DERIVACION_LABELS, ESTADOS_DERIVACION_ALERTA,
   DERIVACION_TERMINADA, derivacionNecesitaAtencion, legajoNecesitaRepaso,

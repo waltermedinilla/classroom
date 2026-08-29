@@ -60,6 +60,15 @@
           <div class="n"><%= totales.repasos %></div>
           <div class="t">Para volver a ver</div>
         </div>
+        <%# Los pedidos de Preceptoría sin resolver. Es el aviso de la feature: el rol `soe`
+            aterriza en esta pantalla, así que es acá donde tiene que enterarse de que alguien
+            le derivó un chico. Solo el número — el motivo es una observación sobre un menor y
+            se lee en /soe/pedidos, no en una tarjeta de resumen. %>
+        <a href="/soe/pedidos" class="soe-card <%= totales.pedidos ? 'alerta' : '' %>" style="text-decoration:none;color:inherit">
+          <span class="material-symbols-outlined ico" aria-hidden="true">move_to_inbox</span>
+          <div class="n"><%= totales.pedidos %></div>
+          <div class="t">Pedidos de Preceptoría</div>
+        </a>
       <% } %>
     </div>
 
