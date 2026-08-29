@@ -45,6 +45,20 @@ const RoomMessage   = require('../models/RoomMessage');
 const RoomPresence  = require('../models/RoomPresence');
 const AttendanceSession = require('../models/AttendanceSession');
 const AttendanceMark    = require('../models/AttendanceMark');
+const SoeCase             = require('../models/SoeCase');
+const SoeRequest          = require('../models/SoeRequest');
+const Section             = require('../models/Section');
+const Horario             = require('../models/Horario');
+const Recurso             = require('../models/Recurso');
+const Reserva             = require('../models/Reserva');
+const RecursoAutorizacion = require('../models/RecursoAutorizacion');
+const SlotOcupacion       = require('../models/SlotOcupacion');
+const Message             = require('../models/Message');
+const MessageRecipient    = require('../models/MessageRecipient');
+const ActivityView        = require('../models/ActivityView');
+const ActivityTemplate    = require('../models/ActivityTemplate');
+const TemplateAssignment  = require('../models/TemplateAssignment');
+const AuditLog            = require('../models/AuditLog');
 const { logDeRuta } = require('../middleware/route-log');
 
 const router = express.Router();
@@ -115,7 +129,63 @@ const COLLECTIONS = [
   // justamente lo que se consulta meses después, y no se purga nunca.
   { name: 'attendancesessions', model: AttendanceSession, optional: true },
   { name: 'attendancemarks',    model: AttendanceMark,    optional: true },
+
+  // ── Sumadas el 2026-08-29 ────────────────────────────────────────────────────
+  // Faltaban las 14. Se detectó comparando esta lista contra los 29 modelos de
+  // models/: el backup respaldaba 14 colecciones de 29, y entre las ausentes estaban
+  // los LEGAJOS DEL SOE. No se borraban en un restore —el bucle de más abajo recorre
+  // solo esta lista, así que lo que no está acá ni se toca—, pero tampoco viajaban en
+  // la copia: perdido el servidor, se perdían para siempre. El test
+  // tests/unit/backupCobertura.test.js ahora obliga a que todo modelo nuevo entre acá
+  // o quede excluido a propósito en EXCLUIDAS_DEL_BACKUP.
+  //
+  // Todas van `optional: true` porque los backups YA generados no las traen. Sin ese
+  // flag, el preview de cualquier backup viejo diría "faltan colecciones requeridas" y
+  // se negaría a restaurar. Con el flag, avisa cuáles se van a vaciar y sigue.
+
+  // Gabinete psicopedagógico. Lo más sensible e irreemplazable del sistema.
+  // Van juntas: un pedido de derivación sin su legajo no se puede leer.
+  { name: 'soecases',    model: SoeCase,    optional: true },
+  { name: 'soerequests', model: SoeRequest, optional: true },
+
+  // Alcance del Jefe de Sección y horario de la escuela.
+  { name: 'sections', model: Section, optional: true },
+  { name: 'horarios', model: Horario, optional: true },
+
+  // Módulo de recursos y reservas: las cuatro van SÍ O SÍ juntas. `slotocupacions` es el
+  // contador atómico que evita la doble reserva de un mismo turno: restaurar las reservas
+  // sin sus contadores deja el módulo creyendo que hay lugar donde no lo hay (o al revés,
+  // netbooks ocupadas que nadie tiene). Ver specs/recursos-reservas.spec.md.
+  { name: 'recursos',             model: Recurso,             optional: true },
+  { name: 'reservas',             model: Reserva,             optional: true },
+  { name: 'recursoautorizacions', model: RecursoAutorizacion, optional: true },
+  { name: 'slotocupacions',       model: SlotOcupacion,       optional: true },
+
+  // Mensajería interna. Juntas: un destinatario sin su mensaje no tiene qué mostrar.
+  { name: 'messages',          model: Message,          optional: true },
+  { name: 'messagerecipients', model: MessageRecipient, optional: true },
+
+  // Acuses de lectura de actividades y plantillas de tareas.
+  { name: 'activityviews',      model: ActivityView,      optional: true },
+  { name: 'activitytemplates',  model: ActivityTemplate,  optional: true },
+  { name: 'templateassignments', model: TemplateAssignment, optional: true },
+
+  // Auditoría. Es un registro, no datos de la escuela, pero es el único lugar donde queda
+  // asentado quién hizo qué — incluida la lectura de un legajo del SOE. Si se pierde, no
+  // se puede reconstruir de ninguna otra fuente.
+  { name: 'auditlogs', model: AuditLog, optional: true },
 ];
+
+// Colecciones que se dejan AFUERA del backup a propósito. Existe para que el test de
+// cobertura pueda distinguir "todavía no la agregaron" de "se decidió no guardarla":
+// sin esta lista, la única forma de pasar el test sería agregar todo, y el olvido
+// volvería a colarse disfrazado de decisión.
+const EXCLUIDAS_DEL_BACKUP = {
+  // Telemetría del monitor de rate limit: son muestras que el propio sistema vuelve a
+  // generar solo, se purgan por su cuenta y no describen a nadie de la escuela.
+  // Restaurarlas no aporta y solo engorda el paquete.
+  ratelimitsamples: 'telemetría del monitor; se regenera sola y se purga sola',
+};
 
 // Colecciones que el backup NO trae, separadas por si se pueden tolerar o no. La usan el
 // preview (para avisar) y el restore (para loguear), así el aviso y lo que después pasa de
@@ -1166,3 +1236,6 @@ module.exports = router;
 module.exports.createBackupTarball = createBackupTarball;
 module.exports.buildBackupStaging  = buildBackupStaging;
 module.exports.COLLECTIONS         = COLLECTIONS;
+// Para tests/unit/backupCobertura.test.js: sin esto, el test no puede distinguir una
+// colección olvidada de una excluida a propósito.
+module.exports.EXCLUIDAS_DEL_BACKUP = EXCLUIDAS_DEL_BACKUP;

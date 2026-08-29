@@ -23,6 +23,11 @@ const fs   = require('fs');
 const os   = require('os');
 const path = require('path');
 
+// La lista REAL de colecciones que respalda el backup. Se importa —en vez de repetirla acá—
+// para que el spec del preview derive de ella qué se va a vaciar: ver el comentario largo en
+// 'backup-preview-accepts-backup-sin-colecciones-nuevas'.
+const { COLLECTIONS } = require('../../routes/backup');
+
 // Las 9 colecciones que ya existían cuando se congeló el formato de backup 1.0. Un backup de
 // esa época las trae todas y no trae ninguna de las de sala en vivo (que nacieron después).
 const COLECCIONES_V1 = {
@@ -4779,12 +4784,21 @@ const specs = [
 
       assert(res.json.previewToken, 'un backup viejo válido debería habilitar el restore, no rechazarse');
 
-      // Todas las colecciones que nacieron DESPUÉS de que se congelara el formato 1.0: las
-      // tres de la sala en vivo y las dos de la asistencia de preceptoría (2026-08-10). Cada
-      // vez que se sume una a COLLECTIONS hay que sumarla acá — es lo que mantiene honesto al
-      // aviso de "esto se va a vaciar".
-      const nuevas = ['roomsessions', 'roommessages', 'roompresences',
-                      'attendancesessions', 'attendancemarks'];
+      // Todas las colecciones que nacieron DESPUÉS de que se congelara el formato 1.0.
+      //
+      // La lista se DERIVA de COLLECTIONS en vez de escribirse a mano. Antes estaba fija en
+      // las cinco de entonces (sala en vivo + asistencia de preceptoría) con un comentario
+      // que pedía acordarse de actualizarla, y el 2026-08-29 —cuando se sumaron las 14 que
+      // faltaban, entre ellas los legajos del SOE— este spec se cayó por eso y no por un
+      // problema real. Un test que hay que acordarse de mantener al día es un test que en
+      // algún momento va a mentir: o se rompe cuando todo está bien, o pasa cuando no.
+      //
+      // Derivarla no lo vuelve tautológico: lo que se verifica no es la lista sino que el
+      // preview la CALCULE y la REPORTE. Si alguien suma una colección sin `optional: true`,
+      // el preview rechaza el backup viejo y el assert del previewToken de arriba lo caza.
+      const nuevas = COLLECTIONS
+        .filter(c => c.optional && !(c.name in COLECCIONES_V1))
+        .map(c => c.name);
       nuevas.forEach(n => assert(res.json.willEmpty?.includes(n), `willEmpty debería avisar de ${n}`));
       assert(res.json.willEmpty.length === nuevas.length,
         `willEmpty debería tener exactamente esas ${nuevas.length}, trajo: ${res.json.willEmpty.join(', ')}`);
