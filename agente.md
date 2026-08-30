@@ -4605,6 +4605,80 @@ propósito) y los dos planos agregados al spec de la sala.
 segunda extensión entró por los nueve lugares sin tener que salir a buscarlos de nuevo, y los
 siete tests que fallaron dijeron exactamente cuáles faltaban.
 
+## El backup no guardaba el material del gabinete (2026-08-30)
+
+En una línea: `routes/backup.js` copiaba `public/archivos` y `archivos/entregas`, y nada más.
+La feature de material del SOE estrenó `archivos/soe/` —certificados, informes del neurólogo,
+recetas— y el backup siguió copiando las dos carpetas de siempre. Se generaba sin error,
+pesaba lo que tenía que pesar y se descargaba bien; simplemente no traía adentro lo más
+irreemplazable que guarda la plataforma: un papel que la familia entregó **una sola vez**.
+
+Es el mismo modo de falla silencioso que el 2026-08-29 se había cazado del lado de las
+colecciones (14 de 29 respaldadas), y por eso lleva el mismo remedio.
+
+### La lista única, y el test que obliga a mantenerla
+
+Las carpetas dejaron de estar escritas a mano en cinco lugares del archivo y pasaron a una sola
+lista, `CARPETAS`, con tres campos que deciden todo lo demás:
+
+| campo | qué decide |
+|---|---|
+| `id` | el nombre dentro de `files/` en el `.tar.gz` — **no se cambia nunca**: es lo que busca el restore |
+| `optional` | nació después del formato 1.0, así que un backup viejo no la trae y eso no lo invalida |
+| `comprimible` | si el modal de "backup comprimido" puede reencodear lo que hay adentro |
+
+De ahí salen solos el armado del staging, el manifest, `GET /stats`, el desglose de
+compresión, el estimado del envío por FTP y el reemplazo del restore.
+
+Lo que impide que vuelva a pasar es `tests/unit/backupCarpetas.test.js`, hermano del de
+colecciones: **toda carpeta que la app administre tiene que estar en `CARPETAS` o en
+`CARPETAS_EXCLUIDAS` con el motivo escrito**. El inventario lo toma de `services/diskStats.js`
+(`RUTAS`), que es la misma lista que alimenta el panel de disco del superadmin — y a la que
+también le faltaba el SOE, así que el panel venía diciendo "cuánto ocupa la app" sin contar el
+gabinete. Verificado que el test **falla** si se saca la carpeta de la lista.
+
+### Las tres decisiones que no son obvias
+
+**1. El material del SOE no se comprime.** Es la única carpeta con `comprimible: false`. Acá la
+imagen no es una foto: es un **documento**, y recomprimir un certificado escaneado cambia el
+papel que la familia entregó. Es la misma decisión que ya regía en la subida (el único camino
+de imagen del proyecto que no pasa por `sharp`). Lo que la sostiene del lado del backup es que
+la carpeta entra al staging como **enlace**, y `comprimirArbol()` recorre con
+`readdir` + `isDirectory()`, que no sigue enlaces: no la ve ni queriendo.
+
+**2. Un backup viejo NO borra lo que no trae.** Es la única asimetría a propósito con las
+colecciones ausentes, que sí se vacían. Una carpeta `optional` que el paquete no tenga se deja
+**intacta**, porque borrarla no completa ningún viaje al pasado: solo destruye papeles que
+ninguna otra copia tiene. Y el caso peor es el backup generado en la ventana entre la feature y
+este cambio, que trae los legajos **con** sus adjuntos declarados y **sin** los archivos —
+vaciar dejaría cada ficha apuntando a un papel borrado. Lo que queda al no tocar nada son
+archivos huérfanos: ocupan disco, no se ven por ningún lado (la descarga los busca por el id
+que está en el legajo) y se pueden sacar después. La regla vive en `planDeCarpetas()`, pura y
+exportada, para poder probarla sin correr un restore de verdad.
+
+**3. `archivos/salas` queda afuera, y ahora está escrito.** Los adjuntos del chat de las salas
+en vivo son el contenido más descartable que guarda la plataforma y ya se purgan solos a los 3
+meses (`cleanup-rooms.js`); meterlos en cada backup —y en cada envío por FTP a la PC del
+dueño— cuesta más de lo que rescata. Contrapartida asumida y anotada en `CARPETAS_EXCLUIDAS`:
+una transcripción de sala restaurada muestra los mensajes pero no las imágenes de esa clase.
+
+### En la pantalla
+
+`views/superadmin/backup.ejs` sumaba a mano las dos carpetas conocidas en dos lugares distintos
+(el "qué se va a incluir" y el resumen del restore). Ahora recorre lo que declare el servidor,
+que era justamente lo que hacía falta para que una carpeta nueva no quedara invisible. Y el
+preview avisa, **antes** de restaurar, cuando el backup es anterior al respaldo del material del
+gabinete: es la diferencia entre "volví a esa fecha" y "volví a esa fecha salvo por los
+certificados, que siguen ahí".
+
+### Tests
+
+`tests/unit/backupCarpetas.test.js` (8 casos: cobertura en las dos direcciones, la regla del
+restore y la estabilidad de los ids) y 3 casos nuevos en `tests/unit/backupTarball.test.js`,
+entre ellos **el que prueba que un backup comprimido deja el estudio del legajo byte por byte
+igual** — verificado que falla si la carpeta se copia en vez de enlazarse. Las tres suites en
+verde: **735 unitarios · 386 smoke · matriz de roles sin hallazgos**.
+
 ## Plan de Futuras Actualizaciones (Roadmap)
 
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`).
@@ -4634,7 +4708,7 @@ siete tests que fallaron dijeron exactamente cuáles faltaban.
 - **`backups/` no tiene retención ni UI**: crece sin límite (2,8 GB hoy) y no se ve desde ningún panel. Cada `/restore` le suma un tarball del tamaño del backup completo.
 - **El envío del backup por FTP sigue siendo manual** (desde 2026-08-17 existe `/superadmin/backup/ftp/enviar`, pero hay que apretar el botón). Automatizarlo por cron es el Nivel 2: reusar `buildBackupStaging()` + `enviarBackup()` desde un timer, que tiene que correr en un solo worker de PM2 (mismo patrón que el promotor de mantenimiento, vía `NODE_APP_INSTANCE`).
 - **Restaurar desde un `.tar.gz` ya presente en el server** (`backups/`, subido por scp/rsync): hoy el único camino es el upload por HTTP en `POST /preview`, que para backups grandes suma el `requestTimeout` y una copia extra en `os.tmpdir()`.
-- **Los archivos de disco no entran al backup**: `routes/backup.js` respalda colecciones, no filesystem. Un restore deja entregas, adjuntos de actividad y adjuntos de sala apuntando a archivos que no están (la ruta contesta 404, no rompe).
+- ~~**Los archivos de disco no entran al backup**~~ ✅ **RESUELTO** — el renglón quedó viejo: los archivos entran desde el 2026-08-10 (`files/archivos` y `files/entregas`, enlazados y no copiados) y el material del gabinete desde el 2026-08-30. Lo único que sigue **afuera a propósito** son los adjuntos del chat de las salas en vivo (`archivos/salas`), anotado con su motivo en `CARPETAS_EXCLUIDAS`: un restore deja esas transcripciones con las imágenes en 404, sin romper nada.
 - **Quedan directorios `classroom-backup-staging-*` huérfanos en `os.tmpdir()`** (2 del 2026-08-14 en la máquina local). No son peligrosos —contienen enlaces, no copias— pero se acumulan. Falta averiguar por qué camino de `GET /download` se escapan del `limpiarStaging()`; el envío por FTP no dejó ninguno.
 - Extender el optimizador de imágenes a las **fotos en entregas de alumnos y a los adjuntos de actividades**: medido el 2026-08-08 son **511 MB en entregas + 400 MB en adjuntos**, con 581 MB de imágenes sin optimizar entre las dos. Preset más conservador (2000 px, calidad 85) porque puede ser la foto de una hoja escrita que el docente necesita leer. Necesita ventana de mantenimiento (achica el disco de verdad, a diferencia de la compresión del backup).
 - **No se puede BORRAR una nota ya puesta** desde la UI: se puede vaciar la devolución, pero no la nota. Con `points` opcional (2026-08-13) ahora sería fácil de agregar.

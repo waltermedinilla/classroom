@@ -72,6 +72,52 @@ const router = express.Router();
 // no se setean nunca.
 const ARCHIVOS_BASE = process.env.BACKUP_ARCHIVOS_BASE || path.join(__dirname, '../public/archivos');
 const ENTREGAS_BASE = process.env.BACKUP_ENTREGAS_BASE || path.join(__dirname, '../archivos/entregas');
+// Material del gabinete psicopedagógico (services/soeAdjuntos.js): certificados, informes,
+// recetas. Vive FUERA de /public a propósito —un informe de un menor no puede salir por una
+// URL adivinable— y justamente por eso no entraba por ninguna de las dos rutas de arriba:
+// hasta el 2026-08-30 el backup no lo respaldaba. Era lo más sensible e irreemplazable de la
+// plataforma y era lo único que no se guardaba.
+const SOE_BASE      = process.env.BACKUP_SOE_BASE      || path.join(__dirname, '../archivos/soe');
+
+// Los árboles de archivos que entran al backup, y el ÚNICO lugar donde está esa lista.
+//
+// Mismo modo de falla que COLLECTIONS, y por eso el mismo remedio: lo que no está acá no se
+// guarda, el backup se genera igual, pesa lo que tiene que pesar y no da ningún error — la
+// ausencia se descubre el día que hay que restaurar, que es el día en que ya no se puede
+// hacer nada. `tests/unit/backupCarpetas.test.js` obliga a que toda carpeta que la app
+// escriba esté en esta lista o excluida a propósito en CARPETAS_EXCLUIDAS.
+//
+//   id           nombre de la carpeta dentro de `files/` en el .tar.gz. NO se cambia nunca:
+//                es lo que el restore busca para saber dónde va cada árbol.
+//   optional     la carpeta nació DESPUÉS de que se congeló el formato 1.0. Un backup viejo
+//                no la trae y eso no lo invalida — ver cómo la trata POST /restore.
+//   comprimible  si el modal de "backup comprimido" puede reencodear lo que hay adentro.
+const CARPETAS = [
+  { id: 'archivos', dir: ARCHIVOS_BASE, label: 'Adjuntos y avatares', comprimible: true },
+  { id: 'entregas', dir: ENTREGAS_BASE, label: 'Entregas de alumnos', comprimible: true },
+
+  // El material del SOE NO se comprime, al revés que los otros dos. Acá la imagen es un
+  // DOCUMENTO —un certificado escaneado, una receta manuscrita— y reencodearlo cambia el
+  // papel que la familia entregó. Es la misma decisión que ya se tomó en la subida (es el
+  // único de los caminos de imagen que no pasa por sharp); el backup la sostiene.
+  { id: 'soe', dir: SOE_BASE, label: 'Material del gabinete (SOE)', comprimible: false, optional: true },
+];
+
+// Carpetas que la app escribe y que el backup NO guarda a propósito. Existe por el mismo
+// motivo que EXCLUIDAS_DEL_BACKUP: para que el test de cobertura pueda distinguir "se
+// olvidaron de agregarla" de "se decidió no guardarla", que es exactamente la diferencia
+// que nadie podía ver el día que faltaba el material del SOE.
+//
+// La clave es la ruta absoluta, igual que la calcula services/diskStats.js.
+const CARPETAS_EXCLUIDAS = {
+  // Imágenes del chat de las salas en vivo. Son el contenido más descartable que guarda la
+  // plataforma y ya se purgan solas a los 3 meses (cleanup-rooms.js), así que meterlas en
+  // cada backup —y en cada envío por FTP a la PC del dueño— cuesta bastante más de lo que
+  // rescata. Contrapartida asumida: una transcripción de sala restaurada de un backup viejo
+  // muestra los mensajes pero no las imágenes que se compartieron en esa clase.
+  [path.join(__dirname, '../archivos/salas')]:
+    'adjuntos del chat de las salas en vivo; se purgan solos a los 3 meses (cleanup-rooms.js)',
+};
 
 // Backups de seguridad pre-restore: persisten en disco (no en /tmp) para no perderse
 // ante un reinicio del servidor. Nunca se commitean (ver .gitignore).
@@ -186,6 +232,34 @@ const EXCLUIDAS_DEL_BACKUP = {
   // Restaurarlas no aporta y solo engorda el paquete.
   ratelimitsamples: 'telemetría del monitor; se regenera sola y se purga sola',
 };
+
+// Qué hacer con cada carpeta de archivos al restaurar, según lo que el backup traiga.
+// `traeLaCarpeta(id)` contesta si el paquete descomprimido tiene ese árbol adentro.
+//
+// La regla en una línea: una carpeta OPCIONAL que el backup no trae se DEJA COMO ESTÁ. Es la
+// única asimetría a propósito con las colecciones ausentes, que sí se vacían, y el motivo es
+// que acá borrar no completa ningún viaje al pasado:
+//
+//   · Un backup anterior a `files/soe` trae legajos de una fecha en la que todavía no había
+//     adjuntos. Vaciar la carpeta no restaura ese estado: solo destruye papeles —un
+//     certificado, un informe del neurólogo— que la familia trajo UNA vez y que ninguna otra
+//     copia tiene.
+//   · Peor todavía es el backup generado en la ventana entre la feature y el día que el
+//     backup empezó a guardarla: trae los legajos CON sus adjuntos declarados y sin los
+//     archivos. Vaciar dejaría cada ficha apuntando a un papel borrado.
+//
+// Lo que queda al no tocar nada son archivos huérfanos: ocupan disco y no se ven por ningún
+// lado (la ruta de descarga los busca por el id que está en el legajo). Es el menor de los
+// dos males, y además es el reversible.
+//
+// Función aparte y pura para poder probar la regla sin correr un restore de verdad
+// (tests/unit/backupCarpetas.test.js).
+function planDeCarpetas(traeLaCarpeta) {
+  return CARPETAS.map((carpeta) => ({
+    ...carpeta,
+    accion: (carpeta.optional && !traeLaCarpeta(carpeta.id)) ? 'intacta' : 'reemplazar',
+  }));
+}
 
 // Colecciones que el backup NO trae, separadas por si se pueden tolerar o no. La usan el
 // preview (para avisar) y el restore (para loguear), así el aviso y lo que después pasa de
@@ -328,31 +402,41 @@ async function buildBackupStaging(generatedByEmail, { comprimir = null } = {}) {
     fs.mkdirSync(filesDir);
 
     let compresion = null;
-    let archivosMeta, entregasMeta;
+    const filesMeta = {};
+    const vaAComprimirse = !!(comprimir && (comprimir.imagenes || comprimir.pdf));
 
-    if (comprimir && (comprimir.imagenes || comprimir.pdf)) {
-      // Comprimir REESCRIBE los archivos, así que este camino sí necesita una copia propia:
-      // tocar los originales del servidor sería destruir la calidad de lo que está en línea.
-      copyDir(ARCHIVOS_BASE, path.join(filesDir, 'archivos'));
-      copyDir(ENTREGAS_BASE, path.join(filesDir, 'entregas'));
+    for (const { id, dir, comprimible } of CARPETAS) {
+      if (vaAComprimirse && comprimible) {
+        // Comprimir REESCRIBE los archivos, así que este camino sí necesita una copia propia:
+        // tocar los originales del servidor sería destruir la calidad de lo que está en línea.
+        // Las stats de estas carpetas se recalculan más abajo, después de comprimir.
+        copyDir(dir, path.join(filesDir, id));
+      } else {
+        // Camino normal, el de todos los días: no se copia un solo byte. El staging apunta a
+        // los originales y el tar los sigue. Las stats se miden sobre el origen porque es
+        // literalmente lo mismo que va a entrar al paquete.
+        //
+        // También es el camino de las carpetas NO comprimibles cuando el resto sí se
+        // comprime: enlazarlas las deja fuera del alcance de comprimirArbol por construcción.
+        linkDir(dir, path.join(filesDir, id));
+        filesMeta[id] = getDirStats(dir);
+      }
+    }
 
+    if (vaAComprimirse) {
       // Comprimir DESPUÉS de copiar y ANTES de empaquetar. Los nombres y extensiones no
       // cambian (ver services/backupCompressor.js), así que el restore no necesita saber
       // que esto pasó: las rutas guardadas en Mongo siguen apuntando a donde tienen que ir.
+      //
+      // Recorre `filesDir` entero, pero adentro solo hay copias reales de las carpetas
+      // comprimibles: las otras son enlaces, y el recorrido no los sigue.
       compresion = await comprimirArbol(filesDir, comprimir);
 
       // Las stats se recalculan recién ahora, para que el manifest declare el peso REAL de
       // lo que quedó adentro y no el de antes de comprimir.
-      archivosMeta = getDirStats(path.join(filesDir, 'archivos'));
-      entregasMeta = getDirStats(path.join(filesDir, 'entregas'));
-    } else {
-      // Camino normal, el de todos los días: no se copia un solo byte. El staging apunta a
-      // los originales y el tar los sigue. Las stats se miden sobre el origen porque es
-      // literalmente lo mismo que va a entrar al paquete.
-      linkDir(ARCHIVOS_BASE, path.join(filesDir, 'archivos'));
-      linkDir(ENTREGAS_BASE, path.join(filesDir, 'entregas'));
-      archivosMeta = getDirStats(ARCHIVOS_BASE);
-      entregasMeta = getDirStats(ENTREGAS_BASE);
+      for (const { id, comprimible } of CARPETAS) {
+        if (comprimible) filesMeta[id] = getDirStats(path.join(filesDir, id));
+      }
     }
 
     const manifest = {
@@ -361,7 +445,9 @@ async function buildBackupStaging(generatedByEmail, { comprimir = null } = {}) {
       appVersion:  require('../package.json').version,
       generatedBy: generatedByEmail,
       collections: collectionsMeta,
-      files: { archivos: archivosMeta, entregas: entregasMeta },
+      // Una clave por carpeta de CARPETAS. Los backups viejos traen solo `archivos` y
+      // `entregas`: todo lo que lee este campo tiene que tolerar que falte una clave.
+      files: filesMeta,
       // Campo OPCIONAL. La versión del formato sigue siendo 1.0 a propósito: subirla haría
       // que POST /preview rechace todos los backups ya generados (los pre-restore de
       // backups/ y los que el dueño tenga descargados). Un backup viejo simplemente no
@@ -411,13 +497,10 @@ router.get('/stats', async (req, res) => {
     for (const { name, model } of COLLECTIONS) {
       collections[name] = await model.countDocuments();
     }
-    res.json({
-      collections,
-      files: {
-        archivos: getDirStats(ARCHIVOS_BASE),
-        entregas: getDirStats(ENTREGAS_BASE),
-      },
-    });
+    const files = {};
+    for (const { id, dir } of CARPETAS) files[id] = getDirStats(dir);
+
+    res.json({ collections, files });
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
@@ -429,10 +512,12 @@ router.get('/stats', async (req, res) => {
 // y este recorre el disco (cacheado 60s dentro del servicio).
 router.get('/file-stats', async (req, res) => {
   try {
-    const desglose = await analizarCarpetas([
-      { dir: ARCHIVOS_BASE, label: 'Adjuntos y avatares' },
-      { dir: ENTREGAS_BASE, label: 'Entregas de alumnos' },
-    ]);
+    // Solo las carpetas comprimibles: este desglose alimenta el modal que decide qué
+    // reencodear, y ofrecer ahí el material del gabinete sería ofrecer algo que el armado
+    // del backup no va a hacer nunca (ver CARPETAS).
+    const desglose = await analizarCarpetas(
+      CARPETAS.filter(c => c.comprimible).map(({ dir, label }) => ({ dir, label })),
+    );
     res.json({
       ...desglose,
       // La pantalla necesita saber por qué un tipo no se puede comprimir en ESTE servidor:
@@ -799,8 +884,8 @@ router.post('/ftp/enviar', enviarFtpLimiter, async (req, res) => {
 
     // Estimación para la barra de progreso: el .tar.gz pesa casi lo mismo que los archivos
     // que mete adentro, porque son JPEG/PNG/PDF ya comprimidos y el gzip va en nivel 1.
-    const estimadoBytes = (built.manifest?.files?.archivos?.sizeBytes || 0)
-                        + (built.manifest?.files?.entregas?.sizeBytes || 0);
+    const estimadoBytes = Object.values(built.manifest?.files || {})
+      .reduce((total, meta) => total + (meta?.sizeBytes || 0), 0);
 
     escribir({
       tipo: 'inicio', archivo: nombre, host: destino.host, puerto: destino.puerto,
@@ -1046,10 +1131,19 @@ router.post('/restore', restoreLimiter, async (req, res) => {
         : `Restaurado ${name}: ${docs.length} documento(s)`);
     }
 
-    // 4. Reemplaza los archivos físicos
-    replaceDir(path.join(extractDir, 'files', 'archivos'), ARCHIVOS_BASE);
-    replaceDir(path.join(extractDir, 'files', 'entregas'), ENTREGAS_BASE);
-    log.push('Archivos físicos restaurados (adjuntos, novedades, avatares, entregas)');
+    // 4. Reemplaza los archivos físicos, un árbol por vez. Qué se reemplaza y qué se deja
+    // como está lo decide planDeCarpetas() — el porqué está escrito ahí arriba.
+    const plan = planDeCarpetas(id => fs.existsSync(path.join(extractDir, 'files', id)));
+    const restauradas = [];
+    for (const { id, dir, label, accion } of plan) {
+      if (accion === 'intacta') {
+        log.push(`Sin tocar ${label}: el backup es anterior al respaldo de esta carpeta`);
+        continue;
+      }
+      replaceDir(path.join(extractDir, 'files', id), dir);
+      restauradas.push(label.toLowerCase());
+    }
+    log.push(`Archivos físicos restaurados (${restauradas.join(', ')})`);
 
     // 5. El cache de usuario/escuela puede tener _id que ya no existen o cambiaron.
     invalidateAll();
@@ -1239,3 +1333,10 @@ module.exports.COLLECTIONS         = COLLECTIONS;
 // Para tests/unit/backupCobertura.test.js: sin esto, el test no puede distinguir una
 // colección olvidada de una excluida a propósito.
 module.exports.EXCLUIDAS_DEL_BACKUP = EXCLUIDAS_DEL_BACKUP;
+// Lo mismo para las carpetas de archivos (tests/unit/backupCarpetas.test.js).
+module.exports.CARPETAS           = CARPETAS;
+module.exports.CARPETAS_EXCLUIDAS = CARPETAS_EXCLUIDAS;
+// La regla de qué carpeta se reemplaza y cuál se deja intacta al restaurar. Probarla por la
+// puerta normal significaría correr un restore de verdad —que borra la base entera y genera
+// un backup de seguridad de ~20 MB—, así que la decisión vive en una función pura aparte.
+module.exports.planDeCarpetas = planDeCarpetas;

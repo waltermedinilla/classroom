@@ -374,12 +374,16 @@
             <div class="stats-mini-label">${label}</div>
           </div>`).join('');
 
-        const totalFileBytes = f.archivos.sizeBytes + f.entregas.sizeBytes;
-        const totalFileCount = f.archivos.count + f.entregas.count;
+        // Suma TODAS las carpetas que declare el servidor, no dos fijas: cuando se agregó el
+        // material del gabinete, una cuenta escrita a mano lo habría dejado afuera del
+        // "qué se va a incluir" aunque el backup sí lo estuviera guardando.
+        const carpetas = Object.values(f || {});
+        const totalFileBytes = carpetas.reduce((t, c) => t + (c?.sizeBytes || 0), 0);
+        const totalFileCount = carpetas.reduce((t, c) => t + (c?.count || 0), 0);
         html += `
           <div class="stats-mini-card" style="grid-column:span 2">
             <div class="stats-mini-value">${formatBytes(totalFileBytes)}</div>
-            <div class="stats-mini-label">${totalFileCount} archivo(s) subidos (adjuntos, novedades, avatares, entregas)</div>
+            <div class="stats-mini-label">${totalFileCount} archivo(s) subidos (adjuntos, novedades, avatares, entregas, material del SOE)</div>
           </div>`;
 
         document.getElementById('statsGrid').innerHTML = html;
@@ -805,8 +809,24 @@
           </div>
         </div>` : '';
 
-      const totalFiles = manifest.files.archivos.count + manifest.files.entregas.count;
-      const totalBytes = manifest.files.archivos.sizeBytes + manifest.files.entregas.sizeBytes;
+      // Los backups viejos traen solo `archivos` y `entregas`; los nuevos suman `soe`. Se
+      // recorre lo que venga: sumar dos claves fijas mostraría de menos sin avisar.
+      const carpetasBackup = Object.values(manifest.files || {});
+      const totalFiles = carpetasBackup.reduce((t, c) => t + (c?.count || 0), 0);
+      const totalBytes = carpetasBackup.reduce((t, c) => t + (c?.sizeBytes || 0), 0);
+
+      // Un backup anterior al respaldo del material del gabinete no trae esos papeles, y el
+      // restore —a propósito— no los borra. Hay que decirlo ANTES: es la diferencia entre
+      // "volví a esa fecha" y "volví a esa fecha salvo por los certificados, que siguen".
+      const avisoSoe = manifest.files && manifest.files.soe ? '' : `
+        <div class="backup-warning" style="margin-bottom:12px">
+          <span class="material-symbols-outlined" style="color:#ea8600">folder_off</span>
+          <div>
+            Este backup es anterior al respaldo del <strong>material del gabinete (SOE)</strong>,
+            así que no lo trae. Al restaurar, esos archivos <strong>se dejan como están</strong>
+            en vez de borrarse: son papeles que la familia entregó una sola vez.
+          </div>
+        </div>`;
 
       // Los backups comprimidos traen este campo; los generados antes de la feature, no.
       // Hay que decirlo ANTES de restaurar: las fotos y los PDFs del servidor van a quedar
@@ -840,6 +860,7 @@
                comprimido y a la vez anterior a las colecciones de sala en vivo. El de
                vaciado va primero porque es el único que implica perder datos. -->
           ${avisoVaciado}
+          ${avisoSoe}
           ${avisoCompresion}
 
           <div class="confirm-box">

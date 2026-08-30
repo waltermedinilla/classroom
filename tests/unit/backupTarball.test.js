@@ -13,9 +13,9 @@
 //   1. el .tar.gz sale con el MISMO layout que cuando se copiaba (backups intercambiables);
 //   2. limpiar el staging NO toca los archivos originales.
 //
-// Tocan disco y Mongo de verdad, pero contra fixtures temporales: BACKUP_ARCHIVOS_BASE y
-// BACKUP_ENTREGAS_BASE se setean ANTES del require para que el módulo no mire nunca
-// public/archivos ni archivos/entregas del proyecto.
+// Tocan disco y Mongo de verdad, pero contra fixtures temporales: BACKUP_ARCHIVOS_BASE,
+// BACKUP_ENTREGAS_BASE y BACKUP_SOE_BASE se setean ANTES del require para que el módulo no
+// mire nunca public/archivos, archivos/entregas ni archivos/soe del proyecto.
 
 const test   = require('node:test');
 const assert = require('node:assert');
@@ -30,11 +30,14 @@ require('dotenv').config();
 const FIXTURES      = fs.mkdtempSync(path.join(os.tmpdir(), `backup-fixtures-${process.pid}-`));
 const ARCHIVOS_DIR  = path.join(FIXTURES, 'archivos');
 const ENTREGAS_DIR  = path.join(FIXTURES, 'entregas');
+const SOE_DIR       = path.join(FIXTURES, 'soe');
 process.env.BACKUP_ARCHIVOS_BASE = ARCHIVOS_DIR;
 process.env.BACKUP_ENTREGAS_BASE = ENTREGAS_DIR;
+process.env.BACKUP_SOE_BASE      = SOE_DIR;
 
 const mongoose = require('mongoose');
-const { createBackupTarball, COLLECTIONS } = require('../../routes/backup');
+const { createBackupTarball, COLLECTIONS, CARPETAS } = require('../../routes/backup');
+const { sharpDisponible } = require('../../services/backupCompressor');
 
 // Un árbol chico pero con la misma forma que el real: subcarpetas por escuela/curso.
 const ARCHIVOS_FIXTURE = {
@@ -44,6 +47,12 @@ const ARCHIVOS_FIXTURE = {
 };
 const ENTREGAS_FIXTURE = {
   'escuela1/act1/alumno1/entrega.pdf': 'la entrega del alumno',
+};
+// Material del gabinete: la carpeta que el backup NO respaldaba hasta el 2026-08-30. Misma
+// forma que la real, {escuela}/{legajo}/archivo (ver services/soeAdjuntos.js).
+const SOE_FIXTURE = {
+  'escuela1/legajo1/certificado.pdf':  'el certificado que trajo la familia',
+  'escuela1/legajo1/informe-neuro.jpg': 'un informe escaneado',
 };
 
 function escribirFixture(base, archivos) {
@@ -67,6 +76,7 @@ function stagingsHuerfanos() {
 test.before(async () => {
   escribirFixture(ARCHIVOS_DIR, ARCHIVOS_FIXTURE);
   escribirFixture(ENTREGAS_DIR, ENTREGAS_FIXTURE);
+  escribirFixture(SOE_DIR, SOE_FIXTURE);
   await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/classroom-escuela');
 });
 
@@ -93,7 +103,7 @@ test('el backup trae el manifest y un .json por cada colección declarada', asyn
 
 // Este es EL test que protege el cambio a enlaces: si algún día tar deja de seguirlos, o
 // alguien saca follow:true, las rutas dejan de aparecer y el backup sale sin archivos.
-test('los archivos entran con las rutas files/archivos y files/entregas, ya resueltas', async () => {
+test('los archivos entran con las rutas files/archivos, files/entregas y files/soe, ya resueltas', async () => {
   const { tarPath, manifest } = await createBackupTarball('test@example.com');
   try {
     const entradas = await listarTar(tarPath);
@@ -105,6 +115,11 @@ test('los archivos entran con las rutas files/archivos y files/entregas, ya resu
     for (const rel of Object.keys(ENTREGAS_FIXTURE)) {
       assert.ok(rutas.includes(`files/entregas/${rel}`), `falta files/entregas/${rel}`);
     }
+    // Lo más irreemplazable del sistema: un certificado que la familia trajo en papel una
+    // sola vez. Hasta el 2026-08-30 el backup se generaba sin error y sin estos archivos.
+    for (const rel of Object.keys(SOE_FIXTURE)) {
+      assert.ok(rutas.includes(`files/soe/${rel}`), `falta files/soe/${rel}`);
+    }
 
     // Un enlace empaquetado SIN resolver produce un backup que parece sano y pesa nada:
     // al restaurarlo en otra máquina, apunta a un destino que no existe.
@@ -113,6 +128,23 @@ test('los archivos entran con las rutas files/archivos y files/entregas, ya resu
 
     assert.equal(manifest.files.archivos.count, Object.keys(ARCHIVOS_FIXTURE).length);
     assert.equal(manifest.files.entregas.count, Object.keys(ENTREGAS_FIXTURE).length);
+    assert.equal(manifest.files.soe.count,      Object.keys(SOE_FIXTURE).length);
+  } finally {
+    fs.rmSync(tarPath, { force: true });
+  }
+});
+
+// El manifest es lo único que mira el preview del restore, y de ahí sale el aviso de qué
+// carpetas trae el backup. Una carpeta declarada en CARPETAS que no aparezca acá dejaría un
+// backup que guarda los archivos pero no los declara: el preview mostraría de menos.
+test('el manifest declara una entrada por cada carpeta de CARPETAS', async () => {
+  const { tarPath, manifest } = await createBackupTarball('test@example.com');
+  try {
+    for (const { id } of CARPETAS) {
+      assert.ok(manifest.files[id], `el manifest no declara la carpeta ${id}`);
+      assert.equal(typeof manifest.files[id].count, 'number');
+      assert.equal(typeof manifest.files[id].sizeBytes, 'number');
+    }
   } finally {
     fs.rmSync(tarPath, { force: true });
   }
@@ -132,6 +164,9 @@ test('limpiar el staging no toca los archivos originales', async () => {
   for (const rel of Object.keys(ENTREGAS_FIXTURE)) {
     assert.ok(fs.existsSync(path.join(ENTREGAS_DIR, rel)), `el backup se llevó puesto ${rel}`);
   }
+  for (const rel of Object.keys(SOE_FIXTURE)) {
+    assert.ok(fs.existsSync(path.join(SOE_DIR, rel)), `el backup se llevó puesto ${rel}`);
+  }
   assert.equal(
     fs.readFileSync(path.join(ARCHIVOS_DIR, 'escuela1/actividades/curso1/apunte.pdf'), 'utf8'),
     antes,
@@ -145,6 +180,70 @@ test('no deja directorios de staging dando vueltas en el temporal', async () => 
   fs.rmSync(tarPath, { force: true });
   assert.deepEqual(stagingsHuerfanos(), antes, 'quedó un staging sin borrar en os.tmpdir()');
 });
+
+// El "backup comprimido" reencodea imágenes y PDFs para que el paquete pese menos. El
+// material del gabinete queda AFUERA de esa pasada a propósito: acá la imagen es un
+// DOCUMENTO —un certificado escaneado, una receta— y recomprimirlo cambia el papel que la
+// familia entregó. Es la misma decisión que ya rige en la subida (el único camino de imagen
+// del proyecto que no pasa por sharp), y lo que la sostiene del lado del backup es que esa
+// carpeta entra al staging como ENLACE: comprimirArbol usa readdir + isDirectory(), que no
+// sigue enlaces, así que ni la ve. Si algún día se cambia por una copia, este test avisa.
+test('un backup comprimido no toca el material del SOE', {
+  skip: sharpDisponible() ? false : 'sharp no está instalado en esta máquina',
+}, async () => {
+  const sharp = require('sharp');
+
+  // Ruido, no un color plano: una imagen lisa ya sale mínima en JPEG y el compresor la
+  // omitiría por "no vale la pena", con lo cual el test no probaría nada.
+  const ruido = Buffer.alloc(600 * 600 * 3);
+  for (let i = 0; i < ruido.length; i++) ruido[i] = (i * 2654435761) % 256;
+  const jpeg = await sharp(ruido, { raw: { width: 600, height: 600, channels: 3 } })
+    .jpeg({ quality: 100 }).toBuffer();
+
+  const enArchivos = path.join(ARCHIVOS_DIR, 'escuela1/avatars/foto-real.jpg');
+  const enSoe      = path.join(SOE_DIR, 'escuela1/legajo1/estudio.jpg');
+  fs.writeFileSync(enArchivos, jpeg);
+  fs.writeFileSync(enSoe, jpeg);
+
+  const extraido = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-soe-comprimido-'));
+  try {
+    const { tarPath, manifest } = await createBackupTarball('test@example.com', {
+      comprimir: { imagenes: true },
+    });
+    try {
+      assert.ok(manifest.compresion.imagenes.count >= 1,
+        'no se comprimió ninguna imagen: el test no estaría probando nada');
+
+      await tar.x({ file: tarPath, cwd: extraido, filter: p => p.startsWith('files/soe/') });
+      const dentro = fs.readFileSync(path.join(extraido, 'files', 'soe', 'escuela1', 'legajo1', 'estudio.jpg'));
+
+      assert.ok(dentro.equals(jpeg),
+        'el estudio del legajo salió recomprimido: el backup cambió el documento original');
+      assert.equal(manifest.files.soe.sizeBytes, getDirStatsSoe(),
+        'el manifest declara para el SOE un peso distinto al que tiene la carpeta real');
+    } finally {
+      fs.rmSync(tarPath, { force: true });
+    }
+  } finally {
+    fs.rmSync(extraido, { recursive: true, force: true });
+    fs.rmSync(enArchivos, { force: true });
+    fs.rmSync(enSoe, { force: true });
+  }
+});
+
+// Peso real de la carpeta del SOE, para contrastarlo con lo que declara el manifest.
+function getDirStatsSoe() {
+  let total = 0;
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) walk(full);
+      else total += fs.statSync(full).size;
+    }
+  };
+  walk(SOE_DIR);
+  return total;
+}
 
 // Escuela recién creada: todavía no entregó nadie, así que archivos/entregas ni siquiera
 // existe en disco. El backup tiene que traer la carpeta igual — vacía, pero presente — para

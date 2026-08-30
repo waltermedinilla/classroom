@@ -23,6 +23,11 @@ const RUTAS = [
   // son los únicos que se purgan solos —a los 3 meses, con cleanup-rooms.js—, así que verlos
   // crecer y bajar por separado dice si la retención está alcanzando.
   { id: 'salas',     label: 'Archivos de salas en vivo', dir: path.join(__dirname, '../archivos/salas') },
+  // Material del gabinete psicopedagógico (services/soeAdjuntos.js). Faltaba: el panel decía
+  // "cuánto ocupa la app" y se comía los certificados e informes del SOE, que están fuera de
+  // /public. Esta lista es además de dónde sale la lista de carpetas que el backup tiene que
+  // respaldar o excluir a propósito (tests/unit/backupCarpetas.test.js).
+  { id: 'soe',       label: 'Material del gabinete (SOE)', dir: path.join(__dirname, '../archivos/soe') },
 ];
 
 const TTL_MS = 60 * 1000;
@@ -136,4 +141,7 @@ async function getDiskStats(mongoose) {
 // Solo para tests: fuerza el próximo cálculo a ignorar el cache
 function invalidarCache() { cache = { at: 0, data: null }; }
 
-module.exports = { getDiskStats, invalidarCache, TTL_MS };
+// RUTAS se exporta para tests/unit/backupCarpetas.test.js: esta lista es el inventario de
+// carpetas que la app escribe, y el test la usa para exigir que cada una esté respaldada por
+// el backup o excluida a propósito.
+module.exports = { getDiskStats, invalidarCache, TTL_MS, RUTAS };
