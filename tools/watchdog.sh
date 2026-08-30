@@ -94,12 +94,29 @@ conn=$(limpio    "$(ss -tn 2>/dev/null | grep -c ":$PUERTO")" "0")
 load=$(limpio      "$(cut -d' ' -f1 /proc/loadavg 2>/dev/null)" "0")
 mem_usada=$(limpio "$(free -m 2>/dev/null | awk '/Mem:/{print $3}')" "0")
 mem_total=$(limpio "$(free -m 2>/dev/null | awk '/Mem:/{print $2}')" "0")
-rss=$(limpio       "$(ps -o rss= -C node 2>/dev/null | awk '{s+=$1} END {print int(s/1024)}')" "0")
+# `ps -C node` NO alcanza: PM2 en cluster le cambia el título al proceso y le deja la ruta
+# completa ("node /home/walter/classroom/server.js"), así que el nombre de comando ya no es
+# `node` pelado y el filtro no matcheaba NADA — rss salía 0 con los dos workers arriba y
+# consumiendo 300 MB. Filtrar por el comando que EMPIEZA con node cubre las dos formas.
+rss=$(limpio       "$(ps -eo rss=,comm= 2>/dev/null | awk '$2 ~ /^node/ {s+=$1} END {print int(s/1024)}')" "0")
 
 # ── 5. MONGO ────────────────────────────────────────────────────────────────
-# `docker exec` es caro para correrlo cada minuto, así que solo se confirma que el
-# contenedor esté arriba. El estado real de la base ya viene en `db` de /health.
-mongo=$(docker ps --filter "name=mongodb" --format "{{.Status}}" 2>/dev/null | grep -qi "^up" && echo "up" || echo "down")
+# `docker exec` es caro para correrlo cada minuto, así que solo se confirma que el proceso
+# esté arriba. El estado real de la base ya viene en `db` de /health.
+#
+# Hay que probar LAS DOS FORMAS porque los dos servidores del proyecto la corren distinto:
+# el viejo en un contenedor Docker (Ubuntu 26.04 no tenía paquetes de Mongo) y el VPS
+# nativo, del repo oficial. Con el chequeo de Docker a secas, en el VPS este campo decía
+# SIEMPRE `down` teniendo la base perfecta y `db=ok` en la misma línea. Un vigilante que
+# miente en un campo enseña a ignorar los demás, que es la peor forma de perder un monitor.
+if command -v docker >/dev/null 2>&1 \
+   && docker ps --filter "name=mongodb" --format "{{.Status}}" 2>/dev/null | grep -qi "^up"; then
+  mongo="up"
+elif pgrep -x mongod >/dev/null 2>&1; then
+  mongo="up"
+else
+  mongo="down"
+fi
 
 # ── 6. DNS PÚBLICO ──────────────────────────────────────────────────────────
 # EL CHEQUEO MÁS IMPORTANTE, y el que no se puede hacer desde la app: el modo de falla
