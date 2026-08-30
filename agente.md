@@ -488,6 +488,37 @@ inferido. Lo funcional que ya figura en el Roadmap no se repite.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-30 — Los iconos se leían como palabras en inglés antes de dibujarse
+
+Reporte del usuario, y de los docentes y alumnos "todo el tiempo": la interfaz aparece
+desordenada, con texto en inglés al lado de cada control —`dynamic_feed` junto a Novedades,
+`dashboard` junto a Resumen— y a los pocos instantes se acomoda sola.
+
+**La causa: `&display=swap` en la fuente de iconos.** Los iconos de Material se escriben en el
+HTML como TEXTO (`<span class="material-symbols-outlined">dynamic_feed</span>`) y la fuente los
+convierte en dibujo mediante ligaduras. `swap` le dice al navegador *"mostrá el texto de
+reemplazo enseguida y cambialo cuando llegue la fuente"*: para una fuente de texto es lo
+correcto —el contenido se lee de inmediato—, pero para una fuente de ICONOS el texto de
+reemplazo **es el nombre del icono**. Y como la palabra es mucho más ancha que el glifo, además
+descoloca el menú entero hasta que la fuente termina de bajar.
+
+**Arreglo: `&display=block`** en las 87 vistas (cada una tiene su propio `<head>`; no hay un
+partial de cabecera compartido). Con `block` el navegador NO dibuja nada durante la carga en
+lugar de dibujar la palabra.
+
+Por qué se volvió tan visible ahora, aunque el código no cambió: el navegador **particiona su
+caché por sitio**, así que al mudarnos a `sanjose.escuela.site` todos los usuarios volvieron a
+descargar la fuente como si fuera la primera vez. Sobre el enlace de la escuela, a las 7 de la
+mañana y con 300 dispositivos, esa descarga tarda.
+
+**Lo que queda como mejora de fondo** (no se hizo, hay que decidirlo): la app usa **214 iconos
+distintos** pero baja la familia completa. Dos caminos: pedirle a Google solo esos 214 con el
+parámetro `icon_names` (un archivo mucho más chico, sin descargar nada), o **alojar la fuente
+en el propio servidor**, que la vuelve inmune al internet de la escuela. El riesgo del primero
+es que un icono construido dinámicamente que se escape del listado quedaría mostrando su nombre
+para siempre, así que necesita un barrido cuidadoso.
+
+
 ### 2026-08-30 — Dos endpoints entregaban el listado de CUALQUIER materia a cualquier logueado
 
 Salió de la verificación por roles de la produccion nueva. `GET /courses/:id` (la pantalla)
