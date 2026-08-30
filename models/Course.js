@@ -123,6 +123,29 @@ courseSchema.methods.canManage = function (user) {
   return false;
 };
 
+// "¿Puede VER esta materia?" — quien la administra (canManage) o el alumno matriculado.
+//
+// Existe porque esta misma pregunta estaba respondida por separado en tres lugares y dos de
+// ellos se la habían olvidado. La pantalla del curso (GET /courses/:id) sí la hacía y devolvía
+// 403; pero `GET /courses/:id/data` y `GET /announcements/course/:id` solo pedían estar
+// logueado. Resultado, verificado el 2026-08-30 contra la base real: **cualquiera de las 1.448
+// cuentas —incluido un alumno de primer año— podía leer el listado completo de las 578
+// materias, con el nombre y el CORREO de cada alumno y del docente**, pidiendo la URL a mano.
+// La pantalla decía que no; la API decía que sí.
+//
+// Por eso la regla vive acá y no repetida en cada ruta: es la única forma de que no se vuelva
+// a olvidar en la cuarta. Ver el mismo criterio en canWatchLive() acá abajo.
+//
+// Ojo con el `select` de la query, igual que en canManage: hace falta traer `students` (y
+// `owner`/`coTeachers`/`school`), o esto rechaza por omisión a quien sí pertenece. Y `students`
+// puede venir populado (documentos) o crudo (ids): por eso el `s._id || s`.
+courseSchema.methods.canView = function (user) {
+  if (!user) return false;
+  if (this.canManage(user)) return true;
+  const uid = idToString(user._id);
+  return (this.students || []).some(s => idToString(s && s._id ? s._id : s) === uid);
+};
+
 // "¿Puede ENTRAR a la sala en vivo de esta materia?" — es canManage() MÁS el equipo directivo
 // de la escuela, MÁS el preceptor que tiene esta división en su alcance.
 //

@@ -28,6 +28,15 @@ const ARCHIVOS_BASE = path.join(__dirname, '../public/archivos');
 router.get('/course/:courseId', requireAuth, async (req, res) => {
   if (idMalo(req, res, 'Curso no encontrado', { param: 'courseId', como: 'json' })) return;
   try {
+    // Guarda de pertenencia. Faltaba: este GET entregaba las novedades de CUALQUIER materia
+    // a cualquier sesión válida, mientras el POST de comentar (más abajo) sí verificaba que
+    // el usuario fuera del curso. La regla vive en el modelo — ver canView() en
+    // models/Course.js. El select trae lo que esa función necesita: sin `students` rechazaría
+    // al alumno matriculado, y sin `school` al admin de la escuela.
+    const course = await Course.findById(req.params.courseId).select('owner coTeachers students school');
+    if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
+    if (!course.canView(res.locals.user)) return res.status(403).json({ error: 'Acceso denegado' });
+
     const announcements = await Announcement.find({ course: req.params.courseId })
       .populate('author', 'name email')      // Nombre del que publicó
       .populate('comments.author', 'name')   // Nombre de cada comentarista

@@ -488,6 +488,41 @@ inferido. Lo funcional que ya figura en el Roadmap no se repite.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-30 — Dos endpoints entregaban el listado de CUALQUIER materia a cualquier logueado
+
+Salió de la verificación por roles de la produccion nueva. `GET /courses/:id` (la pantalla)
+comprobaba pertenencia y devolvía 403 al que no era del curso. Pero **`GET /courses/:id/data`
+y `GET /announcements/course/:id` solo exigían estar logueado.**
+
+Verificado contra la base real, no en teoría: un alumno de primer año que no cursa "Ciencias
+Naturales" pidió la URL a mano y el servidor le devolvió **el nombre de la materia, el docente
+con su correo y los 33 alumnos con nombre y correo electrónico**. Con 578 materias en la base y
+1.448 cuentas, cualquiera podía recorrer la escuela entera. Las novedades de cualquier materia
+salían igual de fácil.
+
+⚠️ **No lo causó la mudanza**: el código es el mismo que venía corriendo. Lo que lo destapó fue
+mirar la API además de la pantalla — la pantalla decía que no y la API decía que sí.
+
+**El arreglo no fue repetir el chequeo una tercera vez**, que es exactamente lo que produjo el
+agujero: la regla se mudó al modelo, `Course.canView(user)`, y ahora los tres endpoints leen de
+ahí. Es el mismo criterio que ya sostenía `canManage()` y `canWatchLive()`.
+
+Detalles que importan del arreglo:
+- `students` puede venir **populado** (documentos) o crudo (ids) según la query. Si `canView`
+  solo supiera comparar ids crudos, rechazaría al alumno que SÍ pertenece — un fallo peor que
+  el que vino a arreglar. Hay un test que fija justamente esa forma.
+- El `select` de la query de novedades tuvo que ampliarse a `owner coTeachers students school`:
+  sin `students` la función rechaza al alumno, sin `school` al admin de la escuela. Es el mismo
+  caveat que `canManage()` ya documentaba.
+- 10 tests nuevos en `tests/unit/courseCanView.test.js`, y la comprobación de punta a punta
+  contra un servidor real: el intruso recibe 403 en los tres endpoints, el alumno matriculado y
+  el docente dueño siguen recibiendo 200.
+
+Lo que se revisó y **está bien**: la sala en vivo y su poll, el historial de clases, el libro de
+calificaciones, el export de alumnos, las notas de una actividad y el export de una clase — los
+siete devuelven 403 a un extraño. La descarga de una entrega ajena también.
+
+
 ### 2026-08-30 — Cartel de mudanza: el servidor viejo manda al nuevo
 
 La plataforma se muda al VPS con dominio propio (`escuela.site`), y el servidor viejo tiene que

@@ -585,9 +585,10 @@ router.get('/:id', requireAuth, async (req, res) => {
       .populate('students', 'name email dni active avatar')
       .populate('division', 'name');
     if (!course) return res.status(404).send('Curso no encontrado');
-    const isOwner   = course.canManage(res.locals.user);
-    const isStudent = course.students.some(s => s._id.toString() === req.userId);
-    if (!isOwner && !isStudent) return res.status(403).send('Acceso denegado');
+    // La regla vive en el modelo (canView) para que sea LA MISMA que usan /:id/data y las
+    // novedades. Antes estaba escrita a mano acá y solo acá, y por eso los otros dos
+    // endpoints quedaron abiertos sin que nadie lo notara.
+    if (!course.canView(res.locals.user)) return res.status(403).send('Acceso denegado');
 
     // Orden alfabético por apellido para la solapa Personas — los nombres se cargan
     // como "APELLIDO, Nombre", así que ordenar por el string completo alcanza.
@@ -816,6 +817,10 @@ router.get('/:id/data', requireAuth, async (req, res) => {
       .populate('students', 'name email')
       .populate('division', 'name');
     if (!course) return res.status(404).json({ error: 'Curso no encontrado' });
+    // La MISMA guarda que GET /:id. Sin esto, este endpoint entregaba la materia entera
+    // —docente y alumnos con sus correos— a cualquier sesión válida, mientras la pantalla
+    // devolvía 403. Ver el comentario de canView() en models/Course.js.
+    if (!course.canView(res.locals.user)) return res.status(403).json({ error: 'Acceso denegado' });
     res.json({ course });
   } catch (err) {
     logDeRuta(err, res);
