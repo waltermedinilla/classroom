@@ -32,7 +32,8 @@
     "optimize:images:dry": "node optimize-existing-images.js --dry-run",
     "migrate:examen": "node migrate-examen-to-evaluacion.js",
     "migrate:examen:dry": "node migrate-examen-to-evaluacion.js --dry-run",
-    "prepare": "husky || true"
+    "prepare": "husky || true",
+    "iconos:actualizar": "node tools/actualizar-iconos.js"
   },
   "dependencies": {
     "basic-ftp": "^6.2.0",

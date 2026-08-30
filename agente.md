@@ -488,6 +488,44 @@ inferido. Lo funcional que ya figura en el Roadmap no se repite.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-30 — La fuente de iconos bajó de 3,8 MB a 233 KB, y dejó de estar repetida 87 veces
+
+Continuación del arreglo de `display=block`. Aquel resolvió que se vieran las palabras en
+inglés; este resuelve **el peso**.
+
+**El dato que decidió el diseño.** El pedido original era alojar la fuente en el servidor
+propio. Se midió antes de hacerlo, desde Mendoza: **Google entregó 3,8 MB en 0,34 s y el VPS
+145 KB en 1,83 s.** Google tiene nodos en Argentina; el VPS es una máquina sola en Alemania —
+por eso venía con hora de Berlín. Servir la fuente desde casa la habría hecho decenas de veces
+más lenta, así que **no se alojó**. La medición vale más que la intuición de "es mejor no
+depender de terceros".
+
+**Lo que sí se hizo: pedir solo los iconos que se usan.** La familia completa trae ~3.700 y la
+app usa **270**. Con `icon_names`, el archivo pasa de 3,8 MB a **233 KB, 17 veces menos**. No se
+nota en una computadora sola, pero a las 7 de la mañana con 300 dispositivos entrando juntos son
+**70 MB por el enlace de la escuela en vez de 1,1 GB**.
+
+**Y la lista no podía vivir repetida en 87 vistas**, así que apareció
+`views/partials/head-iconos.ejs`: un único lugar, incluido por todas. De paso desaparece una
+duplicación que ya existía desde siempre.
+
+Piezas: `tools/iconos.js` (el barrido, compartido) · `tools/actualizar-iconos.js`
+(`npm run iconos:actualizar`) · `tests/unit/iconos.test.js` (5 casos).
+
+⚠️ **Las tres trampas que costaron sangre acá:**
+
+1. **El barrido cortaba en el primer `<`.** La mitad de los iconos se imprimen con un ternario
+   de EJS (`<%= x ? 'task_alt' : 'front_hand' %>`), y `<%=` **empieza con `<`**. El patrón los
+   dejaba vacíos y devolvía 217 iconos en vez de 270: **53 que habrían aparecido en inglés**.
+   Ahora cierra en `</span>`.
+2. **El script de migración se comió al propio partial**, dejándolo incluyéndose a sí mismo —
+   recursión infinita en el primer render. Se detectó porque actualizó 88 archivos y los que
+   tenían el `<link>` eran 87. Hay un test que lo fija.
+3. **Google ignora los nombres que no existen** (contesta 200 igual), así que el barrido puede
+   tomar de más sin miedo. Es deliberado: un nombre sobrante cuesta unos bytes, uno que falte
+   se ve roto en pantalla para siempre. **El error barato es incluir.**
+
+
 ### 2026-08-30 — Los iconos se leían como palabras en inglés antes de dibujarse
 
 Reporte del usuario, y de los docentes y alumnos "todo el tiempo": la interfaz aparece
