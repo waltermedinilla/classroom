@@ -156,6 +156,19 @@ const SECRETO_DIFICULTADES = 'DIFICULTADES-CONFIDENCIALES-XYZ';
 const SECRETO_ENTRADA      = 'TEXTO-DE-LA-ENTREVISTA-XYZ';
 const SECRETO_DESTINO      = 'HOSPITAL-DESTINO-XYZ';
 const SECRETO_DEVOLUCION   = 'LO-QUE-DIJO-EL-HOSPITAL-XYZ';
+// Los dos que se sumaron el 2026-08-30 con el material y las citaciones. Un adjunto es el
+// certificado del neurólogo: es MÁS sensible que el texto que lo describe, no menos. Y una
+// citación dice que a esta familia se la llamó al colegio.
+const SECRETO_ADJUNTO      = 'CERTIFICADO-DEL-NEUROLOGO-XYZ';
+const SECRETO_CITACION     = 'MOTIVO-DE-LA-CITACION-XYZ';
+
+// La lista contra la que se prueban los dos niveles. Vive en una constante y no repetida en
+// cada test: el olvido de sumar un secreto nuevo a una de las dos listas es justamente el
+// agujero por el que se escaparía un campo nuevo.
+const SECRETOS = [
+  SECRETO_MOTIVO, SECRETO_DIFICULTADES, SECRETO_ENTRADA,
+  SECRETO_DESTINO, SECRETO_DEVOLUCION, SECRETO_ADJUNTO, SECRETO_CITACION,
+];
 
 const LEGAJO = {
   _id: 'caso1',
@@ -176,7 +189,21 @@ const LEGAJO = {
     {
       _id: 'r1', destino: SECRETO_DESTINO, tipo: 'salud_mental', motivo: 'Evaluación',
       fecha: new Date('2026-08-12'), estado: 'en_tratamiento', contacto: 'Lic. Pérez',
-      devoluciones: [{ fecha: new Date('2026-08-15'), texto: SECRETO_DEVOLUCION, registradoPor: 'soe1' }],
+      devoluciones: [{ _id: 'v1', fecha: new Date('2026-08-15'), texto: SECRETO_DEVOLUCION, registradoPor: 'soe1' }],
+    },
+  ],
+  citaciones: [
+    {
+      _id: 'c1', dia: '2026-08-20', hora: '10:30', a: 'familia',
+      motivo: SECRETO_CITACION, estado: 'realizada', creadaPor: 'soe1',
+    },
+  ],
+  adjuntos: [
+    {
+      _id: 'a1', kind: 'archivo', ancla: { tipo: 'devolucion', id: 'v1' },
+      titulo: SECRETO_ADJUNTO, categoria: 'certificado', origen: 'profesional',
+      fecha: new Date('2026-08-15'), nombre: 'certificado.pdf', path: 'esc1/caso1/x.pdf',
+      ext: '.pdf', size: 120000, subidoPor: 'soe1',
     },
   ],
   openedBy: 'soe1',
@@ -223,7 +250,7 @@ describe('sanitizarLegajo', () => {
     // que se coló, un spread de más o un `referrals` que viajó "solo para contar cuántos
     // hay" aparecen acá aunque la vista no los dibuje. El leak que importa es el del HTML
     // que llega al navegador, no el de la pantalla.
-    for (const secreto of [SECRETO_MOTIVO, SECRETO_DIFICULTADES, SECRETO_ENTRADA, SECRETO_DESTINO, SECRETO_DEVOLUCION]) {
+    for (const secreto of SECRETOS) {
       assert.ok(!json.includes(secreto), `el resumen filtró: ${secreto}`);
     }
 
@@ -236,16 +263,23 @@ describe('sanitizarLegajo', () => {
     // Sabe QUE hay una derivación en curso, pero no a dónde.
     assert.strictEqual(visto.referrals, undefined);
     assert.strictEqual(visto.entries, undefined);
+    // Y desde el 2026-08-30, tampoco el material ni las citaciones. Un certificado médico es
+    // más sensible que el texto que lo describe: si alguna vez estos dos dejan de ser
+    // `undefined` en resumen, lo que se reparte es el papel del neurólogo.
+    assert.strictEqual(visto.adjuntos, undefined);
+    assert.strictEqual(visto.citaciones, undefined);
   });
 
   test('completo devuelve la historia entera', () => {
     const visto = sanitizarLegajo(LEGAJO, COMPLETO);
     const json  = JSON.stringify(visto);
-    for (const secreto of [SECRETO_MOTIVO, SECRETO_DIFICULTADES, SECRETO_ENTRADA, SECRETO_DESTINO, SECRETO_DEVOLUCION]) {
+    for (const secreto of SECRETOS) {
       assert.ok(json.includes(secreto), `completo debería incluir: ${secreto}`);
     }
     assert.strictEqual(visto.entries.length, 1);
     assert.strictEqual(visto.referrals[0].devoluciones.length, 1);
+    assert.strictEqual(visto.citaciones.length, 1);
+    assert.strictEqual(visto.adjuntos.length, 1);
   });
 
   test('un legajo sin entradas ni derivaciones no rompe el sanitizado', () => {
@@ -253,6 +287,11 @@ describe('sanitizarLegajo', () => {
     const visto = sanitizarLegajo(vacio, RESUMEN);
     assert.strictEqual(visto.tieneDerivacionActiva, false);
     assert.strictEqual(visto.fortalezas, '');
+    // Un legajo viejo —de los que ya existen en producción— no tiene ni `citaciones` ni
+    // `adjuntos`, y no necesita migración: en completo los dos salen como listas vacías.
+    const completoVacio = sanitizarLegajo(vacio, COMPLETO);
+    assert.deepStrictEqual(completoVacio.citaciones, []);
+    assert.deepStrictEqual(completoVacio.adjuntos, []);
     assert.strictEqual(sanitizarLegajo(null, COMPLETO), null);
   });
 

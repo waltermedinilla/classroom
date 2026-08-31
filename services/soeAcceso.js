@@ -101,9 +101,16 @@ const puedeVer = (school, role) => nivelAcceso(school, role) !== NINGUNO;
 // las entrevistas y sin saber a dónde se lo derivó. Es la línea entre acompañar y chusmear.
 const CAMPOS_RESUMEN = ['estado', 'prioridad', 'fortalezas', 'estrategias', 'tieneDerivacionActiva'];
 
+// ⚠️ `adjuntos` y `citaciones` están acá y NO en CAMPOS_RESUMEN, y no es una omisión que
+// convenga "arreglar" algún día. Un adjunto es el certificado del neurólogo o la receta que
+// mandó el hospital: es el dato más sensible que llegó a guardar la plataforma, más que el
+// texto que lo describe. Y una citación dice que a esta familia se la llamó al colegio, que es
+// justamente lo que el nivel 'resumen' —pensado para que un docente dé mejor la clase— no
+// tiene por qué saber.
 const CAMPOS_COMPLETO = [
   ...CAMPOS_RESUMEN,
   'motivo', 'dificultades', 'entries', 'referrals', 'proximoRepaso',
+  'citaciones', 'adjuntos',
   'openedBy', 'openedAt', 'closedBy', 'closedAt', 'cierreMotivo', 'lastEntryAt',
 ];
 
@@ -150,6 +157,14 @@ function sanitizarLegajo(legajo, nivel) {
     dificultades: plano.dificultades || '',
     entries:      plano.entries      || [],
     referrals:    plano.referrals    || [],
+
+    // Las citaciones y el material que acompaña cada actuación. Solo en completo, por el
+    // motivo que está anotado arriba de CAMPOS_COMPLETO. Que salgan por acá y no por una
+    // consulta propia es lo que hace que la ruta que sirve un archivo y la línea de tiempo
+    // compartan una única guarda de confidencialidad, en vez de tener una cada una.
+    citaciones:   plano.citaciones   || [],
+    adjuntos:     plano.adjuntos     || [],
+
     openedBy:     plano.openedBy,
     openedAt:     plano.openedAt,
     closedBy:     plano.closedBy,

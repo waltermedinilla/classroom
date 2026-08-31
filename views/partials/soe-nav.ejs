@@ -30,6 +30,12 @@
     Derivaciones
   </a>
   <% } %>
+  <% if (puede('soe_agenda')) { %>
+  <a href="/soe/agenda" class="admin-nav-item <%= activePage === 'agenda' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">calendar_month</span>
+    Agenda
+  </a>
+  <% } %>
 </nav>
 
 <% if (typeof soeEscribe !== 'undefined' && !soeEscribe) { %>

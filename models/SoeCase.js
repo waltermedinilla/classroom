@@ -19,6 +19,8 @@ const { Schema } = mongoose;
 const {
   ESTADOS, PRIORIDADES, TIPOS_ENTRADA, ANIMOS, TIPOS_DERIVACION, ESTADOS_DERIVACION,
 } = require('../services/soeAcceso');
+const { ANCLAS, KINDS, CATEGORIAS, ORIGENES } = require('../services/soeAdjuntos');
+const { CITADOS, ESTADOS_CITACION } = require('../services/soeAgenda');
 
 // ── Una entrada del seguimiento ──────────────────────────────────────────────
 // El pulso a lo largo del tiempo: entrevistas, observaciones de aula, contactos con la
@@ -71,6 +73,91 @@ const referralSchema = new Schema({
   creadaPor: { type: Schema.Types.ObjectId, ref: 'User', required: true },
 }, { timestamps: true });
 
+// ── Un papel: el certificado, la receta, el informe, el enlace ───────────────
+//
+// Es lo que faltaba para que el legajo fuera un registro y no un relato. Vive en UN array
+// PLANO del legajo con un puntero (`ancla`) a la actuación de la que cuelga, en vez de
+// repartido adentro de entries[], referrals[] y citaciones[]. Los tres motivos están en
+// services/soeAdjuntos.js; el que manda es el mismo que hace que este documento sea uno solo:
+// con un array hay UNA guarda de confidencialidad, y no cuatro donde olvidarse de aplicarla.
+const adjuntoSchema = new Schema({
+  kind: { type: String, enum: KINDS, required: true },
+
+  // De qué actuación cuelga. `tipo: 'legajo'` con `id: null` es el material general del
+  // legajo, el que no pertenece a ningún encuentro puntual.
+  ancla: {
+    tipo: { type: String, enum: ANCLAS, default: 'legajo' },
+    id:   { type: Schema.Types.ObjectId, default: null },
+  },
+
+  titulo:      { type: String, trim: true, required: true, maxlength: 200 },
+  categoria:   { type: String, enum: CATEGORIAS, default: 'otro' },
+
+  // ⚠️ QUIÉN LO PRODUJO, no quién lo subió. El certificado lo firma el neurólogo
+  // (`profesional`) y lo carga el gabinete (`subidoPor`), porque la familia lo trajo en papel.
+  // Los dos datos se guardan porque son distintos, y confundirlos haría que dentro de un año
+  // el legajo dijera que el certificado lo escribió la escuela.
+  origen:      { type: String, enum: ORIGENES, default: 'gabinete' },
+  descripcion: { type: String, trim: true, default: '', maxlength: 1000 },
+
+  // La fecha DEL DOCUMENTO —la que dice el certificado—, no la de la carga. Un certificado
+  // del 3 de marzo cargado en agosto vale por marzo. Para la de carga está createdAt.
+  fecha: { type: Date, required: true },
+
+  // kind: 'archivo'. `path` es relativo a la base de disco del panel (ver routes/soe.js), y
+  // el nombre en disco NO tiene relación con el que subió la persona: eso evita de raíz las
+  // colisiones ("certificado.pdf" de dos alumnos) y el path traversal en el propio nombre.
+  nombre: { type: String, trim: true, default: '', maxlength: 300 },  // el original, para mostrar
+  path:   { type: String, default: '' },
+  ext:    { type: String, default: '' },
+  size:   { type: Number, default: 0 },
+
+  // kind: 'enlace'. Solo http/https — lo garantiza normalizarEnlace() en services/soeAdjuntos.js.
+  url: { type: String, trim: true, default: '', maxlength: 2000 },
+
+  subidoPor: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+
+  // Dar de baja un adjunto BORRA EL ARCHIVO DEL DISCO pero deja el registro: quién lo subió,
+  // cuándo, y que alguien lo dio de baja. Un legajo del que se puede sacar material sin dejar
+  // rastro no es un registro completo — y borrar de verdad tiene que ser posible, porque el
+  // día que alguien sube por error el certificado de otro chico hay que poder sacarlo.
+  eliminadoEl:  { type: Date, default: null },
+  eliminadoPor: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+}, { timestamps: { createdAt: true, updatedAt: false } });
+
+// ── Una citación ─────────────────────────────────────────────────────────────
+//
+// Citar a la familia es una actuación del gabinete y no una entrada de agenda: tiene motivo,
+// tiene un resultado (vino / no vino) y puede tener un acta firmada colgada. Por eso vive
+// adentro del legajo, en la misma línea de tiempo que todo lo demás.
+//
+// ⚠️ EL DÍA Y LA HORA SON TEXTO, no un `Date`. La regla completa —y el bug que evita— está en
+// el encabezado de services/soeAgenda.js. En una palabra: producción corre en UTC, la escuela
+// en UTC−3, y una citación guardada como instante se muestra tres horas antes (o el día
+// anterior). Mismo criterio que models/Reserva.js.
+const citacionSchema = new Schema({
+  dia:  { type: String, required: true },                  // 'YYYY-MM-DD', día escolar
+  hora: { type: String, default: '', maxlength: 5 },        // 'HH:MM' literal, o '' ("a la mañana")
+
+  a:      { type: String, enum: CITADOS, default: 'familia' },
+  motivo: { type: String, trim: true, required: true, maxlength: 500 },
+  lugar:  { type: String, trim: true, default: '', maxlength: 200 },
+
+  estado: { type: String, enum: ESTADOS_CITACION, default: 'programada' },
+
+  // Cómo se la convocó. No es burocracia: cuando la familia dice que nunca se enteró, esto es
+  // lo único que queda escrito.
+  medio: { type: String, trim: true, default: '', maxlength: 200 },
+
+  // Qué pasó en el encuentro. Se carga al marcarla realizada o ausente, y es lo que el hito
+  // muestra en la línea de tiempo.
+  notas: { type: String, trim: true, default: '', maxlength: 2000 },
+
+  creadaPor:   { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  resueltaPor: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+  resueltaEl:  { type: Date, default: null },
+}, { timestamps: true });
+
 const soeCaseSchema = new Schema({
   student: { type: Schema.Types.ObjectId, ref: 'User',   required: true },
   school:  { type: Schema.Types.ObjectId, ref: 'School', required: true },
@@ -95,6 +182,12 @@ const soeCaseSchema = new Schema({
 
   entries:   [entrySchema],
   referrals: [referralSchema],
+
+  // Las citaciones y el material, desde el 2026-08-30. Los dos son arrays nuevos y ninguno
+  // necesita migración: un legajo viejo simplemente no los tiene, y todo el código los lee
+  // con `|| []`.
+  citaciones: [citacionSchema],
+  adjuntos:   [adjuntoSchema],
 
   openedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   openedAt: { type: Date, default: Date.now },
@@ -132,5 +225,10 @@ soeCaseSchema.index({ division: 1 });
 
 // La solapa Derivaciones busca las que tienen seguimiento vencido en toda la escuela.
 soeCaseSchema.index({ school: 1, 'referrals.proximoSeguimiento': 1 });
+
+// La Agenda pinta un mes de toda la escuela: trae los legajos que tienen alguna citación en
+// ese rango de días. `citaciones.dia` es un string 'YYYY-MM-DD' —ver el schema— así que el
+// rango se pide con $gte/$lte de strings, y este índice es el que lo sostiene.
+soeCaseSchema.index({ school: 1, 'citaciones.dia': 1 });
 
 module.exports = mongoose.model('SoeCase', soeCaseSchema);

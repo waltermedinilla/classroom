@@ -18,7 +18,7 @@
 | `directivo` | Directivo | Directivo institucional |
 | `teacher` | Docente | Puede ser dueño de cursos |
 | `preceptor` | Preceptor | Panel propio en `/preceptor`, acotado a las divisiones que un admin le asigna. Ve materias, docentes y alumnos de esos cursos, y administra a los alumnos (alta, edición, baja lógica). **No es auto-asignable** |
-| `soe` | SOE | Servicio de Orientación Escolar. Panel propio en `/soe`: legajo psicopedagógico por alumno (situación, seguimiento, derivaciones externas con sus devoluciones) más un panel de indicadores de solo lectura. Ve toda su escuela salvo que un admin le asigne divisiones. **Es el único rol que escribe legajos**; quién más los lee lo decide `School.soeAccess` (default: nadie) |
+| `soe` | SOE | Servicio de Orientación Escolar. Panel propio en `/soe`: legajo psicopedagógico por alumno (situación, seguimiento, derivaciones externas con sus devoluciones, **citaciones a la familia** y **el material de cada actuación** — certificados, recetas, informes y enlaces), una **agenda** con el calendario del gabinete, y un panel de indicadores de solo lectura. Ve toda su escuela salvo que un admin le asigne divisiones. **Es el único rol que escribe legajos**; quién más los lee lo decide `School.soeAccess` (default: nadie). Los archivos del legajo **no viven en `/public`**: salen por una ruta que revalida el permiso y audita cada apertura |
 | `student` | Alumno | Puede unirse a cursos |
 
 > Los valores internos en la BD son en inglés. La traducción al español se hace mediante `res.locals.roleNames` definido como middleware global en `server.js`. Nunca cambiar los valores internos del enum.
@@ -487,6 +487,107 @@ inferido. Lo funcional que ya figura en el Roadmap no se repite.
 ---
 
 ## Historial de Cambios (Changelog)
+
+### 2026-08-30 — El legajo del SOE deja de ser solo texto: material, citaciones y agenda
+
+Pedido del usuario: *"que cada actuación permita adjuntar archivos, enlaces o demás material…
+si vuelve de esa derivación, que permita ver algún certificado o receta… que quede un registro
+completo… que permita también consignar un calendario si hay que citar a los padres"*.
+
+**Los tres agujeros que tapa.** (1) El certificado que trajo la madre, la receta del neurólogo y
+el informe del hospital vivían en una carpeta de cartón: el legajo decía *"trajo un
+certificado"* y no lo podía mostrar — dentro de un año esa frase no vale nada. (2) La devolución
+de una derivación existía como texto desde la v1, pero **el papel que la respalda, no**, justo en
+el momento en que el chico vuelve del servicio externo con algo escrito. (3) Citar a la familia
+no dejaba rastro: se llamaba por teléfono, se anotaba en un cuaderno, y el día que la madre no
+aparecía no quedaba nada — ni que se la citó, ni para cuándo, ni que faltó.
+
+**Lo que hay ahora.** Archivos y enlaces colgados de **cualquier** actuación (una entrevista, la
+derivación, la devolución, una citación, o el legajo en general); **citaciones** con a quién,
+para qué, dónde, cómo se avisó y qué terminó pasando; una solapa **Agenda** con el calendario
+del mes; y un panel **Material y documentación** que es el índice de todos los papeles del chico.
+
+Piezas nuevas: `services/soeAdjuntos.js` · `services/soeAgenda.js` · `views/soe/agenda.ejs` ·
+`views/partials/soe-adjunto-campos.ejs` y `-chips.ejs` · dos arrays en `models/SoeCase.js`.
+Spec completa: `specs/soe-adjuntos-y-agenda.spec.md`.
+
+⚠️ **Esta feature ya se había descartado dos veces, y con razón.** Las dos specs anteriores del
+SOE dejaron los adjuntos afuera con este motivo textual: *"los adjuntos de hoy se sirven por URL
+adivinable desde disco"*. Un certificado de salud mental en `/public` lo lee cualquiera que
+tenga la URL, para siempre y sin dejar registro. Lo que destraba el pedido es que acá **no se
+sirven así**: van a `archivos/soe/{escuela}/{legajo}/` (fuera de `/public`) y salen por una ruta
+que revalida el alcance del alumno contra sus divisiones ACTUALES, exige nivel completo, chequea
+que la ruta caiga dentro de su base, manda `nosniff` + `no-store`, y **audita cada apertura**.
+
+**Las siete decisiones que no son obvias:**
+
+1. **Un array plano de adjuntos con puntero a la actuación**, no cuatro arrays anidados. Mismo
+   argumento por el que el legajo es un solo documento: con un array hay **una** guarda de
+   confidencialidad, no cuatro donde olvidarse de aplicarla. La clave de agrupación es
+   `tipo:id` y no el id pelado — los ids de subdocumento son únicos por array, no por
+   documento, así que el acta de una citación podía aparecer colgada de una entrevista.
+2. **La citación se guarda como día de calendario + hora literal**, los dos strings, igual que
+   `Reserva`. Producción corre en UTC y la escuela en UTC−3: un `new Date('2026-09-02T14:30')`
+   mueve la citación tres horas —o al día anterior si es temprano— sin que nadie se entere.
+   Con texto no hay nada que convertir. Para ordenar el hilo, el día se pasa al **mediodía**
+   UTC; la hora nunca se le suma.
+3. **La citación futura NO entra a la línea de tiempo.** Con el orden "lo último arriba" se
+   sentaría por encima de todo lo que de verdad ocurrió. Es agenda, no historia. La
+   **cancelada** sí entra aunque su día no haya llegado: cancelar es algo que pasó.
+4. **Reprogramar cierra la citación y abre otra**, no mueve la fecha. La citación a la que la
+   familia no pudo venir y la del jueves siguiente son dos convocatorias distintas, y pisar la
+   fecha borraría que hubo una primera — que es justo el dato que se quiere conservar.
+5. **`origen` es quién PRODUJO el papel; `subidoPor`, quién lo cargó.** El certificado lo firma
+   el neurólogo y lo carga la psicopedagoga porque la familia lo trajo en papel. Confundirlos
+   haría que dentro de un año el legajo dijera que lo escribió la escuela.
+6. **Dar de baja borra el archivo y DEJA el registro.** Las dos mitades importan: borrar de
+   verdad tiene que ser posible (alguien sube por error el certificado de otro chico), y el
+   rastro tiene que quedar (un legajo del que se saca material sin huella no es un registro).
+7. **Las imágenes NO pasan por sharp**, al revés que los otros seis caminos de imagen del
+   proyecto. Acá la imagen es un **documento**: recomprimir un certificado escaneado cambia el
+   papel que la familia entregó.
+
+⚠️ **Las cuatro trampas del camino:**
+
+- **`cargarLegajo` va ANTES de multer en la cadena, y ese orden ES la mitigación.** Multer
+  escribe el archivo antes de que corra el handler: con la validación adentro, el archivo de
+  alguien sin permiso ya está en disco cuando se contesta 403.
+- **Un archivo rechazado no se lleva puesto el texto.** Se guarda la actuación igual y el cartel
+  dice qué pasó con el papel — perder cuatro párrafos de una entrevista por un PDF de 25 MB
+  sería el peor de los dos males. Y el rechazo va con `cb(null, false)` + motivo anotado, nunca
+  con `cb(err)` (aborta el socket) ni en silencio (es el bug de las novedades de agosto).
+- **La devolución puede ser solo el papel.** Antes exigía texto; con el certificado adjunto es
+  habitual que no haya nada más que decir. Descartar el archivo porque el texto vino vacío
+  habría sido exactamente aquel bug otra vez.
+- **`enctype="multipart/form-data"` en los cinco formularios.** Sin él el navegador manda solo
+  el nombre del archivo: sin error, sin cartel y sin nada que investigar después.
+
+**Dos hallazgos al pasar, arreglados acá:**
+
+- 🐛 **El barrido de iconos no veía las TABLAS de iconos.** `tools/iconos.js` detectaba
+  `{ icon: 'badge' }` pero no `const TIPO_ENTRADA_ICONS = { entrevista: 'record_voice_over' }`,
+  donde la clave es el tipo y el valor el icono. Consecuencia: `record_voice_over`,
+  `family_restroom` y `handshake` —los iconos de la línea de tiempo del legajo— **se venían
+  mostrando con su nombre en inglés desde que existe el recorte**. La convención nueva es el
+  nombre: toda constante terminada en `_ICONS`/`_ICONOS` es una tabla y sus valores entran.
+- 🐛 **El azul de marca no llega a AA en modo oscuro.** `--primary` (#1a73e8) vale lo mismo en
+  los dos temas y sobre la tarjeta oscura da **3,59:1**. Se arregló en las pantallas del SOE con
+  la clase `.soe-desplegar` (#8ab4f8 en oscuro, 8,76:1). ⚠️ **Es un problema general del
+  proyecto**, no del panel: cualquier `color: var(--primary)` en modo oscuro tiene lo mismo.
+
+⚠️ **Producción**: hay un **índice nuevo** (`{ school: 1, 'citaciones.dia': 1 }`). Se crea solo
+al arrancar. Los dos arrays nuevos **no necesitan migración**: un legajo viejo no los tiene y
+todo el código los lee con `|| []`.
+
+⚠️ **Pendiente que conviene no olvidar**: el backup (`/superadmin/backup`) copia
+`public/archivos` y `archivos/entregas`, **no** `archivos/soe`. O sea que hoy los certificados
+médicos del gabinete **no se están respaldando**. Agregarlo toca el formato del backup, el
+restore y el preview, así que va aparte.
+
+Tests: 60 unitarios nuevos (`soeAdjuntos` 25, `soeAgenda` 35) + 11 casos sumados a
+`soeLinea` y `soeAcceso` + **8 specs de smoke**. Las tres suites en verde: 795 unitarios,
+394/394 smoke, matriz de roles sin hallazgos.
+
 
 ### 2026-08-30 — La fuente de iconos bajó de 3,8 MB a 233 KB, y dejó de estar repetida 87 veces
 

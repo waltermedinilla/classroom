@@ -20,6 +20,11 @@
 
 const express  = require('express');
 const mongoose = require('mongoose');
+const multer   = require('multer');
+const path     = require('path');
+const fs       = require('fs');
+const fsp      = require('fs').promises;
+const crypto   = require('crypto');
 
 const User       = require('../models/User');
 const Course     = require('../models/Course');
@@ -36,7 +41,9 @@ const { logAudit }  = require('../middleware/audit');
 const { logDeRuta } = require('../middleware/route-log');
 const { idMalo }    = require('../middleware/objectId');
 
-const acceso = require('../services/soeAcceso');
+const acceso   = require('../services/soeAcceso');
+const adjuntos = require('../services/soeAdjuntos');
+const agenda   = require('../services/soeAgenda');
 const { construirLinea } = require('../services/soeLinea');
 const { indicadoresDeAlumno } = require('../services/soeIndicadores');
 // diaEscolar resuelve el día en la zona de la escuela (producción corre en UTC).
@@ -95,10 +102,201 @@ async function legajoEnScope(req, caseId) {
   return alumno ? { alumno, legajo } : null;
 }
 
+// La versión MIDDLEWARE de legajoEnScope, para las rutas que reciben un archivo.
+//
+// Existe por una razón concreta y no por prolijidad: multer escribe el archivo en disco antes
+// de que corra el handler. Con la validación adentro del handler, el archivo de alguien que no
+// tiene permiso ya está en el servidor cuando se le contesta 403 — y encima habría que saber
+// en qué carpeta ponerlo sin haber resuelto todavía de qué legajo se trata. Poniendo la guarda
+// en la cadena, ANTES de multer, las dos cosas se resuelven de una vez.
+//
+// Deja `req.soeLegajo` y `req.soeAlumno` listos para el handler, que así no repite la búsqueda.
+async function cargarLegajo(req, res, next) {
+  if (idMalo(req, res, 'Legajo no encontrado')) return;
+  try {
+    const par = await legajoEnScope(req, req.params.id);
+    if (!par) return res.status(403).send('Acceso denegado');
+    req.soeLegajo = par.legajo;
+    req.soeAlumno = par.alumno;
+    next();
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+}
+
 // Deja el snapshot de división al día. No es fuente de verdad (ver models/SoeCase.js): sirve
 // para listar y filtrar sin joins, y se refresca cada vez que pasamos por acá igual.
 const primeraDivision = (alumno) => (alumno.divisiones && alumno.divisiones.length
   ? oid(alumno.divisiones[0]) : null);
+
+// ── El material del legajo en disco ──────────────────────────────────────────
+//
+// ⚠️ ESTOS ARCHIVOS NO VIVEN EN /public, Y ES LO MÁS IMPORTANTE DE TODO ESTE BLOQUE.
+// Un certificado de salud mental servido por express.static es un certificado que lee
+// cualquiera que tenga la URL —o que la adivine—, para siempre y sin dejar registro. Se
+// sirven por GET /soe/legajo/:id/adjunto/:adjId, que vuelve a preguntar por el alcance del
+// alumno y por el nivel de acceso, igual que la ficha. Mismo criterio que los adjuntos de la
+// sala en vivo (routes/rooms.js:811), llevado al dato más sensible de la plataforma.
+//
+// Estructura: archivos/soe/{schoolId}/{caseId}/{archivo}. Un directorio por legajo: si algún
+// día hay que exportar o dar de baja un legajo entero, es un solo rmdir.
+const SOE_BASE = path.join(__dirname, '../archivos/soe');
+
+// Nombre en disco sin relación con el que subió la persona. El visible viaja en
+// `adjunto.nombre`, y separarlos evita de raíz los dos problemas del nombre original:
+// colisiones ("certificado.pdf" de dos alumnos) y path traversal dentro del propio nombre.
+const nombreEnDisco = (ext) =>
+  Date.now().toString(36) + crypto.randomBytes(4).toString('hex') + ext;
+
+// Busboy (multer) decodifica los headers multipart como latin1, pero los navegadores mandan
+// el nombre del archivo en UTF-8: sin esto, "Certificación médica.pdf" llega como
+// "CertificaciÃ³n mÃ©dica.pdf". Mismo arreglo que routes/rooms.js:61 y routes/activities.js:97.
+const arreglarNombre = (s) => Buffer.from(String(s || ''), 'latin1').toString('utf8');
+
+// Content-Disposition con el nombre real del archivo. El `filename=` ASCII es el fallback
+// para clientes viejos; `filename*` en UTF-8 es el que usan los navegadores y el que hace que
+// "Certificación médica.pdf" se baje con su nombre. Mismo helper que routes/rooms.js:801 —
+// duplicado a propósito, para no crear una dependencia entre dos routers por cuatro líneas.
+function disposicion(tipo, nombre) {
+  const ascii = String(nombre).replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  return `${tipo}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(nombre)}`;
+}
+
+// Resuelve la ruta en disco de un adjunto y verifica que caiga DENTRO de SOE_BASE.
+// `adjunto.path` lo escribimos nosotros y nunca viene del cliente, pero el chequeo se hace
+// igual: es una línea, y es la diferencia entre un bug de ese campo y servir /etc/passwd.
+function rutaDeAdjunto(relativa) {
+  if (!relativa) return null;
+  const abs = path.resolve(SOE_BASE, relativa);
+  return abs.startsWith(path.resolve(SOE_BASE) + path.sep) ? abs : null;
+}
+
+// El directorio de ESTE legajo, relativo a SOE_BASE. Sale de `req.soeLegajo`, que deja
+// cargarLegajo — o sea, DESPUÉS de validar el alcance (ver el comentario de multer).
+//
+// La escuela se toma del LEGAJO y no del usuario: el documento es el dueño del archivo, y si
+// alguna vez un legajo termina en manos de un usuario de otra escuela lo que hay que corregir
+// es el permiso, no repartir sus archivos en dos carpetas.
+const dirDelLegajo = (req) => path.join(
+  String(req.soeLegajo.school || 'general'),
+  String(req.soeLegajo._id),
+);
+
+// ⚠️ EL ORDEN IMPORTA Y ES LA MITIGACIÓN, no un detalle de estilo: multer corre ANTES que el
+// handler, así que con la validación de alcance adentro del handler el archivo de alguien sin
+// permiso YA ESTARÍA ESCRITO EN DISCO para cuando se contesta 403. Por eso `cargarLegajo` va
+// antes de `conAdjunto` en cada ruta, y por eso el destino se resuelve desde req.soeLegajo.
+// Es el mismo razonamiento de routes/rooms.js:589 y de middleware/image-upload.js.
+const subidor = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const dir = path.join(SOE_BASE, dirDelLegajo(req));
+      fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (req, file, cb) =>
+      cb(null, nombreEnDisco(adjuntos.extensionDe(file.originalname))),
+  }),
+  limits: { fileSize: adjuntos.MAX_ADJUNTO_BYTES },
+  fileFilter: (req, file, cb) => {
+    const ok = adjuntos.extensionPermitida(file.originalname);
+    // ⚠️ `cb(null, false)` y NUNCA `cb(err)`: abortar el cuerpo a mitad de subida mata el
+    // pedido SIGUIENTE de ese mismo socket con un "fetch failed" que aparece en una pantalla
+    // sin relación (la lección del 2026-08-24, en la memoria de subidas de imagen). Y para
+    // que el descarte no sea silencioso —el otro error de aquel día— se anota el motivo acá y
+    // el handler lo convierte en un cartel.
+    if (!ok) req.adjuntoRechazado = 'formato';
+    cb(null, ok);
+  },
+});
+
+// Envuelve a multer para que un archivo demasiado grande no termine en el "File too large"
+// en inglés de multer ni en un 500. Estas rutas son formularios clásicos con redirect (no
+// fetch), así que el aviso viaja como query param y lo dibuja la ficha.
+function conAdjunto(campo) {
+  return (req, res, next) => {
+    subidor.single(campo)(req, res, (err) => {
+      if (!err) return next();
+      if (err.code === 'LIMIT_FILE_SIZE') req.adjuntoRechazado = 'grande';
+      else req.adjuntoRechazado = 'error';
+      // Se sigue igual: el resto del formulario (la entrevista que se acaba de escribir) NO
+      // se pierde por culpa del archivo. Se guarda el texto y el cartel explica qué pasó con
+      // el papel. Perder cuatro párrafos de una entrevista por un PDF de 25 MB sería el peor
+      // de los dos males.
+      next();
+    });
+  };
+}
+
+// Borra del disco el archivo que multer ya escribió. Se usa cuando el handler termina
+// rechazando el formulario: sin esto quedaría un huérfano que no referencia ningún adjunto.
+async function tirarArchivoSubido(req) {
+  if (!req.file || !req.file.path) return;
+  await fsp.unlink(req.file.path).catch(() => {});
+}
+
+// Arma el adjunto que vino en un formulario —el archivo, el enlace, o los dos— y lo empuja al
+// array plano del legajo con su ancla. Devuelve cuántos se agregaron.
+//
+// Vive acá, compartida por las cinco rutas que aceptan material (la entrada del seguimiento,
+// la derivación, la devolución, la citación y el alta suelta), porque el olvido de alguna de
+// las validaciones en una de ellas ES el bug: es exactamente lo que pasó con las imágenes en
+// agosto, cuando la entrega del alumno tenía su propia lista y se quedó atrás.
+function adjuntarDelFormulario(req, legajo, ancla, usuario) {
+  const tipo = adjuntos.ANCLAS.includes(ancla.tipo) ? ancla.tipo : 'legajo';
+  const anclaFinal = { tipo, id: ancla.id || null };
+
+  const categoria = deLista(req.body.categoria, adjuntos.CATEGORIAS, 'otro');
+  const origen    = deLista(req.body.origen,    adjuntos.ORIGENES,   'gabinete');
+  // La fecha del documento. Sin ella, hoy: es lo que pasa cuando se sube el papel el mismo
+  // día que llega, que es la mitad de los casos.
+  const cuando    = fecha(req.body.adjuntoFecha) || new Date();
+  const descripcion = txt(req.body.adjuntoDescripcion, 1000);
+
+  let agregados = 0;
+
+  if (req.file) {
+    const original = arreglarNombre(req.file.originalname);
+    legajo.adjuntos.push({
+      kind: 'archivo',
+      ancla: anclaFinal,
+      // El título por defecto es el nombre del archivo: obligar a escribirlo sería fricción
+      // en el momento exacto en que la persona está apurada, con el papel en la mano.
+      titulo: txt(req.body.adjuntoTitulo, 200) || original.slice(0, 200) || 'Archivo',
+      categoria, origen, descripcion,
+      fecha: cuando,
+      nombre: original.slice(0, 300),
+      // Relativo a SOE_BASE: la base puede mudarse de disco sin reescribir la colección.
+      path: path.relative(SOE_BASE, req.file.path),
+      ext:  adjuntos.extensionDe(original),
+      size: req.file.size || 0,
+      subidoPor: usuario,
+    });
+    agregados++;
+  }
+
+  const url = adjuntos.normalizarEnlace(req.body.enlace);
+  if (url) {
+    legajo.adjuntos.push({
+      kind: 'enlace',
+      ancla: anclaFinal,
+      titulo: txt(req.body.enlaceTitulo, 200) || adjuntos.dominioDe(url) || 'Enlace',
+      categoria, origen, descripcion,
+      fecha: cuando,
+      url,
+      subidoPor: usuario,
+    });
+    agregados++;
+  }
+
+  return agregados;
+}
+
+// El sufijo del redirect cuando el archivo rebotó. Los tres motivos dicen cosas distintas y
+// se resuelven de tres maneras distintas: no es lo mismo "ese formato no entra" que "pesa
+// demasiado". Un cartel único mandaría a investigar a la capa equivocada.
+const avisoDeAdjunto = (req) => (req.adjuntoRechazado ? `?adjunto=${req.adjuntoRechazado}` : '');
 
 // Guarda de nivel COMPLETO, para las pantallas que muestran el destino de una derivación.
 //
@@ -174,6 +372,30 @@ router.get('/', async (req, res) => {
         lastEntryAt:   l.lastEntryAt,
       }));
 
+    // Las citaciones que vienen y las que quedaron sin registrar. Mismo criterio y mismo
+    // nivel que los dos bloques de arriba: cada renglón dice a qué familia se citó y para
+    // qué, que es lectura de nivel completo.
+    //
+    // ⚠️ Se arman con `abiertos` y NO con `legajos`: un legajo cerrado no puede tener una
+    // citación viva. Cerrarlo no borra la fecha (reabrirlo la devuelve tal cual), pero
+    // mientras está cerrado no molesta a nadie — la misma regla que `legajoNecesitaRepaso`.
+    const hoyDia = agenda.hoyEscolar();
+    const citaciones = !completo ? [] : abiertos.flatMap(l =>
+      (l.citaciones || [])
+        .filter(c => agenda.citacionSinRegistrar(c, hoyDia) || agenda.citacionProxima(c, hoyDia))
+        .map(c => ({
+          student:  l.student,
+          division: l.division,
+          citacion: c,
+          sinRegistrar: agenda.citacionSinRegistrar(c, hoyDia),
+        })));
+    // Lo que quedó sin registrar arriba de todo; después, lo que viene, del día más cercano
+    // al más lejano. Es el orden de una bandeja: lo que se pasó de fecha no puede quedar
+    // abajo para siempre.
+    citaciones.sort((a, b) => (Number(b.sinRegistrar) - Number(a.sinRegistrar))
+      || String(a.citacion.dia).localeCompare(String(b.citacion.dia))
+      || String(a.citacion.hora || '').localeCompare(String(b.citacion.hora || '')));
+
     // Los pedidos de Preceptoría sin atender. Es el aviso: el rol `soe` aterriza en esta
     // pantalla (server.js redirige "/" acá), así que es donde tiene que enterarse de que
     // alguien le derivó un chico. Solo el CONTEO — el motivo, que es una observación sobre
@@ -203,6 +425,8 @@ router.get('/', async (req, res) => {
       cerrados: legajos.filter(l => l.estado === 'cerrado').length,
       pendientes,
       repasos,
+      citaciones,
+      agenda,
       totales: {
         // "Activos" y no "abiertos": tiene que coincidir con lo que lista la tabla de abajo,
         // que son todos los no cerrados. Contar solo estado === 'abierto' daba la tarjeta en
@@ -214,6 +438,10 @@ router.get('/', async (req, res) => {
         atencion: pendientes.length,
         repasos:  repasos.length,
         pedidos:  pedidosSinAtender,
+        // Dos números y no uno: "lo que viene" es agenda y "lo que quedó sin registrar" es
+        // una deuda. Sumados en una sola tarjeta, la deuda desaparece adentro del total.
+        citaciones:   citaciones.filter(c => !c.sinRegistrar).length,
+        citacionesSinRegistrar: citaciones.filter(c => c.sinRegistrar).length,
         // La tarjeta de "piden atención" solo se dibuja en nivel completo: en resumen
         // siempre valdría 0 y mentiría por omisión.
         veDerivaciones: completo,
@@ -362,6 +590,116 @@ router.get('/pedidos', requireCompleto, async (req, res) => {
   }
 });
 
+// ── Agenda: GET /soe/agenda ──────────────────────────────────────────────────
+//
+// El calendario del gabinete. Junta las TRES fechas que hasta ahora vivían en tres pantallas
+// distintas —la citación a la familia, el "volver a ver a este chico" y el "volver a
+// preguntarle al hospital"— en un solo mes de pared.
+//
+// requireCompleto por el mismo motivo que /soe/derivaciones y /soe/pedidos: cada renglón
+// nombra a un alumno con legajo y dice para qué se citó a su familia. El nivel 'resumen' está
+// definido como "sabe que hay un seguimiento en curso, sin saber de qué se trata".
+router.get('/agenda', requireCompleto, async (req, res) => {
+  try {
+    const hoy = agenda.hoyEscolar();
+    const mes = agenda.mesValido(req.query.mes) ? req.query.mes : hoy.slice(0, 7);
+
+    const filtro = { school: res.locals.user.school };
+    if (!req.soeAlcance.todas) filtro.division = { $in: req.soeAlcance.divisionIds.map(oid) };
+
+    // Se traen TODOS los legajos del alcance con los campos que tienen fecha, y no una query
+    // por cada clase de evento. Son decenas por escuela, no miles, y el $or de tres ramas
+    // sobre arrays embebidos costaría más de leer que de ejecutar. La proyección deja afuera
+    // lo pesado y lo clínico: entries[] no se toca, ni siquiera para descartarla.
+    const legajos = await SoeCase.find(filtro)
+      .select('student division estado prioridad proximoRepaso citaciones ' +
+              'referrals._id referrals.destino referrals.estado referrals.proximoSeguimiento')
+      .populate('student', 'name avatar')
+      .populate('division', 'name')
+      .lean();
+
+    const eventos = legajos.flatMap(l => agenda.eventosDelLegajo(l, hoy));
+
+    res.render('soe/agenda', {
+      activePage: 'agenda',
+      calendario: agenda.armarCalendario(mes, eventos, hoy),
+      // La lista de abajo mira 21 días para adelante: es el horizonte con el que se organiza
+      // una semana de entrevistas sin que la lista se vuelva ilegible.
+      proximos: agenda.proximos(eventos, hoy, 21),
+      atencion: agenda.cuantosPidenAtencion(eventos),
+      hoy,
+      agenda,
+      acceso,
+    });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+// ── El archivo de un adjunto: GET /soe/legajo/:id/adjunto/:adjId ─────────────
+//
+// ⚠️ `:id` ACÁ ES EL ID DEL LEGAJO, no el del alumno. Es la convención de todas las subrutas
+// de /soe/legajo (la ficha, que es `/legajo/:id` a secas, sí usa el del alumno).
+//
+// Esta ruta es el motivo por el que los adjuntos no viven en /public: revalida el alcance del
+// alumno contra las divisiones ACTUALES —no contra el snapshot del legajo— y exige nivel
+// completo, así que la URL de un certificado no sirve de nada en manos de otra persona.
+//
+// Va ANTES del `router.use(requireEscrituraSoe)` de más abajo: un directivo con acceso
+// completo lee el legajo entero y tiene que poder abrir sus papeles, aunque no pueda escribir
+// una coma.
+router.get('/legajo/:id/adjunto/:adjId', requireCompleto, async (req, res) => {
+  if (idMalo(req, res, 'Archivo no encontrado')) return;
+  if (!mongoose.isValidObjectId(req.params.adjId)) {
+    return res.status(404).send('Archivo no encontrado');
+  }
+  try {
+    const par = await legajoEnScope(req, req.params.id);
+    if (!par) return res.status(403).send('Acceso denegado');
+
+    const adj = par.legajo.adjuntos.id(req.params.adjId);
+    if (!adj || adj.kind !== 'archivo') return res.status(404).send('Archivo no encontrado');
+    // Dado de baja: el registro sigue en el legajo, el archivo ya no está. 410 y no 404
+    // porque son dos cosas distintas y el que las mira desde un log tiene que poder
+    // distinguirlas.
+    if (adj.eliminadoEl) return res.status(410).send('Este archivo fue dado de baja');
+
+    const abs = rutaDeAdjunto(adj.path);
+    // El documento existe pero el archivo no: pasa con un restore parcial o con un borrado a
+    // mano en el servidor. 404 con el motivo, no un 500.
+    if (!abs || !fs.existsSync(abs)) {
+      return res.status(404).send('El archivo ya no está disponible');
+    }
+
+    // ⚠️ Toda apertura de un adjunto se audita, TAMBIÉN la del propio SOE — al revés que la
+    // lectura de la ficha. Un certificado médico abierto es un hecho puntual y raro, no el
+    // trabajo diario del gabinete: no llena la auditoría de ruido, y es exactamente el evento
+    // que la escuela va a querer poder reconstruir si alguna vez hay una pregunta.
+    logAudit(req, 'soe.attachment_view',
+      [{ type: 'user', id: par.alumno._id, name: par.alumno.name }],
+      { categoria: adj.categoria, nombre: adj.nombre });
+
+    const enLinea = adjuntos.seVeEnLinea(adj.ext);
+    // nosniff es obligatorio acá: sin él un navegador podría adivinar el tipo de un archivo
+    // subido y ejecutarlo como HTML. La lista cerrada de extensiones ya lo impide; las dos
+    // defensas cuestan una línea entre las dos.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition',
+      disposicion(enLinea ? 'inline' : 'attachment', adj.nombre || 'archivo'));
+    // `private` y corto: es material de salud de un menor. Que no quede en ninguna caché
+    // compartida, y que en la del navegador dure lo que dura mirarlo.
+    res.setHeader('Cache-Control', 'private, no-store');
+
+    res.sendFile(abs, (err) => {
+      if (err && !res.headersSent) res.status(500).send('Error al abrir el archivo');
+    });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
 // ── La ficha: GET /soe/legajo/:id ────────────────────────────────────────────
 router.get('/legajo/:id', async (req, res) => {
   if (idMalo(req, res, 'Alumno no encontrado')) return;
@@ -389,7 +727,11 @@ router.get('/legajo/:id', async (req, res) => {
     // del navegador, sin recargar. El query param existe para poder linkear la vista
     // cronológica y para que la preferencia funcione con JS apagado.
     const orden = req.query.orden === 'cronologico' ? 'cronologico' : 'reciente';
-    const linea = construirLinea(visto, { orden });
+    // `hoy` decide qué citaciones ya entran al hilo: las que todavía no llegaron son agenda y
+    // no historia (ver services/soeAgenda.js). Se calcula acá, en la ruta, porque
+    // construirLinea es pura y no mira el reloj.
+    const hoy   = agenda.hoyEscolar();
+    const linea = construirLinea(visto, { orden, hoy });
 
     // Quién firmó cada hito, resuelto de una sola vez. Sale de la LÍNEA y no solo de
     // `entries`: las derivaciones y las devoluciones también tienen autor, y sin ellos el
@@ -414,10 +756,25 @@ router.get('/legajo/:id', async (req, res) => {
       legajo: visto,
       linea,
       orden,
+      hoy,
       indicadores,
       autores: new Map(autores.map(a => [a._id.toString(), a])),
       nivel,
       acceso,
+      adjuntos,
+      agenda,
+      // El índice de material del legajo: TODOS los papeles, ordenados por la fecha del
+      // documento, incluidos los dados de baja (que se dibujan apagados). Es la otra lectura
+      // que necesita el gabinete además de la cronológica — "¿qué tenemos de este chico?".
+      // Sale del legajo YA SANITIZADO: en nivel resumen `visto.adjuntos` no existe y esto
+      // queda en [] sin ninguna regla de confidencialidad propia que mantener al día.
+      material: adjuntos.ordenarAdjuntos((visto && visto.adjuntos) || []),
+      // Los avisos que puede traer el redirect. Listas blancas cerradas: los valores vienen
+      // de la URL y terminan en la pantalla.
+      avisoAdjunto: ['formato', 'grande', 'error', 'vacio'].includes(req.query.adjunto)
+        ? req.query.adjunto : null,
+      avisoCitacion: ['incompleta', 'sinfecha'].includes(req.query.citacion)
+        ? req.query.citacion : null,
       paraInput,
     });
   } catch (err) {
@@ -610,16 +967,23 @@ router.post('/legajo/:id/situacion', async (req, res) => {
   }
 });
 
-// Una entrada del seguimiento.
-router.post('/legajo/:id/entrada', async (req, res) => {
-  if (idMalo(req, res, 'Legajo no encontrado')) return;
+// Una entrada del seguimiento, con el material que la acompañe.
+//
+// `cargarLegajo` va ANTES de `conAdjunto` a propósito: multer escribe en disco antes del
+// handler, así que la validación de alcance tiene que estar en la cadena y no adentro (ver el
+// comentario de `subidor` más arriba).
+router.post('/legajo/:id/entrada', cargarLegajo, conAdjunto('archivo'), async (req, res) => {
   try {
-    const par = await legajoEnScope(req, req.params.id);
-    if (!par) return res.status(403).send('Acceso denegado');
-    const { alumno, legajo } = par;
+    const alumno = req.soeAlumno;
+    const legajo = req.soeLegajo;
 
     const texto = txt(req.body.texto, 4000);
-    if (!texto) return res.redirect(`/soe/legajo/${alumno._id}#linea`);
+    if (!texto) {
+      // Sin texto no hay actuación, y un papel colgado de una actuación que no existe no
+      // tiene dónde vivir: se tira el archivo que multer ya escribió.
+      await tirarArchivoSubido(req);
+      return res.redirect(`/soe/legajo/${alumno._id}#linea`);
+    }
 
     // La fecha del HECHO. Si no la cargan, hoy — pero el campo está en el formulario porque
     // las entrevistas se anotan después, no en el momento.
@@ -638,6 +1002,13 @@ router.post('/legajo/:id/entrada', async (req, res) => {
       autor: res.locals.user._id,
     });
 
+    // El material que vino con la entrevista: el certificado que trajeron, la foto de la
+    // libreta, el enlace al informe. Se cuelga de ESTA entrada, cuyo _id ya existe (mongoose
+    // lo asigna en el push, antes del save).
+    const nuevaEntrada = legajo.entries[legajo.entries.length - 1];
+    adjuntarDelFormulario(req, legajo,
+      { tipo: 'entrada', id: nuevaEntrada._id }, res.locals.user._id);
+
     // lastEntryAt ordena la lista del panel sin abrir cada legajo. Se recalcula sobre TODAS
     // las entradas y no se pisa con `cuando`: cargar hoy una entrevista de hace un mes no
     // debería mandar el legajo al fondo de la lista ni traerlo al frente.
@@ -655,9 +1026,9 @@ router.post('/legajo/:id/entrada', async (req, res) => {
 
     logAudit(req, 'soe.entry_add',
       [{ type: 'user', id: alumno._id, name: alumno.name }],
-      { tipo: req.body.tipo || 'nota' });
+      { tipo: req.body.tipo || 'nota', adjuntos: req.file ? 1 : 0 });
 
-    res.redirect(`/soe/legajo/${alumno._id}#linea`);
+    res.redirect(`/soe/legajo/${alumno._id}${avisoDeAdjunto(req)}#linea`);
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).send('Error del servidor');
@@ -694,16 +1065,17 @@ router.post('/legajo/:id/entrada/:entryId/editar', async (req, res) => {
   }
 });
 
-// Una derivación externa.
-router.post('/legajo/:id/derivacion', async (req, res) => {
-  if (idMalo(req, res, 'Legajo no encontrado')) return;
+// Una derivación externa, con la nota o el formulario con el que se derivó.
+router.post('/legajo/:id/derivacion', cargarLegajo, conAdjunto('archivo'), async (req, res) => {
   try {
-    const par = await legajoEnScope(req, req.params.id);
-    if (!par) return res.status(403).send('Acceso denegado');
-    const { alumno, legajo } = par;
+    const alumno = req.soeAlumno;
+    const legajo = req.soeLegajo;
 
     const destino = txt(req.body.destino, 200);
-    if (!destino) return res.redirect(`/soe/legajo/${alumno._id}#derivaciones`);
+    if (!destino) {
+      await tirarArchivoSubido(req);
+      return res.redirect(`/soe/legajo/${alumno._id}#derivaciones`);
+    }
 
     legajo.referrals.push({
       destino,
@@ -718,13 +1090,18 @@ router.post('/legajo/:id/derivacion', async (req, res) => {
     // Derivar es, por definición, entrar en seguimiento.
     if (legajo.estado === 'abierto') legajo.estado = 'seguimiento';
 
+    // La nota de derivación, el formulario del hospital, el turno que ya dieron.
+    const nuevaDerivacion = legajo.referrals[legajo.referrals.length - 1];
+    adjuntarDelFormulario(req, legajo,
+      { tipo: 'derivacion', id: nuevaDerivacion._id }, res.locals.user._id);
+
     await legajo.save();
 
     logAudit(req, 'soe.referral_add',
       [{ type: 'user', id: alumno._id, name: alumno.name }],
       { destino, tipo: req.body.tipo || 'otro' });
 
-    res.redirect(`/soe/legajo/${alumno._id}#derivaciones`);
+    res.redirect(`/soe/legajo/${alumno._id}${avisoDeAdjunto(req)}#derivaciones`);
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).send('Error del servidor');
@@ -760,24 +1137,43 @@ router.post('/legajo/:id/derivacion/:refId', async (req, res) => {
   }
 });
 
-// Una devolución: lo que dijo el lugar al que se lo derivó. Es el dato que hoy se pierde.
-router.post('/legajo/:id/derivacion/:refId/devolucion', async (req, res) => {
-  if (idMalo(req, res, 'Legajo no encontrado')) return;
+// ⭐ Una devolución: lo que dijo el lugar al que se lo derivó, y AHORA TAMBIÉN EL PAPEL QUE
+// LO RESPALDA — el certificado, la receta, el informe con el que el chico volvió.
+//
+// Es el caso que motivó toda esta feature. Hasta acá el legajo podía decir "empezó
+// tratamiento, trajo una receta"; el año que viene esa frase no sirve para nada. Con el papel
+// colgado del mismo hito, sirve.
+router.post('/legajo/:id/derivacion/:refId/devolucion',
+  cargarLegajo, conAdjunto('archivo'), async (req, res) => {
   try {
-    const par = await legajoEnScope(req, req.params.id);
-    if (!par) return res.status(403).send('Acceso denegado');
-    const { alumno, legajo } = par;
+    const alumno = req.soeAlumno;
+    const legajo = req.soeLegajo;
 
     const ref = legajo.referrals.id(req.params.refId);
-    if (!ref) return res.status(404).send('Derivación no encontrada');
+    if (!ref) {
+      await tirarArchivoSubido(req);
+      return res.status(404).send('Derivación no encontrada');
+    }
 
     const texto = txt(req.body.texto, 2000);
-    if (texto) {
+    // ⚠️ El papel PUEDE VENIR SOLO. Antes de esto la devolución exigía texto, y con el
+    // certificado adjunto es habitual que no haya nada más que decir que lo que dice el
+    // papel: obligar a escribir "adjunto certificado" para poder guardar el certificado es
+    // fricción pura, y la alternativa —descartar el archivo en silencio porque el texto vino
+    // vacío— es exactamente el bug de las novedades de agosto.
+    const hayPapel = !!req.file || !!adjuntos.normalizarEnlace(req.body.enlace);
+    if (texto || hayPapel) {
       ref.devoluciones.push({
         fecha: fecha(req.body.fecha) || new Date(),
-        texto,
+        // El schema exige texto. Cuando solo vino el papel, se deja dicho eso mismo: es más
+        // honesto que una cadena vacía y se lee bien en la línea de tiempo.
+        texto: texto || 'Se recibió documentación del servicio.',
         registradoPor: res.locals.user._id,
       });
+      const nuevaDevolucion = ref.devoluciones[ref.devoluciones.length - 1];
+      adjuntarDelFormulario(req, legajo,
+        { tipo: 'devolucion', id: nuevaDevolucion._id }, res.locals.user._id);
+
       // Si estaba esperando respuesta, ya la tuvo. No se toca ningún otro estado: que el
       // lugar conteste no significa que el chico haya empezado el tratamiento.
       if (ref.estado === 'sin_respuesta') ref.estado = 'en_tratamiento';
@@ -785,10 +1181,239 @@ router.post('/legajo/:id/derivacion/:refId/devolucion', async (req, res) => {
 
       logAudit(req, 'soe.referral_update',
         [{ type: 'user', id: alumno._id, name: alumno.name }],
-        { devolucion: true, destino: ref.destino });
+        { devolucion: true, destino: ref.destino, adjuntos: req.file ? 1 : 0 });
+    } else {
+      await tirarArchivoSubido(req);
     }
-    res.redirect(`/soe/legajo/${alumno._id}#derivaciones`);
+    res.redirect(`/soe/legajo/${alumno._id}${avisoDeAdjunto(req)}#derivaciones`);
   } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+// ── Material: archivos y enlaces ─────────────────────────────────────────────
+
+// ¿El ancla que dice el formulario existe de verdad en este legajo?
+//
+// Se verifica contra el documento y no se confía en el `<input type="hidden">`: un ancla
+// inventada dejaría el papel colgado de una actuación inexistente, o sea invisible en la
+// línea de tiempo aunque el archivo esté guardado. Cuando no resuelve, el material cae en el
+// legajo (`tipo: 'legajo'`), que es el cajón general: se sigue viendo en el panel de material
+// y no se pierde nada — lo único que se pierde es la asociación que no era válida.
+function anclaValida(legajo, tipo, id) {
+  const suelto = { tipo: 'legajo', id: null };
+  if (!adjuntos.ANCLAS.includes(tipo) || tipo === 'legajo') return suelto;
+  if (!mongoose.isValidObjectId(id)) return suelto;
+
+  if (tipo === 'entrada'    && legajo.entries.id(id))    return { tipo, id };
+  if (tipo === 'derivacion' && legajo.referrals.id(id))  return { tipo, id };
+  if (tipo === 'citacion'   && legajo.citaciones.id(id)) return { tipo, id };
+  if (tipo === 'devolucion') {
+    // La devolución vive dos niveles adentro (referrals[].devoluciones[]), así que es la
+    // única que hay que buscar recorriendo.
+    for (const r of legajo.referrals) if (r.devoluciones.id(id)) return { tipo, id };
+  }
+  return suelto;
+}
+
+// Sumar material a una actuación que YA EXISTE. Es el camino del papel que llega después:
+// la entrevista fue en marzo y el certificado lo trajeron en mayo.
+router.post('/legajo/:id/adjunto', cargarLegajo, conAdjunto('archivo'), async (req, res) => {
+  try {
+    const alumno = req.soeAlumno;
+    const legajo = req.soeLegajo;
+
+    const ancla = anclaValida(legajo, req.body.anclaTipo, req.body.anclaId);
+    const cuantos = adjuntarDelFormulario(req, legajo, ancla, res.locals.user._id);
+
+    if (!cuantos) {
+      // Ni archivo ni enlace. Si multer ya había anotado por qué rebotó el archivo, ese
+      // motivo manda: es más específico que "no mandaste nada".
+      const motivo = req.adjuntoRechazado || 'vacio';
+      return res.redirect(`/soe/legajo/${alumno._id}?adjunto=${motivo}#material`);
+    }
+
+    await legajo.save();
+
+    logAudit(req, 'soe.attachment_add',
+      [{ type: 'user', id: alumno._id, name: alumno.name }],
+      { ancla: ancla.tipo, categoria: req.body.categoria || 'otro', archivo: !!req.file });
+
+    res.redirect(`/soe/legajo/${alumno._id}${avisoDeAdjunto(req)}#material`);
+  } catch (err) {
+    await tirarArchivoSubido(req);
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+// Dar de baja un adjunto: BORRA EL ARCHIVO DEL DISCO y deja el registro.
+//
+// ⚠️ Acá NO rige la regla de "solo lo propio" que sí rige para las entradas del seguimiento, y
+// la diferencia es deliberada. Aquélla protege la firma profesional de lo que alguien
+// escribió: reescribir la entrevista que anotó otra persona borra su palabra. Esto es otra
+// cosa —sacar un papel de una carpeta— y el caso que lo justifica es concreto y grave: alguien
+// sube por error el certificado de OTRO chico, y quien está de guardia ese día tiene que poder
+// sacarlo ya, no cuando vuelva de licencia la colega que lo subió.
+//
+// Lo que no se pierde es el rastro: quién lo había subido, quién lo dio de baja y cuándo
+// quedan en el legajo, y el hecho va a la auditoría.
+router.post('/legajo/:id/adjunto/:adjId/eliminar', cargarLegajo, async (req, res) => {
+  try {
+    const alumno = req.soeAlumno;
+    const legajo = req.soeLegajo;
+
+    if (!mongoose.isValidObjectId(req.params.adjId)) {
+      return res.status(404).send('Material no encontrado');
+    }
+    const adj = legajo.adjuntos.id(req.params.adjId);
+    if (!adj) return res.status(404).send('Material no encontrado');
+
+    // Idempotente: dos clicks en el botón no pueden convertirse en dos bajas distintas.
+    if (adj.eliminadoEl) return res.redirect(`/soe/legajo/${alumno._id}#material`);
+
+    adj.eliminadoEl  = new Date();
+    adj.eliminadoPor = res.locals.user._id;
+
+    // El archivo se borra DESPUÉS de guardar: si el save falla, el legajo sigue apuntando a un
+    // archivo que existe, que es el orden recuperable. Al revés quedaría un adjunto vigente
+    // sin archivo, o sea un 404 en la cara del gabinete sin explicación.
+    await legajo.save();
+
+    if (adj.kind === 'archivo') {
+      const abs = rutaDeAdjunto(adj.path);
+      // Se traga el error a propósito: si el archivo ya no estaba, la baja igual tiene que
+      // completarse. Un archivo huérfano no le hace daño a nadie; un adjunto que la persona
+      // creyó haber dado de baja y sigue abriéndose, sí.
+      if (abs) await fsp.unlink(abs).catch(() => {});
+    }
+
+    logAudit(req, 'soe.attachment_delete',
+      [{ type: 'user', id: alumno._id, name: alumno.name }],
+      { titulo: adj.titulo, categoria: adj.categoria });
+
+    res.redirect(`/soe/legajo/${alumno._id}#material`);
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+// ── Citaciones ───────────────────────────────────────────────────────────────
+
+// Citar. El día y la hora son TEXTO y no se convierten nunca a un instante: ver la regla de
+// fechas del encabezado de services/soeAgenda.js.
+router.post('/legajo/:id/citacion', cargarLegajo, conAdjunto('archivo'), async (req, res) => {
+  try {
+    const alumno = req.soeAlumno;
+    const legajo = req.soeLegajo;
+
+    const dia    = String(req.body.dia || '').trim();
+    const motivo = txt(req.body.motivo, 500);
+    if (!agenda.diaValido(dia) || !motivo) {
+      await tirarArchivoSubido(req);
+      return res.redirect(`/soe/legajo/${alumno._id}?citacion=incompleta#citaciones`);
+    }
+
+    legajo.citaciones.push({
+      dia,
+      hora:   agenda.normalizarHora(req.body.hora),
+      a:      deLista(req.body.a, agenda.CITADOS, 'familia'),
+      motivo,
+      lugar:  txt(req.body.lugar, 200),
+      medio:  txt(req.body.medio, 200),
+      estado: 'programada',
+      creadaPor: res.locals.user._id,
+    });
+
+    const nueva = legajo.citaciones[legajo.citaciones.length - 1];
+    adjuntarDelFormulario(req, legajo, { tipo: 'citacion', id: nueva._id }, res.locals.user._id);
+
+    // Citar a la familia es empezar a seguir al chico, igual que derivarlo.
+    if (legajo.estado === 'abierto') legajo.estado = 'seguimiento';
+
+    await legajo.save();
+
+    logAudit(req, 'soe.appointment_add',
+      [{ type: 'user', id: alumno._id, name: alumno.name }],
+      { dia, a: req.body.a || 'familia' });
+
+    res.redirect(`/soe/legajo/${alumno._id}${avisoDeAdjunto(req)}#citaciones`);
+  } catch (err) {
+    await tirarArchivoSubido(req);
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+// Registrar qué pasó con una citación: vino, no vino, se canceló, se pasó para otro día.
+//
+// Reprogramar CIERRA ésta y abre una nueva, en vez de mover la fecha de la misma. No es un
+// capricho: la citación a la que la familia no pudo venir y la del jueves siguiente son dos
+// convocatorias distintas, y pisar la fecha borraría del legajo que hubo una primera. Es
+// exactamente el dato que se quiere conservar cuando, tres meses después, hay que reconstruir
+// cuántas veces se llamó a esta familia.
+router.post('/legajo/:id/citacion/:citId', cargarLegajo, conAdjunto('archivo'), async (req, res) => {
+  try {
+    const alumno = req.soeAlumno;
+    const legajo = req.soeLegajo;
+
+    if (!mongoose.isValidObjectId(req.params.citId)) {
+      await tirarArchivoSubido(req);
+      return res.status(404).send('Citación no encontrada');
+    }
+    const cita = legajo.citaciones.id(req.params.citId);
+    if (!cita) {
+      await tirarArchivoSubido(req);
+      return res.status(404).send('Citación no encontrada');
+    }
+
+    const antes  = cita.estado;
+    const estado = deLista(req.body.estado, agenda.ESTADOS_CITACION, cita.estado);
+    const nuevoDia = String(req.body.nuevoDia || '').trim();
+
+    // Reprogramar sin decir para cuándo no es reprogramar: se deja la citación como estaba y
+    // el formulario vuelve con el aviso.
+    if (estado === 'reprogramada' && !agenda.diaValido(nuevoDia)) {
+      await tirarArchivoSubido(req);
+      return res.redirect(`/soe/legajo/${alumno._id}?citacion=sinfecha#citaciones`);
+    }
+
+    cita.estado = estado;
+    if (req.body.notas !== undefined) cita.notas = txt(req.body.notas, 2000);
+    if (agenda.CITACION_RESUELTA.includes(estado)) {
+      cita.resueltaPor = res.locals.user._id;
+      cita.resueltaEl  = new Date();
+    }
+
+    if (estado === 'reprogramada') {
+      legajo.citaciones.push({
+        dia:    nuevoDia,
+        hora:   agenda.normalizarHora(req.body.nuevaHora),
+        a:      cita.a,
+        motivo: cita.motivo,
+        lugar:  cita.lugar,
+        medio:  cita.medio,
+        estado: 'programada',
+        creadaPor: res.locals.user._id,
+      });
+    }
+
+    // El acta firmada, la constancia de que la familia se notificó, la foto del cuaderno de
+    // comunicaciones. Va colgada de ESTA citación aunque el estado sea 'reprogramada': el
+    // papel pertenece al encuentro que se registró, no al que todavía no ocurrió.
+    adjuntarDelFormulario(req, legajo, { tipo: 'citacion', id: cita._id }, res.locals.user._id);
+
+    await legajo.save();
+
+    logAudit(req, 'soe.appointment_update',
+      [{ type: 'user', id: alumno._id, name: alumno.name }],
+      { de: antes, a: cita.estado, ...(estado === 'reprogramada' ? { nuevoDia } : {}) });
+
+    res.redirect(`/soe/legajo/${alumno._id}${avisoDeAdjunto(req)}#citaciones`);
+  } catch (err) {
+    await tirarArchivoSubido(req);
     logDeRuta(err, res);
     res.status(500).send('Error del servidor');
   }

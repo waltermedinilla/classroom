@@ -312,4 +312,221 @@
       font-size: 11px; line-height: 1.4; color: var(--text-hint); margin-top: 2px;
     }
   }
+
+  /* ── Avisos del formulario ──────────────────────────────────────────────────
+     El cartel de "ese archivo no entró". Aparece arriba de la ficha después de un
+     redirect, que es como guardan todos los formularios de este panel. */
+  .soe-aviso {
+    display: flex; gap: 10px; align-items: flex-start;
+    border-radius: var(--radius-sm); padding: 11px 14px; margin-bottom: 16px;
+    font-size: 13px; line-height: 1.5;
+    background: #fef4e5; color: #7a4100; border: 1px solid #f2c98a;
+  }
+  .soe-aviso .material-symbols-outlined { font-size: 20px; flex-shrink: 0; }
+  /* El par de arriba está pensado para fondo claro y da 1,3:1 en oscuro. Como el fondo va en
+     hex, el texto tiene que ir en hex también — y por eso el modo oscuro redeclara los tres. */
+  [data-theme="dark"] .soe-aviso { background: #3a2c12; color: #fdd663; border-color: #6b5220; }
+
+  /* ── Material: archivos y enlaces ───────────────────────────────────────────
+     El certificado, la receta, el informe. Se dibujan como una fila con el ícono de la
+     categoría a la izquierda, para que se puedan barrer con la vista buscando "el
+     certificado" sin leer ningún título. */
+  .adj-lista { display: flex; flex-direction: column; gap: 8px; }
+  .adj {
+    display: flex; gap: 10px; align-items: flex-start;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 10px 12px; background: var(--bg);
+  }
+  .adj .ico {
+    width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface); border: 1px solid var(--border);
+  }
+  .adj .ico .material-symbols-outlined { font-size: 18px; color: var(--primary); }
+  .adj .cuerpo { min-width: 0; flex: 1; }
+  .adj .titulo {
+    font-size: 13.5px; font-weight: 600; color: var(--text);
+    text-decoration: none; word-break: break-word;
+  }
+  a.titulo:hover { color: var(--primary); text-decoration: underline; }
+  /* --text-secondary y no --text-hint: este renglón dice quién firmó el papel y de cuándo es,
+     que es información y no adorno. Misma medición que la meta de la línea de tiempo. */
+  .adj .meta { font-size: 11.5px; color: var(--text-secondary); margin-top: 3px; line-height: 1.45; }
+  .adj .nota { font-size: 12.5px; color: var(--text); margin-top: 5px; line-height: 1.5; white-space: pre-wrap; }
+  .adj .acciones { flex-shrink: 0; }
+  .adj-baja {
+    background: none; border: none; padding: 4px; cursor: pointer;
+    color: var(--text-secondary); line-height: 0; border-radius: 50%;
+  }
+  .adj-baja:hover { color: #c5221f; background: var(--surface); }
+  [data-theme="dark"] .adj-baja:hover { color: #f28b82; }
+  .adj-baja .material-symbols-outlined { font-size: 17px; }
+
+  /* Dado de baja: el registro queda, el archivo no. Se ve apagado y tachado, que es
+     exactamente lo que pasó — no desaparece, para que el legajo siga siendo completo. */
+  .adj.baja { opacity: .6; }
+  .adj.baja .titulo { text-decoration: line-through; }
+  .adj.baja .ico .material-symbols-outlined { color: var(--text-secondary); }
+
+  /* Los papeles colgados de un hito de la línea de tiempo: más chicos, en fila. */
+  .adj-hito { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+  .adj-chip {
+    display: inline-flex; align-items: center; gap: 5px; max-width: 100%;
+    padding: 4px 10px; border-radius: 14px; font-size: 11.5px; font-weight: 500;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); text-decoration: none;
+  }
+  .adj-chip:hover { border-color: var(--primary); color: var(--primary); }
+  .adj-chip .material-symbols-outlined { font-size: 14px; flex-shrink: 0; }
+  .adj-chip span.txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .adj-chip.baja { opacity: .55; text-decoration: line-through; pointer-events: none; }
+
+  /* ── El azul de los desplegables ────────────────────────────────────────────
+     ⚠️ `--primary` (#1a73e8) vale LO MISMO en los dos temas, y sobre el fondo oscuro de una
+     tarjeta (#1e2124) da **3,59:1** — por debajo del 4,5:1 que pide la pauta. Medido en el
+     navegador el 2026-08-30. Es la misma familia de problema que documenta la memoria del
+     contraste de los grises, entrando por el color de marca.
+     `--primary-dark` sería todavía peor: el tema oscuro necesita el tono CLARO de la familia,
+     que es el mismo #8ab4f8 que ya usa el acento de los hitos de apertura más arriba.
+
+     Va como CLASE y no como `style=` inline en cada <summary>, y esa es la única forma de que
+     funcione: un color inline le gana a la variante de modo oscuro (es la trampa que dejó el
+     texto invisible en la sala en vivo). */
+  .soe-desplegar { cursor: pointer; color: var(--primary); }
+  [data-theme="dark"] .soe-desplegar { color: #8ab4f8; }
+
+  /* El bloque plegado que suma material a una actuación ya registrada. */
+  .adj-alta { margin-top: 10px; }
+  .adj-alta > summary {
+    cursor: pointer; font-size: 12.5px; color: var(--primary);
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  [data-theme="dark"] .adj-alta > summary { color: #8ab4f8; }
+  .adj-alta > summary .material-symbols-outlined { font-size: 15px; }
+
+  /* Un <input type=file> propio: el nativo no se puede estilar y se ve distinto en cada
+     navegador. La etiqueta es el control visible y el input queda tapado detrás de ella. */
+  .archivo-campo { position: relative; }
+  .archivo-campo input[type=file] {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    opacity: 0; cursor: pointer;
+  }
+  .archivo-campo .caja {
+    display: flex; align-items: center; gap: 8px;
+    border: 1px dashed var(--border); border-radius: var(--radius-sm);
+    padding: 10px 12px; font-size: 13px; color: var(--text-secondary); background: var(--surface);
+  }
+  .archivo-campo input[type=file]:focus-visible + .caja { border-color: var(--primary); outline: 2px solid var(--primary); outline-offset: 1px; }
+  .archivo-campo:hover .caja { border-color: var(--primary); color: var(--primary); }
+  .archivo-campo .caja .material-symbols-outlined { font-size: 19px; }
+
+  /* ── Citaciones ─────────────────────────────────────────────────────────────
+     Misma caja que una derivación: son las dos actuaciones que tienen un estado propio y
+     esperan algo del mundo de afuera. */
+  .cita { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 12px; }
+  /* Pasó el día y nadie registró qué pasó. El mismo resaltado que la derivación sin
+     respuesta: es el agujero por el que se pierde el dato. */
+  .cita.atencion { border-color: #ea4335; background: #fce8e610; }
+  .cita h4 { margin: 0 0 4px; font-size: 15px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .cita h4 .material-symbols-outlined { font-size: 18px; color: var(--text-secondary); }
+  .cita .cuando { font-size: 13px; font-weight: 600; color: var(--text); }
+  .cita .resultado {
+    border-left: 3px solid var(--primary); padding: 8px 12px; margin-top: 10px;
+    background: var(--bg); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    font-size: 13.5px; line-height: 1.5; white-space: pre-wrap;
+  }
+
+  /* El hito de citación en la línea de tiempo. El acento es el mismo azul de la apertura
+     porque las dos son actos institucionales de la escuela, no del servicio externo.
+     El par claro/oscuro va acá igual que los otros cinco: sobre --bg oscuro el tono de
+     abajo pierde contraste. */
+  .linea li.hito-citacion { --acento: #1a73e8; }
+  [data-theme="dark"] .linea li.hito-citacion { --acento: #8ab4f8; }
+  .linea .resultado {
+    border-left: 3px solid var(--acento, var(--border)); padding: 7px 11px; margin-top: 8px;
+    background: var(--surface); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    font-size: 13px; line-height: 1.5; white-space: pre-wrap;
+  }
+
+  /* ── El calendario de la agenda ─────────────────────────────────────────────
+     Mes de pared, de domingo a sábado, igual que el de Preceptoría y el de Dirección (la
+     grilla la arma services/actividadesDelDia.js, compartida con ellos). Los colores, en
+     cambio, van por tokens y NO en hex como en aquellas dos pantallas: este panel se usa
+     también de noche y con el tema oscuro puesto. */
+  .cal-cab { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .cal-cab .mes { font-size: 16px; font-weight: 600; text-transform: capitalize; }
+  .cal-nav { display: flex; gap: 6px; }
+  .cal-nav a {
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    min-width: 34px; height: 34px; padding: 0 10px; border-radius: 18px;
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--text-secondary); text-decoration: none; font-size: 12.5px; font-weight: 500;
+  }
+  .cal-nav a:hover { color: var(--primary); border-color: var(--primary); }
+  .cal-nav a .material-symbols-outlined { font-size: 18px; }
+
+  .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+  .cal-dow {
+    font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase;
+    color: var(--text-secondary); text-align: center; padding: 6px 0;
+  }
+  .cal-dow .corto { display: none; }
+  .cal-celda {
+    min-height: 96px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface); padding: 6px; overflow: hidden;
+  }
+  .cal-celda.vacia { border: none; background: transparent; }
+  .cal-celda.pasado { background: var(--bg); }
+  .cal-num { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); }
+  .cal-celda.hoy { border-color: var(--primary); }
+  .cal-celda.hoy .cal-num {
+    background: var(--primary); color: #ffffff;   /* fondo en variable de marca ⇒ texto explícito */
+    border-radius: 50%; width: 22px; height: 22px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+
+  /* Un evento adentro de una celda. El punto de color dice de qué clase es; el texto va en
+     los tokens del tema para que se lea en claro y en oscuro sin duplicar nada. */
+  .cal-ev {
+    display: flex; align-items: center; gap: 4px; margin-top: 4px;
+    font-size: 11px; line-height: 1.3; color: var(--text); text-decoration: none;
+  }
+  .cal-ev:hover { color: var(--primary); }
+  .cal-ev .punto { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .cal-ev .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cal-ev.atencion .txt { font-weight: 700; }
+  .cal-mas { font-size: 10.5px; color: var(--text-secondary); margin-top: 3px; }
+
+  /* La lista de "lo que viene", debajo del calendario. */
+  .ag-fila {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .ag-fila:last-child { border-bottom: none; }
+  .ag-fecha {
+    flex-shrink: 0; width: 62px; text-align: center; line-height: 1.15;
+    border-right: 1px solid var(--border); padding-right: 10px;
+  }
+  .ag-fecha .d { font-size: 19px; font-weight: 700; }
+  .ag-fecha .m { font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary); }
+  .ag-fecha .h { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+  .ag-cuerpo { min-width: 0; flex: 1; }
+  .ag-cuerpo .t { font-size: 13.5px; font-weight: 600; }
+  .ag-cuerpo .s { font-size: 12px; color: var(--text-secondary); margin-top: 2px; line-height: 1.45; }
+  .ag-fila.atencion .ag-fecha .d { color: #c5221f; }
+  [data-theme="dark"] .ag-fila.atencion .ag-fecha .d { color: #f28b82; }
+
+  @media (max-width: 700px) {
+    /* La grilla de 7 columnas no se puede colapsar —un calendario con 3 columnas deja de ser
+       un calendario—, así que lo que se achica es la celda. El nombre del día pasa a tres
+       letras, igual que en el calendario de Preceptoría. */
+    .cal-dow .largo { display: none; }
+    .cal-dow .corto { display: inline; }
+    .cal-celda { min-height: 62px; padding: 3px; }
+    .cal-ev .txt { display: none; }
+    .cal-ev { gap: 3px; }
+    .cal-ev .punto { width: 7px; height: 7px; }
+    .cal-num { font-size: 11px; }
+    .adj { padding: 9px 10px; }
+  }
 </style>
