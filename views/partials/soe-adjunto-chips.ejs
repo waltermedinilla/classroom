@@ -1,0 +1,37 @@
+<%# Los papeles colgados de UNA actuación, dibujados como chips en su tarjeta de la línea de
+    tiempo o adentro de la caja de una derivación o una citación.
+
+    Locals:
+      lista     → los adjuntos de esa actuación (services/soeLinea.js ya los agrupó).
+      legajoId  → para armar la URL del archivo.
+      adjuntos  → services/soeAdjuntos.js.
+
+    Los dados de baja se dibujan igual, tachados y sin enlace: el registro es parte del legajo
+    aunque el archivo ya no esté. Un legajo del que se puede sacar material sin dejar rastro no
+    es un registro completo. %>
+<% if ((lista || []).length) { %>
+  <div class="adj-hito">
+    <% lista.forEach(a => { %>
+      <% if (a.eliminadoEl) { %>
+        <span class="adj-chip baja" title="Dado de baja el <%= fmt.fechaCorta(a.eliminadoEl) %>">
+          <span class="material-symbols-outlined">delete</span>
+          <span class="txt"><%= a.titulo %></span>
+        </span>
+      <% } else if (a.kind === 'enlace') { %>
+        <%# rel="noopener noreferrer" y target: el enlace apunta afuera de la escuela y no
+            tiene por qué recibir de dónde salió ni control sobre esta pestaña. %>
+        <a class="adj-chip" href="<%= a.url %>" target="_blank" rel="noopener noreferrer"
+           title="<%= adjuntos.CATEGORIA_LABELS[a.categoria] %> · <%= adjuntos.dominioDe(a.url) %>">
+          <span class="material-symbols-outlined">link</span>
+          <span class="txt"><%= a.titulo %></span>
+        </a>
+      <% } else { %>
+        <a class="adj-chip" href="/soe/legajo/<%= legajoId %>/adjunto/<%= a._id %>" target="_blank" rel="noopener"
+           title="<%= adjuntos.CATEGORIA_LABELS[a.categoria] %> · <%= adjuntos.ORIGEN_LABELS[a.origen] %><%= a.size ? ' · ' + adjuntos.pesoLegible(a.size) : '' %>">
+          <span class="material-symbols-outlined"><%= adjuntos.CATEGORIA_ICONS[a.categoria] || 'attach_file' %></span>
+          <span class="txt"><%= a.titulo %></span>
+        </a>
+      <% } %>
+    <% }) %>
+  </div>
+<% } %>

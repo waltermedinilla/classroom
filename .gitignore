@@ -5,6 +5,9 @@ logs/
 public/archivos/
 archivos/entregas/
 archivos/salas/
+# El material del legajo del gabinete: certificados medicos, recetas e informes de menores.
+# No va al repo bajo ninguna circunstancia. Ver specs/soe-adjuntos-y-agenda.spec.md.
+archivos/soe/
 sin-commitear/
 backups/
 maintenance.json

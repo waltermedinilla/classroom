@@ -104,6 +104,54 @@
       <span class="material-symbols-outlined" style="font-size:18px">arrow_back</span> Volver al resumen
     </a>
 
+    <%# ── Avisos ──────────────────────────────────────────────────────────────
+        Llegan como query param después de un redirect, que es como guardan todos los
+        formularios de este panel. Los valores ya vienen filtrados por lista blanca en la ruta.
+
+        Los cuatro motivos de un archivo rechazado dicen cosas distintas y se resuelven de
+        maneras distintas. Un cartel único —"no se pudo subir"— mandaría a investigar a la
+        capa equivocada, que es el modo de falla más caro que tuvo este proyecto. %>
+    <% if (typeof avisoAdjunto !== 'undefined' && avisoAdjunto) { %>
+      <div class="soe-aviso">
+        <span class="material-symbols-outlined">warning</span>
+        <div>
+          <% if (avisoAdjunto === 'formato') { %>
+            <strong>Ese archivo no se puede adjuntar.</strong>
+            Aceptamos PDF, Word, Excel, texto e imágenes (<%= adjuntos.EXT_ADJUNTOS.slice(0, 6).join(', ') %>…).
+            Si es una foto sacada con un iPhone, elegila desde <em>Fotos</em> y no desde Archivos.
+          <% } else if (avisoAdjunto === 'grande') { %>
+            <strong>Ese archivo pesa demasiado.</strong>
+            El máximo son <%= Math.round(adjuntos.MAX_ADJUNTO_BYTES / (1024 * 1024)) %> MB.
+            Si es un PDF escaneado, volvé a escanearlo en blanco y negro o en menos calidad.
+          <% } else if (avisoAdjunto === 'vacio') { %>
+            <strong>No llegó ningún material.</strong>
+            Hay que elegir un archivo o pegar un enlace (o las dos cosas).
+          <% } else { %>
+            <strong>El archivo no se pudo guardar.</strong>
+            Lo demás del formulario sí quedó registrado. Probá de nuevo con el archivo solo.
+          <% } %>
+          <%# Lo importante y lo que no es obvio: el texto NO se perdió. Sin decirlo, la
+              reacción natural es volver a escribir la entrevista entera. %>
+          <br>Lo que escribiste quedó guardado igual: solo falta volver a subir el archivo.
+        </div>
+      </div>
+    <% } %>
+    <% if (typeof avisoCitacion !== 'undefined' && avisoCitacion) { %>
+      <div class="soe-aviso">
+        <span class="material-symbols-outlined">warning</span>
+        <div>
+          <% if (avisoCitacion === 'sinfecha') { %>
+            <strong>Para pasar la citación a otro día hay que decir para cuándo.</strong>
+            La citación quedó como estaba.
+          <% } else { %>
+            <strong>Falta la fecha o el motivo de la citación.</strong>
+            Los dos son obligatorios: sin ellos, dentro de un año la citación no le dice nada
+            a nadie.
+          <% } %>
+        </div>
+      </div>
+    <% } %>
+
     <div class="soe-panel ficha">
       <% if (legajo) { %>
         <div class="franja" style="background:<%= acceso.PRIORIDAD_COLORS[legajo.prioridad] %>"></div>
@@ -195,10 +243,22 @@
       <% } %>
       <% if (legajo && nivel === 'completo') { %>
         <a href="#linea"><span class="material-symbols-outlined">timeline</span> Línea de tiempo</a>
+        <a href="#citaciones"><span class="material-symbols-outlined">event</span> Citaciones</a>
         <a href="#derivaciones"><span class="material-symbols-outlined">share</span> Derivaciones</a>
+        <a href="#material"><span class="material-symbols-outlined">folder_shared</span> Material</a>
       <% } %>
       <a href="#como-viene"><span class="material-symbols-outlined">insights</span> Cómo viene</a>
     </div>
+
+    <%# El material agrupado por actuación, UNA sola vez para toda la pantalla. Los paneles de
+        Derivaciones y Citaciones lo consultan por clave; la línea de tiempo no lo necesita
+        porque services/soeLinea.js ya le colgó a cada hito los suyos.
+
+        Se declara acá, al nivel de la plantilla, y no adentro de un bloque condicional: EJS
+        compila todo en una sola función, y un `const` declarado dentro de un bloque no se ve
+        desde el siguiente. En nivel 'resumen' `material` llega vacío y esto queda en un Map
+        vacío, sin ninguna regla de confidencialidad propia que mantener al día. %>
+    <% const adjPorAncla = adjuntos.agruparPorAncla(material || []); %>
 
     <%# ── Situación ──────────────────────────────────────────────────────── %>
     <% if (legajo) { %>
@@ -316,7 +376,11 @@
         <h3><span class="material-symbols-outlined">timeline</span> Línea de tiempo</h3>
 
         <% if (soeEscribe) { %>
-          <form method="POST" action="/soe/legajo/<%= legajo._id %>/entrada" class="soe-form" style="margin-bottom:20px">
+          <%# enctype multipart: sin él el navegador manda solo el NOMBRE del archivo y el
+              servidor no recibe nada, sin error y sin cartel. Vale para los cinco formularios
+              de esta pantalla que incluyen soe-adjunto-campos. %>
+          <form method="POST" action="/soe/legajo/<%= legajo._id %>/entrada" class="soe-form"
+                enctype="multipart/form-data" style="margin-bottom:20px">
             <div class="fila">
               <div>
                 <label for="e-fecha">Fecha del hecho</label>
@@ -357,6 +421,7 @@
               <label for="e-texto">Qué pasó</label>
               <textarea id="e-texto" name="texto" maxlength="4000" required placeholder="Lo que se habló, lo que se observó, lo que se acordó…"></textarea>
             </div>
+            <%- include('../partials/soe-adjunto-campos', { pfx: 'e', adjuntos }) %>
             <div>
               <button type="submit" class="btn btn-primary">
                 <span class="material-symbols-outlined">add</span> Agregar a la línea de tiempo
@@ -424,16 +489,47 @@
 
                     <% if (h.texto) { %><div class="texto"><%= h.texto %></div><% } %>
 
+                    <%# Lo que pasó en la citación, aparte del motivo por el que se citó. Son
+                        dos cosas distintas y mezclarlas en un párrafo es lo que hace que un
+                        legajo no se pueda releer. %>
+                    <% if (h.resultado) { %>
+                      <div class="resultado"><%= h.resultado %></div>
+                    <% } %>
+
+                    <%# Los papeles de ESTE hito: el certificado que trajeron a la entrevista,
+                        la receta que volvió del hospital, el acta que se firmó en la citación. %>
+                    <%- include('../partials/soe-adjunto-chips', { lista: h.adjuntos, legajoId: legajo._id, adjuntos }) %>
+
                     <div class="meta">
                       <%= fmt.fechaCorta(h.fecha) %>
                       <% if (autor) { %> · <%= autor.name %><% } %>
                       <% if (h.meta && h.tipo === 'entrada') { %> · <%= h.meta %><% } %>
+                      <% if (h.tipo === 'citacion' && h.submeta) { %> · <%= h.submeta %> hs<% } %>
+                      <% if (h.tipo === 'citacion' && h.lugar) { %> · <%= h.lugar %><% } %>
                       <%# La derivación y su devolución linkean al panel de gestión de abajo,
                           que es donde se les cambia el estado y se les carga la respuesta. %>
                       <% if (h.refId) { %>
-                        · <a href="#deriv-<%= h.refId %>" style="color:var(--primary);text-decoration:none">ver la derivación</a>
+                        · <a href="#deriv-<%= h.refId %>" class="soe-desplegar" style="text-decoration:none">ver la derivación</a>
+                      <% } %>
+                      <% if (h.citacionId) { %>
+                        · <a href="#cita-<%= h.citacionId %>" class="soe-desplegar" style="text-decoration:none">ver la citación</a>
                       <% } %>
                     </div>
+
+                    <%# Sumar material a una actuación que YA ESTÁ registrada: el certificado
+                        de la entrevista de marzo que la familia trajo recién en mayo. Solo en
+                        los hitos que tienen ancla — la apertura y el cierre no la tienen, y su
+                        material va al cajón general del panel de abajo. %>
+                    <% if (soeEscribe && legajo.estado !== 'cerrado' && h.ancla) { %>
+                      <% const _anclaTipo = h.ancla.split(':')[0]; const _anclaId = h.ancla.split(':')[1]; %>
+                      <form method="POST" action="/soe/legajo/<%= legajo._id %>/adjunto"
+                            enctype="multipart/form-data" class="soe-form" style="margin-top:6px">
+                        <input type="hidden" name="anclaTipo" value="<%= _anclaTipo %>">
+                        <input type="hidden" name="anclaId"   value="<%= _anclaId %>">
+                        <%- include('../partials/soe-adjunto-campos', {
+                              pfx: 'h' + _anclaId, adjuntos, boton: 'Guardar el material' }) %>
+                      </form>
+                    <% } %>
                   </div>
                 </div>
               </li>
@@ -443,7 +539,7 @@
           <noscript>
             <div style="margin-top:10px">
               <a href="/soe/legajo/<%= alumno._id %>?orden=<%= orden === 'cronologico' ? 'reciente' : 'cronologico' %>#linea"
-                 style="font-size:12.5px;color:var(--primary)">
+                 class="soe-desplegar" style="font-size:12.5px">
                 Ver <%= orden === 'cronologico' ? 'lo último arriba' : 'del comienzo al presente' %>
               </a>
             </div>
@@ -493,19 +589,27 @@
               </div>
             <% } %>
 
+            <%# Los papeles de la derivación misma: la nota con la que se derivó, el
+                formulario del hospital, el turno que ya dieron. %>
+            <%- include('../partials/soe-adjunto-chips', { lista: adjPorAncla.get(adjuntos.claveAncla('derivacion', r._id)) || [], legajoId: legajo._id, adjuntos }) %>
+
             <% (r.devoluciones || []).slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha)).forEach(d => { %>
               <div class="devolucion">
                 <div style="font-size:11px;color:var(--text-hint);margin-bottom:3px">
                   Devolución del <%= fmt.fechaCorta(d.fecha) %>
                 </div>
                 <%= d.texto %>
+                <%# ⭐ Acá aparecen el certificado y la receta con los que el chico volvió: es
+                    el caso que motivó esta feature. %>
+                <%- include('../partials/soe-adjunto-chips', { lista: adjPorAncla.get(adjuntos.claveAncla('devolucion', d._id)) || [], legajoId: legajo._id, adjuntos }) %>
               </div>
             <% }) %>
 
             <% if (soeEscribe && legajo.estado !== 'cerrado') { %>
               <details style="margin-top:12px">
-                <summary style="cursor:pointer;font-size:13px;color:var(--primary)">Registrar devolución o cambiar el estado</summary>
-                <form method="POST" action="/soe/legajo/<%= legajo._id %>/derivacion/<%= r._id %>/devolucion" class="soe-form" style="margin-top:12px">
+                <summary class="soe-desplegar" style="font-size:13px">Registrar devolución o cambiar el estado</summary>
+                <form method="POST" action="/soe/legajo/<%= legajo._id %>/derivacion/<%= r._id %>/devolucion"
+                      enctype="multipart/form-data" class="soe-form" style="margin-top:12px">
                   <div class="fila">
                     <div>
                       <label>Fecha de la devolución</label>
@@ -515,7 +619,12 @@
                   <div>
                     <label>Qué dijeron</label>
                     <textarea name="texto" maxlength="2000" placeholder="Lo que informó el servicio: diagnóstico, tratamiento, sugerencias para la escuela…"></textarea>
+                    <div class="ayuda">
+                      Se puede guardar solo el papel, sin escribir nada: si el certificado ya lo
+                      dice todo, no hace falta repetirlo acá.
+                    </div>
                   </div>
+                  <%- include('../partials/soe-adjunto-campos', { pfx: 'dev' + r._id, adjuntos }) %>
                   <div><button type="submit" class="btn btn-primary">Guardar devolución</button></div>
                 </form>
                 <form method="POST" action="/soe/legajo/<%= legajo._id %>/derivacion/<%= r._id %>" class="soe-form" style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px">
@@ -544,8 +653,9 @@
 
         <% if (soeEscribe && legajo.estado !== 'cerrado') { %>
           <details style="margin-top:8px">
-            <summary style="cursor:pointer;font-size:13.5px;font-weight:600;color:var(--primary)">+ Derivar a un servicio externo</summary>
-            <form method="POST" action="/soe/legajo/<%= legajo._id %>/derivacion" class="soe-form" style="margin-top:14px">
+            <summary class="soe-desplegar" style="font-size:13.5px;font-weight:600">+ Derivar a un servicio externo</summary>
+            <form method="POST" action="/soe/legajo/<%= legajo._id %>/derivacion" class="soe-form"
+                  enctype="multipart/form-data" style="margin-top:14px">
               <div class="fila">
                 <div>
                   <label for="d-destino">A dónde</label>
@@ -576,14 +686,267 @@
                 <div>
                   <label for="d-prox">Volver a preguntar el</label>
                   <input type="date" id="d-prox" name="proximoSeguimiento">
-                  <div class="ayuda">Pasada esta fecha sin devolución, la derivación aparece resaltada en el resumen.</div>
+                  <div class="ayuda">Pasada esta fecha sin devolución, la derivación aparece resaltada en el resumen y en la agenda.</div>
                 </div>
-                <div style="display:flex;align-items:flex-end">
-                  <button type="submit" class="btn btn-primary">Registrar derivación</button>
-                </div>
+              </div>
+              <%- include('../partials/soe-adjunto-campos', { pfx: 'd', adjuntos }) %>
+              <div>
+                <button type="submit" class="btn btn-primary">Registrar derivación</button>
               </div>
             </form>
           </details>
+        <% } %>
+      </div>
+    <% } %>
+
+    <%# ── Citaciones ─────────────────────────────────────────────────────── %>
+    <% if (legajo && nivel === 'completo') { %>
+      <div class="soe-panel" id="citaciones">
+        <h3><span class="material-symbols-outlined">event</span> Citaciones</h3>
+
+        <%# Lo próximo arriba: la citación del jueves es la que se está buscando cuando se
+            abre esta ficha. Las viejas quedan abajo, que es donde va la historia. %>
+        <% const citas = agenda.ordenarCitaciones(legajo.citaciones || [], { descendente: true }); %>
+        <% const sinRegistrar = citas.filter(c => agenda.citacionSinRegistrar(c, hoy)); %>
+
+        <% if (sinRegistrar.length) { %>
+          <div class="soe-aviso">
+            <span class="material-symbols-outlined">event_busy</span>
+            <div>
+              <strong><%= sinRegistrar.length %></strong>
+              <%= sinRegistrar.length === 1 ? 'citación ya pasó' : 'citaciones ya pasaron' %>
+              y no quedó anotado qué ocurrió. Aunque la familia no haya venido, registrarlo es
+              parte del legajo: es lo que después permite decir cuántas veces se la convocó.
+            </div>
+          </div>
+        <% } %>
+
+        <% if (!citas.length) { %>
+          <div class="vacio" style="padding:20px 0">
+            <span class="material-symbols-outlined">event</span>
+            Todavía no se citó a nadie por este alumno.
+          </div>
+        <% } %>
+
+        <% citas.forEach(c => { const pendiente = agenda.citacionSinRegistrar(c, hoy); %>
+          <div class="cita <%= pendiente ? 'atencion' : '' %>" id="cita-<%= c._id %>">
+            <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+              <div style="min-width:200px;flex:1">
+                <h4>
+                  <span class="material-symbols-outlined"><%= agenda.CITADO_ICONS[c.a] || 'event' %></span>
+                  <%= agenda.CITADO_LABELS[c.a] || 'Citación' %>
+                </h4>
+                <div class="cuando">
+                  <%# La fecha se arma desde el string 'YYYY-MM-DD' con `fmt` sobre el mediodía
+                      UTC. Es la regla de fechas del proyecto: `new Date('2026-09-02')` es
+                      medianoche UTC y en la zona de la escuela se vería como el 1. %>
+                  <%= fmt.fechaCorta(new Date(c.dia + 'T12:00:00Z')) %>
+                  <% if (c.hora) { %> · <%= c.hora %> hs<% } %>
+                </div>
+                <div style="font-size:12px;color:var(--text-secondary);margin-top:3px">
+                  <% if (c.lugar) { %><%= c.lugar %><% } %>
+                  <% if (c.lugar && c.medio) { %> · <% } %>
+                  <% if (c.medio) { %>Avisado por <%= c.medio %><% } %>
+                </div>
+              </div>
+              <div>
+                <span class="chip <%= pendiente ? 'chip-alerta' : (agenda.CITACION_ACTIVA.includes(c.estado) ? 'chip-ok' : 'chip-neutro') %>">
+                  <%= agenda.ESTADO_CITACION_LABELS[c.estado] %>
+                </span>
+              </div>
+            </div>
+
+            <% if (c.motivo) { %>
+              <div class="lectura" style="margin-top:8px;font-size:13.5px"><%= c.motivo %></div>
+            <% } %>
+
+            <% if (c.notas) { %>
+              <div class="resultado"><%= c.notas %></div>
+            <% } %>
+
+            <%- include('../partials/soe-adjunto-chips', { lista: adjPorAncla.get(adjuntos.claveAncla('citacion', c._id)) || [], legajoId: legajo._id, adjuntos }) %>
+
+            <% if (soeEscribe && legajo.estado !== 'cerrado') { %>
+              <details style="margin-top:12px">
+                <summary class="soe-desplegar" style="font-size:13px">
+                  Registrar qué pasó, pasarla de fecha o adjuntar el acta
+                </summary>
+                <form method="POST" action="/soe/legajo/<%= legajo._id %>/citacion/<%= c._id %>"
+                      enctype="multipart/form-data" class="soe-form" style="margin-top:12px">
+                  <div class="fila">
+                    <div>
+                      <label for="ce-<%= c._id %>">Qué pasó</label>
+                      <select id="ce-<%= c._id %>" name="estado">
+                        <% agenda.ESTADOS_CITACION.forEach(e => { %>
+                          <option value="<%= e %>" <%= e === c.estado ? 'selected' : '' %>><%= agenda.ESTADO_CITACION_LABELS[e] %></option>
+                        <% }) %>
+                      </select>
+                    </div>
+                    <div>
+                      <%# Solo se usan si el estado elegido es "se pasó para otro día". La ruta
+                          rechaza esa opción sin fecha y vuelve con el aviso: reprogramar sin
+                          decir para cuándo no es reprogramar. %>
+                      <label for="cd-<%= c._id %>">Nueva fecha</label>
+                      <input type="date" id="cd-<%= c._id %>" name="nuevoDia">
+                      <div class="ayuda">Solo si la pasás para otro día. Se abre una citación nueva y ésta queda registrada como fue.</div>
+                    </div>
+                    <div>
+                      <label for="ch-<%= c._id %>">Nueva hora</label>
+                      <input type="time" id="ch-<%= c._id %>" name="nuevaHora">
+                    </div>
+                  </div>
+                  <div>
+                    <label for="cn-<%= c._id %>">Qué se conversó</label>
+                    <textarea id="cn-<%= c._id %>" name="notas" maxlength="2000"
+                              placeholder="Lo que se habló, con quién, a qué se llegó…"><%= c.notas %></textarea>
+                  </div>
+                  <%- include('../partials/soe-adjunto-campos', { pfx: 'cit' + c._id, adjuntos }) %>
+                  <div><button type="submit" class="btn btn-primary">Guardar</button></div>
+                </form>
+              </details>
+            <% } %>
+          </div>
+        <% }) %>
+
+        <% if (soeEscribe && legajo.estado !== 'cerrado') { %>
+          <details style="margin-top:8px">
+            <summary class="soe-desplegar" style="font-size:13.5px;font-weight:600">+ Citar</summary>
+            <form method="POST" action="/soe/legajo/<%= legajo._id %>/citacion" class="soe-form"
+                  enctype="multipart/form-data" style="margin-top:14px">
+              <div class="fila">
+                <div>
+                  <label for="c-a">A quién</label>
+                  <select id="c-a" name="a">
+                    <% agenda.CITADOS.forEach(a => { %>
+                      <option value="<%= a %>"><%= agenda.CITADO_LABELS[a] %></option>
+                    <% }) %>
+                  </select>
+                </div>
+                <div>
+                  <label for="c-dia">Día</label>
+                  <input type="date" id="c-dia" name="dia" required value="<%= hoy %>">
+                </div>
+                <div>
+                  <label for="c-hora">Hora</label>
+                  <input type="time" id="c-hora" name="hora">
+                  <div class="ayuda">Opcional: se puede citar "a la mañana".</div>
+                </div>
+              </div>
+              <div>
+                <label for="c-motivo">Para qué se la cita</label>
+                <textarea id="c-motivo" name="motivo" maxlength="500" required
+                          placeholder="Qué se quiere conversar, qué se le va a plantear…"></textarea>
+              </div>
+              <div class="fila">
+                <div>
+                  <label for="c-lugar">Dónde</label>
+                  <input type="text" id="c-lugar" name="lugar" maxlength="200" placeholder="Gabinete de la escuela">
+                </div>
+                <div>
+                  <%# Cuando la familia dice que nunca se enteró, esto es lo único que queda
+                      escrito. Por eso está en el formulario y no en una nota suelta. %>
+                  <label for="c-medio">Cómo se avisó</label>
+                  <input type="text" id="c-medio" name="medio" maxlength="200"
+                         placeholder="Cuaderno de comunicaciones, teléfono, WhatsApp…">
+                </div>
+              </div>
+              <%- include('../partials/soe-adjunto-campos', { pfx: 'c', adjuntos }) %>
+              <div>
+                <button type="submit" class="btn btn-primary">
+                  <span class="material-symbols-outlined">event</span> Registrar la citación
+                </button>
+              </div>
+            </form>
+          </details>
+        <% } %>
+      </div>
+    <% } %>
+
+    <%# ── Material y documentación ───────────────────────────────────────── %>
+    <% if (legajo && nivel === 'completo') { %>
+      <div class="soe-panel" id="material">
+        <h3><span class="material-symbols-outlined">folder_shared</span> Material y documentación</h3>
+        <p style="font-size:12.5px;color:var(--text-secondary);margin:-6px 0 14px;line-height:1.5">
+          Todos los papeles del legajo en un solo lugar: los certificados, las recetas, los
+          informes y los enlaces, sin importar de qué actuación cuelguen. La línea de tiempo
+          los muestra en su momento; esto es el índice.
+        </p>
+
+        <% if (!material.length) { %>
+          <div class="vacio" style="padding:20px 0">
+            <span class="material-symbols-outlined">folder_open</span>
+            Todavía no hay ningún archivo ni enlace cargado.
+          </div>
+        <% } else { %>
+          <div class="adj-lista">
+            <% material.forEach(a => { %>
+              <div class="adj <%= a.eliminadoEl ? 'baja' : '' %>">
+                <div class="ico">
+                  <span class="material-symbols-outlined">
+                    <%= a.eliminadoEl ? 'delete' : (a.kind === 'enlace' ? 'link' : (adjuntos.CATEGORIA_ICONS[a.categoria] || 'attach_file')) %>
+                  </span>
+                </div>
+                <div class="cuerpo">
+                  <% if (a.eliminadoEl) { %>
+                    <span class="titulo"><%= a.titulo %></span>
+                  <% } else if (a.kind === 'enlace') { %>
+                    <a class="titulo" href="<%= a.url %>" target="_blank" rel="noopener noreferrer"><%= a.titulo %></a>
+                  <% } else { %>
+                    <a class="titulo" href="/soe/legajo/<%= legajo._id %>/adjunto/<%= a._id %>" target="_blank" rel="noopener"><%= a.titulo %></a>
+                  <% } %>
+
+                  <div class="meta">
+                    <%= adjuntos.CATEGORIA_LABELS[a.categoria] %>
+                    · <%= adjuntos.ORIGEN_LABELS[a.origen] %>
+                    · <%= fmt.fechaCorta(a.fecha) %>
+                    <% if (a.kind === 'enlace') { %>
+                      · <%= adjuntos.dominioDe(a.url) %>
+                    <% } else if (a.size) { %>
+                      · <%= adjuntos.pesoLegible(a.size) %>
+                    <% } %>
+                    <% if (a.ancla && a.ancla.tipo !== 'legajo') { %>
+                      · <%= adjuntos.ANCLA_LABELS[a.ancla.tipo] %>
+                    <% } %>
+                    <% if (a.eliminadoEl) { %>
+                      <br><strong>Dado de baja el <%= fmt.fechaCorta(a.eliminadoEl) %>.</strong>
+                      El registro queda; el archivo ya no está en el servidor.
+                    <% } %>
+                  </div>
+
+                  <% if (a.descripcion) { %><div class="nota"><%= a.descripcion %></div><% } %>
+                </div>
+
+                <% if (soeEscribe && !a.eliminadoEl) { %>
+                  <div class="acciones">
+                    <%# La confirmación es del navegador y no un modal propio: es una acción
+                        rara, destructiva y con una sola pregunta. Sin JS el borrado igual
+                        funciona, que es lo que importa. %>
+                    <form method="POST" action="/soe/legajo/<%= legajo._id %>/adjunto/<%= a._id %>/eliminar"
+                          onsubmit="return confirm('Se va a borrar el archivo del servidor. En el legajo queda el registro de que existió y de quién lo dio de baja. ¿Seguimos?')">
+                      <button type="submit" class="adj-baja" title="Dar de baja este material"
+                              aria-label="Dar de baja <%= a.titulo %>">
+                        <span class="material-symbols-outlined">delete</span>
+                      </button>
+                    </form>
+                  </div>
+                <% } %>
+              </div>
+            <% }) %>
+          </div>
+        <% } %>
+
+        <% if (soeEscribe && legajo.estado !== 'cerrado') { %>
+          <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px">
+            <form method="POST" action="/soe/legajo/<%= legajo._id %>/adjunto"
+                  enctype="multipart/form-data" class="soe-form">
+              <%# Sin ancla: es el cajón general del legajo, para el papel que no pertenece a
+                  ningún encuentro puntual. El que sí pertenece a uno se sube desde su propia
+                  tarjeta de la línea de tiempo, y así queda colgado ahí. %>
+              <input type="hidden" name="anclaTipo" value="legajo">
+              <%- include('../partials/soe-adjunto-campos', {
+                    pfx: 'm', adjuntos, abierto: true, boton: 'Guardar el material' }) %>
+            </form>
+          </div>
         <% } %>
       </div>
     <% } %>
@@ -757,6 +1120,26 @@
   <%- include('../partials/footer') %>
 
   <script>
+    // El nombre del archivo elegido, adentro de la caja punteada.
+    //
+    // El <input type="file"> nativo no se puede estilar y se ve distinto en cada navegador,
+    // así que está tapado por su etiqueta (ver .archivo-campo en soe-styles.ejs). El precio
+    // es que hay que escribir a mano el nombre del archivo elegido: sin esto, la persona
+    // adjunta el certificado y la pantalla sigue diciendo "Elegí un archivo".
+    //
+    // Delegado en el documento y no un listener por campo: esta ficha dibuja un formulario de
+    // adjunto por cada hito de la línea de tiempo, así que pueden ser veinte.
+    document.addEventListener('change', function (ev) {
+      var input = ev.target;
+      if (!input || input.type !== 'file' || !input.closest('.archivo-campo')) return;
+      var destino = input.closest('.archivo-campo').querySelector('[data-nombre-archivo]');
+      if (!destino) return;
+      var f = input.files && input.files[0];
+      // El texto original se guarda la primera vez, para poder volver a él si se cancela.
+      if (!destino.dataset.original) destino.dataset.original = destino.textContent;
+      destino.textContent = f ? f.name : destino.dataset.original;
+    });
+
     // El orden de la línea de tiempo.
     //
     // Por defecto lo último arriba: para el trabajo diario importa la última actuación.

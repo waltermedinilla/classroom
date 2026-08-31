@@ -22,6 +22,10 @@ const {
   TIPO_ENTRADA_LABELS, TIPO_ENTRADA_ICONS,
   TIPO_DERIVACION_LABELS, ESTADO_DERIVACION_LABELS,
 } = require('./soeAcceso');
+const {
+  CITADO_LABELS, ESTADO_CITACION_LABELS, citacionEnLinea,
+} = require('./soeAgenda');
+const { claveAncla, agruparPorAncla } = require('./soeAdjuntos');
 
 // Una fecha utilizable, o null. Un hito sin fecha no se puede ubicar en el hilo y se
 // descarta: es preferible que falte a que aparezca en 1970 arriba de todo.
@@ -46,6 +50,12 @@ const texto = (v) => (typeof v === 'string' ? v.trim() : '');
 //   refId   → la derivación a la que pertenece, para linkear al panel de gestión.
 //   animo   → solo en las entradas; tiñe el círculo. null = esta entrada no dice nada
 //             sobre cómo estaba el chico, que es un caso legítimo del modelo.
+//   ancla   → la clave con la que se le cuelgan los adjuntos (ver services/soeAdjuntos.js).
+//             Se resuelve al final, de una sola pasada, y termina en `adjuntos`.
+//   adjuntos→ los papeles de ESE hito: el certificado que trajeron a la entrevista, la nota
+//             con la que se derivó, la receta que volvió del hospital, el acta que firmaron
+//             en la citación. Siempre un array, aunque esté vacío: la vista no tiene que
+//             preguntar si existe.
 
 function hitoApertura(legajo) {
   const fecha = cuando(legajo.openedAt);
@@ -62,6 +72,11 @@ function hitoApertura(legajo) {
     autor: legajo.openedBy || null,
     meta: null,
     refId: null,
+    // El material general del legajo NO cuelga de acá, y es deliberado: un informe cargado
+    // hoy aparecería dentro de la tarjeta de apertura, que está al fondo del hilo por ser lo
+    // más viejo, y quedaría escondido justo el día que se subió. Ese material vive en el
+    // panel "Material y documentación" de la ficha, que es un índice y no una cronología.
+    ancla: null,
   };
 }
 
@@ -82,6 +97,7 @@ function hitoEntrada(e) {
     meta: e.editedAt ? 'editado' : null,
     refId: null,
     entryId: e._id || null,
+    ancla: claveAncla('entrada', e._id),
   };
 }
 
@@ -104,6 +120,7 @@ function hitoDerivacion(r) {
     meta: ESTADO_DERIVACION_LABELS[r.estado] || null,
     submeta: clase || null,
     refId: r._id || null,
+    ancla: claveAncla('derivacion', r._id),
   };
 }
 
@@ -126,6 +143,49 @@ function hitoDevolucion(d, r) {
     autor: d.registradoPor || null,
     meta: null,
     refId: r._id || null,
+    // ⭐ Acá cuelgan el certificado y la receta que vuelven del servicio: el hito de la
+    // devolución es exactamente "lo que dijeron allá", y el papel que lo respalda es parte de
+    // eso. Es el caso que motivó toda esta feature.
+    ancla: claveAncla('devolucion', d._id),
+  };
+}
+
+// ── La citación ──────────────────────────────────────────────────────────────
+//
+// Un encuentro que el gabinete convocó: la familia, el chico, los docentes. Entra al hilo
+// solo cuando ya pasó o se resolvió — la regla vive en services/soeAgenda.js y la decide
+// `construirLinea`, no esta función. Una citación para dentro de tres semanas es AGENDA, y
+// puesta en un hilo ordenado con lo último arriba se sentaría por encima de todo lo que de
+// verdad ocurrió.
+function hitoCitacion(c) {
+  // El día es TEXTO ('YYYY-MM-DD') y se convierte al mediodía UTC solo para poder ordenar el
+  // hilo. El mediodía y no la medianoche: es el mismo truco que usa el resto del proyecto
+  // para que el día del calendario sea el mismo en cualquier zona entre UTC−11 y UTC+11.
+  // La HORA no se convierte nunca — viaja aparte, como el texto literal que es.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(c && c.dia))) return null;
+  const fecha = cuando(`${c.dia}T12:00:00Z`);
+  if (!fecha) return null;
+
+  const aQuien = CITADO_LABELS[c.a] || 'Citación';
+  return {
+    tipo: 'citacion',
+    subtipo: c.a || 'familia',
+    fecha,
+    titulo: `Citación · ${aQuien}`,
+    texto: texto(c.motivo),
+    icono: 'event',
+    animo: null,
+    autor: c.creadaPor || null,
+    meta: ESTADO_CITACION_LABELS[c.estado] || null,
+    submeta: c.hora || null,
+    // Lo que pasó en el encuentro, si se registró. Va aparte del motivo porque son dos cosas
+    // distintas —para qué se la citó y qué se habló— y mezclarlas en un solo párrafo es
+    // justamente lo que hace que un legajo no se pueda releer.
+    resultado: texto(c.notas),
+    lugar: texto(c.lugar),
+    refId: null,
+    citacionId: c._id || null,
+    ancla: claveAncla('citacion', c._id),
   };
 }
 
@@ -144,6 +204,7 @@ function hitoCierre(legajo) {
     autor: legajo.closedBy || null,
     meta: null,
     refId: null,
+    ancla: null,
   };
 }
 
@@ -152,7 +213,12 @@ function hitoCierre(legajo) {
 // `orden`: 'reciente' (default, lo último arriba — el trabajo diario) o 'cronologico' (del
 // comienzo al presente — leer la historia). Cualquier otro valor cae en el default: la
 // preferencia llega de localStorage y de un query param, y ninguno de los dos es confiable.
-function construirLinea(legajo, { orden = 'reciente' } = {}) {
+//
+// `hoy`: el día escolar ('YYYY-MM-DD') con el que se decide si una citación ya entra al hilo.
+// Es un PARÁMETRO y no `new Date()` adentro, para que esta función siga sin mirar el reloj y
+// los tests puedan pararse en cualquier fecha. Sin él, ninguna citación pendiente entra —
+// que es el comportamiento seguro: nunca inventa que un encuentro ya ocurrió.
+function construirLinea(legajo, { orden = 'reciente', hoy = null } = {}) {
   if (!legajo || typeof legajo !== 'object') return [];
 
   const hitos = [];
@@ -174,8 +240,24 @@ function construirLinea(legajo, { orden = 'reciente' } = {}) {
     }
   }
 
+  for (const c of (legajo.citaciones || [])) {
+    if (!citacionEnLinea(c, hoy)) continue;
+    const h = hitoCitacion(c);
+    if (h) hitos.push(h);
+  }
+
   const cierre = hitoCierre(legajo);
   if (cierre) hitos.push(cierre);
+
+  // Los papeles de cada hito, de una sola pasada sobre el array plano de adjuntos. Es acá y
+  // no en la vista por la misma razón de siempre: el .ejs dibuja, no decide.
+  //
+  // Un hito sin ancla (la apertura y el cierre) recibe [] igual. Que TODOS tengan el campo es
+  // lo que deja escribir `h.adjuntos.length` en la vista sin un `if` por tipo de hito.
+  const porAncla = agruparPorAncla(legajo.adjuntos || []);
+  for (const h of hitos) {
+    h.adjuntos = (h.ancla && porAncla.get(h.ancla)) || [];
+  }
 
   const asc = orden === 'cronologico';
   hitos.sort((a, b) => (asc ? a.fecha - b.fecha : b.fecha - a.fecha));

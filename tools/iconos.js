@@ -50,6 +50,20 @@ const ENTRECOMILLADO = /['"]([a-z][a-z0-9_]{2,})['"]/g;
 // archivo, mientras que uno que falte se ve roto en pantalla. El error barato es incluir.
 const CAMPO_ICONO = /icon(?:o|Name)?\s*:\s*['"]([a-z][a-z0-9_]{2,})['"]/g;
 
+// TABLAS de iconos: `const TIPO_ENTRADA_ICONS = { entrevista: 'record_voice_over', … }`.
+//
+// ⚠️ ESTE PATRÓN FALTABA Y SE PAGÓ. La clave de estas tablas es el tipo (`entrevista`) y el
+// valor es el icono, así que ninguno de los dos patrones de arriba las ve: no hay un campo
+// que se llame `icon` y la vista las imprime con `<%= algo[x] %>`, sin comillas. Resultado:
+// los iconos de la línea de tiempo del legajo —record_voice_over, family_restroom,
+// handshake— se venían mostrando con su nombre en inglés desde que existe el recorte, que es
+// exactamente el bug que este barrido vino a evitar.
+//
+// La convención que lo arregla es el NOMBRE: cualquier constante terminada en _ICONS o
+// _ICONOS es una tabla de iconos y todos sus valores entrecomillados entran. Una tabla nueva
+// que respete el nombre queda cubierta sola.
+const TABLA_ICONOS = /_ICON(?:S|OS)\s*=\s*\{([\s\S]*?)\n\}/g;
+
 function archivosDe(dir, exts) {
   const abs = path.join(RAIZ, dir);
   if (!fs.existsSync(abs)) return [];
@@ -83,6 +97,9 @@ function escanearIconos() {
         for (const q of bloque.matchAll(ENTRECOMILLADO)) agregar(q[1]); // …? 'a' : 'b'
       }
       for (const m of src.matchAll(CAMPO_ICONO)) agregar(m[1]);
+      for (const m of src.matchAll(TABLA_ICONOS)) {
+        for (const q of m[1].matchAll(ENTRECOMILLADO)) agregar(q[1]);
+      }
     }
   }
   return [...nombres].sort();

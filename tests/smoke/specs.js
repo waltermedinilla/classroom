@@ -8842,6 +8842,243 @@ const specs = [
       }
     },
   },
+  // ── Material del legajo y citaciones (2026-08-30) ───────────────────────────
+  // Cubren los criterios 33 a 42 de specs/soe-adjuntos-y-agenda.spec.md.
+  //
+  // Van por HTTP y no en un unitario porque lo que se prueba acá es justamente lo que una
+  // función pura no puede probar: que el archivo llega al disco, que la ruta que lo devuelve
+  // revalida el permiso, y que un archivo rechazado no se lleva puesto el texto que la
+  // persona acababa de escribir.
+  {
+    id: 'soe-material-adjunta-certificado',
+    title: 'SOE: adjunta el certificado a la devolución y lo puede volver a abrir (criterios 33 y 34)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      assert(state.soeCaseId && state.soeRefId, 'faltan el legajo y la derivación de los specs anteriores');
+
+      // El caso que motivó la feature: el chico vuelve del hospital con un papel.
+      state.soeAdjTitulo = `CERTIFICADO-${RUN_ID}`;
+      const fd = new FormData();
+      fd.append('texto', `VOLVIO-CON-CERTIFICADO-${RUN_ID}`);
+      fd.append('fecha', '2026-08-18');
+      fd.append('archivo', new Blob(['%PDF-1.4 certificado de prueba'], { type: 'application/pdf' }), 'certificado medico.pdf');
+      fd.append('adjuntoTitulo', state.soeAdjTitulo);
+      fd.append('categoria', 'certificado');
+      fd.append('origen', 'profesional');
+      fd.append('adjuntoFecha', '2026-08-17');
+
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/derivacion/${state.soeRefId}/devolucion`,
+        { form: fd, expectStatus: 302 });
+
+      const ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(ficha.text.includes(state.soeAdjTitulo), 'el certificado debería aparecer en la ficha');
+
+      state.soeAdjId = (ficha.text.match(/\/adjunto\/([a-f0-9]{24})/) || [])[1];
+      assert(state.soeAdjId, 'no se pudo leer el id del adjunto desde la ficha');
+
+      // La ruta que lo devuelve: es la que hace que el archivo NO viva en /public.
+      const archivo = await client.get('soe', `/soe/legajo/${state.soeCaseId}/adjunto/${state.soeAdjId}`,
+        { expectStatus: 200 });
+      assert(archivo.byteLength > 0, 'el archivo debería bajar con contenido');
+      assert(archivo.headers.get('x-content-type-options') === 'nosniff',
+        'falta nosniff: sin él el navegador puede adivinar el tipo y ejecutarlo como HTML');
+      const dispo = archivo.headers.get('content-disposition') || '';
+      assert(/certificado/i.test(decodeURIComponent(dispo)),
+        `el Content-Disposition debería llevar el nombre real, llegó: ${dispo}`);
+      // El PDF se muestra adentro del navegador; un .docx se descargaría.
+      assert(dispo.startsWith('inline'), 'un PDF tendría que verse en línea');
+    },
+  },
+  {
+    id: 'soe-material-rechaza-y-no-pierde-el-texto',
+    title: 'SOE: un archivo prohibido rebota con cartel y el texto se guarda igual (criterio 35)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const texto = `ENTREVISTA-CON-ARCHIVO-MALO-${RUN_ID}`;
+      const fd = new FormData();
+      fd.append('texto', texto);
+      fd.append('tipo', 'entrevista');
+      fd.append('fecha', '2026-08-19');
+      // Un .svg es interpretable como HTML: es de los que nunca pueden entrar.
+      fd.append('archivo', new Blob(['<svg onload="alert(1)"></svg>'], { type: 'image/svg+xml' }), 'ataque.svg');
+
+      const res = await client.post('soe', `/soe/legajo/${state.soeCaseId}/entrada`,
+        { form: fd, expectStatus: 302 });
+      // El aviso viaja en el redirect, con el motivo CONCRETO: no es lo mismo "ese formato no
+      // entra" que "pesa demasiado", y se resuelven de maneras distintas.
+      assert(/adjunto=formato/.test(res.headers.get('location') || ''),
+        `el redirect debería avisar el motivo, fue a: ${res.headers.get('location')}`);
+
+      const ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}?adjunto=formato`,
+        { expectStatus: 200 });
+      // ⭐ Lo que importa: la entrevista NO se perdió por culpa del archivo.
+      assert(ficha.text.includes(texto), 'el texto de la actuación tenía que guardarse igual');
+      assert(!ficha.text.includes('ataque.svg'), 'el archivo prohibido no puede haber quedado');
+      assert(/no se puede adjuntar/i.test(ficha.text), 'la ficha debería explicar por qué rebotó');
+    },
+  },
+  {
+    id: 'soe-material-enlace-solo-http',
+    title: 'SOE: un enlace javascript: no queda guardado (criterio 36)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const marca = `ENLACE-MALO-${RUN_ID}`;
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/adjunto`, {
+        body: { anclaTipo: 'legajo', enlace: 'javascript:alert(1)', enlaceTitulo: marca },
+        expectStatus: 302,
+      });
+      const ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(!ficha.text.includes(marca), 'un enlace javascript: no puede quedar en el legajo');
+      assert(!ficha.text.includes('javascript:alert'), 'el esquema prohibido llegó al HTML');
+
+      // Y uno bueno sí, con el https puesto solo.
+      state.soeEnlace = `ENLACE-BUENO-${RUN_ID}`;
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/adjunto`, {
+        body: { anclaTipo: 'legajo', enlace: 'hospital.gob.ar/turnos', enlaceTitulo: state.soeEnlace },
+        expectStatus: 302,
+      });
+      const ok = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(ok.text.includes(state.soeEnlace), 'el enlace bueno debería estar');
+      assert(ok.text.includes('https://hospital.gob.ar/turnos'), 'el enlace debería normalizarse a https');
+    },
+  },
+  {
+    id: 'soe-material-no-lo-abre-cualquiera',
+    title: 'SOE: el certificado no se abre sin permiso (criterio 37)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // Es la razón de ser de la ruta: un archivo en /public lo lee cualquiera con la URL.
+      const url = `/soe/legajo/${state.soeCaseId}/adjunto/${state.soeAdjId}`;
+      for (const actor of ['scopedStudent', 'scopedTeacher', 'soeDir', 'admin']) {
+        await client.get(actor, url, { expectStatus: 403 });
+      }
+      // Un id que no existe no confirma ni desmiente nada: 404 parejo.
+      await client.get('soe', `/soe/legajo/${state.soeCaseId}/adjunto/000000000000000000000000`,
+        { expectStatus: 404 });
+    },
+  },
+  {
+    id: 'soe-material-baja-deja-rastro',
+    title: 'SOE: dar de baja borra el archivo y deja el registro (criterio 38)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/adjunto/${state.soeAdjId}/eliminar`,
+        { expectStatus: 302 });
+
+      // 410 y no 404: el registro existe, el archivo no. Son dos cosas distintas y quien las
+      // mire desde un log tiene que poder distinguirlas.
+      await client.get('soe', `/soe/legajo/${state.soeCaseId}/adjunto/${state.soeAdjId}`,
+        { expectStatus: 410 });
+
+      const ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      // ⭐ El renglón sigue: un legajo del que se puede sacar material sin dejar rastro no es
+      // un registro completo.
+      assert(ficha.text.includes(state.soeAdjTitulo), 'el registro del adjunto tiene que quedar');
+      assert(/Dado de baja el/.test(ficha.text), 'la ficha debería decir que se dio de baja');
+
+      // Idempotente: dos clicks no son dos bajas.
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/adjunto/${state.soeAdjId}/eliminar`,
+        { expectStatus: 302 });
+    },
+  },
+  {
+    id: 'soe-citacion-registrar-la-ausencia',
+    title: 'SOE: cita a la familia, la familia no viene, y queda registrado (criterio 39)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      state.soeCitaMotivo = `CITACION-${RUN_ID}`;
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/citacion`, {
+        // Una fecha ya pasada: tiene que aparecer resaltada como "sin registrar qué pasó".
+        body: { dia: '2026-08-20', hora: '10:30', a: 'familia', motivo: state.soeCitaMotivo,
+                lugar: 'Gabinete', medio: 'Cuaderno de comunicaciones' },
+        expectStatus: 302,
+      });
+
+      let ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(ficha.text.includes(state.soeCitaMotivo), 'la citación debería verse en la ficha');
+      // La fecha no puede correrse un día: es la trampa de zona horaria del proyecto.
+      assert(/20\/08|20 de ago/i.test(ficha.text), 'la citación del 20/08 se muestra con otra fecha');
+      assert(ficha.text.includes('10:30'), 'la hora tiene que mostrarse tal cual se cargó');
+      assert(/no quedó anotado qué ocurrió|Sin registrar/i.test(ficha.text),
+        'una citación vencida sin registrar tiene que avisar');
+
+      state.soeCitaId = (ficha.text.match(/id="cita-([a-f0-9]{24})"/) || [])[1];
+      assert(state.soeCitaId, 'no se pudo leer el id de la citación');
+
+      // Registrar que la familia no vino. Aunque no haya venido, es parte del legajo.
+      const notas = `NO-VINO-${RUN_ID}`;
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/citacion/${state.soeCitaId}`, {
+        body: { estado: 'ausente', notas }, expectStatus: 302,
+      });
+
+      ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(ficha.text.includes(notas), 'lo que se registró debería verse');
+      assert(ficha.text.includes('No se presentó'), 'el estado debería ser "No se presentó"');
+      assert(!/no quedó anotado qué ocurrió/i.test(ficha.text),
+        'una vez registrada, la citación ya no puede pedir atención');
+      // Y entra a la línea de tiempo, porque su día ya pasó (decisión D8 de la spec).
+      assert(/Citación · La familia/.test(ficha.text), 'la citación debería ser un hito del hilo');
+    },
+  },
+  {
+    id: 'soe-citacion-reprogramar',
+    title: 'SOE: reprogramar deja la vieja registrada y abre otra (criterios 40 y 41)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const motivo = `CITACION-A-MOVER-${RUN_ID}`;
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/citacion`, {
+        body: { dia: '2026-08-21', hora: '09:00', a: 'alumno', motivo }, expectStatus: 302,
+      });
+      let ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      const ids = [...ficha.text.matchAll(/id="cita-([a-f0-9]{24})"/g)].map(m => m[1]);
+      const citaId = ids.find(id => id !== state.soeCitaId);
+      assert(citaId, 'no se pudo leer el id de la citación nueva');
+
+      // Sin fecha no es reprogramar: no cambia nada y avisa.
+      const sinFecha = await client.post('soe', `/soe/legajo/${state.soeCaseId}/citacion/${citaId}`, {
+        body: { estado: 'reprogramada', nuevoDia: '' }, expectStatus: 302,
+      });
+      assert(/citacion=sinfecha/.test(sinFecha.headers.get('location') || ''),
+        'reprogramar sin fecha debería volver con el aviso');
+
+      // Con fecha: la vieja queda como fue, y se abre una nueva.
+      await client.post('soe', `/soe/legajo/${state.soeCaseId}/citacion/${citaId}`, {
+        body: { estado: 'reprogramada', nuevoDia: '2099-04-15', nuevaHora: '11:00' },
+        expectStatus: 302,
+      });
+
+      ficha = await client.get('soe', `/soe/legajo/${state.scopedStudentId}`, { expectStatus: 200 });
+      // ⭐ Las dos existen: pisar la fecha borraría que hubo una primera convocatoria, que es
+      // justo el dato que se quiere conservar.
+      assert(ficha.text.includes('Se pasó para otro día'), 'la citación vieja tiene que quedar registrada');
+      assert(/15\/04\/2099|15 de abr/i.test(ficha.text), 'la citación nueva debería estar en su fecha');
+      assert((ficha.text.match(new RegExp(motivo, 'g')) || []).length >= 2,
+        'el motivo debería aparecer en las dos citaciones');
+    },
+  },
+  {
+    id: 'soe-agenda',
+    title: 'SOE: la agenda muestra las tres fechas y solo la ve el nivel completo (criterio 42)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const agosto = await client.get('soe', '/soe/agenda?mes=2026-08', { expectStatus: 200 });
+      assert(/agosto de 2026/i.test(agosto.text), 'el calendario debería estar en agosto de 2026');
+      assert(agosto.text.includes('/soe/legajo/' + state.scopedStudentId),
+        'la citación del alumno debería linkear a su legajo');
+
+      // Un mes escrito a mano en la URL no puede romper la pantalla.
+      await client.get('soe', '/soe/agenda?mes=2026-13', { expectStatus: 200 });
+      await client.get('soe', '/soe/agenda?mes=cualquiera', { expectStatus: 200 });
+
+      // Y el resumen del panel lo cuenta.
+      const home = await client.get('soe', '/soe', { expectStatus: 200 });
+      assert(/Citaciones/.test(home.text), 'el resumen debería nombrar las citaciones');
+
+      for (const actor of ['scopedStudent', 'scopedTeacher', 'soeDir', 'admin']) {
+        await client.get(actor, '/soe/agenda', { expectStatus: 403 });
+      }
+    },
+  },
   {
     id: 'soe-cleanup',
     title: 'Limpieza: borra el legajo y los usuarios del SOE',
@@ -8862,6 +9099,20 @@ const specs = [
         }
       } finally {
         await mongo.close();
+      }
+
+      // Y los archivos que quedaron en disco. Borrar el legajo de la base no los toca: sin
+      // esto, cada corrida del smoke deja un certificado de prueba en archivos/soe/ para
+      // siempre. Un directorio por legajo (ver SOE_BASE en routes/soe.js) hace que sea un
+      // solo rmdir.
+      if (state.soeCaseId) {
+        const fsp  = require('fs').promises;
+        const path = require('path');
+        const base = path.join(__dirname, '../../archivos/soe');
+        for (const escuela of await fsp.readdir(base).catch(() => [])) {
+          await fsp.rm(path.join(base, escuela, state.soeCaseId), { recursive: true, force: true })
+            .catch(() => {});
+        }
       }
       if (state.soeId)             await client.post('admin', `/admin/users/${state.soeId}/delete`,             { expectStatus: 200 });
       if (state.soeDirId)          await client.post('admin', `/admin/users/${state.soeDirId}/delete`,          { expectStatus: 200 });

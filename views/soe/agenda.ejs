@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agenda — Orientación Escolar</title>
+  <%- include('../partials/head-iconos') %>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <%- include('../partials/soe-styles') %>
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content main-content-ancho">
+    <%- include('../partials/soe-nav', { activePage }) %>
+
+    <div class="dashboard-topbar">
+      <div>
+        <h2>Agenda</h2>
+        <div style="font-size:12.5px;color:var(--text-secondary);margin-top:2px">
+          Las citaciones a las familias, los legajos que hay que volver a mirar y los servicios
+          a los que hay que volver a preguntar, en un solo calendario.
+        </div>
+      </div>
+    </div>
+
+    <% if (atencion) { %>
+      <%# Mismo cartel y mismos colores que el de /soe/derivaciones: son la misma clase de
+          aviso —algo se pasó de fecha y nadie lo miró— y tienen que verse igual. %>
+      <div class="soe-lectura" style="background:#fce8e6;border-color:#ea4335;color:#5c1d18">
+        <span class="material-symbols-outlined" style="color:#c5221f">priority_high</span>
+        <div>
+          <strong><%= atencion %></strong>
+          <%= atencion === 1 ? 'fecha ya pasó' : 'fechas ya pasaron' %>
+          sin que quede registrado qué ocurrió: una citación a la que nadie le anotó el
+          resultado, un legajo que había que volver a ver, o un servicio al que había que
+          volver a preguntar.
+        </div>
+      </div>
+    <% } %>
+
+    <%# ── El mes ──────────────────────────────────────────────────────────── %>
+    <div class="soe-panel">
+      <div class="cal-cab">
+        <div class="mes"><%= calendario.nombre %></div>
+        <div class="cal-nav">
+          <a href="/soe/agenda?mes=<%= calendario.anterior %>" title="Mes anterior" aria-label="Mes anterior">
+            <span class="material-symbols-outlined">chevron_left</span>
+          </a>
+          <a href="/soe/agenda">Hoy</a>
+          <a href="/soe/agenda?mes=<%= calendario.siguiente %>" title="Mes siguiente" aria-label="Mes siguiente">
+            <span class="material-symbols-outlined">chevron_right</span>
+          </a>
+        </div>
+      </div>
+
+      <div class="cal">
+        <% ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'].forEach(d => { %>
+          <div class="cal-dow">
+            <span class="largo"><%= d %></span><span class="corto"><%= d.slice(0, 3) %></span>
+          </div>
+        <% }) %>
+
+        <% calendario.semanas.forEach(semana => { semana.forEach(celda => { %>
+          <% if (!celda) { %>
+            <div class="cal-celda vacia"></div>
+          <% } else { %>
+            <div class="cal-celda <%= celda.esHoy ? 'hoy' : '' %> <%= celda.pasado ? 'pasado' : '' %>">
+              <span class="cal-num"><%= celda.numero %></span>
+              <%# Tres eventos por celda como máximo: con más, la celda de un martes cargado
+                  crece y desalinea la fila entera. El resto se cuenta abajo y se lee completo
+                  en la lista de "lo que viene" o entrando al legajo. %>
+              <% celda.eventos.slice(0, 3).forEach(e => { %>
+                <a class="cal-ev <%= e.atencion ? 'atencion' : '' %>"
+                   href="/soe/legajo/<%= e.student && e.student._id %>#<%= e.tipo === 'citacion' ? 'citaciones' : (e.tipo === 'seguimiento' ? 'derivaciones' : 'situacion') %>"
+                   title="<%= agenda.EVENTO_LABELS[e.tipo] %> · <%= e.student ? e.student.name : 'Alumno' %><%= e.hora ? ' · ' + e.hora : '' %><%= e.detalle ? ' — ' + e.detalle : '' %>">
+                  <span class="punto" style="background:<%= agenda.EVENTO_COLORS[e.tipo] %>"></span>
+                  <span class="txt"><%= e.hora ? e.hora + ' ' : '' %><%= e.student ? e.student.name : 'Alumno' %></span>
+                </a>
+              <% }) %>
+              <% if (celda.eventos.length > 3) { %>
+                <div class="cal-mas">+<%= celda.eventos.length - 3 %> más</div>
+              <% } %>
+            </div>
+          <% } %>
+        <% }) }) %>
+      </div>
+
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:14px;font-size:11.5px;color:var(--text-secondary)">
+        <% agenda.TIPOS_EVENTO.forEach(t => { %>
+          <span style="display:inline-flex;align-items:center;gap:5px">
+            <span style="width:8px;height:8px;border-radius:50%;background:<%= agenda.EVENTO_COLORS[t] %>"></span>
+            <%= agenda.EVENTO_LABELS[t] %>
+          </span>
+        <% }) %>
+      </div>
+    </div>
+
+    <%# ── Lo que viene ────────────────────────────────────────────────────── %>
+    <div class="soe-panel">
+      <h3><span class="material-symbols-outlined">upcoming</span> Los próximos días</h3>
+
+      <% if (!proximos.length) { %>
+        <div class="vacio" style="padding:24px 0">
+          <span class="material-symbols-outlined">event_available</span>
+          No hay nada agendado para las próximas tres semanas.
+        </div>
+      <% } else { %>
+        <% proximos.forEach(e => { %>
+          <%# La fecha se parte a mano desde el string 'YYYY-MM-DD' y NO se convierte a Date.
+              Es la regla de fechas de services/soeAgenda.js: un `new Date('2026-09-02')` es
+              medianoche UTC, y formatearlo en la zona de la escuela lo mostraría como el 1. %>
+          <% const [, mm, dd] = e.dia.split('-');
+             const MESES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']; %>
+          <div class="ag-fila <%= e.atencion ? 'atencion' : '' %>">
+            <div class="ag-fecha">
+              <div class="d"><%= Number(dd) %></div>
+              <div class="m"><%= MESES[Number(mm) - 1] %></div>
+              <% if (e.hora) { %><div class="h"><%= e.hora %></div><% } %>
+            </div>
+            <div class="ag-cuerpo">
+              <div class="t">
+                <a href="/soe/legajo/<%= e.student && e.student._id %>" style="color:var(--text);text-decoration:none">
+                  <%= e.student ? e.student.name : 'Alumno' %>
+                </a>
+                <% if (e.division) { %>
+                  <span style="font-weight:400;color:var(--text-secondary)"> · <%= e.division.name %></span>
+                <% } %>
+              </div>
+              <div class="s">
+                <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-3px;color:<%= agenda.EVENTO_COLORS[e.tipo] %>">
+                  <%= agenda.EVENTO_ICONS[e.tipo] %>
+                </span>
+                <%= agenda.EVENTO_LABELS[e.tipo] %>
+                <% if (e.tipo === 'citacion') { %>
+                  · <%= e.titulo %>
+                  <% if (e.estado) { %> · <%= agenda.ESTADO_CITACION_LABELS[e.estado] %><% } %>
+                <% } else if (e.tipo === 'seguimiento') { %>
+                  · <%= e.titulo %>
+                <% } %>
+                <% if (e.detalle) { %><br><%= e.detalle %><% } %>
+                <% if (e.lugar) { %><br>En <%= e.lugar %><% } %>
+                <% if (e.atencion) { %>
+                  <br><strong>Esta fecha ya pasó y no quedó registrado qué ocurrió.</strong>
+                <% } %>
+              </div>
+            </div>
+          </div>
+        <% }) %>
+      <% } %>
+    </div>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

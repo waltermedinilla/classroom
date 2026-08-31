@@ -133,6 +133,10 @@ const SECTIONS = [
   { key: 'soe_pedidos',      panel: 'soe', label: 'Pedidos',      icon: 'move_to_inbox', path: '/soe/pedidos',     roles: ['soe', 'directivo', 'superadmin'] },
   { key: 'soe_alumnos',      panel: 'soe', label: 'Alumnos',      icon: 'group',        path: '/soe/alumnos',      roles: ['soe', 'directivo', 'superadmin'] },
   { key: 'soe_derivaciones', panel: 'soe', label: 'Derivaciones', icon: 'share',        path: '/soe/derivaciones', roles: ['soe', 'directivo', 'superadmin'] },
+  // El calendario del gabinete: las citaciones, los repasos de legajo y los seguimientos de
+  // las derivaciones en un solo mes. Nivel completo, igual que las dos de arriba: cada celda
+  // nombra a un alumno con legajo y dice para qué se citó a su familia.
+  { key: 'soe_agenda',       panel: 'soe', label: 'Agenda',       icon: 'calendar_month', path: '/soe/agenda',     roles: ['soe', 'directivo', 'superadmin'] },
 
   // ── General: los accesos del menú lateral (header.ejs) ─────────────────────
   { key: 'app_courses', panel: 'app', label: 'Mis clases',     icon: 'menu_book',       path: '/courses',               roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'student'], locked: true },

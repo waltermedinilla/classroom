@@ -69,6 +69,18 @@
           <div class="n"><%= totales.pedidos %></div>
           <div class="t">Pedidos de Preceptoría</div>
         </a>
+        <%# Dos tarjetas y no una: "lo que viene" es agenda y "lo que quedó sin registrar" es
+            una deuda. Sumadas, la deuda desaparece adentro del total. %>
+        <a href="/soe/agenda" class="soe-card" style="text-decoration:none;color:inherit">
+          <span class="material-symbols-outlined ico" aria-hidden="true">event</span>
+          <div class="n"><%= totales.citaciones %></div>
+          <div class="t">Citaciones por delante</div>
+        </a>
+        <a href="/soe/agenda" class="soe-card <%= totales.citacionesSinRegistrar ? 'alerta' : '' %>" style="text-decoration:none;color:inherit">
+          <span class="material-symbols-outlined ico" aria-hidden="true">event_busy</span>
+          <div class="n"><%= totales.citacionesSinRegistrar %></div>
+          <div class="t">Citaciones sin registrar</div>
+        </a>
       <% } %>
     </div>
 
@@ -139,6 +151,54 @@
             </table>
           </div>
         <% } %>
+      </div>
+    <% } %>
+
+    <%# ── Las citaciones ──────────────────────────────────────────────────────
+        Va después del panel de alertas y antes de la lista de legajos: es lo que el gabinete
+        necesita ver al abrir la pantalla a la mañana ("¿a quién cité para hoy?"), pero no es
+        una urgencia salvo cuando la fecha ya pasó — y esas van arriba de la tabla. %>
+    <% if (citaciones && citaciones.length) { %>
+      <div class="soe-panel">
+        <h3><span class="material-symbols-outlined">event</span> Citaciones</h3>
+        <div class="tabla-scroll">
+          <table class="soe-tabla">
+            <thead>
+              <tr><th>Cuándo</th><th>Alumno</th><th>Curso</th><th>A quién</th><th>Estado</th></tr>
+            </thead>
+            <tbody>
+              <% citaciones.forEach(c => { %>
+                <tr>
+                  <td style="white-space:nowrap">
+                    <%# La fecha viene como 'YYYY-MM-DD' y se formatea sobre el mediodía UTC:
+                        armarla a medianoche la correría un día en la zona de la escuela. %>
+                    <span class="chip <%= c.sinRegistrar ? 'chip-alerta' : 'chip-neutro' %>">
+                      <%= fmt.fechaCorta(new Date(c.citacion.dia + 'T12:00:00Z')) %>
+                    </span>
+                    <% if (c.citacion.hora) { %>
+                      <span style="font-size:11.5px;color:var(--text-secondary)"><%= c.citacion.hora %></span>
+                    <% } %>
+                  </td>
+                  <td><a href="/soe/legajo/<%= c.student._id %>#citaciones"><%= c.student.name %></a></td>
+                  <td><%= c.division ? c.division.name : '—' %></td>
+                  <td><%= agenda.CITADO_LABELS[c.citacion.a] || '—' %></td>
+                  <td>
+                    <% if (c.sinRegistrar) { %>
+                      <span class="chip chip-alerta">Sin registrar qué pasó</span>
+                    <% } else { %>
+                      <span class="chip chip-ok"><%= agenda.ESTADO_CITACION_LABELS[c.citacion.estado] %></span>
+                    <% } %>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+        <div style="margin-top:12px">
+          <a href="/soe/agenda" class="soe-desplegar" style="font-size:12.5px;text-decoration:none">
+            Ver el calendario completo →
+          </a>
+        </div>
       </div>
     <% } %>
 

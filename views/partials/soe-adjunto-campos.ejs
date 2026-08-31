@@ -1,0 +1,105 @@
+<%# Los campos con los que se cuelga un archivo o un enlace de una actuación del gabinete.
+    Se incluye desde los CINCO formularios que aceptan material (la entrada del seguimiento,
+    la derivación, la devolución, la citación y el alta suelta del panel de material).
+
+    Está en un partial y no copiado cinco veces por el motivo de siempre en este proyecto: el
+    olvido de actualizar una de las copias ES el bug. Es literalmente lo que pasó con las
+    imágenes en agosto, cuando la entrega del alumno se quedó con su propia lista de formatos.
+
+    Locals:
+      pfx      → prefijo para los `id` (un mismo formulario no puede repetir ids).
+      adjuntos → services/soeAdjuntos.js, para el `accept` y los dos catálogos.
+      abierto  → true para dibujarlo desplegado (el panel de material, donde adjuntar ES la
+                 acción principal). Por defecto va plegado: en los demás formularios el papel
+                 es opcional y no tiene que tapar el campo donde se escribe qué pasó.
+      boton    → texto de un botón de envío DENTRO del bloque plegado. Se usa cuando estos
+                 campos son todo el formulario (el alta suelta desde un hito de la línea de
+                 tiempo). Sin él no se dibuja ninguno: en los formularios que ya tienen su
+                 propio botón, un segundo botón visible en cada tarjeta del hilo sería ruido.
+
+    ⚠️ EL FORMULARIO QUE INCLUYA ESTO TIENE QUE LLEVAR enctype="multipart/form-data".
+    Sin eso el navegador manda solo el NOMBRE del archivo y el servidor no recibe nada — sin
+    error, sin cartel y sin nada que investigar después. %>
+<% const _pfx = typeof pfx === 'string' ? pfx : 'adj'; %>
+<% const _abierto = typeof abierto !== 'undefined' && abierto; %>
+
+<details class="adj-alta" <%= _abierto ? 'open' : '' %>>
+  <summary>
+    <span class="material-symbols-outlined">attach_file</span>
+    Adjuntar un archivo o un enlace
+  </summary>
+
+  <div class="soe-form" style="margin-top:12px">
+    <div class="archivo-campo">
+      <%# El `accept` sale de ACCEPT_ADJUNTOS y NO de EXT_ADJUNTOS: `.heic` queda afuera a
+          propósito para que Safari en iOS convierta la foto a JPG en el camino. El motivo
+          largo está en services/soeAdjuntos.js. %>
+      <input type="file" id="<%= _pfx %>-archivo" name="archivo"
+             accept="<%= adjuntos.ACCEPT_ADJUNTOS %>"
+             aria-label="Elegir un archivo para adjuntar">
+      <div class="caja">
+        <span class="material-symbols-outlined">upload_file</span>
+        <span data-nombre-archivo>Elegí un archivo (certificado, receta, informe, una foto…)</span>
+      </div>
+    </div>
+
+    <div class="fila">
+      <div>
+        <label for="<%= _pfx %>-cat">Qué es</label>
+        <select id="<%= _pfx %>-cat" name="categoria">
+          <% adjuntos.CATEGORIAS.forEach(c => { %>
+            <option value="<%= c %>" <%= c === 'otro' ? 'selected' : '' %>><%= adjuntos.CATEGORIA_LABELS[c] %></option>
+          <% }) %>
+        </select>
+      </div>
+      <div>
+        <%# Quién lo PRODUJO, no quién lo sube. Los dos se guardan y son distintos: el
+            certificado lo firma el neurólogo y lo carga el gabinete porque la familia lo
+            trajo en papel. Ver el comentario del schema en models/SoeCase.js. %>
+        <label for="<%= _pfx %>-origen">Quién lo trajo o lo firmó</label>
+        <select id="<%= _pfx %>-origen" name="origen">
+          <% adjuntos.ORIGENES.forEach(o => { %>
+            <option value="<%= o %>" <%= o === 'gabinete' ? 'selected' : '' %>><%= adjuntos.ORIGEN_LABELS[o] %></option>
+          <% }) %>
+        </select>
+      </div>
+      <div>
+        <label for="<%= _pfx %>-fecha">Fecha del documento</label>
+        <input type="date" id="<%= _pfx %>-fecha" name="adjuntoFecha">
+        <div class="ayuda">La que dice el papel, no la de hoy. En blanco se usa hoy.</div>
+      </div>
+    </div>
+
+    <div class="fila">
+      <div>
+        <label for="<%= _pfx %>-titulo">Cómo llamarlo</label>
+        <input type="text" id="<%= _pfx %>-titulo" name="adjuntoTitulo" maxlength="200"
+               placeholder="Certificado del neurólogo">
+        <div class="ayuda">En blanco se usa el nombre del archivo.</div>
+      </div>
+      <div>
+        <%# El enlace convive con el archivo: se pueden mandar los dos de una vez (el
+            certificado escaneado y el turno del hospital, por ejemplo). %>
+        <label for="<%= _pfx %>-enlace">…o un enlace</label>
+        <input type="text" id="<%= _pfx %>-enlace" name="enlace" maxlength="2000"
+               placeholder="hospital.gob.ar/turnos">
+        <div class="ayuda">Para lo que no conviene copiar al servidor. Solo direcciones web.</div>
+      </div>
+    </div>
+
+    <div>
+      <label for="<%= _pfx %>-desc">Nota sobre este material</label>
+      <input type="text" id="<%= _pfx %>-desc" name="adjuntoDescripcion" maxlength="1000"
+             placeholder="Qué dice, para qué sirve, quién lo entregó…">
+    </div>
+
+    <% if (typeof boton !== 'undefined' && boton) { %>
+      <div>
+        <button type="submit" class="btn btn-outline" style="padding:6px 14px;font-size:12.5px">
+          <span class="material-symbols-outlined" style="font-size:16px">upload</span>
+          <%= boton %>
+        </button>
+      </div>
+    <% } %>
+  </div>
+</details>

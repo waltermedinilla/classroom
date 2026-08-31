@@ -168,3 +168,123 @@ describe('construirLinea — confidencialidad por construcción', () => {
     assert.strictEqual(hitos[0].tipo, 'apertura');
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Las citaciones y el material (2026-08-30)
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// Cubren los criterios 26 a 30 de specs/soe-adjuntos-y-agenda.spec.md.
+
+const HOY = '2026-08-30';
+
+// El mismo legajo de arriba, más una citación pasada, una futura y cuatro papeles.
+const CON_MATERIAL = {
+  ...LEGAJO,
+  citaciones: [
+    { _id: 'c1', dia: '2026-04-10', hora: '10:30', a: 'familia',
+      motivo: 'Charlar por las inasistencias', estado: 'realizada',
+      notas: 'Vino la mamá. Se acordó traer el certificado.', lugar: 'Gabinete', creadaPor: 'soe1' },
+    { _id: 'c2', dia: '2026-12-01', hora: '09:00', a: 'alumno',
+      motivo: 'Seguimiento de fin de año', estado: 'programada', creadaPor: 'soe1' },
+  ],
+  adjuntos: [
+    { _id: 'ad1', kind: 'archivo', ancla: { tipo: 'devolucion', id: 'v1' },
+      titulo: 'Certificado', categoria: 'certificado', fecha: d('2026-09-15') },
+    { _id: 'ad2', kind: 'archivo', ancla: { tipo: 'devolucion', id: 'v1' },
+      titulo: 'Receta', categoria: 'receta', fecha: d('2026-09-16') },
+    { _id: 'ad3', kind: 'enlace',  ancla: { tipo: 'entrada', id: 'e1' },
+      titulo: 'Protocolo', categoria: 'informe', fecha: d('2026-03-12') },
+    { _id: 'ad4', kind: 'archivo', ancla: { tipo: 'legajo', id: null },
+      titulo: 'Informe general', categoria: 'informe', fecha: d('2026-06-01') },
+  ],
+};
+
+describe('construirLinea — las citaciones', () => {
+  test('la citación pasada entra al hilo y la futura no (criterio 26)', () => {
+    const hitos = construirLinea(CON_MATERIAL, { hoy: HOY });
+    const citas = hitos.filter(h => h.tipo === 'citacion');
+    assert.strictEqual(citas.length, 1);
+    assert.strictEqual(citas[0].fecha.toISOString().slice(0, 10), '2026-04-10');
+  });
+
+  test('⭐ el día se ubica en el hilo sin correrse por la zona horaria (criterio 27)', () => {
+    // El día es TEXTO ('YYYY-MM-DD') y se convierte al MEDIODÍA UTC solo para poder ordenar.
+    // A medianoche, formateado en la zona de la escuela (UTC−3), se vería como el 9.
+    const [cita] = construirLinea(CON_MATERIAL, { hoy: HOY }).filter(h => h.tipo === 'citacion');
+    assert.strictEqual(cita.fecha.toISOString(), '2026-04-10T12:00:00.000Z');
+    // Y la HORA viaja aparte, como el texto literal que es: nunca se suma a la fecha.
+    assert.strictEqual(cita.submeta, '10:30');
+  });
+
+  test('el motivo y lo que se conversó son dos campos distintos (criterio 28)', () => {
+    // Mezclarlos en un solo párrafo es lo que hace que un legajo no se pueda releer.
+    const [cita] = construirLinea(CON_MATERIAL, { hoy: HOY }).filter(h => h.tipo === 'citacion');
+    assert.ok(cita.texto.includes('inasistencias'));
+    assert.ok(cita.resultado.includes('Vino la mamá'));
+    assert.strictEqual(cita.lugar, 'Gabinete');
+  });
+
+  test('sin `hoy` solo entran las YA RESUELTAS: nunca inventa que un encuentro ocurrió', () => {
+    // El comportamiento seguro ante un llamador que se olvidó del parámetro. La citación
+    // 'realizada' entra igual —no depende de ninguna comparación de fechas—, pero una
+    // pendiente cuyo día pasó se queda afuera hasta que alguien diga qué día es hoy.
+    const soloPendientes = {
+      ...CON_MATERIAL,
+      citaciones: [{ _id: 'c9', dia: '2020-01-01', a: 'familia', motivo: 'Vieja', estado: 'programada' }],
+    };
+    assert.strictEqual(construirLinea(soloPendientes).filter(h => h.tipo === 'citacion').length, 0);
+    assert.strictEqual(construirLinea(CON_MATERIAL).filter(h => h.tipo === 'citacion').length, 1);
+  });
+
+  test('la citación se ordena entre los demás hitos por su fecha, no al final', () => {
+    // El punto de la línea de tiempo es el RECORRIDO: la citación de abril va entre la
+    // derivación de marzo y la observación de mayo.
+    const cronologico = construirLinea(CON_MATERIAL, { hoy: HOY, orden: 'cronologico' });
+    assert.deepStrictEqual(fechas(cronologico),
+      ['2026-03-01', '2026-03-12', '2026-03-20', '2026-04-10', '2026-05-20', '2026-09-15']);
+  });
+});
+
+describe('construirLinea — el material colgado de cada hito', () => {
+  test('⭐ el certificado y la receta cuelgan de la DEVOLUCIÓN (criterio 29)', () => {
+    // Es el caso que motivó la feature: el chico vuelve del hospital con un papel, y ese
+    // papel pertenece al hito de "lo que dijeron allá".
+    const hitos = construirLinea(CON_MATERIAL, { hoy: HOY });
+    const devolucion = hitos.find(h => h.tipo === 'devolucion');
+    assert.strictEqual(devolucion.adjuntos.length, 2);
+    // Lo más nuevo primero, por la fecha DEL DOCUMENTO.
+    assert.deepStrictEqual(devolucion.adjuntos.map(a => a.titulo), ['Receta', 'Certificado']);
+  });
+
+  test('cada hito recibe solo lo suyo, y siempre un array (criterio 30)', () => {
+    const hitos = construirLinea(CON_MATERIAL, { hoy: HOY });
+    // Que TODOS tengan el campo es lo que deja escribir `h.adjuntos.length` en la vista sin
+    // un `if` por tipo de hito.
+    for (const h of hitos) assert.ok(Array.isArray(h.adjuntos), `${h.tipo} sin adjuntos`);
+    assert.strictEqual(hitos.find(h => h.subtipo === 'entrevista').adjuntos.length, 1);
+    assert.strictEqual(hitos.find(h => h.tipo === 'derivacion').adjuntos.length, 0);
+  });
+
+  test('el material general del legajo NO va colgado de la apertura', () => {
+    // Un informe cargado hoy aparecería dentro de la tarjeta de apertura, que está al fondo
+    // del hilo por ser lo más viejo, y quedaría escondido justo el día que se subió. Ese
+    // material vive en el panel "Material y documentación", que es un índice y no una
+    // cronología.
+    const apertura = construirLinea(CON_MATERIAL, { hoy: HOY }).find(h => h.tipo === 'apertura');
+    assert.strictEqual(apertura.ancla, null);
+    assert.deepStrictEqual(apertura.adjuntos, []);
+  });
+
+  test('en resumen no hay ni citaciones ni material que colgar', () => {
+    // Otra vez sin ninguna regla propia: el sanitizado no le entrega los arrays.
+    const enResumen = sanitizarLegajo(CON_MATERIAL, RESUMEN);
+    assert.strictEqual(construirLinea(enResumen, { hoy: HOY }).length, 0);
+  });
+
+  test('un legajo sin adjuntos ni citaciones sigue armando la línea de siempre', () => {
+    // El caso de los legajos que ya existen en producción: no tienen los arrays nuevos y no
+    // necesitan migración.
+    assert.strictEqual(construirLinea(LEGAJO, { hoy: HOY }).length, 5);
+    assert.deepStrictEqual(construirLinea(LEGAJO, { hoy: HOY })[0].adjuntos, []);
+  });
+});
