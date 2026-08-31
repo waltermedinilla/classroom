@@ -102,6 +102,32 @@ describe('caducidad sin tocar la base', () => {
   });
 });
 
+describe('la vencida antes de la inscripción del alumno (2026-08-31)', () => {
+  // GET /activities/course/:id le ocultaba al alumno las actividades vencidas ANTES de su
+  // alta —le tapaba el material de todas las clases anteriores— y /activities/my-pending
+  // tenía una copia del mismo filtro. Al sacar el primero se sacó también la copia, y lo que
+  // permite sacarla sin cambiar un solo número es esta regla: sin tardías, la vencida ya no
+  // cuenta como pendiente, sin importar cuándo se inscribió nadie.
+  //
+  // Si alguien afloja caducaEl() y rompe esa garantía, "Mis pendientes" se le llena de tareas
+  // viejas al alumno el día que lo dan de alta. Este es el test que se cae.
+  const alta = hace(5);   // el alumno entró al curso hace 5 días
+
+  test('vencida antes del alta y sin tardías → no le figura como pendiente', () => {
+    const act = { dueDate: hace(20) };
+    assert.ok(act.dueDate < alta, 'el fixture tiene que vencer ANTES del alta');
+    assert.strictEqual(sigueSiendoPendiente(act, AHORA), false);
+  });
+
+  test('vencida antes del alta pero con tardías abiertas y en ventana → sigue pendiente', () => {
+    // La puede entregar, así que le cuenta. Es lo mismo que pasaba antes del cambio: el filtro
+    // viejo también dejaba pasar las de tardías abiertas, y por eso sacarlo no movió nada.
+    const act = { dueDate: hace(6), allowLateSubmissions: true };
+    assert.ok(act.dueDate < alta, 'el fixture tiene que vencer ANTES del alta');
+    assert.strictEqual(sigueSiendoPendiente(act, AHORA), true);
+  });
+});
+
 describe('orden de la lista (porUrgencia)', () => {
   // Con fecha se identifican por el título; sin fecha, por cuándo se publicaron.
   const vence = (t, dias) => ({ t, dueDate: hace(-dias) });

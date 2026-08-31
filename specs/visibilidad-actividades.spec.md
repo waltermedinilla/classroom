@@ -75,8 +75,12 @@ interruptor de dos posiciones y **la fecha programada nunca se pierde**.
 ### Servidor
 
 10. `GET /activities/course/:id` como alumno no devuelve las programadas ni las ocultas.
-11. Ese filtro **convive** con el de `enrollmentDates` (las dos condiciones se combinan
-    con `$and`; antes las dos peleaban por la misma clave `$or`).
+11. Ese filtro es la **única** condición que se le aplica al alumno. Hasta el 2026-08-31
+    convivía con el de `enrollmentDates` —que le escondía las actividades vencidas antes
+    de su alta, y con eso el material de las clases anteriores— y las dos se combinaban
+    con `$and` porque peleaban por la misma clave `$or`. Ese segundo filtro se retiró
+    (ver el changelog del 2026-08-31): **el plazo de entrega no decide la visibilidad**.
+    Si algún día vuelve a haber dos condiciones con `$or`, vuelve el `$and`.
 12. `GET /activities/my-pending` y el resumen de pendientes del dashboard aplican la
     misma regla.
 13. `POST /activities/:id/submit` rechaza con 403 la entrega a una actividad que el

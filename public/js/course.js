@@ -2229,9 +2229,13 @@ async function loadStudentDetail(activityId) {
   // Banner de alerta según estado del plazo
   if (isOverdueSt) {
     if (isBlocked) {
+      // Lo que se cerró es la ENTREGA, no la actividad: el enunciado y los adjuntos siguen
+      // acá arriba y el alumno los puede abrir siempre. Decirlo es la mitad del pedido de la
+      // docente del 2026-08-31 — la otra mitad es que la actividad no desaparezca de la lista
+      // (ver GET /activities/course/:courseId).
       html += `<div class="deadline-warning">
         <span class="material-symbols-outlined" style="font-size:18px">lock</span>
-        El plazo de entrega ha vencido. Las entregas están cerradas.
+        El plazo de entrega ha vencido. Las entregas están cerradas, pero el material de la clase sigue disponible.
       </div>`;
     } else {
       html += `<div class="deadline-info">

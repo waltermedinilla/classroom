@@ -135,9 +135,13 @@ a figurar sola si el docente le pone una fecha de entrega futura.
     alumno: no desaparece de la materia, solo del pendiente.
 16. Con las tardías abiertas, `POST /activities/:id/submit` sigue aceptando la entrega
     de una actividad ya caducada como pendiente.
-17. Las reglas previas siguen valiendo y se combinan con esta: no cuenta lo ya
-    entregado, ni lo programado/oculto (`visibilidadActividad.js`), ni lo que venció
-    antes de que el alumno se matriculara (`enrollmentDates`).
+17. Las reglas previas siguen valiendo y se combinan con esta: no cuenta lo ya entregado
+    ni lo programado/oculto (`visibilidadActividad.js`).
+17b. Lo que venció **antes de que el alumno se matriculara** ya no se filtra aparte: el
+    filtro por `enrollmentDates` que había acá y en `GET /activities/course/:id` se
+    retiró el 2026-08-31 (le escondía al alumno el material de las clases anteriores).
+    Esta regla lo cubre sola — sin tardías, el corte es el vencimiento pelado — y esa
+    garantía está fijada por dos tests unitarios, porque es lo que permitió borrarlo.
 
 ### Orden de la lista (`porUrgencia`)
 

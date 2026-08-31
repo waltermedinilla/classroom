@@ -488,6 +488,73 @@ inferido. Lo funcional que ya figura en el Roadmap no se repite.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-31 — La actividad vencida dejaba al alumno sin el material de la clase
+
+Sugerencia de una docente, enviada desde producción y adoptada por el usuario: *"que las
+actividades vencidas sigan siendo visibles para los estudiantes sin necesidad de que el docente
+habilite la entrega, como es en el verdadero Classroom — si no los chicos pierden todo el acceso
+al material de las clases"*.
+
+**Qué pasaba.** `GET /activities/course/:courseId` aplicaba al alumno **dos** condiciones, no
+una. La primera es la de siempre: solo lo publicado (`availableFrom <= ahora`). La segunda, que
+llegó con el alta por Curso, le ocultaba al alumno que tuviera `enrollmentDates` en esa materia
+toda actividad cuya fecha de entrega hubiera vencido **antes de su alta**, con una única salida:
+que el docente hubiera habilitado las entregas tardías.
+
+La intención era razonable —no llenarle la pantalla de tareas viejas al que entra en septiembre—
+pero lo que se llevaba puesto no era la tarea: era el **material**. Enunciado, consignas y
+adjuntos de todas las clases anteriores desaparecían de la materia, y la única forma de
+devolvérselos era que el docente fuera abriendo las entregas de una actividad por vez. Justamente
+lo que la docente pedía no tener que hacer.
+
+**Y no le pasaba solo al que llega tarde.** `enrollmentDates` se escribe con `ahora` en **cada**
+matriculación: el alta del admin y la de preceptoría (`services/enrollment.js`), el código de
+clase, la automatrícula, y también las herramientas de mantenimiento que completan matrículas
+(`matricula-parcial` y la fusión de materias duplicadas, en `services/dbFixes.js`). Un alumno que
+cursa desde marzo, re-matriculado por una de esas herramientas en agosto, estrenaba fecha de alta
+**de agosto** y se quedaba sin ver el año entero.
+
+**El cambio.** La visibilidad del alumno vuelve a tener una sola condición: lo publicado. El
+plazo de entrega no decide qué se ve. En Classroom el que entra a la clase ve todo lo que se
+publicó; entregar es otra cosa.
+
+**Lo que NO cambió, y es la mitad del diseño**:
+
+- **Entregar sigue cerrado.** `allowLateSubmissions` manda igual que siempre en
+  `POST /activities/:id/submit` y en `exigirAlumnoQuePuedeEntregar` — la vencida se abre, se lee
+  y se descarga, pero contestar sigue dando 403 hasta que el docente habilite las tardías. Se
+  abrió el estante, no la puerta.
+- **No vuelve a "Mis pendientes".** La vencida sin tardías no pasa `sigueSiendoPendiente()`
+  (`public/js/pendienteActividad.js`, 23/08): sin tardías el corte es el vencimiento pelado.
+- **El chip de la tarjeta ya decía "Vencida"** (`public/js/estadoActividad.js`). No hubo que
+  inventar ningún estado nuevo.
+
+**Por qué recién ahora se podía sacar.** Antes del 23/08 quitar este filtro habría devuelto la
+molestia que lo justificaba: sin la caducidad de pendientes, la vencida visible también volvía a
+contarse como tarea por hacer. La feature de pendientes que caducan es la que dejó separadas las
+dos preguntas —*qué veo* y *qué me falta hacer*— y sin ella este cambio no se podía hacer.
+
+**De paso, una regla menos.** `GET /activities/my-pending` tenía una copia del mismo filtro por
+`enrollmentDates`. Se sacó: era redundante (lo de arriba) y era la última diferencia entre esa
+pantalla y el cartel del inicio (`GET /courses`), que nunca lo había tenido. Ahora las dos
+deciden con la misma función y no pueden divergir.
+
+**En el detalle de la actividad**, el cartel del plazo vencido pasó a decir *"Las entregas están
+cerradas, pero el material de la clase sigue disponible"*. Es la otra mitad del pedido: que el
+alumno **sepa** que el material está.
+
+**No requiere cambios en la base de producción.** No se escribe ni se migra nada:
+`enrollmentDates` se sigue guardando igual (lo usa el panel de jefatura para distinguir al que se
+incorporó después del vencimiento), solo dejó de usarse para esconder.
+
+**Tests**: 2 unitarios nuevos en `tests/unit/pendienteActividad.test.js` —fijan la garantía que
+permite borrar el filtro duplicado— y el bloque `enrolldiv-*` del smoke reescrito: la vencida
+**se ve** con las tardías cerradas, entregarla da **403**, no aparece en "Mis pendientes", el
+alumno con y sin fecha de alta ven **lo mismo**, y abrir las tardías ya no cambia *qué* ve el
+alumno (solo lo que puede entregar).
+
+---
+
 ### 2026-08-31 — La solapa Novedades decía "dynamic_feed": el barrido de iconos se comía uno
 
 Reportado por el usuario: en la vista de computadora, docentes y alumnos veían el texto

@@ -2061,27 +2061,35 @@ const specs = [
     },
   },
 
-  // ── Alta de alumno con Curso (matricula automática en materias + regla temporal) ──
-  // Verifica el flujo nuevo: admin crea usuario con role=student + divisionId, y el backend:
+  // ── Alta de alumno con Curso: matrícula automática + la vencida NO se le esconde ──
+  // Verifica el flujo del alta: admin crea usuario con role=student + divisionId, y el backend:
   //  1. Inscribe al alumno en TODAS las materias del Curso seleccionado (1 en smoke — el
   //     único curso creado por `course-create`).
   //  2. Guarda joinedAt = ahora en Course.enrollmentDates para ese alumno.
-  //  3. En GET /activities/course/:id, si el alumno tiene joinedAt, el server oculta las
-  //     tareas cuyo dueDate ya venció ANTES de ese momento — salvo que el docente haya
-  //     habilitado tardías (decisión explícita del usuario).
-  // Se contrasta con `scopedStudent` (que se unió por código, sin joinedAt) — ese sigue
-  // viendo TODAS las actividades (backward compat con lo que había antes de esta feature).
+  //  3. Y desde el 2026-08-31 NO usa ese joinedAt para ocultarle nada: el alumno recién dado
+  //     de alta ve también las actividades vencidas antes de su alta, con las tardías cerradas.
+  //
+  // El caso real, reportado por una docente desde producción: con la regla anterior el chico
+  // perdía el MATERIAL de todas las clases anteriores (enunciado y adjuntos), y devolvérselo
+  // dependía de que el docente abriera las entregas de una por una. Ver el bloque de abajo:
+  // la actividad se ve, pero entregarla sigue dando 403, y no vuelve a "Mis pendientes".
+  //
+  // Se contrasta con `scopedStudent` (que se unió por código, sin joinedAt): los dos ven lo
+  // mismo, que es justamente lo que antes no pasaba.
   {
     id: 'enrolldiv-teacher-creates-past-activity',
     title: 'El docente crea una actividad con dueDate en el PASADO (ambientar el caso borde)',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state }) {
       const yesterday = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+      // El título lleva el RUN_ID porque "Mis pendientes" se verifica buscándolo en el HTML.
+      const titulo = `Tarea vencida (pre-latejoiner) ${RUN_ID}`;
       const res = await client.post('scopedTeacher', '/activities/create', {
-        body: { courseId: state.courseId, title: 'Tarea vencida (pre-latejoiner)', type: 'tarea', points: '10', dueDate: yesterday },
+        body: { courseId: state.courseId, title: titulo, type: 'tarea', points: '10', dueDate: yesterday },
         expectStatus: 201,
       });
-      state.pastActivityId = res.json.activity._id;
+      state.pastActivityId     = res.json.activity._id;
+      state.pastActivityTitulo = titulo;
     },
   },
   {
@@ -2118,13 +2126,17 @@ const specs = [
     },
   },
   {
-    id: 'enrolldiv-latejoiner-hides-past-activity',
-    title: 'El late-joiner NO ve la actividad vencida antes de su alta',
+    id: 'enrolldiv-latejoiner-sees-past-activity',
+    title: 'El late-joiner SÍ ve la actividad vencida antes de su alta, con las tardías cerradas',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state, assert }) {
-      const res = await client.get('lateJoiner', `/activities/course/${state.courseId}`, { expectStatus: 200 });
-      const seesPast = res.json.activities.some(a => a._id === state.pastActivityId);
-      assert(!seesPast, 'la actividad vencida antes de la inscripción NO debería figurarle al late-joiner');
+      const res  = await client.get('lateJoiner', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      const past = res.json.activities.find(a => a._id === state.pastActivityId);
+      assert(past, 'la actividad vencida antes del alta TIENE que figurarle: es el material de la clase');
+      // Que las tardías estén cerradas es la mitad del spec. Si estuvieran abiertas, la
+      // actividad se vería también con la regla vieja y el test no probaría nada.
+      assert(past.allowLateSubmissions !== true,
+        'el fixture tiene que estar con las tardías CERRADAS, si no el spec no distingue nada');
     },
   },
   {
@@ -2138,28 +2150,72 @@ const specs = [
     },
   },
   {
+    id: 'enrolldiv-latejoiner-cannot-submit-past',
+    title: 'Verla no es poder entregarla: la vencida con tardías cerradas devuelve 403',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // La otra mitad del pedido de la docente: se abre el material, no la entrega. Si alguien
+      // "arregla" la visibilidad abriendo también la puerta, este spec se cae.
+      const res = await client.post('lateJoiner', `/activities/${state.pastActivityId}/submit`, {
+        body: { text: 'no debería poder entregar esto' },
+        expectStatus: 403,
+      });
+      assert(/plazo de entrega/i.test(res.json?.error || ''),
+        `esperaba el 403 del plazo vencido, recibí: ${JSON.stringify(res.json)}`);
+    },
+  },
+  {
+    id: 'enrolldiv-latejoiner-past-not-pending',
+    title: 'Y tampoco le vuelve como pendiente: está en la materia, no en "Mis pendientes"',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Es lo que hace que mostrar las vencidas no sea molesto: sigueSiendoPendiente() las
+      // caduca sola (public/js/pendienteActividad.js), así que /activities/my-pending puede
+      // dejar de filtrar por enrollmentDates sin llenarse de tareas viejas.
+      const res = await client.get('lateJoiner', '/activities/my-pending', { expectStatus: 200 });
+      assert(!res.text.includes(state.pastActivityTitulo),
+        'la vencida se ve en la materia pero NO puede contar como pendiente');
+    },
+  },
+  {
     id: 'enrolldiv-oldstudent-still-sees-past',
-    title: 'El alumno unido por código (sin joinedAt) sigue viendo todas las actividades',
+    title: 'El alumno unido por código (sin joinedAt) ve exactamente lo mismo',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state, assert }) {
       const res = await client.get('scopedStudent', `/activities/course/${state.courseId}`, { expectStatus: 200 });
       const seesPast    = res.json.activities.some(a => a._id === state.pastActivityId);
       const seesCurrent = res.json.activities.some(a => a._id === state.activityId);
-      assert(seesPast,    'scopedStudent (sin joinedAt) debería seguir viendo la actividad vencida — backward compat');
-      assert(seesCurrent, 'scopedStudent debería seguir viendo la actividad vigente');
+      assert(seesPast,    'scopedStudent (sin joinedAt) tiene que ver la actividad vencida');
+      assert(seesCurrent, 'scopedStudent tiene que ver la actividad vigente');
     },
   },
   {
     id: 'enrolldiv-late-submissions-override',
-    title: 'Si el docente habilita tardías en la actividad vencida, el late-joiner también la ve',
+    title: 'Habilitar las tardías ya no cambia la visibilidad: cambia solo la entrega',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state, assert }) {
-      // Habilitar tardías en la actividad vencida
-      await client.patch('scopedTeacher', `/activities/${state.pastActivityId}/toggle-late`, { expectStatus: 200 });
+      const idsDelCurso = async () => {
+        const res = await client.get('lateJoiner', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+        return res.json.activities.map(a => a._id).sort();
+      };
 
-      const res = await client.get('lateJoiner', `/activities/course/${state.courseId}`, { expectStatus: 200 });
-      const seesPast = res.json.activities.some(a => a._id === state.pastActivityId);
-      assert(seesPast, 'con allowLateSubmissions=true, la actividad vencida debería aparecer también al late-joiner');
+      const antes = await idsDelCurso();
+      const patch = await client.patch('scopedTeacher', `/activities/${state.pastActivityId}/toggle-late`, {
+        expectStatus: 200,
+      });
+      assert(patch.json.allowLateSubmissions === true, 'el toggle tenía que dejar las tardías abiertas');
+
+      // Lo que ve el alumno es idéntico antes y después: el flag es la puerta de la entrega,
+      // no el estante del material. Antes del 2026-08-31 esta lista crecía con el toggle.
+      const despues = await idsDelCurso();
+      assert(JSON.stringify(despues) === JSON.stringify(antes),
+        `abrir las tardías no debería cambiar QUÉ ve el alumno: ${antes.length} → ${despues.length}`);
+
+      // Y ahora sí puede entregar la misma actividad que hace dos specs le daba 403.
+      await client.post('lateJoiner', `/activities/${state.pastActivityId}/submit`, {
+        body: { text: 'entrega tardía, con las tardías abiertas por el docente' },
+        expectStatus: 200,
+      });
     },
   },
   {

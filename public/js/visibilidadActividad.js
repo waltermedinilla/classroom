@@ -93,9 +93,11 @@
    * `$ne: false` incluye a los documentos donde el campo falta o es null — o sea, a todo lo
    * cargado antes de esta feature.
    *
-   * OJO al combinarlo: devuelve un `$or` de primer nivel. En GET /course/:id hay otro `$or`
-   * (el de enrollmentDates) y si los dos se asignan a la misma clave el segundo pisa al
-   * primero en silencio. Por eso los dos se meten dentro de un `$and`.
+   * OJO al combinarlo: devuelve un `$or` de primer nivel. Si algún día vuelve a haber una
+   * segunda condición con `$or` en la misma query, asignar las dos a `query.$or` hace que la
+   * segunda pise a la primera EN SILENCIO (y el alumno pasa a ver las programadas): van las
+   * dos anidadas dentro de un `$and`. Ya pasó una vez, con el filtro de enrollmentDates que
+   * GET /course/:id tuvo hasta el 2026-08-31.
    */
   function filtroVisibleParaAlumno(ahora) {
     var corte = ahora instanceof Date ? ahora : new Date(ahora || Date.now());

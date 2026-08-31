@@ -221,29 +221,25 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
     const isOwner = course.canManage(res.locals.user);
 
     const query = { course: req.params.courseId };
-    // Los alumnos solo ven actividades que ya fueron publicadas (availableFrom <= ahora).
-    // Además, si tienen enrollmentDate para este curso (o sea, fueron dados de alta con el
-    // flujo "Nuevo usuario → seleccionar Curso"), ocultamos las tareas cuya fecha de entrega
-    // ya venció ANTES de que se inscribieran — no las pudieron haber hecho. Se dejan visibles
-    // las que no tienen dueDate (nunca vencen) y las que el docente marcó con tardías abiertas
-    // (decisión explícita del usuario: si el docente abrió tardías, todos ven la actividad,
-    // incluso los alumnos recién llegados). Alumnos sin enrollmentDate (los que ya estaban
-    // antes de esta feature, o los que agregó el docente manualmente) ven todo — backward compat.
-    if (!isOwner) {
-      // Dos condiciones independientes, las dos con `$or` adentro: si se asignaran las dos a
-      // query.$or la segunda pisaría a la primera en silencio (y el alumno vería las
-      // programadas). Por eso van anidadas en un $and.
-      const condiciones = [filtroVisibleParaAlumno(new Date())];
-      const joinedAt = course.enrollmentDates?.get?.(userId);
-      if (joinedAt) {
-        condiciones.push({ $or: [
-          { dueDate: null },
-          { dueDate: { $gte: joinedAt } },
-          { allowLateSubmissions: true },
-        ] });
-      }
-      query.$and = condiciones;
-    }
+    // Los alumnos ven todas las actividades ya publicadas (availableFrom <= ahora), y esa es
+    // la ÚNICA condición: el plazo de entrega no decide la visibilidad.
+    //
+    // ⚠️ Hasta el 2026-08-31 había una segunda condición acá: al alumno con enrollmentDate
+    // para el curso se le ocultaban las actividades cuya fecha de entrega había vencido ANTES
+    // de su alta, salvo que el docente hubiera habilitado las tardías. Se sacó a pedido de una
+    // docente (sugerencia enviada desde producción): esa regla no le quitaba una tarea, le
+    // quitaba el MATERIAL de todas las clases anteriores —enunciados y adjuntos—, y para
+    // recuperarlo el docente tenía que ir abriendo las entregas de una por una. Encima no
+    // afectaba solo al que llega tarde: las herramientas de mantenimiento que rematriculan
+    // (services/enrollment.js, dbFixes 'matricula-parcial') escriben enrollmentDates = ahora,
+    // así que un alumno de siempre podía quedarse sin ver el año entero. En Classroom, el que
+    // entra a la clase ve todo lo publicado; entregar es otra cosa.
+    //
+    // Lo que NO cambió, y es la mitad del diseño: `allowLateSubmissions` sigue mandando en la
+    // ENTREGA (exigirAlumnoQuePuedeEntregar + POST /:id/submit), y la vencida no le vuelve a
+    // aparecer como pendiente porque sigueSiendoPendiente() la caduca sola. Ver ambos en
+    // public/js/pendienteActividad.js.
+    if (!isOwner) Object.assign(query, filtroVisibleParaAlumno(new Date()));
 
     const activities = await Activity.find(query)
       .populate('author', 'name')
@@ -635,18 +631,14 @@ router.get('/my-pending', requireAuth, requireSection('app_pending'), async (req
     if (user.role !== 'student') return res.redirect('/courses');
 
     const now = new Date();
-    // Traemos también enrollmentDates para poder aplicar por curso el mismo filtro de
-    // "no mostrar actividades vencidas antes de la inscripción del alumno" que usamos en
-    // GET /activities/course/:id. Sin este filtro acá, "Mis pendientes" mostraría tareas
-    // que no le figuran al alumno cuando entra al curso — inconsistencia visible al usuario.
-    const joinedCourses = await Course.find({ students: user._id }).select('name _id enrollmentDates');
+    // Ya no se filtra por enrollmentDates. Iba de la mano del filtro que GET /course/:id tenía
+    // hasta el 2026-08-31, y sacarlo no cambia esta lista ni en un renglón: la actividad
+    // vencida antes del alta del alumno tampoco pasa sigueSiendoPendiente() —sin tardías el
+    // corte es el vencimiento pelado—, así que la condición era redundante. De paso quedan una
+    // sola regla y un solo número entre esta pantalla y el cartel del inicio (GET /courses),
+    // que nunca tuvo el filtro de inscripción.
+    const joinedCourses = await Course.find({ students: user._id }).select('name _id');
     const courseIds = joinedCourses.map(c => c._id);
-    const userIdStr = user._id.toString();
-    const joinedAtByCourse = {};
-    joinedCourses.forEach(c => {
-      const dt = c.enrollmentDates?.get?.(userIdStr);
-      if (dt) joinedAtByCourse[c._id.toString()] = dt;
-    });
 
     // El orden final NO lo decide esta query: `sort({ dueDate: 1 })` pone los `null` PRIMERO
     // (así ordena Mongo) y la lista arrancaba con las tareas sin plazo, empujando abajo lo que
@@ -663,15 +655,9 @@ router.get('/my-pending', requireAuth, requireSection('app_pending'), async (req
     }).select('activity');
     const submittedSet = new Set(submissions.map(s => s.activity.toString()));
 
-    // Filtra las que están realmente pendientes (sin entrega y plazo aún abierto)
-    // + oculta las vencidas ANTES de la inscripción del alumno (misma regla que /course/:id)
+    // Filtra las que están realmente pendientes (sin entrega y todavía en ventana)
     const pending = activities.filter(a => {
       if (submittedSet.has(a._id.toString())) return false;
-      // Regla de inscripción: solo aplica si el alumno tiene joinedAt registrado para ese curso
-      const joinedAt = joinedAtByCourse[a.course._id.toString()];
-      if (joinedAt && a.dueDate && new Date(a.dueDate) < joinedAt && !a.allowLateSubmissions) {
-        return false;
-      }
       // Misma función que usa el contador del inicio (GET /courses): si las dos pantallas
       // no comparten la regla, el cartel dice un número y esta lista muestra otro.
       return sigueSiendoPendiente(a, now);
