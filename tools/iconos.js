@@ -40,7 +40,34 @@ const NOMBRE = /^[a-z][a-z0-9_]{2,}$/;
 // iconos se imprimen con un ternario de EJS (`<%= x ? 'task_alt' : 'front_hand' %>`), y `<%=`
 // EMPIEZA con `<`. Con el patrón que cortaba en el primer `<`, todos esos quedaban vacíos y
 // el barrido devolvía 217 iconos en vez de 270 — 53 que habrían aparecido en inglés.
-const CONTEXTO = /material-symbols-outlined[^>]*>([\s\S]*?)<\/span>/g;
+//
+// ⚠️ ARRANCA EN `<span` Y NO EN EL NOMBRE DE LA CLASE. Es la otra mitad del mismo cuidado, y
+// también se pagó. La clase se nombra en el código en TRES lugares distintos: en el HTML de un
+// icono, en una regla de CSS (`.tarjeta .material-symbols-outlined { … }`) y en JavaScript
+// (`btn.querySelector('.material-symbols-outlined')`). Empezando en el nombre de la clase, los
+// tres arrancaban un tramo.
+//
+// En los dos últimos no hay etiqueta que cerrar, así que `[^>]*>` seguía de largo por varios
+// renglones hasta el primer `>` suelto —el de una función flecha `() =>` alcanza— y desde ahí
+// se tragaba TODO hasta el próximo `</span>`, que era el de un icono de verdad. Ese icono
+// quedaba fuera de la lista y salía en pantalla con su nombre en inglés. Es lo que pasó con
+// `dynamic_feed`, el icono de la solapa **Novedades** de la materia (`views/course.ejs`):
+// veintipico de renglones más arriba hay un `querySelector` con la clase y el barrido se lo
+// comió. Lo reportaron docentes y alumnos el 2026-08-31.
+//
+// Pidiendo la etiqueta de apertura `<span`, una mención dentro de JS o de CSS ya no puede
+// empezar un tramo: para llegar hasta ella desde un `<span` anterior habría que cruzar el `>`
+// de ese span. Y no se pierde ninguno de los buenos: el código tiene 1.142 spans con la clase
+// y el patrón devuelve 1.142 tramos.
+//
+// El `(?:<%[^<>]*%>[^<>]*)*` del medio está porque siete iconos llevan EJS DENTRO de la
+// etiqueta (`title="<%= motivoCandado(sec) %>"`, `style="color:<%= r.color %>"`). Sin eso, el
+// candado de /superadmin/roles y otros seis quedaban afuera.
+//
+// ⚠️ Y NO se escribe como `(?:[^<>]|<%[\s\S]*?%>)*`, que parece lo mismo y es más corto: esas
+// dos alternativas se pisan entre sí y el retroceso se vuelve exponencial. Medido el
+// 2026-08-31, el barrido no terminó en 2 minutos. Con este patrón tarda 22 milisegundos.
+const CONTEXTO = /<span[^<>]*(?:<%[^<>]*%>[^<>]*)*material-symbols-outlined[^<>]*(?:<%[^<>]*%>[^<>]*)*>([\s\S]*?)<\/span>/g;
 
 // Cualquier cadena entrecomillada que parezca un nombre de icono, dentro de ese contexto.
 const ENTRECOMILLADO = /['"]([a-z][a-z0-9_]{2,})['"]/g;

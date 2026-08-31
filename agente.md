@@ -488,6 +488,48 @@ inferido. Lo funcional que ya figura en el Roadmap no se repite.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-08-31 — La solapa Novedades decía "dynamic_feed": el barrido de iconos se comía uno
+
+Reportado por el usuario: en la vista de computadora, docentes y alumnos veían el texto
+**`dynamic_feed`** al lado de *Novedades*, dentro de la materia.
+
+Es el mismo síntoma del 2026-08-30 —un icono que se muestra con su nombre en inglés— pero por
+otra causa. Aquel era `display=swap`; este es que el icono **nunca entró en la lista** que se le
+pide a Google. Y no fue un descuido al escribir la lista: la lista la arma un barrido del código,
+y el barrido se lo comía.
+
+**Cómo se lo comía.** `tools/iconos.js` buscaba tramos que empezaran en el nombre de la clase
+—`material-symbols-outlined`— y terminaran en el `</span>` siguiente. Pero esa clase aparece en
+TRES lugares distintos: en el HTML de un icono, en una regla de CSS y en JavaScript
+(`btn.querySelector('.material-symbols-outlined')`). En los dos últimos no hay etiqueta que
+cerrar, así que el patrón seguía de largo por varios renglones hasta el primer `>` suelto —el de
+una función flecha `() =>` alcanza— y desde ahí se tragaba TODO hasta el próximo `</span>`, que
+era el de un icono de verdad. En `views/course.ejs` ese icono era el de Novedades.
+
+**El arreglo.** El tramo ahora tiene que empezar en la etiqueta de apertura `<span`, con lugar
+para el EJS que siete iconos llevan dentro de los atributos (`title="<%= motivoCandado(sec) %>"`).
+Una mención en CSS o en JavaScript ya no puede abrir un tramo: para llegar hasta ella desde un
+`<span` anterior habría que cruzar el `>` de ese span. Control de que no se perdió ninguno de los
+buenos: el código tiene **1.142 spans con la clase y el patrón devuelve 1.142 tramos**.
+
+**Efecto secundario que conviene mirar.** La lista pasó de 286 nombres a 243. Entró el que
+faltaba y salieron 44 que nunca fueron iconos —`div`, `span`, `flex`, `textarea`, `preceptor`,
+`hoy`—: cadenas entrecomilladas que el barrido cosechaba de los bloques de JavaScript que se
+tragaba. Ninguno de los 44 se usa como icono en ninguna vista (verificado con un barrido
+independiente, y la URL nueva la sirve Google con 200).
+
+**El test que faltaba.** Ya había uno que compara la lista del partial contra el barrido, pero
+usaba **el mismo barrido**: si el barrido se come un icono, el test se lo come igual y dice que
+está todo bien. El nuevo recorre las vistas **icono por icono**, sin arrastrar lo anterior, y
+falla nombrando archivo y renglón. Sin el arreglo falla y señala `views/course.ejs:88`.
+
+**Ojo con la expresión regular.** La versión corta y evidente del patrón nuevo
+—`(?:[^<>]|<%[\s\S]*?%>)*`— tiene dos alternativas que se pisan entre sí y el retroceso se
+vuelve exponencial: el barrido no terminó en 2 minutos. La forma escrita en `tools/iconos.js`
+tarda 22 milisegundos.
+
+---
+
 ### 2026-08-30 — El legajo del SOE deja de ser solo texto: material, citaciones y agenda
 
 Pedido del usuario: *"que cada actuación permita adjuntar archivos, enlaces o demás material…

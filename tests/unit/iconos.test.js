@@ -40,6 +40,62 @@ test('⭐ no falta ningún icono en la lista del partial', () => {
     'Se arregla con:  npm run iconos:actualizar\n');
 });
 
+test('⭐ ningún icono escrito como texto se pierde por lo que haya arriba en el archivo', () => {
+  // Este barrido es A PROPÓSITO distinto al de tools/iconos.js, y por eso vale: el de allá
+  // recorre el archivo entero con una sola expresión, y el 2026-08-31 se descubrió que una
+  // mención de la clase dentro de JavaScript le hacía saltear el icono siguiente —así se
+  // perdió `dynamic_feed`, el de la solapa Novedades de la materia, que docentes y alumnos
+  // vieron escrito en inglés—. Un test que usara el MISMO barrido habría dicho que todo
+  // estaba bien. Este mira icono por icono, sin arrastrar nada de lo anterior.
+  const CLASE = 'material-symbols-outlined';
+  const archivos = [];
+  (function recorrer(dir) {
+    if (!fs.existsSync(dir)) return;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = require('path').join(dir, e.name);
+      if (e.isDirectory()) { if (!e.name.startsWith('.') && e.name !== 'node_modules') recorrer(p); }
+      else if (e.name.endsWith('.ejs') || e.name.endsWith('.js')) archivos.push(p);
+    }
+  })(require('path').join(__dirname, '..', '..', 'views'));
+  (function recorrer(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = require('path').join(dir, e.name);
+      if (e.isDirectory()) recorrer(p); else if (e.name.endsWith('.js')) archivos.push(p);
+    }
+  })(require('path').join(__dirname, '..', '..', 'public', 'js'));
+
+  const usados = new Map();
+  for (const archivo of archivos) {
+    const src = fs.readFileSync(archivo, 'utf8');
+    let i = -1;
+    while ((i = src.indexOf(CLASE, i + 1)) !== -1) {
+      const fin = src.indexOf('</span>', i);
+      if (fin === -1) continue;
+      const bloque = src.slice(i, fin);
+      // Un icono son unos pocos caracteres. Un tramo largo es una mención en CSS o en JS que
+      // se estiró hasta el `</span>` de otro: ahí no hay nada que leer.
+      if (bloque.length > 400) continue;
+      const m = bloque.match(/>\s*([a-z][a-z0-9_]{2,})\s*$/);
+      if (m) usados.set(m[1], archivo + ':' + src.slice(0, i).split('\n').length);
+    }
+  }
+
+  assert.ok(usados.size > 150,
+    'el barrido de control encontró solo ' + usados.size + ' iconos: se rompió él, no la lista');
+  assert.ok(usados.has('dynamic_feed'),
+    'la solapa Novedades de la materia dejó de usar dynamic_feed: si el icono cambió, este ' +
+    'testigo del bug del 2026-08-31 hay que actualizarlo a mano');
+
+  const enElPartial = new Set(listaDe(urlDelPartial()));
+  const faltan = [...usados].filter(([icono]) => !enElPartial.has(icono));
+
+  assert.deepStrictEqual(faltan, [],
+    'Estos iconos están escritos en una vista pero NO están en la lista del partial:\n' +
+    faltan.map(([icono, donde]) => '  · ' + icono + '  (' + donde + ')').join('\n') +
+    '\n\nCada uno se ve como su nombre en inglés al lado del control.\n' +
+    'Se arregla con:  npm run iconos:actualizar\n');
+});
+
 test('el partial pide la fuente con display=block, no swap', () => {
   // Con `swap` el navegador dibuja el NOMBRE del icono mientras baja la fuente. Para una
   // fuente de texto es lo correcto; para una de iconos es el bug que originó todo esto.
