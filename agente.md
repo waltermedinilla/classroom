@@ -526,6 +526,74 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-06 — La docente transmite su clase en vivo (v1.0.78, DESPLEGADA APAGADA)
+
+`specs/transmision-en-vivo.spec.md`. SFU con mediasoup en un proceso aparte (`media/`), señalización
+por WebSocket y un proxy propio en Express (`middleware/rtc-proxy.js`) en vez de una regla en el
+Caddyfile — así el mismo código corre en desarrollo y en producción, y la transmisión se puede
+probar antes de desplegarla.
+
+**Primer módulo de DOS EJES**: la escuela lo prende y además elige a qué docentes
+(`config/modulos.js`, campo `alcance`; `moduloActivoPara()` y `requireModuloPara`). Prender la
+escuela y no habilitar a nadie es el estado inicial esperado. Por qué este módulo lo necesita y
+`recursos` no: reservar la sala de computación es asunto interno de una escuela, pero transmitir
+consume el **puerto de salida del servidor**, que es de todas las escuelas a la vez.
+
+⭐ La sutileza que lo pone al revés si se ignora: `moduloActivoPara()` se le pregunta a **quien
+emite**, nunca a quien mira. Si se le preguntara al que mira, cada alumno tendría que estar en la
+lista para ver a su profesora.
+
+### 2026-09-06 — Cada persona confirma su correo y su celular (v1.0.78, DESPLEGADA APAGADA)
+
+`specs/verificacion-de-contacto.spec.md`. El correo queda completo; el celular, escrito con los dos
+proveedores (WhatsApp Cloud y Twilio) en `off`. Es la primera vez que la plataforma puede mandar
+algo hacia afuera: ese caño de salida es la precondición de las notificaciones y de la recuperación
+de contraseña por correo.
+
+**Falta configurar, no programar**: elegir proveedor y cargar las 5 variables de SMTP, correr
+`node migrate-phone-e164.js --dry-run` y después sin él, y prender el módulo por escuela en
+`/superadmin/schools`. Comprobación: `node tools/probar-canal.js --email <dirección>`.
+
+Las tres reglas que no son obvias: (a) verificar **nunca habilita nada** — está prohibido cualquier
+middleware que mire `emailVerifiedAt` para dejar pasar; (b) la **verificación asistida** (el
+preceptor confirma el número que ya conoce, firmado en `AuditLog`) cubre el celular sin costo, que
+es lo que permite arrancar con el SMS en `off`; (c) toda escritura de `email`/`phone` **borra** su
+verificación, en los 6 lugares que hoy los escriben, fijado por un test estático.
+
+⚠️ Un `.select()` que no traiga los campos nuevos muestra "Sin verificar" para todo el mundo **sin
+dar ningún error**: por eso van por la constante `CAMPOS_SELECT` y no a mano.
+
+### 2026-09-06 — El reseteo dicta la contraseña y avisa si hay otra cuenta con el mismo DNI
+
+Las dos mitades del *"le restablecí la contraseña y después no pude entrar"* del 31/08. El servidor
+**siempre** cambió bien la contraseña — eso nunca estuvo roto, y ahora hay un spec que lo documenta.
+
+1. La respuesta **nombraba** la contraseña (`"DNI del usuario"`) en vez de darla, así que había que
+   ir a leer el número a otro lado de la ficha y re-tipearlo. Ahora el cartel trae el correo y la
+   contraseña juntos: son los dos datos que hay que dictar, y separarlos es lo que hace que se
+   termine probando la contraseña de una cuenta con el correo de otra.
+2. Hay **60 DNIs con dos cuentas** en la misma escuela (padrón + alta manual, una con el correo
+   institucional y otra con el personal). La ficha ahora lo avisa, pegado al correo y al DNI.
+
+⚠️ El índice único `{ school, dni }` que declara `models/User.js` **no existe en la base**, y no se
+puede crear mientras esos 60 duplicados existan. Fusionar primero, crear el índice después.
+
+**Bug encontrado al revisar esto**: los saltos de línea del `alert` eran **literales** dentro de
+strings con comillas simples — un `SyntaxError` que dejaba sin ejecutar el `<script>` **entero** de
+la ficha del usuario (restablecer, eliminar y los botones de verificación asistida).
+
+### 2026-09-06 — Script para reparar las notas en 0 que ningún docente puso
+
+`migrate-ceros-falsos.js`, suelto y con `--dry-run`. Hasta v1.0.41 (14/08) una devolución con el
+campo de nota vacío guardaba `points: 0`, porque `Number('')` es 0. Ese fix cortó el problema para
+las notas nuevas pero **nunca reparó las ya escritas**: medido contra producción el 06/09, siguen
+**128 ceros falsos sobre 112 alumnos y 6 actividades**.
+
+⚠️ La fecha que separa un cero falso de uno real **no sale de `gradedAt`** —se reescribe en cada
+guardado, y hay ceros del bug con `gradedAt` posterior al fix— sino del timestamp que lleva adentro
+el ObjectId del subdocumento, que no se puede reescribir. De 130 ceros, 128 son del bug y 2 los
+tipeó un humano. Pendiente de correr en producción, con backup y ventana.
+
 ### 2026-09-05 (más tarde) — El watchdog avisa cuando hay código pusheado que no se desplegó
 
 Pedido del usuario, después de que el deploy de v1.0.76 no ocurriera: *"hacé que el watchdog
