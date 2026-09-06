@@ -591,8 +591,29 @@ las notas nuevas pero **nunca reparó las ya escritas**: medido contra producci�
 
 ⚠️ La fecha que separa un cero falso de uno real **no sale de `gradedAt`** —se reescribe en cada
 guardado, y hay ceros del bug con `gradedAt` posterior al fix— sino del timestamp que lleva adentro
-el ObjectId del subdocumento, que no se puede reescribir. De 130 ceros, 128 son del bug y 2 los
-tipeó un humano. Pendiente de correr en producción, con backup y ventana.
+el ObjectId del subdocumento, que no se puede reescribir.
+
+**✅ CORRIDO EN PRODUCCIÓN el 2026-09-06**, con backup previo de `activities` (1.329 documentos) y
+sin ventana de mantenimiento: son 128 `updateOne` anclados por el `_id` de cada subdocumento y
+duran segundos. El resultado, medido:
+
+| | antes | después |
+|---|---|---|
+| notas con valor | 1335 | 1207 |
+| devoluciones sin nota (`points: null`) | 227 | 355 |
+| notas en 0 | 175 | **47** |
+| **promedio general de la escuela** | **7,494** | **8,289** |
+
+Los 128 conservan su devolución, su `gradedAt` y su alumno (verificado uno por uno). Correrlo de
+nuevo no hace nada: el dry-run posterior dice *"0 ceros falsos"*.
+
+**Lo que quedó abierto: los 47 ceros que el script NO toca.** Son **todos posteriores al fix** (0
+anteriores), del 14/08 al 01/09, y 32 de ellos tienen devolución escrita. Como el fix hace que un
+campo vacío guarde `null`, un 0 de esa fecha solo puede haberlo tipeado alguien — y la regla de la
+casa es que **la nota mínima es 1**. Falta decidir qué hacer con ellos y, sobre todo, **por qué
+siguen apareciendo**: la carga manual todavía acepta el 0 (`min="0"` en el casillero y el servidor
+solo rechaza negativos, en `routes/activities.js`, `POST /:id/grade`). Ojo al exigir ≥ 1: el
+autocalificador tiene que quedar afuera, porque ahí un 0 sí es real.
 
 ### 2026-09-05 (más tarde) — El watchdog avisa cuando hay código pusheado que no se desplegó
 
