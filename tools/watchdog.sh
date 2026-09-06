@@ -16,6 +16,7 @@
 #   4. El cupo        → el rate limit no está agotado
 #   5. El DNS público → el nombre .ts.net resuelve desde internet   ← invisible desde adentro
 #   6. El Funnel      → el edge de Tailscale acepta y enruta TLS    ← invisible desde adentro
+#   7. El deploy      → el código servido es el último pusheado     ← falla en silencio
 #
 # Este script mide las seis a la vez. Correlo por cron cada minuto: cuando alguien reporte
 # "no anda", la respuesta va a estar escrita, con la hora exacta y la capa culpable.
@@ -178,10 +179,65 @@ else
 fi
 ts_estado=$(limpio "$(timeout "$TIMEOUT_CORTO" tailscale status --json 2>/dev/null | grep -o '"BackendState":"[^"]*"' | cut -d'"' -f4)" "n/d")
 
+# ── 9. EL CÓDIGO DESPLEGADO vs EL DEL REPOSITORIO ───────────────────────────
+# La capa que faltaba, y la única que falla en SILENCIO ABSOLUTO: el 2026-09-05 GitHub se
+# rindió a los 10 s entregando el webhook del push de v1.0.76 ("giving up after 1 attempt"),
+# el deploy nunca empezó y producción siguió sirviendo código viejo con TODO en verde — el
+# sitio respondía 200, deploy.log no tenía una línea nueva (no hay nada que registrar cuando
+# el deploy no arranca) y nadie se enteró. Se descubrió de casualidad. Ver [[deploy-pipeline]].
+#
+# Se comparan dos SHA, no dos números de versión: el commit que está en el disco del server
+# contra el que tiene la rama en GitHub. Es la comparación exacta — un push que no cambie
+# `package.json` no movería la versión y se escaparía igual.
+#
+# ⚠️ NO cada minuto: `ls-remote` sale a la red. Se consulta cada REPO_CHEQUEO_SEG (5 min por
+# defecto) y el resto de los minutos se repite el último resultado, guardado en un archivo de
+# estado. Ese archivo guarda además DESDE CUÁNDO está atrasado, y por eso el campo puede
+# decir `atrasado:37` — sin ese dato, el analizador no podría distinguir un deploy que está
+# corriendo ahora mismo de uno que no ocurrió nunca.
+#
+# Poner REPO_CHEQUEO_SEG=0 lo apaga (el server viejo, que quedó atrás a propósito, diría
+# "atrasado" para siempre).
+REPO_CHEQUEO_SEG="${REPO_CHEQUEO_SEG:-300}"
+ESTADO_REPO="${WATCHDOG_REPO_ESTADO:-$APP_DIR/logs/.watchdog-repo}"
+ahora_epoch=$(date +%s)
+
+ultimo_chequeo=0; repo_guardado="n/d"; atrasado_desde=0
+if [ -f "$ESTADO_REPO" ]; then
+  read -r ultimo_chequeo repo_guardado atrasado_desde < "$ESTADO_REPO" 2>/dev/null
+  ultimo_chequeo=$(limpio "$ultimo_chequeo" "0")
+  repo_guardado=$(limpio  "$repo_guardado"  "n/d")
+  atrasado_desde=$(limpio "$atrasado_desde" "0")
+fi
+
+if [ "$REPO_CHEQUEO_SEG" -gt 0 ] 2>/dev/null && [ $((ahora_epoch - ultimo_chequeo)) -ge "$REPO_CHEQUEO_SEG" ]; then
+  sha_local=$(limpio "$(git -C "$APP_DIR" rev-parse HEAD 2>/dev/null)" "")
+  # GIT_TERMINAL_PROMPT=0: si el remoto pidiera credenciales, sin esto el cron quedaría
+  # colgado esperando una contraseña que nadie va a tipear.
+  sha_remoto=$(limpio "$(GIT_TERMINAL_PROMPT=0 timeout "$TIMEOUT_LARGO"     git -C "$APP_DIR" ls-remote origin refs/heads/main 2>/dev/null | awk '{print $1}')" "")
+
+  if [ -z "$sha_local" ] || [ -z "$sha_remoto" ]; then
+    repo_guardado="n/d"; atrasado_desde=0       # sin git o sin red: no se sabe, no se inventa
+  elif [ "$sha_local" = "$sha_remoto" ]; then
+    repo_guardado="aldia"; atrasado_desde=0
+  else
+    repo_guardado="atrasado"
+    [ "$atrasado_desde" = "0" ] && atrasado_desde=$ahora_epoch
+  fi
+  ultimo_chequeo=$ahora_epoch
+  echo "$ultimo_chequeo $repo_guardado $atrasado_desde" > "$ESTADO_REPO" 2>/dev/null
+fi
+
+if [ "$repo_guardado" = "atrasado" ] && [ "$atrasado_desde" != "0" ]; then
+  repo="atrasado:$(( (ahora_epoch - atrasado_desde) / 60 ))"
+else
+  repo="$repo_guardado"
+fi
+
 # ── Una línea, campos clave=valor ───────────────────────────────────────────
 # Formato pensado para dos lectores: `grep`/`tail` a ojo, y el analizador. Nada de comas
 # adentro de los valores para que un `cut` casual no se rompa.
-echo "$ts app=$app_code t=$app_time db=$db_estado ver=$version up=$app_uptime cupo=$cupo_rest/$cupo_lim workers=$workers conn=$conn load=$load mem=$mem_usada/$mem_total rss=$rss mongo=$mongo dns=$dns dnsip=${dns_ip:-none} ext=$ext_code tls=$ext_tls funnel=$funnel tsnet=$ts_estado" >> "$LOG"
+echo "$ts app=$app_code t=$app_time db=$db_estado ver=$version up=$app_uptime cupo=$cupo_rest/$cupo_lim workers=$workers conn=$conn load=$load mem=$mem_usada/$mem_total rss=$rss mongo=$mongo dns=$dns dnsip=${dns_ip:-none} ext=$ext_code tls=$ext_tls funnel=$funnel tsnet=$ts_estado repo=$repo" >> "$LOG"
 
 # Rotación simple: sin esto el archivo crece para siempre (el access log ya tiene ese
 # problema y está anotado como deuda). 20000 líneas ≈ 14 días de un chequeo por minuto.

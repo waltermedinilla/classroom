@@ -526,6 +526,60 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-05 (más tarde) — El watchdog avisa cuando hay código pusheado que no se desplegó
+
+Pedido del usuario, después de que el deploy de v1.0.76 no ocurriera: *"hacé que el watchdog
+avise cuando la versión no coincida"*.
+
+**El agujero que tapa.** El webhook de GitHub abandonó la entrega a los 10 segundos
+(*"giving up after 1 attempt(s)"* — **GitHub no reintenta**), el deploy nunca arrancó y
+producción siguió sirviendo la versión anterior **con todo en verde**: el sitio respondía 200,
+`deploy.log` no tenía una línea nueva —no hay nada que registrar cuando un proceso no empieza—
+y nadie se enteró. Se descubrió de casualidad, al ir a verificar el despliegue a mano. Es el
+modo de falla más silencioso que tuvo el proyecto: **el push queda en GitHub y todo parece
+normal**.
+
+**Lo que hay ahora.** El watchdog suma una capa (la 7) que compara **dos SHA**: el commit que
+está en el disco del servidor contra el que tiene la rama en GitHub. Son SHA y no números de
+versión a propósito — un push que no toque `package.json` no movería la versión y se escaparía
+igual. El campo nuevo de la línea es `repo=aldia`, `repo=atrasado:37` (con los minutos) o
+`repo=n/d`.
+
+**No consulta la red cada minuto**: `ls-remote` se ejecuta cada 5 (`REPO_CHEQUEO_SEG`) y el resto
+del tiempo se repite el último resultado, guardado en `logs/.watchdog-repo` junto con **desde
+cuándo** está atrasado. Ese dato es el que permite distinguir un deploy que está corriendo ahora
+mismo de uno que no ocurrió nunca. Con `REPO_CHEQUEO_SEG=0` se apaga, que es lo que corresponde
+en el servidor viejo: quedó atrás a propósito y diría "atrasado" para siempre.
+
+**Los 10 minutos de gracia** ([services/watchdogDiagnostico.js](services/watchdogDiagnostico.js),
+`DEPLOY_GRACIA_MIN`) no son un número al azar: un deploy completo tarda menos de un minuto y el
+remoto se consulta cada 5, así que diez dejan pasar un despliegue en curso —y hasta uno que se
+haya trabado y reintentado— sin gritar. Avisar en cada deploy sería una alarma falsa por
+despliegue, que es la forma más rápida de que se deje de mirar la herramienta.
+
+⭐ **Es 'aviso' y NUNCA 'falla', aunque lleve días.** `resumirIncidentes` calcula la
+disponibilidad contando las fallas: marcar esto como falla diría **"0% de disponibilidad"** con
+la escuela usando la plataforma sin un solo problema. Una métrica que miente sobre lo único que
+todos miran vale menos que no tenerla. El sitio está arriba, rápido y sano — lo que le falta es
+el último código.
+
+**Un arreglo que salió de paso.** Al probar el informe apareció que un tramo se contradecía
+solo: *"22:17–22:56 (40 min) … desde hace 10 min"*. `tramos()` conservaba el texto de la
+**primera** medición, y hay resúmenes que llevan un número que se mueve dentro del mismo tramo
+(los minutos del deploy, el cupo que queda, lo que tarda la app). Ahora el texto se refresca con
+la última: el rango lo pone el tramo, el texto dice cómo está la cosa ahora.
+
+Tests: `tests/unit/watchdog.test.js` (35 → 36 casos). Cubren el parseo de los tres estados, que
+dentro de la gracia no moleste, que pasado el umbral avise, que una capa realmente caída le gane
+al aviso, que el tramo se describa con su última medición y —el más importante— **que un deploy
+atrasado no baje la disponibilidad**. Verificado que 3 de ellos fallan sin el arreglo. La
+medición del `.sh` se probó aparte contra un repo real en sus cinco caminos: al día, cache
+vigente, atrasado con minutos, apagado y sin repositorio.
+
+> ⚠️ **Al desplegarlo hay que verificar que el cron siga vivo**: `tools/watchdog.sh` ya se murió
+> en silencio una vez por el bit de ejecución (v1.0.69). Se comprueba comparando la hora de la
+> última línea de `logs/watchdog.log` contra `date`.
+
 ### 2026-09-06 — Los workers se reciclaban cada 4 minutos: el techo de PM2 peleado con el de V8
 
 Pregunta del usuario: *"necesito saber por qué en producción se reinicia el nodejs"*.

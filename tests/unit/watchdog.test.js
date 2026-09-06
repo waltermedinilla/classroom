@@ -13,7 +13,8 @@ const test   = require('node:test');
 const assert = require('node:assert');
 
 const {
-  parsearLinea, parsearCupo, diagnosticar, tramos, resumirIncidentes,
+  parsearLinea, parsearCupo, parsearRepo, diagnosticar, tramos, resumirIncidentes,
+  DEPLOY_GRACIA_MIN,
 } = require('../../services/watchdogDiagnostico');
 
 // Medición sana. Cada test rompe UNA capa sobre esta base.
@@ -23,16 +24,17 @@ const sana = (over = {}) => ({
   cupo: '11500/12000', workers: '2', conn: '40', load: '0.4',
   mem: '2100/7800', rss: '320', mongo: 'up',
   dns: 'ok', dnsip: '199.38.181.54', ext: '200', tls: '0.3',
-  funnel: 'on', tsnet: 'Running', ...over,
+  funnel: 'on', tsnet: 'Running', repo: 'aldia', ...over,
 });
 
 // ── Parseo ───────────────────────────────────────────────────────────────────
 
 test('parsea una línea real del watchdog', () => {
-  const m = parsearLinea('2026-08-14T07:32:01-0300 app=200 t=0.042 db=ok ver=1.0.42 cupo=11500/12000 dns=ok ext=200 funnel=on');
+  const m = parsearLinea('2026-08-14T07:32:01-0300 app=200 t=0.042 db=ok ver=1.0.42 cupo=11500/12000 dns=ok ext=200 funnel=on repo=aldia');
   assert.equal(m.app, '200');
   assert.equal(m.db, 'ok');
   assert.equal(m.cupo, '11500/12000');
+  assert.equal(m.repo, 'aldia');
   assert.equal(m.fecha.getFullYear(), 2026);
 });
 
@@ -248,4 +250,92 @@ test('resumirIncidentes tolera lista vacía', () => {
   const r = resumirIncidentes([]);
   assert.equal(r.total, 0);
   assert.equal(r.disponibilidad, null, 'sin datos no se inventa un 100%');
+});
+
+// ── ⭐ La capa que falla en silencio: código pusheado que no se desplegó ──────
+//
+// El caso testigo es el del 2026-09-05: GitHub abandonó la entrega del webhook a los 10 s y
+// no reintentó. El deploy nunca arrancó, así que NO hubo nada anómalo en ningún log —el sitio
+// respondía 200 y `deploy.log` no tenía una línea nueva— y producción siguió con código viejo
+// hasta que alguien fue a mirar de casualidad.
+
+test('parsearRepo entiende los tres estados y no inventa el cuarto', () => {
+  assert.deepEqual(parsearRepo('aldia'),       { atrasado: false, minutos: 0 });
+  assert.deepEqual(parsearRepo('atrasado:37'), { atrasado: true,  minutos: 37 });
+  assert.deepEqual(parsearRepo('atrasado'),    { atrasado: true,  minutos: null }, 'sin el dato de cuándo empezó');
+  assert.equal(parsearRepo('n/d'),     null, 'no medido no es "al día"');
+  assert.equal(parsearRepo(''),        null);
+  assert.equal(parsearRepo(undefined), null, 'una línea vieja, sin el campo, no dispara nada');
+  assert.deepEqual(parsearRepo('atrasado:xx'), { atrasado: true, minutos: null }, 'minutos ilegibles no anulan el aviso');
+});
+
+test('un push sin desplegar hace rato = aviso, y señala la capa deploy', () => {
+  const d = diagnosticar(sana({ repo: 'atrasado:37' }));
+  assert.equal(d.estado, 'aviso');
+  assert.equal(d.capa, 'deploy');
+  assert.match(d.resumen, /37 min/);
+  assert.match(d.accion, /Redeliver|reset --hard/, 'tiene que decir qué hacer, no solo que pasa algo');
+});
+
+test('durante los primeros minutos NO avisa: puede ser el deploy corriendo ahora', () => {
+  // Un deploy completo tarda menos de un minuto. Gritar en ese lapso sería una alarma falsa
+  // en CADA despliegue, que es la forma más rápida de que se deje de mirar la herramienta.
+  const d = diagnosticar(sana({ repo: `atrasado:${DEPLOY_GRACIA_MIN - 1}` }));
+  assert.equal(d.estado, 'ok', 'dentro de la gracia no molesta');
+  assert.equal(d.capa, null);
+});
+
+test('pasado el umbral avisa, y a las horas lo dice en horas', () => {
+  assert.equal(diagnosticar(sana({ repo: `atrasado:${DEPLOY_GRACIA_MIN}` })).capa, 'deploy', 'el umbral es inclusivo');
+  assert.match(diagnosticar(sana({ repo: 'atrasado:180' })).resumen, /3 h/);
+});
+
+test('sin medir el repositorio NO se inventa un veredicto', () => {
+  // n/d es "no se pudo consultar el remoto" o "está apagado a propósito" (el server viejo,
+  // que quedó atrás adrede y diría "atrasado" para siempre). Ninguno de los dos es un problema.
+  assert.equal(diagnosticar(sana({ repo: 'n/d' })).estado, 'ok');
+  assert.equal(diagnosticar(sana({ repo: undefined })).estado, 'ok', 'una línea vieja del log no dispara nada');
+});
+
+test('⭐ un deploy atrasado NO baja la disponibilidad', () => {
+  // El sitio está arriba, rápido y sano: lo único que pasa es que le falta el último código.
+  // Si esto contara como falla, el informe diría "0% de disponibilidad" con la escuela usando
+  // la plataforma sin un solo problema — y una métrica que miente sobre lo que todos miran
+  // vale menos que no tenerla.
+  const r = resumirIncidentes([
+    sana({ repo: 'atrasado:60' }), sana({ repo: 'atrasado:61' }), sana({ repo: 'atrasado:62' }),
+  ]);
+  assert.equal(r.conFalla, 0);
+  assert.equal(r.disponibilidad, 100);
+  assert.equal(r.porCapa['deploy'], undefined, 'no es un incidente de disponibilidad');
+});
+
+test('una capa caída de verdad le gana al aviso de deploy', () => {
+  // Las dos cosas a la vez: el sitio no se ve Y además falta desplegar. Lo que hay que
+  // arreglar primero es lo que dejó a la escuela afuera.
+  const d = diagnosticar(sana({ dns: 'nxdomain', ext: 'skip', repo: 'atrasado:120' }));
+  assert.equal(d.estado, 'falla');
+  assert.equal(d.capa, 'dns-funnel');
+});
+
+test('el tramo de deploy atrasado se agrupa como un solo incidente', () => {
+  const t = tramos([
+    sana({ repo: 'aldia' }),
+    sana({ repo: 'atrasado:15' }), sana({ repo: 'atrasado:16' }), sana({ repo: 'atrasado:17' }),
+    sana({ repo: 'aldia' }),
+  ]);
+  const deploy = t.filter(x => x.capa === 'deploy');
+  assert.equal(deploy.length, 1, 'tres mediciones seguidas son UN tramo, no tres avisos');
+  assert.equal(deploy[0].muestras, 3);
+});
+
+test('el tramo se describe con su última medición, no con la primera', () => {
+  // Si no, el informe se contradice solo: el rango dice 40 minutos y el texto, congelado en
+  // el primer minuto, dice 10. Vale para toda capa cuyo resumen lleve un número que se mueve
+  // (los minutos del deploy, el cupo que queda, lo que tarda la app).
+  const t = tramos([
+    sana({ repo: 'atrasado:15' }), sana({ repo: 'atrasado:30' }), sana({ repo: 'atrasado:45' }),
+  ]);
+  assert.equal(t.length, 1);
+  assert.match(t[0].resumen, /45 min/, 'tiene que contar lo último que se midió');
 });

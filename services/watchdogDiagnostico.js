@@ -19,6 +19,14 @@ const UMBRAL_LENTO_S = 2;
 // para que la ventana se reinicie".
 const CUPO_ALERTA = 0.1; // 10% del límite
 
+// Minutos que se le perdonan a un deploy antes de avisar que el código no llegó.
+//
+// No es un número al azar: un deploy completo (git reset + npm install + reload de los dos
+// workers) tarda menos de un minuto, y el watchdog consulta el remoto cada 5. Diez minutos
+// dejan pasar un deploy en curso y hasta uno que se haya trabado y reintentado, sin gritar.
+// Más abajo de esto el aviso sería ruido; más arriba, el silencio se estira de más.
+const DEPLOY_GRACIA_MIN = 10;
+
 /**
  * Parsea una línea del watchdog: "2026-08-14T07:32:01-0300 app=200 t=0.04 db=ok ..."
  * Devuelve null si la línea está corrupta o incompleta — un log truncado a mitad de
@@ -49,6 +57,24 @@ function parsearCupo(valor) {
   const restante = Number(r), limite = Number(l);
   if (!Number.isFinite(restante) || !Number.isFinite(limite) || limite <= 0) return null;
   return { restante, limite, fraccion: restante / limite };
+}
+
+/**
+ * "aldia" | "atrasado" | "atrasado:37" | "n/d" → { atrasado, minutos } o null si no se midió.
+ *
+ * `atrasado` sin minutos es válido y se trata como si hubiera pasado la gracia: significa que
+ * el estado viene de un archivo escrito antes de que existiera ese dato, y ante la duda es
+ * mejor avisar de más que callarse un deploy que no ocurrió.
+ */
+function parsearRepo(valor) {
+  if (!valor || valor === 'n/d' || valor === '?') return null;
+  if (valor === 'aldia') return { atrasado: false, minutos: 0 };
+  if (!valor.startsWith('atrasado')) return null;
+
+  const i = valor.indexOf(':');
+  if (i < 0) return { atrasado: true, minutos: null };
+  const min = Number(valor.slice(i + 1));
+  return { atrasado: true, minutos: Number.isFinite(min) ? min : null };
 }
 
 /**
@@ -177,6 +203,33 @@ function diagnosticar(m) {
     };
   }
 
+  // ── Capa 7: el código desplegado ──────────────────────────────────────────
+  // Va última de las que juzgan, y es la única que NO habla de disponibilidad: el sitio
+  // está perfecto, arriba y rápido — lo que pasa es que está sirviendo código viejo.
+  //
+  // ⭐ Por eso es 'aviso' y NUNCA 'falla', aunque lleve días: `resumirIncidentes` calcula la
+  // disponibilidad contando las fallas, y marcar esto como falla diría "0% de disponibilidad"
+  // con la escuela usando la plataforma sin problemas. Una métrica que miente sobre lo único
+  // que todos miran vale menos que no tenerla.
+  //
+  // Existe porque es el modo de falla más silencioso que tuvo el proyecto: el 2026-09-05
+  // GitHub abandonó la entrega del webhook a los 10 s y no reintentó; el deploy nunca arrancó
+  // y no quedó rastro en ningún log, porque no hay nada que registrar cuando un proceso no
+  // empieza. Ver [[deploy-pipeline]].
+  const repo = parsearRepo(m.repo);
+  if (repo && repo.atrasado && (repo.minutos === null || repo.minutos >= DEPLOY_GRACIA_MIN)) {
+    const cuanto = repo.minutos === null
+      ? ''
+      : repo.minutos >= 120
+        ? ` desde hace ${Math.round(repo.minutos / 60)} h`
+        : ` desde hace ${repo.minutos} min`;
+    return {
+      estado: 'aviso', capa: 'deploy',
+      resumen: `Hay código pusheado que NO está desplegado${cuanto}: producción sigue sirviendo la versión anterior.`,
+      accion: 'Revisar la entrega del webhook en GitHub → Settings → Webhooks → Recent Deliveries (botón Redeliver), o desplegar a mano: git reset --hard origin/main && pm2 reload classroom --update-env',
+    };
+  }
+
   // ── Todo bien ─────────────────────────────────────────────────────────────
   // Vale la pena leer este caso con cuidado: si el usuario reporta que no anda y el
   // watchdog dice OK en ese minuto, el problema NO está ni en el servidor ni en el camino
@@ -206,6 +259,14 @@ function tramos(mediciones) {
     if (ultimo && ultimo.estado === d.estado && ultimo.capa === d.capa) {
       ultimo.hasta = m.fecha;
       ultimo.muestras++;
+      // El texto se refresca con el de la ÚLTIMA medición del tramo, no con el de la primera.
+      // Hay resúmenes que llevan un número que se mueve dentro del mismo tramo —los minutos
+      // que hace que el deploy no llega, el porcentaje de cupo que queda, los segundos que
+      // tarda la app— y conservar el primero hacía que el informe se contradijera solo:
+      // "22:17–22:56 (40 min) … desde hace 10 min". El rango lo pone el tramo; el texto tiene
+      // que decir cómo está la cosa AHORA.
+      ultimo.resumen = d.resumen;
+      ultimo.accion  = d.accion;
     } else {
       salida.push({
         estado: d.estado, capa: d.capa, resumen: d.resumen, accion: d.accion,
@@ -240,6 +301,6 @@ function resumirIncidentes(mediciones) {
 }
 
 module.exports = {
-  parsearLinea, parsearCupo, diagnosticar, tramos, resumirIncidentes,
-  UMBRAL_LENTO_S, CUPO_ALERTA,
+  parsearLinea, parsearCupo, parsearRepo, diagnosticar, tramos, resumirIncidentes,
+  UMBRAL_LENTO_S, CUPO_ALERTA, DEPLOY_GRACIA_MIN,
 };
