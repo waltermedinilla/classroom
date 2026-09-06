@@ -526,6 +526,40 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-06 — La nota más baja es 1: se cierra la puerta por la que entraban los ceros
+
+Regla de la escuela, confirmada por el dueño el 2026-08-31. Hasta hoy la carga manual aceptaba el
+0: `min="0"` en el casillero y un servidor que solo rechazaba negativos.
+
+**Por qué hacía falta, y no era obvio.** El bug de `Number('')` (v1.0.41) explicaba los 128 ceros
+falsos históricos, y al repararlos parecía cerrado el tema. Pero de los 47 ceros que quedaron,
+**ninguno es anterior al fix**: los tipeó gente. Y el desglose no deja lugar a dudas —
+**29 de ellos son de una sola actividad, los 29 con devolución escrita**, de la misma docente que
+encabezaba los 128. O sea: el 0 no era solo un accidente de programación, es **lo que se escribe
+para decir "corregí pero no le pongo nota"**. Arreglar el código sin dar esa salida habría dejado
+la puerta abierta.
+
+**Dónde vive la regla.** En `public/js/devoluciones.js` (`NOTA_MINIMA` y `notaValidaManual`),
+compartida por el navegador y —desde hoy— por el servidor, que la `require()`. Escribirla dos
+veces es lo que hace que una pantalla acepte lo que la base rechaza. Los cuatro lugares que la
+usan: `POST /activities/:id/grade` (la guarda real), la recolección de la tabla de notas, el
+`min` del casillero y los dos guardados sueltos de `course.js`.
+
+⭐ **El mensaje de rechazo es la mitad del arreglo**: nombra la alternativa —dejar el casillero
+vacío y escribir solo la devolución— en vez de limitarse a decir que no. Hay un test que lo exige.
+De paso, el guardado inline del gradebook **dejó de tragarse los errores del servidor**: rechazaba
+y no decía nada, y la nota quedaba en pantalla como si se hubiera guardado.
+
+⚠️ **El autocalificador queda afuera**, y por eso la regla no se puso en el modelo: ahí un 0 es
+real (el alumno contestó todo mal). Escribe por otro camino (`manual: false`, sin pasar por
+`/grade`) y `models/Activity.js` conserva su `min: 0`, que es el piso del dato y no el de la
+carga manual.
+
+Tests: 4 unitarios nuevos en `devoluciones.test.js` (verificados en rojo con `NOTA_MINIMA = 0`),
+el spec de smoke `nota-cero-manual-rechazada` —que prueba la ruta, porque el navegador es
+cortesía y el 0 puede venir de un `fetch` a mano— y el viejo *"acepta los extremos: 0 y el
+máximo"* adecuado a la regla nueva.
+
 ### 2026-09-06 — La docente transmite su clase en vivo (v1.0.78, DESPLEGADA APAGADA)
 
 `specs/transmision-en-vivo.spec.md`. SFU con mediasoup en un proceso aparte (`media/`), señalización
@@ -607,13 +641,27 @@ duran segundos. El resultado, medido:
 Los 128 conservan su devolución, su `gradedAt` y su alumno (verificado uno por uno). Correrlo de
 nuevo no hace nada: el dry-run posterior dice *"0 ceros falsos"*.
 
-**Lo que quedó abierto: los 47 ceros que el script NO toca.** Son **todos posteriores al fix** (0
-anteriores), del 14/08 al 01/09, y 32 de ellos tienen devolución escrita. Como el fix hace que un
-campo vacío guarde `null`, un 0 de esa fecha solo puede haberlo tipeado alguien — y la regla de la
-casa es que **la nota mínima es 1**. Falta decidir qué hacer con ellos y, sobre todo, **por qué
-siguen apareciendo**: la carga manual todavía acepta el 0 (`min="0"` en el casillero y el servidor
-solo rechaza negativos, en `routes/activities.js`, `POST /:id/grade`). Ojo al exigir ≥ 1: el
-autocalificador tiene que quedar afuera, porque ahí un 0 sí es real.
+**Segunda pasada, el mismo día: los 32 con devolución.** De los 47 que el modo por defecto no
+toca, **ninguno era anterior al fix** — o sea que los tipeó gente — y **29 salían de una sola
+actividad, los 29 con devolución escrita**, de la misma docente que encabezaba los 128. Ese
+desglose es lo que cambió el diagnóstico: el 0 no era solo un accidente de programación, es lo
+que se escribe para decir *"corregí pero no le pongo nota"*.
+
+Por eso el script sumó el modo **`--con-devolucion`**, que repara todo cero acompañado de una
+devolución sin mirar la fecha: la devolución es la prueba de que hubo corrección. Corrido con
+backup propio, reparó **32** y dejó **15**.
+
+| | inicio | tras los 128 | tras los 32 |
+|---|---|---|---|
+| notas en 0 | 175 | 47 | **15** |
+| promedio general | 7,494 | 8,289 | **8,515** |
+
+**Los 15 que quedan no se tocan a propósito**: ninguno tiene devolución escrita, así que no hay
+señal de qué se quiso decir y convertirlos en "sin nota" sería inventar una intención. Son 13 de
+una misma actividad de una docente, más 2 sueltos. Eso se pregunta, no se migra.
+
+La puerta por la que entraban quedó cerrada el mismo día — ver la entrada *"La nota más baja
+es 1"*.
 
 ### 2026-09-05 (más tarde) — El watchdog avisa cuando hay código pusheado que no se desplegó
 

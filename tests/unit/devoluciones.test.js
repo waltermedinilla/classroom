@@ -10,7 +10,9 @@
 const test   = require('node:test');
 const assert = require('node:assert');
 
-const { recolectarDevoluciones, resumenGuardado } = require('../../public/js/devoluciones');
+const {
+  recolectarDevoluciones, resumenGuardado, notaValidaManual, NOTA_MINIMA,
+} = require('../../public/js/devoluciones');
 
 // Fila como la arma saveAllGrades a partir del DOM. Por defecto: nada cargado antes.
 const fila = (over = {}) => ({
@@ -77,14 +79,16 @@ test('la nota viaja como número, no como el string del input', () => {
   assert.strictEqual(guardar[0].points, 9);
 });
 
-test('acepta los extremos del rango: 0 y el máximo', () => {
+// ⚠️ Este test decía "acepta los extremos: 0 y el máximo" hasta el 2026-09-06. Cambió porque
+// cambió la regla, no porque estuviera mal escrito: la nota mínima de la escuela es 1.
+test('acepta los extremos del rango: la mínima y el máximo', () => {
   const { guardar, invalidas } = recolectarDevoluciones([
-    fila({ studentId: 'a', nota: '0' }),
+    fila({ studentId: 'a', nota: String(NOTA_MINIMA) }),
     fila({ studentId: 'b', nota: '10' }),
   ], 10);
 
-  assert.equal(invalidas.length, 0, '0 y el máximo son notas válidas');
-  assert.deepEqual(guardar.map(g => g.points), [0, 10]);
+  assert.equal(invalidas.length, 0, 'la mínima y el máximo son notas válidas');
+  assert.deepEqual(guardar.map(g => g.points), [NOTA_MINIMA, 10]);
 });
 
 // ── Filas que no hay que mandar ──────────────────────────────────────────────
@@ -117,6 +121,69 @@ test('la nota mayor al máximo se reporta como inválida y no se guarda', () => 
   assert.equal(invalidas.length, 1, 'antes se descartaba sin avisarle al docente');
   assert.equal(invalidas[0].nombre, 'Ana');
   assert.equal(invalidas[0].nota, '11');
+});
+
+// ── La nota mínima es 1 (2026-09-06) ─────────────────────────────────────────
+//
+// Por qué existe esta tanda: `Number('')` fabricó 128 notas en 0 que ningún docente puso, y una
+// vez reparadas aparecieron 47 ceros MÁS, todos posteriores al fix del bug — o sea tipeados a
+// mano. El 0 es lo que la gente escribe para decir "corregí pero no le pongo nota". La regla de
+// la escuela es que la nota más baja es 1.
+
+test('el 0 cargado a mano es inválido: la nota mínima es 1', () => {
+  const veredicto = notaValidaManual('0', 10);
+
+  assert.equal(veredicto.ok, false);
+  assert.equal(veredicto.points, undefined, 'una nota rechazada no devuelve valor');
+});
+
+test('el rechazo del 0 nombra la alternativa, no solo el error', () => {
+  // El mensaje es la mitad del arreglo: quien escribe 0 quiere decir "sin nota", y si no se le
+  // dice cómo se hace eso, va a volver a escribir 0 (o a inventar un 1 que no corresponde).
+  const { error } = notaValidaManual('0', 10);
+
+  assert.match(error, /más baja es 1/i, 'tiene que decir cuál es el mínimo');
+  assert.match(error, /vacío/i,         'tiene que decir que se deja el casillero vacío');
+  assert.match(error, /devoluci/i,      'tiene que nombrar la devolución sin nota');
+});
+
+test('la mínima exacta se acepta y devuelve número', () => {
+  const veredicto = notaValidaManual(String(NOTA_MINIMA), 10);
+
+  assert.equal(veredicto.ok, true);
+  assert.strictEqual(veredicto.points, NOTA_MINIMA);
+});
+
+test('notaValidaManual sigue cubriendo el resto del rango', () => {
+  assert.equal(notaValidaManual('-1', 10).ok,   false, 'negativa');
+  assert.equal(notaValidaManual('ocho', 10).ok, false, 'no numérica');
+  assert.equal(notaValidaManual('11', 10).ok,   false, 'por encima del máximo');
+  assert.equal(notaValidaManual('150', null).ok, true, 'sin máximo no hay tope');
+  assert.equal(notaValidaManual(7, 10).ok,       true, 'acepta número, no solo string');
+});
+
+test('la tabla de notas rechaza el 0 y dice por qué en esa fila', () => {
+  const { guardar, invalidas } = recolectarDevoluciones([
+    fila({ studentId: 'a', nota: '0' }),
+    fila({ studentId: 'b', nota: '6' }),
+  ], 10);
+
+  assert.deepEqual(guardar.map(g => g.studentId), ['b'], 'el 0 no se guarda; el 6 sí');
+  assert.deepEqual(invalidas.map(i => i.studentId), ['a']);
+  assert.match(invalidas[0].error, /más baja es 1/i,
+    'el motivo viaja por fila: con 30 alumnos, "fuera de rango" no dice cuál falló ni por qué');
+});
+
+test('el 0 con devolución escrita tampoco entra, pero la devolución no se pierde', () => {
+  // Es EXACTAMENTE el caso que fabricó los 47: corregir, escribir la devolución y poner 0.
+  // Lo que corresponde es que se guarde la devolución sin nota, no que se guarde un 0.
+  const { guardar, invalidas } = recolectarDevoluciones([
+    fila({ nota: '0', feedback: 'Rehacer el punto 2' }),
+  ], 10);
+
+  assert.equal(guardar.length, 0, 'con la nota inválida la fila entera se frena y se avisa');
+  assert.equal(invalidas.length, 1);
+  assert.equal(invalidas[0].nota, '0');
 });
 
 test('la nota negativa o no numérica se reporta como inválida', () => {
@@ -191,5 +258,10 @@ test('resumenGuardado distingue notas de devoluciones', () => {
 
 test('una nota de 0 cuenta como nota en el resumen', () => {
   // Con `e.points !== undefined` un 0 sigue siendo nota; con un chequeo por falsy, no.
+  //
+  // ⚠️ Que la carga manual ya no acepte el 0 NO vuelve inútil este test: resumenGuardado cuenta
+  // lo que le pasan, y lo que distingue es "hay nota" de "no hay nota" (`undefined`). El 0 es el
+  // valor con el que esa distinción se rompe si alguien la escribe como `if (e.points)`. Además
+  // el autocalificador sí produce ceros legítimos.
   assert.match(resumenGuardado([{ studentId: 'a', points: 0, feedback: '' }]), /1 nota/);
 });

@@ -1778,19 +1778,33 @@ function renderGradebook({ activities, students, gradeMap }, container) {
 async function saveGradeFromGradebook(activityId, studentId, input) {
   const val = input.value.trim();
   if (val === '') return;
-  const points = Number(val);
-  if (isNaN(points)) return;
+
+  // Misma regla que el servidor (public/js/devoluciones.js): la nota mínima es 1. Se valida
+  // acá además de allá para poder DECIR por qué, que en esta tabla es lo único que hay: el
+  // guardado es inline, sin botón ni cartel, así que un rechazo silencioso se lee como
+  // "escribí un 0 y no pasó nada".
+  const veredicto = notaValidaManual(val, input.max ? Number(input.max) : null);
+  if (!veredicto.ok) {
+    alert(veredicto.error);
+    input.focus();
+    return;
+  }
 
   input.style.opacity = '0.5'; // Feedback visual de guardado en progreso
   const res = await fetch('/activities/' + activityId + '/grade', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ studentId, points }),
+    body:    JSON.stringify({ studentId, points: veredicto.points }),
   });
   input.style.opacity = '1';
   if (res.ok) {
     input.classList.add('gb-saved');
     setTimeout(() => input.classList.remove('gb-saved'), 1800); // Animación de "guardado"
+  } else {
+    // Antes un rechazo del servidor no se veía en ningún lado y la nota quedaba en pantalla
+    // como si se hubiera guardado.
+    const d = await res.json().catch(() => ({}));
+    alert(d.error || 'No se pudo guardar la nota.');
   }
 }
 
@@ -2048,7 +2062,7 @@ async function loadTeacherDetail(activityId) {
         </td>
         <td class="gt-col-grade">
           <div class="gt-grade-wrap">
-            <input class="grade-input" type="number" min="0" max="${activity.points || 9999}"
+            <input class="grade-input" type="number" min="${NOTA_MINIMA}" max="${activity.points || 9999}"
               value="${sg.points ?? ''}" placeholder="—" data-student="${sg._id}">
           </div>
         </td>
@@ -2140,10 +2154,12 @@ async function saveAllGrades(activityId, max) {
 
   const { guardar, invalidas } = recolectarDevoluciones(filas, max);
 
-  // Antes las notas mal cargadas se descartaban sin decir nada
+  // Antes las notas mal cargadas se descartaban sin decir nada. Y desde el 2026-09-06 el motivo
+  // viaja POR FILA: el rango dejó de ser lo único que puede fallar (la nota mínima es 1), y con
+  // treinta alumnos en pantalla "quedaron fuera de rango" no dice cuál es el problema de cuál.
   if (invalidas.length) {
-    alert('Estas notas quedaron fuera de rango (0 a ' + max + ') y no se guardaron:\n' +
-      invalidas.map(i => `• ${i.nombre || i.studentId}: ${i.nota}`).join('\n'));
+    alert('Estas notas no se guardaron:\n' +
+      invalidas.map(i => `• ${i.nombre || i.studentId}: "${i.nota}" — ${i.error}`).join('\n'));
   }
 
   if (guardar.length === 0) {
@@ -3196,9 +3212,20 @@ async function saveGrade(activityId, studentId, btn) {
   const savedEl = document.getElementById('gs-' + studentId);
   const points  = input.value;
 
-  if (points === '' || isNaN(Number(points))) {
+  if (points === '') {
     input.style.borderColor = 'var(--danger)';
     setTimeout(() => { input.style.borderColor = ''; }, 1500);
+    return;
+  }
+
+  // La nota mínima es 1 (public/js/devoluciones.js). El borde rojo solo no alcanza acá: el
+  // motivo más común de rechazo es el 0, y el 0 se escribe queriendo decir "sin nota" — hay
+  // que nombrarle la alternativa, no solo marcarle el campo.
+  const veredicto = notaValidaManual(points, input.max ? Number(input.max) : null);
+  if (!veredicto.ok) {
+    input.style.borderColor = 'var(--danger)';
+    setTimeout(() => { input.style.borderColor = ''; }, 1500);
+    alert(veredicto.error);
     return;
   }
 
@@ -3208,7 +3235,7 @@ async function saveGrade(activityId, studentId, btn) {
   const res = await fetch('/activities/' + activityId + '/grade', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ studentId, points: Number(points) }),
+    body:    JSON.stringify({ studentId, points: veredicto.points }),
   });
 
   btn.disabled    = false;

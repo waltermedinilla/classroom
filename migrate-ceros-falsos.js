@@ -1,8 +1,9 @@
 // Repara las notas que valen 0 sin que ningún docente haya puesto un 0.
 //
 // Uso:
-//   node migrate-ceros-falsos.js --dry-run    ← empezá SIEMPRE por acá
+//   node migrate-ceros-falsos.js --dry-run                  ← empezá SIEMPRE por acá
 //   node migrate-ceros-falsos.js
+//   node migrate-ceros-falsos.js --con-devolucion [--dry-run]
 //
 // ── Qué pasó ────────────────────────────────────────────────────────────────────────────
 // Hasta v1.0.41 (2026-08-14 00:02, commit b176868), el docente que escribía una DEVOLUCIÓN
@@ -36,19 +37,38 @@
 // Es idempotente: después de correrlo, los registros reparados tienen points null y ya no
 // entran en el filtro. Correrlo dos veces no hace nada la segunda vez.
 
+// ── El segundo modo: --con-devolucion (agregado el 2026-09-06) ──────────────────────────
+// Al reparar los 128 quedaron 47 ceros afuera, y al mirarlos apareció algo que el diagnóstico
+// original no podía ver: NINGUNO es anterior al fix, o sea que los tipeó gente. Y 29 de ellos
+// son de UNA sola actividad, los 29 con devolución escrita, de la misma docente que encabezaba
+// los 128.
+//
+// La conclusión es que el 0 nunca fue solo un accidente de programación: es lo que se escribe
+// para decir "corregí pero no le pongo nota". Con la regla de la escuela ya explícita —la nota
+// más baja es 1, ver public/js/devoluciones.js— un 0 CON devolución escrita es reparable
+// independientemente de su fecha, porque la devolución es la prueba de que hubo corrección.
+//
+// Un 0 SIN devolución queda afuera igual: ahí no hay ninguna señal de qué se quiso decir, y
+// convertirlo en "sin nota" sería inventar una intención. Esos se preguntan, no se migran.
 require('dotenv').config();
 const mongoose = require('mongoose');
 
-const DRY_RUN = process.argv.includes('--dry-run');
+const DRY_RUN        = process.argv.includes('--dry-run');
+const CON_DEVOLUCION = process.argv.includes('--con-devolucion');
 
 // v1.0.41 salió el 2026-08-14 00:02 hora de Argentina (UTC-3).
 const FIX = new Date('2026-08-14T03:02:00Z');
 
+const tieneDevolucion = (g) => String(g.feedback || '').trim() !== '';
+
+// Modo por defecto: solo los del bug de `Number('')`, con el corte por fecha.
+// Con --con-devolucion: todo cero que venga acompañado de una devolución, sin mirar la fecha.
+// El segundo incluye al primero, así que correr el default después no encuentra nada.
 const esCeroFalso = (g) =>
   g.points === 0 &&
-  String(g.feedback || '').trim() !== '' &&
+  tieneDevolucion(g) &&
   !!g._id &&
-  g._id.getTimestamp() < FIX;
+  (CON_DEVOLUCION || g._id.getTimestamp() < FIX);
 
 async function main() {
   const uri = process.env.MONGODB_URI;
@@ -74,9 +94,13 @@ async function main() {
     if (falsos.length) afectadas.push({ doc: a, falsos, legitimos: ceros.length - falsos.length });
   }
 
+  console.log(CON_DEVOLUCION
+    ? 'Modo --con-devolucion: repara TODO cero acompañado de una devolución escrita.\n'
+    : 'Modo por defecto: solo los ceros del bug de Number(\'\'), anteriores al fix.\n');
   console.log(`Notas en 0 encontradas:        ${totalCeros}`);
-  console.log(`De esas, ceros falsos del bug: ${totalFalsos}`);
-  console.log(`Ceros puestos a propósito:     ${totalCeros - totalFalsos} (no se tocan)`);
+  console.log(`De esas, reparables:           ${totalFalsos}`);
+  console.log(`Quedan como están:             ${totalCeros - totalFalsos}`
+    + (CON_DEVOLUCION ? ' (sin devolución: no hay señal de qué se quiso decir)' : ' (no cumplen las tres condiciones)'));
 
   if (!totalFalsos) {
     console.log('\nNada para reparar. La base ya está limpia.');

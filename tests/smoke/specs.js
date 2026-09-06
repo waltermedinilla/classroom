@@ -2228,6 +2228,38 @@ const specs = [
     },
   },
   {
+    // La regla de la escuela: la nota más baja es 1. Se prueba contra la RUTA y no solo en el
+    // unitario de public/js/devoluciones.js porque el navegador es cortesía — quien mete el 0
+    // puede ser un fetch a mano, y la guarda que importa es ésta.
+    //
+    // Por qué existe: `Number('')` fabricó 128 notas en 0 que nadie puso (reparadas el
+    // 2026-09-06), y al medirlas aparecieron 47 ceros MÁS, todos posteriores al fix de aquel
+    // bug — o sea tipeados. El 0 es lo que se escribe para decir "corregí y no le pongo nota".
+    //
+    // ⚠️ Va DESPUÉS de 'activity-grade' y no rompe a 'gradebook-reflects-grade', que espera un
+    // 9: el 400 no escribe nada, y el segundo caso manda devolución SIN points, que por diseño
+    // deja intacta la nota que ya estaba.
+    id: 'nota-cero-manual-rechazada',
+    title: 'El servidor rechaza la nota 0 y ofrece la devolución sin nota',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const r = await client.post('scopedTeacher', `/activities/${state.activityId}/grade`, {
+        body: { studentId: state.scopedStudentId, points: '0', feedback: 'Rehacer el punto 2' },
+        expectStatus: 400,
+      });
+      assert(/más baja es 1/i.test(r.json.error || ''),
+        `el error tiene que decir cuál es la mínima: ${JSON.stringify(r.json)}`);
+      assert(/vacío/i.test(r.json.error || ''),
+        `el error tiene que nombrar la salida (casillero vacío): ${JSON.stringify(r.json)}`);
+
+      // La otra mitad de la regla: lo que el 0 quería decir SÍ se puede guardar.
+      await client.post('scopedTeacher', `/activities/${state.activityId}/grade`, {
+        body: { studentId: state.scopedStudentId, feedback: 'Corregido sin nota' },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
     id: 'gradebook-reflects-grade',
     title: 'La nota aparece en el libro de calificaciones del curso',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],

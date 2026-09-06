@@ -18,6 +18,10 @@ const { uploadLimiter } = require('../middleware/rate-limits');
 const ActivityTemplate   = require('../models/ActivityTemplate');
 const TemplateAssignment = require('../models/TemplateAssignment');
 const { computeAutoGrade } = require('../services/autoGrader');
+// La regla de qué nota puede poner una PERSONA a mano (mínimo 1). Vive en public/js porque la
+// comparte el navegador: si la escribiéramos dos veces, la pantalla podría aceptar un valor que
+// el servidor rechaza. No la usa el autocalificador — ver el comentario del propio archivo.
+const { notaValidaManual } = require('../public/js/devoluciones');
 const { logDeRuta } = require('../middleware/route-log');
 // Guarda de forma del :id, en la primera línea de cada handler con parámetro. Ver
 // middleware/objectId.js y el issue conocido nº 10 de agente.md. Ojo con `como: 'json'`:
@@ -752,13 +756,13 @@ router.post('/:id/grade', requireAuth, async (req, res) => {
 
     let nota;
     if (mandaNota) {
-      nota = Number(points);
-      if (!Number.isFinite(nota) || nota < 0) {
-        return res.status(400).json({ error: 'La nota tiene que ser un número mayor o igual a 0' });
-      }
-      if (activity.points != null && nota > activity.points) {
-        return res.status(400).json({ error: `La nota no puede superar el máximo de la actividad (${activity.points})` });
-      }
+      // ⭐ La nota mínima es 1, y esta es la guarda que de verdad la impone: las tres pantallas
+      // que cargan notas mandan acá, y un `curl` también. El texto del error nombra la salida
+      // (dejar el casillero vacío = devolución sin nota), porque ESE es el caso que produce los
+      // ceros a mano. Ver el comentario largo de public/js/devoluciones.js.
+      const veredicto = notaValidaManual(points, activity.points);
+      if (!veredicto.ok) return res.status(400).json({ error: veredicto.error });
+      nota = veredicto.points;
     }
 
     const existing = activity.grades.find(g => g.student.toString() === studentId);

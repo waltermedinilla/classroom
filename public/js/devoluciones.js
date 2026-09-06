@@ -6,7 +6,57 @@
 //      entera cuando estaban vacíos), y encima la pantalla mostraba "✓ Notas guardadas".
 //   2) Al ser una función sin DOM se puede testear con node:test → tests/unit/devoluciones.test.js.
 //
-// Se carga como <script> en views/course.ejs (queda como global) y como require() en los tests.
+// Se carga como <script> en views/course.ejs (queda como global), como require() en los tests
+// y —desde el 2026-09-06— también en el SERVIDOR (routes/activities.js), que es lo que hace que
+// la regla de la nota mínima no pueda decir una cosa en la pantalla y otra en la base.
+
+// ── La nota más baja que puede poner una persona ─────────────────────────────
+//
+// Regla de la escuela, confirmada por el dueño el 2026-08-31: **la nota mínima es 1**. Un 0
+// cargado a mano es siempre inválido.
+//
+// ⭐ La razón por la que esto existe es más interesante que la regla: hasta la v1.0.41 un
+// casillero de nota VACÍO se guardaba como 0 (`Number('')` es 0), y eso fabricó 128 notas en 0
+// que ningún docente puso. Ese bug se arregló en el código el 2026-08-14 y los datos se
+// repararon el 2026-09-06 — pero al medirlos aparecieron 47 ceros MÁS, todos posteriores al fix,
+// o sea tipeados a mano. La conclusión es que el 0 no era un accidente de programación
+// solamente: es lo que la gente escribe cuando quiere decir "corregí, pero no le pongo nota".
+// Por eso el mensaje de rechazo no puede ser solo un "no": tiene que nombrar la alternativa
+// (dejar el casillero vacío = devolución sin nota), que es lo que la persona quería hacer.
+//
+// ⚠️ NO aplica al autocalificador. Ahí un 0 es real —el alumno contestó todo mal— y su camino de
+// escritura es otro (routes/activities.js, el bloque de `autoGraded`, que escribe `manual: false`
+// sin pasar por POST /:id/grade). Por el mismo motivo `models/Activity.js` conserva `min: 0` en
+// el sub-schema: ese es el piso absoluto del dato, no el de la carga manual.
+const NOTA_MINIMA = 1;
+
+/**
+ * ¿Es válida esta nota puesta a mano? Única fuente de verdad, para el servidor y el navegador.
+ *
+ * @param {*}      valor  Lo que cargó la persona (string del DOM o número)
+ * @param {number} max    Nota máxima de la actividad (null/undefined = sin tope)
+ * @returns {{ ok: boolean, points?: number, error?: string }}
+ */
+function notaValidaManual(valor, max) {
+  const points = Number(valor);
+
+  if (!Number.isFinite(points)) {
+    return { ok: false, error: 'La nota tiene que ser un número.' };
+  }
+  if (points < NOTA_MINIMA) {
+    // El texto nombra la salida, no solo el rechazo. Ver el comentario largo de arriba.
+    return {
+      ok:    false,
+      error: `La nota más baja es ${NOTA_MINIMA}. Si corregiste pero no querés ponerle nota, `
+           + 'dejá el casillero vacío y escribí solo la devolución.',
+    };
+  }
+  if (max != null && points > max) {
+    return { ok: false, error: `La nota no puede superar el máximo de la actividad (${max}).` };
+  }
+
+  return { ok: true, points };
+}
 
 /**
  * Decide qué filas de la tabla hay que mandar al servidor y cuáles tienen la nota mal cargada.
@@ -39,12 +89,16 @@ function recolectarDevoluciones(filas, max) {
     if (!cambioNota && !cambioFeedback) return; // nada tocado en esta fila
 
     if (nota !== '' && cambioNota) {
-      const points = Number(nota);
-      if (!Number.isFinite(points) || points < 0 || (max != null && points > max)) {
-        invalidas.push({ studentId: fila.studentId, nombre: fila.nombre, nota });
+      // La regla es una sola y vive arriba: acá NO se repite el rango a mano. Es lo que evita
+      // que la pantalla acepte un 0 que el servidor después va a rechazar (o al revés).
+      const veredicto = notaValidaManual(nota, max);
+      if (!veredicto.ok) {
+        // El motivo viaja con cada fila: con 30 alumnos en pantalla, "quedaron fuera de rango"
+        // no alcanza para saber si el problema fue un 0, un 11 o una letra.
+        invalidas.push({ studentId: fila.studentId, nombre: fila.nombre, nota, error: veredicto.error });
         return;
       }
-      guardar.push({ studentId: fila.studentId, points, feedback });
+      guardar.push({ studentId: fila.studentId, points: veredicto.points, feedback });
       return;
     }
 
@@ -71,5 +125,5 @@ function resumenGuardado(entries) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { recolectarDevoluciones, resumenGuardado };
+  module.exports = { recolectarDevoluciones, resumenGuardado, notaValidaManual, NOTA_MINIMA };
 }
