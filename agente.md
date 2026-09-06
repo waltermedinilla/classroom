@@ -526,6 +526,82 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-06 — Los workers se reciclaban cada 4 minutos: el techo de PM2 peleado con el de V8
+
+Pregunta del usuario: *"necesito saber por qué en producción se reinicia el nodejs"*.
+
+**No se estaba cayendo.** De los 302 reinicios acumulados en el VPS, **272 eran PM2 reciclando
+el worker a propósito**, con `[PM2][WORKER] ... exceeds --max-memory-restart value` y salida
+con **código 0** vía `SIGINT`. Ni un OOM del kernel (`dmesg` limpio), con **22 GB libres de
+24**. El servidor viejo hacía exactamente lo mismo: **89 reinicios**, mismo mensaje. O sea que
+**no lo trajo la mudanza al VPS** — venía de antes y nunca se había mirado.
+
+**La causa: dos techos que no se hablaban.** `max_memory_restart` estaba en **400 MB**, y Node
+se da solo un techo de heap de **4144 MB** (medido con `v8.getHeapStatistics()` en las dos
+máquinas, que tienen 16 GB o más). V8 no hace recolección profunda hasta acercarse a **su**
+límite, así que con permiso para 4 GB dejaba crecer el heap tranquilo… y a los 400 MB lo mataba
+PM2. **El worker moría lleno de basura que nadie le había pedido juntar.** La huella de que era
+eso y no una fuga: el RSS **no bajaba de noche**, con la escuela vacía (376 MB por worker a las
+00:11 del 04/09), y en cambio con la app recién arrancada y sin visitas queda **clavado en
+165 MB sin moverse**.
+
+**El patrón horario era el de la escuela**, no el de un proceso enfermo: 53 reinicios entre las
+08 y las 11 del 03/09, 26 entre las 19 y las 21 del 04/09. Turno mañana y turno noche.
+
+**Qué rompía.** Poco, y ahí está el motivo de que nadie lo notara en meses: el reload es limpio
+—PM2 levanta el worker nuevo, espera el `New worker listening` y recién ahí frena al viejo, que
+hace `server.close()`— y **el otro worker cubre el hueco**. Pero el `setTimeout(..., 10_000)` de
+`shutdown()` mata lo que siga en vuelo a los 10 segundos: **una subida grande en curso se
+cortaba**. Con un reciclado cada 4 minutos en hora pico, eso pasaba de verdad.
+
+**Lo que hay ahora**, en `ecosystem.config.js`, es un **par** de números en el orden correcto —
+V8 primero, PM2 después:
+
+```js
+node_args: ['--max-old-space-size=768'],   // V8 compacta a los 768 MB de heap
+max_memory_restart: '1280M',               // PM2 solo si algo se desmadra de verdad
+```
+
+Los **512 MB de margen** entre uno y otro no son redondeo: el RSS que mide PM2 es el heap **más
+todo lo nativo** (libvips/sharp, los hasta 20 MB por request de las imágenes en `memoryStorage`,
+los buffers de mongoose), que no vive en el heap de V8 y que **ningún GC baja**. Sin margen, PM2
+seguiría matando workers sanos. Con 24 GB en el VPS, 2 workers × 1280 MB es el **10%** de la
+máquina.
+
+**De paso, un comentario que mentía.** El archivo decía *"Modo cluster: PM2 lanza un worker por
+core de CPU"* arriba de `instances: 2`. No es "por core": nació con `instances: 'max'` y se bajó
+a 2 a mano el mismo día (25/05/2026), con la excusa de *"si el servidor es chico"* — y ninguna
+de las dos máquinas lo es (el viejo tiene 12 núcleos y 15 GB; el VPS, 8 y 24 GB). El comentario
+quedó describiendo un valor que ya no estaba. **El 2 no se tocó** —hay margen para subirlo, pero
+no es la palanca de este problema: cada worker tiene *su propio* techo de memoria, así que más
+workers serían más reciclados, no menos— pero ahora el comentario dice la verdad y avisa de las
+dos trampas: el rate limit que se multiplica por instancia y el techo de memoria por worker.
+
+> ⚠️ **Al desplegarlo NO alcanza `pm2 restart classroom`**: ese comando reusa la configuración
+> guardada y seguiría corriendo con los 400 MB. Hay que releer el archivo con
+> `pm2 restart ecosystem.config.js --update-env`. Es la misma trampa que ya está documentada
+> para los logs, unas líneas más abajo en el propio archivo.
+
+**No toca la base de datos** ni el código de la aplicación: es solo configuración del proceso.
+
+Tests: `tests/unit/limitesMemoria.test.js`. No comprueba los valores sino **la relación** entre
+ellos —que el heap declarado quede por debajo del techo de PM2 con margen para lo nativo, y que
+sea menor que el que Node daría solo—, porque el riesgo real es que alguien mueva uno de los dos
+números sin el otro y reintroduzca el bug: la app arrancaría perfecta y volvería a fallar recién
+bajo carga, en horario de clase, sin romper ninguna pantalla. Verificado que **falla con la
+configuración anterior** (3 de 7 casos) y pasa con la nueva.
+
+Y un caso más, que salió de un error cometido **preparando este mismo cambio**: al commitear
+`ecosystem.config.js` entero se coló el bloque de `classroom-media`, que estaba a medias en la
+copia de trabajo, con su `script: 'media/servidor.js'` **sin versionar**. No rompe nada al leer
+el archivo ni tira el sitio — pero `pm2 restart ecosystem.config.js` habría dejado esa app en
+`errored`, y ese comando es justo el único que aplica este cambio de techo: el error se habría
+destapado durante el despliegue. El commit se rehízo sin ese bloque (nada estaba pusheado) y el
+test ahora compara **lo commiteado contra lo commiteado**: si el `ecosystem` versionado invoca un
+script, ese script tiene que estar versionado. Mirar el disco no serviría —`media/servidor.js`
+está en la carpeta— y pondría en rojo la copia de trabajo de cualquiera con una feature a medio
+hacer, que es un estado legítimo; publicar la config de un proceso sin publicar el proceso, no.
+
 ### 2026-09-04 — El alumno puede corregir su entrega hasta que el docente la corrige
 
 Pedido del usuario: *"el alumno cuando quiere entregar un trabajo, si por error se equivoca le

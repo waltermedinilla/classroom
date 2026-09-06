@@ -10,14 +10,52 @@ module.exports = {
     name:      'classroom',
     script:    'server.js',
 
-    // Modo cluster: PM2 lanza un worker por core de CPU.
-    // Cada worker es un proceso Node.js independiente que comparte el puerto.
-    // Si un worker cae, los demás siguen atendiendo; PM2 reinicia el caído solo.
+    // Modo cluster: 2 procesos Node independientes que comparten el puerto 3000; el sistema
+    // operativo reparte las conexiones entrantes entre ellos. Si uno cae o se recicla, el otro
+    // sigue atendiendo — es lo ÚNICO que hace que los reciclados por memoria (ver abajo) pasen
+    // inadvertidos en vez de ser un corte de servicio en plena clase.
+    //
+    // ⚠️ El 2 es un número FIJO escrito a mano, NO "un worker por core": el archivo nació con
+    // `instances: 'max'` y se bajó a 2 el mismo día (25/05/2026), con la excusa de "si el
+    // servidor es chico". Ninguna de las dos máquinas lo es —el server viejo tiene 12 núcleos
+    // y 15 GB; el VPS, 8 y 24 GB—, así que hay margen para subirlo si alguna vez la CPU
+    // aprieta. Hoy no aprieta: está al 1%. Dos cosas antes de tocarlo:
+    //   · Cada worker tiene SU PROPIO contador de rate limit (por eso vuelca a Mongo cada
+    //     minuto, ver rateLimitStats en server.js): el techo real es el configurado × 2.
+    //   · Cada worker tiene SU PROPIO max_memory_restart: más workers son MÁS reciclados en
+    //     total, no menos. La palanca para eso es el techo de abajo, no este número.
     instances:  2,
     exec_mode:  'cluster',
 
-    // Reinicia el worker si consume más de 400 MB de RAM (previene memory leaks acumulados)
-    max_memory_restart: '400M',
+    // ── Techo de memoria: DOS límites que tienen que estar alineados ────────────────────
+    //
+    // ⭐ Esto decía 400 MB a secas, y reciclaba los workers cada 4 minutos en horario de clase:
+    // 272 reinicios medidos en el VPS y 89 en el servidor viejo, todos con
+    // `[PM2][WORKER] ... exceeds --max-memory-restart`. NO era una fuga ni una caída —el worker
+    // salía con código 0— era este número peleado con el de V8.
+    //
+    // Node calcula el techo de su heap según la RAM de la máquina: da 4144 MB (medido en las
+    // dos, con `v8.getHeapStatistics()`). V8 no hace recolección profunda hasta acercarse a SU
+    // límite, así que con permiso para 4 GB dejaba crecer el heap tranquilo... y a los 400 MB
+    // lo mataba PM2. El worker moría lleno de basura que nadie le había pedido juntar.
+    // Por eso el RSS tampoco bajaba de noche, con la escuela vacía: 376 MB por worker a las
+    // 00:11 del 04/09.
+    //
+    // El orden correcto es V8 PRIMERO, PM2 después:
+    //   --max-old-space-size=768  → V8 compacta al llegar a 768 MB de heap
+    //   max_memory_restart 1280M  → PM2 solo interviene si algo se desmadra de verdad
+    //
+    // ⚠️ Los 512 MB de margen entre uno y otro NO son decorativos ni redondeo: el RSS que mide
+    // PM2 es el heap MÁS todo lo nativo (libvips/sharp, los hasta 20 MB por request de las
+    // imágenes en memoryStorage, los buffers de mongoose), que no vive en el heap de V8 y que
+    // por lo tanto NINGÚN GC baja. Sin margen, PM2 seguiría matando workers sanos.
+    //
+    // ⚠️ Si tocás uno de los dos números, tocá el otro: tests/unit/limitesMemoria.test.js falla
+    // si el techo de PM2 no le deja al heap ese margen.
+    //
+    // Con 24 GB en el VPS, 2 workers × 1280 MB es el 10% de la máquina.
+    max_memory_restart: '1280M',
+    node_args: ['--max-old-space-size=768'],
 
     // No recarga archivos en producción (solo en dev con nodemon)
     watch: false,
