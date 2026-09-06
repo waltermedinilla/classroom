@@ -64,14 +64,68 @@
                 Módulos opcionales
               </p>
               <% MODULOS.forEach(m => { %>
-                <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:14px;font-size:13.5px;cursor:pointer">
+                <% const cfg = (school.modules && school.modules[m.id]) || {}; %>
+                <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px;font-size:13.5px;cursor:pointer">
                   <input type="checkbox" class="modulo" data-id="<%= m.id %>"
-                         <%= school.modules && school.modules[m.id] && school.modules[m.id].enabled ? 'checked' : '' %>>
+                         <%= cfg.enabled ? 'checked' : '' %>>
                   <span>
                     <b><%= m.label %></b><br>
                     <span style="color:var(--text-secondary);font-size:12.5px"><%= m.descripcion %></span>
                   </span>
                 </label>
+
+                <%# Segundo eje: a qué personas. Solo para los módulos que lo declaran
+                    (config/modulos.js, alcance 'escuela+persona'). El bloque se muestra y se
+                    esconde con el checkbox de arriba: elegir docentes para un módulo apagado no
+                    quiere decir nada. %>
+                <% if (m.alcance === 'escuela+persona') { %>
+                  <div class="alcance" data-for="<%= m.id %>"
+                       style="margin:0 0 16px 28px;padding:12px 14px;border-left:2px solid var(--border);
+                              <%= cfg.enabled ? '' : 'display:none' %>">
+                    <p style="font-size:12.5px;color:var(--text-secondary);margin:0 0 10px">
+                      ¿Quiénes pueden transmitir?
+                    </p>
+
+                    <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:7px;cursor:pointer">
+                      <input type="radio" name="alcance-<%= m.id %>" class="alcance-modo" value="lista"
+                             <%= cfg.alcance === 'todos' ? '' : 'checked' %>>
+                      <span>Solo estos docentes</span>
+                    </label>
+                    <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:10px;cursor:pointer">
+                      <input type="radio" name="alcance-<%= m.id %>" class="alcance-modo" value="todos"
+                             <%= cfg.alcance === 'todos' ? 'checked' : '' %>>
+                      <span>Todos los docentes de la escuela</span>
+                    </label>
+
+                    <%# La lista de personas. `personas` viene como ObjectId: se comparan como
+                        texto, que es lo mismo que hace moduloActivoPara(). %>
+                    <% const elegidos = (cfg.personas || []).map(String); %>
+                    <div class="lista-personas"
+                         style="<%= cfg.alcance === 'todos' ? 'display:none' : '' %>">
+                      <% if (!docentes || !docentes.length) { %>
+                        <p style="font-size:12.5px;color:var(--text-secondary);margin:0">
+                          Esta escuela todavía no tiene docentes cargados.
+                        </p>
+                      <% } else { %>
+                        <div style="max-height:210px;overflow-y:auto;border:1px solid var(--border);
+                                    border-radius:8px;padding:8px 10px">
+                          <% docentes.forEach(d => { %>
+                            <label style="display:flex;gap:8px;align-items:center;font-size:13px;
+                                          padding:4px 0;cursor:pointer">
+                              <input type="checkbox" class="persona" data-modulo="<%= m.id %>"
+                                     value="<%= d._id %>"
+                                     <%= elegidos.includes(String(d._id)) ? 'checked' : '' %>>
+                              <span><%= d.name %></span>
+                            </label>
+                          <% }) %>
+                        </div>
+                        <p style="font-size:12px;color:var(--text-secondary);margin:8px 0 0">
+                          <span class="cuenta-personas"><%= elegidos.length %></span> de <%= docentes.length %> docentes habilitados.
+                        </p>
+                      <% } %>
+                    </div>
+                  </div>
+                <% } %>
               <% }) %>
               <p style="color:var(--text-secondary);font-size:12px;margin-top:-4px">
                 Al prenderlo, las solapas del módulo aparecen para los roles que correspondan.
@@ -101,6 +155,35 @@
       });
     });
 
+    // ── Módulos de dos ejes ────────────────────────────────────────────────
+    // El bloque de personas se muestra con el módulo prendido, y la lista de docentes con el
+    // modo "solo estos". Es solo visual: lo que manda es lo que se envía en el submit, y el
+    // servidor revalida cada id contra los docentes de la escuela.
+    document.querySelectorAll('.modulo').forEach(chk => {
+      const caja = document.querySelector('.alcance[data-for="' + chk.dataset.id + '"]');
+      if (!caja) return;
+      chk.addEventListener('change', () => {
+        caja.style.display = chk.checked ? '' : 'none';
+      });
+    });
+
+    document.querySelectorAll('.alcance').forEach(caja => {
+      const lista  = caja.querySelector('.lista-personas');
+      const cuenta = caja.querySelector('.cuenta-personas');
+
+      caja.querySelectorAll('.alcance-modo').forEach(r => {
+        r.addEventListener('change', () => {
+          if (lista) lista.style.display = r.value === 'todos' && r.checked ? 'none' : '';
+        });
+      });
+
+      caja.querySelectorAll('.persona').forEach(p => {
+        p.addEventListener('change', () => {
+          if (cuenta) cuenta.textContent = caja.querySelectorAll('.persona:checked').length;
+        });
+      });
+    });
+
     document.getElementById('schoolForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const errorEl = document.getElementById('formError');
@@ -118,7 +201,18 @@
           description: document.getElementById('description').value.trim(),
           color: document.getElementById('color').value,
           modules: Object.fromEntries(
-            [...document.querySelectorAll('.modulo')].map(c => [c.dataset.id, { enabled: c.checked }])
+            [...document.querySelectorAll('.modulo')].map(c => {
+              const id  = c.dataset.id;
+              const cfg = { enabled: c.checked };
+              // Segundo eje, solo si este módulo lo tiene pintado (config/modulos.js).
+              const caja = document.querySelector('.alcance[data-for="' + id + '"]');
+              if (caja) {
+                const modo = caja.querySelector('.alcance-modo:checked');
+                cfg.alcance  = modo ? modo.value : 'lista';
+                cfg.personas = [...caja.querySelectorAll('.persona:checked')].map(p => p.value);
+              }
+              return [id, cfg];
+            })
           ),
         }),
       });

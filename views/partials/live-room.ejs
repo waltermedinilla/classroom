@@ -326,6 +326,16 @@
     <div class="lr-circulos" id="lrCirculos"></div>
   </div>
 
+  <%# Transmisión en vivo. Va ENTRE la presencia y el chat porque ése es el orden en que se
+      mira una clase: quiénes están, qué se está dando, qué se dice.
+
+      Se incluye solo si la escuela tiene el módulo prendido: para el resto, el navegador ni
+      siquiera baja el bundle de mediasoup (240 KB). `sala.transmision` viene en null cuando el
+      módulo está apagado — lo decide routes/rooms.js, no la vista. %>
+  <% if (sala.transmision) { %>
+    <%- include('transmision', { course, sala, esGestor, esAlumno }) %>
+  <% } %>
+
   <!-- Chat -->
   <div class="lr-card">
     <div class="lr-chat" id="lrChat">
@@ -821,6 +831,11 @@
       if (reinicio) { SALA.sessionId = s.sessionId; seq = 0; forzarRepintado = false; }
 
       pintarEstado(s);
+      // El estado de la transmisión llega en el MISMO poll, como una clave más (D3): quién
+      // levantó la mano y quién tiene la palabra aguantan perfectamente 4 segundos. `SALA` se
+      // actualiza porque los manejadores de los botones lo leen.
+      SALA.transmision = s.transmision;
+      pintarTransmision(s.transmision);
       pintarPresencia(s.presencia);
       if (s.mensajes && s.mensajes.length) {
         pintarMensajes(s.mensajes, reinicio);
@@ -1178,8 +1193,176 @@
     });
   }
 
+  // ── Transmisión en vivo ────────────────────────────────────────────────────
+  //
+  // El puente entre el poll (que es la fuente de verdad de QUÉ pasa) y public/js/transmision.js
+  // (que sostiene las conexiones de video). Este bloque no habla WebRTC: pinta el estado que
+  // vino por el poll y llama a window.Transmision cuando el usuario toca algo.
+  //
+  // Existe solo si la escuela tiene el módulo: sin él, el partial no se renderizó y $('txCard')
+  // es null. Ver config/modulos.js.
+  const HAY_TX = !!$('txCard');
+
+  function pintarTransmision(tx) {
+    if (!HAY_TX || !tx) return;
+
+    $('txCard').style.display = '';
+    $('txPunto').className = 'tx-punto' + (tx.activa ? '' : ' off');
+    $('txEstadoTexto').textContent = tx.activa
+      ? (tx.docente ? tx.docente + ' está transmitiendo' : 'La clase se está transmitiendo')
+        + (tx.espectadores ? ' · ' + tx.espectadores + ' mirando' : '')
+      : 'La clase no se está transmitiendo';
+
+    // Botones del emisor. `puedoEmitir` lo decide el SERVIDOR y ya combina las dos guardas del
+    // módulo (la escuela y este docente en particular), así que un docente sin habilitar
+    // simplemente no ve el botón — y si lo forzara, la ruta le contesta 403 igual.
+    if (GESTOR) {
+      $('txAbrir').style.display  = (tx.puedoEmitir && !tx.activa) ? '' : 'none';
+      $('txCerrar').style.display = (tx.puedoEmitir && tx.activa)  ? '' : 'none';
+      const ctrl = $('txControles');
+      if (ctrl) ctrl.style.display = (tx.activa && tx.puedoEmitir) ? 'flex' : 'none';
+    }
+
+    // Botones del que mira. El alumno tiene que TOCAR para empezar a recibir (D12).
+    const mirando = window.Transmision && window.Transmision.estoyMirando();
+    const puedeMirar = tx.activa && tx.puedoVer && !tx.puedoEmitir;
+    $('txVer').style.display   = (puedeMirar && !mirando) ? '' : 'none';
+    $('txNoVer').style.display = (puedeMirar && mirando)  ? '' : 'none';
+
+    // Quién tiene la palabra.
+    const hab = $('txHablando');
+    if (tx.palabra) {
+      hab.style.display = '';
+      $('txHablandoTexto').textContent = tx.palabra.mia
+        ? 'Tenés la palabra: te escuchan.'
+        : tx.palabra.nombre + ' tiene la palabra';
+    } else { hab.style.display = 'none'; }
+
+    // La cola de manos, EN ORDEN DE LLEGADA. Es el dato que Meet no da.
+    const caja = $('txManos');
+    if (tx.activa && tx.manos.length) {
+      caja.style.display = '';
+      caja.innerHTML = tx.manos.map((m, i) => {
+        const boton = (GESTOR && tx.puedoEmitir)
+          ? '<button class="btn btn-outline" data-palabra="' + m.uid + '" '
+            + 'style="padding:3px 10px;font-size:12px">Darle la palabra</button>'
+          : '';
+        return '<div class="tx-mano">'
+             + '<span class="tx-mano-n">' + (i + 1) + '</span>'
+             + '<span class="tx-mano-nombre">' + esc(m.nombre) + '</span>'
+             + '<span style="color:var(--lr-tenue);font-size:12px">' + esc(m.desde) + '</span>'
+             + boton + '</div>';
+      }).join('');
+    } else { caja.style.display = 'none'; caja.innerHTML = ''; }
+
+    // El botón de levantar la mano.
+    const btnMano = $('txMano');
+    if (btnMano) {
+      btnMano.style.display = tx.puedoPedirLaPalabra || tx.miMano ? '' : 'none';
+      $('txManoTexto').textContent = tx.miMano ? 'Bajar la mano' : 'Levantar la mano';
+      btnMano.dataset.levantada = tx.miMano ? '1' : '';
+    }
+
+    // El cartel de la degradación. Va acá y no solo por WebSocket porque quien entra DESPUÉS
+    // de que el gobernador bajó la calidad también tiene derecho a saber por qué.
+    if (tx.activa && tx.degradadaPor === 'aforo' && tx.capaMax !== '360p') {
+      const el = $('txAviso');
+      el.style.display = '';
+      el.className = 'tx-aviso tx-atencion';
+      el.textContent = tx.capaMax === 'audio'
+        ? 'Se cortaron las cámaras: hay muchas clases transmitiendo en la escuela. La voz y la pantalla siguen.'
+        : 'La clase se está viendo en calidad baja: hay muchas clases transmitiendo en la escuela.';
+    }
+  }
+
+  if (HAY_TX) {
+    const abrirTx = $('txAbrir');
+    if (abrirTx) abrirTx.addEventListener('click', async () => {
+      abrirTx.disabled = true;
+      try {
+        // El servidor decide y puede decir que no (503): el gobernador de ancho de banda corre
+        // ahí, que es el único lugar que sabe cuánta gente hay mirando en toda la escuela.
+        const r = await post(BASE + '/transmision/abrir', { micro: true, pantalla: true, camara: false });
+        const d = await r.json();
+        if (!r.ok) { alert(d.error || 'No se pudo empezar a transmitir'); return; }
+        await window.Transmision.empezarAEmitir({ micro: true, pantalla: true, camara: false });
+        if (d.aviso) { const el = $('txAviso'); el.style.display=''; el.className='tx-aviso tx-atencion'; el.textContent = d.aviso; }
+        repintarTodo();
+      } catch (e) {
+        alert('No se pudo empezar a transmitir: ' + e.message);
+        await post(BASE + '/transmision/cerrar').catch(() => {});
+      } finally { abrirTx.disabled = false; }
+    });
+
+    const cerrarTx = $('txCerrar');
+    if (cerrarTx) cerrarTx.addEventListener('click', async () => {
+      window.Transmision.dejarDeEmitir();
+      await post(BASE + '/transmision/cerrar');
+      repintarTodo();
+    });
+
+    $('txVer').addEventListener('click', async () => {
+      try { await window.Transmision.empezarAMirar(); pintarTransmision(SALA.transmision); }
+      catch (e) { alert('No se pudo ver la clase: ' + e.message); }
+    });
+    $('txNoVer').addEventListener('click', () => {
+      window.Transmision.dejarDeMirar();
+      pollear();
+    });
+
+    // Los tres interruptores del emisor.
+    for (const [cual, id] of [['micro','txBtnMicro'], ['pantalla','txBtnPantalla'], ['camara','txBtnCamara']]) {
+      const b = $(id);
+      if (!b) continue;
+      b.addEventListener('click', async () => {
+        const T = window.Transmision;
+        if (T.tieneProductor(cual)) { T.despublicar(cual); return; }
+        try {
+          if (cual === 'micro')    await T.publicarMicrofono();
+          if (cual === 'pantalla') await T.publicarPantalla();
+          if (cual === 'camara')   await T.publicarCamara();
+          await post(BASE + '/transmision/modo', { [cual]: true });
+          T.pintar();
+        } catch (e) {
+          // Que el usuario rechace el permiso del navegador NO es un error del sistema: es una
+          // decisión suya, y merece un texto que lo diga así.
+          if (e.name === 'NotAllowedError') aviso2('No diste permiso para usar ' + cual + '.');
+          else aviso2('No se pudo activar ' + cual + ': ' + e.message);
+        }
+      });
+    }
+
+    function aviso2(t) {
+      const el = $('txAviso');
+      el.style.display = ''; el.className = 'tx-aviso tx-error'; el.textContent = t;
+    }
+
+    const btnMano = $('txMano');
+    if (btnMano) btnMano.addEventListener('click', async () => {
+      await post(BASE + '/transmision/mano', { levantar: !btnMano.dataset.levantada });
+      pollear();
+    });
+
+    const quitar = $('txQuitarPalabra');
+    if (quitar) quitar.addEventListener('click', async () => {
+      const uid = SALA.transmision && SALA.transmision.palabra && SALA.transmision.palabra.uid;
+      if (uid) { await post(BASE + '/transmision/palabra/' + uid, { dar: false }); pollear(); }
+    });
+
+    $('txManos').addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-palabra]');
+      if (!b) return;
+      b.disabled = true;
+      const r = await post(BASE + '/transmision/palabra/' + b.dataset.palabra, { camara: false });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'No se pudo dar la palabra'); }
+      b.disabled = false;
+      pollear();
+    });
+  }
+
   // ── Arranque ───────────────────────────────────────────────────────────────
   pintarEstado(SALA);
+  pintarTransmision(SALA.transmision);
   pintarPresencia(SALA.presencia);
   pintarMensajes(SALA.mensajes || [], true);
   // Los avisos que ya vinieron pintados del servidor no son novedad: la página se acaba de

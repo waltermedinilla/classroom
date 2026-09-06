@@ -36,6 +36,8 @@ const { SECTIONS_BY_KEY, isAllowed, sectionForPath, normalizePath } = require('.
 // Módulos opcionales por escuela: acá solo se publican en res.locals para que los navs y
 // res.locals.can() los vean. El enforcement vive en middleware/modulos.js.
 const { MODULOS, moduloActivo } = require('./config/modulos');
+// Túnel del WebSocket de la transmisión en vivo (ver el comentario donde se monta, más abajo).
+const { montarProxyRtc } = require('./middleware/rtc-proxy');
 
 // Log del deploy automático (POST /deploy). Va a un archivo propio y no al logger de
 // winston a propósito: el proceso que escribe acá sobrevive al worker que lo lanzó
@@ -813,6 +815,17 @@ connectDB().then(() => {
   // se pasa de largo y el corte se ve como "error de conexión" a mitad de la subida.
   // headersTimeout sigue en el default (65 s), que es lo que frena un slowloris de headers.
   server.requestTimeout = 60 * 60 * 1000; // 1 h
+
+  // Túnel del WebSocket de la transmisión en vivo hacia el proceso de medios.
+  //
+  // Va SIEMPRE, aunque la escuela no tenga el módulo prendido: es un reenvío de sockets, no
+  // una funcionalidad. Quien no tenga transmisión nunca va a abrir ese WebSocket, y si lo
+  // abriera a mano, el proceso de medios le pide un ticket que Express no le va a firmar.
+  //
+  // Ver el comentario largo de middleware/rtc-proxy.js: esto reemplaza al bloque que iba a ir
+  // en el Caddyfile, y lo reemplaza por algo mejor — el mismo código anda en desarrollo y en
+  // producción, así que la transmisión se puede probar antes de desplegarla.
+  montarProxyRtc(server, logger);
 
   // ── Promotor de la ventana de mantenimiento ────────────────────────────────
   // Mira cada 30 s si la plataforma ya se vació para activar el mantenimiento que el dueño

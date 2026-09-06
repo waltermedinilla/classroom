@@ -28,6 +28,10 @@
 //              (ahí se compara `res.locals[flag] === false` para esconder la solapa).
 //   secciones  las claves de config/sections.js que este módulo trae. Sirve para que, al
 //              apagarlo, se entienda qué solapas desaparecen.
+//   alcance    'escuela'         → la escuela lo prende y vale para TODOS los que corresponda.
+//              'escuela+persona' → la escuela lo prende Y ADEMÁS elige a qué personas.
+//              Ausente equivale a 'escuela', que es como se comportaban los módulos antes de
+//              que existiera este campo.
 //
 // ⚠️ Un módulo se agrega acá recién CUANDO SU CÓDIGO EXISTE. Listar uno que todavía no está
 // implementado le daría al superadmin un interruptor que no prende nada, que es peor que no
@@ -41,6 +45,23 @@ const MODULOS = [
     descripcion: 'Calendario de la sala de computación, netbooks y demás recursos, con pedido '
                + 'del docente y aprobación del administrativo.',
     secciones:   ['admin_recursos', 'app_reservas'],
+    alcance:     'escuela',
+  },
+  {
+    id:          'transmision',
+    label:       'Transmisión en vivo',
+    icon:        'cast',
+    localsKey:   'transmisionEnabled',
+    descripcion: 'La o el docente transmite voz, pantalla y cámara dentro de la sala en vivo '
+               + 'de su materia. Se habilita docente por docente.',
+    // Sin solapas propias A PROPÓSITO: la transmisión vive adentro de la solapa "En vivo", que
+    // ya existe y ya tiene resueltos sus permisos por rol en config/sections.js. Un módulo con
+    // `secciones: []` es legítimo — significa "agrega capacidades, no pantallas".
+    secciones:   [],
+    // El eje nuevo. Ver D10 de specs/transmision-en-vivo.spec.md: la transmisión consume el
+    // puerto de salida de TODAS las escuelas del servidor, así que lo sensato es arrancar con
+    // dos o tres docentes y mirar qué pasa, no repartirla de golpe.
+    alcance:     'escuela+persona',
   },
 ];
 
@@ -61,7 +82,35 @@ function moduloActivo(school, id) {
   return school.modules?.[id]?.enabled === true;
 }
 
+// ¿Esta PERSONA puede usar este módulo?
+//
+// Es el segundo eje, y NO reemplaza a moduloActivo(): lo compone. Primero tiene que estar
+// prendido para la escuela; recién después se mira la lista de personas.
+//
+// ⭐ LA SUTILEZA QUE HAY QUE ENTENDER O LA FEATURE QUEDA AL REVÉS: en `transmision` esta
+// pregunta se le hace a QUIEN EMITE, nunca a quien mira. Si se le hiciera al que mira, cada
+// alumno tendría que estar en la lista para poder ver a su profesora, que es absurdo. Para el
+// alumno la transmisión simplemente está prendida o no está, y eso ya lo dice el estado de la
+// sala. Ver D10 de specs/transmision-en-vivo.spec.md.
+//
+// FAIL-CLOSED igual que su hermana, y con un motivo extra: sin `user` la respuesta es NO. Un
+// llamado sin usuario es un bug de quien llama, y el default seguro es no habilitar a nadie.
+function moduloActivoPara(school, user, id) {
+  if (!moduloActivo(school, id)) return false;
+
+  const mod = MODULOS_BY_ID[id];
+  // Un módulo de un solo eje ya contestó todo lo que tenía que contestar.
+  if (mod.alcance !== 'escuela+persona') return true;
+
+  const cfg = school.modules[id];
+  if (cfg.alcance === 'todos') return true;
+
+  // 'lista' (el default): hay que estar adentro. Sin usuario, no.
+  if (!user?._id) return false;
+  return (cfg.personas || []).some(p => String(p) === String(user._id));
+}
+
 // Los ids de los módulos prendidos, para pintar el resumen de la escuela.
 const modulosActivos = (school) => MODULOS.filter(m => moduloActivo(school, m.id)).map(m => m.id);
 
-module.exports = { MODULOS, MODULOS_BY_ID, moduloActivo, modulosActivos };
+module.exports = { MODULOS, MODULOS_BY_ID, moduloActivo, moduloActivoPara, modulosActivos };

@@ -42,6 +42,7 @@ const Division      = require('../models/Division');
 const Subject       = require('../models/Subject');
 const RoomSession   = require('../models/RoomSession');
 const RoomMessage   = require('../models/RoomMessage');
+const Transmision   = require('../models/Transmision');
 const RoomPresence  = require('../models/RoomPresence');
 const AttendanceSession = require('../models/AttendanceSession');
 const AttendanceMark    = require('../models/AttendanceMark');
@@ -170,6 +171,15 @@ const COLLECTIONS = [
   { name: 'roomsessions',  model: RoomSession,  optional: true },
   { name: 'roommessages',  model: RoomMessage,  optional: true },
   { name: 'roompresences', model: RoomPresence, optional: true },
+  // El registro histórico de las transmisiones. Va con sus hermanas y por el mismo motivo: es
+  // lo que permite contestar dentro de un año cuánto consumió realmente la feature, y ese dato
+  // no se puede reconstruir de ningún otro lado — vive en la memoria de un proceso que se
+  // reinicia. Los VIDEOS no entran, porque no se graban (ver D9 de la spec).
+  // ⚠️ `transmisions` y no `transmisiones`: el nombre lo decide la pluralización de Mongoose,
+  // no el castellano. Mismo caso que `recursoautorizacions`. Escribirlo "bien" hace que el
+  // backup guarde una colección vacía con nombre inventado y NO guarde la que tiene los datos
+  // — que es exactamente lo que atajó tests/unit/backupCobertura.test.js al escribirlo así.
+  { name: 'transmisions',  model: Transmision,  optional: true },
   // Asistencia de preceptoría. También van juntas: una marca sin su toma no se puede fechar
   // ni atribuir a un curso. Es de las colecciones que MÁS caro sale perder — la asistencia es
   // justamente lo que se consulta meses después, y no se purga nunca.

@@ -32,6 +32,17 @@ const { EXT_IMAGENES } = require('../config/imagePresets');
 const { logDeRuta, logRechazo } = require('../middleware/route-log');
 const live = require('../services/liveRoom');
 
+// ── Transmisión en vivo ──────────────────────────────────────────────────────
+// Módulo OPCIONAL y de dos ejes: la escuela lo prende y adentro se elige a qué docentes
+// (config/modulos.js, D10 de specs/transmision-en-vivo.spec.md). Se despliega APAGADO.
+const jwt   = require('jsonwebtoken');
+const tx    = require('../services/transmision');
+const medios = require('../services/mediaClient');
+const aforo  = require('../media/aforo');
+const Transmision = require('../models/Transmision');
+const { moduloActivo, moduloActivoPara } = require('../config/modulos');
+const { TICKET_TTL_S } = require('../config/transmision');
+
 const router = express.Router();
 
 // ── Almacenamiento de los adjuntos ───────────────────────────────────────────
@@ -193,6 +204,23 @@ const ctxSala = (req) => ({
   userId:   req.userId,
 });
 
+// El mismo contexto, más lo que necesitan las reglas de la transmisión.
+//
+// `habilitado` es la respuesta del SEGUNDO EJE del módulo (¿este docente en particular puede
+// transmitir?). Se resuelve acá, en la ruta, y se le pasa hecho al servicio: las reglas de
+// services/transmision.js son puras y no consultan la escuela.
+//
+// ⭐ Ojo con el sujeto: la pregunta se le hace a QUIEN EMITE. Un alumno nunca necesita estar
+// habilitado para mirar a su profesora — ver el comentario largo de moduloActivoPara().
+const ctxTx = (req) => ({
+  ...ctxSala(req),
+  esPersonal: !req.esAlumno && !req.esGestor,
+  habilitado: moduloActivoPara(req.res.locals.school, usuario(req), 'transmision'),
+});
+
+// ¿Esta escuela tiene el módulo? Se usa para no pintar ni contestar nada donde no existe.
+const hayTransmision = (req) => moduloActivo(req.res.locals.school, 'transmision');
+
 // Payload que consume la vista. Es la ÚNICA forma de la sala: la usan el render inicial y el
 // poll, para que no puedan divergir.
 async function estadoDeSala(req, session, since = 0) {
@@ -204,6 +232,9 @@ async function estadoDeSala(req, session, since = 0) {
       puedoCompartirImagen: false,
       mensajes: [], settings: { studentsCanWrite: true, reactionsOn: true, studentsCanShareImages: true },
       presencia: { presentes: 0, total: course.students.length, conectados: [], ausentes: [] },
+      // Una forma SOLA, también con la sala cerrada: el navegador no tiene que preguntarse si
+      // la clave existe. Mismo criterio que el resto de este objeto.
+      transmision: hayTransmision(req) ? tx.estadoParaCliente(null, ctxTx(req)) : null,
     };
   }
 
@@ -220,11 +251,29 @@ async function estadoDeSala(req, session, since = 0) {
   const presences = await RoomPresence.find({ session: session._id }).lean();
   const presencia = live.presenceSummary(presences, course.students);
 
+  // Estado de la transmisión. `null` cuando la escuela no tiene el módulo: el navegador no
+  // pinta nada y no se entera de que existe.
+  //
+  // El número de espectadores lo sabe el proceso de medios, no la base. Va con cache de 3 s
+  // (services/mediaClient.js) porque esto corre en el poll, y con el proceso caído devuelve 0
+  // en vez de romper: la sala tiene que seguir funcionando entera (RN-10).
+  let transmision = null;
+  if (hayTransmision(req)) {
+    const espectadores = session.transmision?.activa
+      ? await medios.espectadoresDeSala(session._id)
+      : 0;
+    transmision = tx.estadoParaCliente(session, ctxTx(req), {
+      espectadores,
+      docenteNombre: course.owner?.name || '',
+    });
+  }
+
   const ctx = ctxSala(req);
   return {
     estado:    'abierta',
     sessionId: String(session._id),
     seq:       session.lastSeq,
+    transmision,
     puedoEscribir: live.puedeEscribir(session, ctx),
     // Va en el estado y no se decide en el navegador: cuando la docente apaga el interruptor,
     // el botón de la cámara se le va de la pantalla a los alumnos en el poll siguiente, sin
@@ -935,6 +984,231 @@ router.post('/:id/sala/presentarme', async (req, res, next) => {
     if (!session) return fallar(req, res, 409, 'La sala está cerrada');
 
     await anunciarIngreso(req, session);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// ── Transmisión en vivo ──────────────────────────────────────────────────────
+//
+// Ver specs/transmision-en-vivo.spec.md. Todas cuelgan de /:id/sala, así que ya pasaron por
+// cargarSala: quien llega acá tiene derecho a estar en esta sala. Lo que se decide en estas
+// rutas es otra cosa — si además puede EMITIR.
+
+// Guarda de módulo, eje 1 (la escuela). Va en cada ruta y no en un router.use() porque estas
+// rutas están intercaladas con las del chat, que no llevan guarda.
+//
+// 403 y no 404: es el mismo código y el mismo texto que usa middleware/modulos.js para
+// `recursos`. La casa ya tiene una pantalla de rechazo; inventarle otra a este módulo sería
+// darle al usuario dos experiencias distintas para la misma situación.
+function exigirModulo(req, res) {
+  if (hayTransmision(req)) return false;
+  fallar(req, res, 403, 'Acceso denegado');
+  return true;
+}
+
+// Guarda de módulo, eje 2 (esta persona). Solo para las rutas que EMITEN.
+function exigirPoderEmitir(req, res) {
+  if (exigirModulo(req, res)) return true;
+  if (!req.esGestor) {
+    fallar(req, res, 403, 'Solo la o el docente puede hacer esto');
+    return true;
+  }
+  if (!moduloActivoPara(req.res.locals.school, usuario(req), 'transmision')) {
+    fallar(req, res, 403, 'Tu escuela todavía no te habilitó para transmitir');
+    return true;
+  }
+  return false;
+}
+
+// POST /courses/:id/sala/transmision/abrir — prende la transmisión.
+//
+// Es la ruta donde corre EL GOBERNADOR (media/aforo.js), y por eso es la única de la feature
+// que puede contestar 503: cuando no entra, no entra, y se dice con todas las letras.
+router.post('/:id/sala/transmision/abrir', async (req, res, next) => {
+  try {
+    if (exigirPoderEmitir(req, res)) return;
+
+    const session = await sesionAbierta(req.course._id);
+    if (!session) return fallar(req, res, 409, 'Primero abrí la sala');
+    if (session.transmision?.activa) return res.json({ ok: true, yaEstaba: true });
+
+    // El aforo se mide sobre TODA la escuela, no sobre esta aula: el puerto es uno solo.
+    const global = await medios.estado();
+
+    const r = await tx.abrir(session, req.course, usuario(req), {
+      espectadores: global.espectadores,
+      clases:       global.clases,
+      modo:         req.body || {},
+    });
+
+    if (!r.ok) {
+      logAudit(req, 'tx.rejected',
+        [{ type: 'course', id: req.course._id, name: req.course.name }],
+        { sessionId: String(session._id), motivo: r.motivo, espectadores: global.espectadores });
+      return res.status(503).json({ error: r.error });
+    }
+
+    await live.systemMessage(session, `${usuario(req).name} empezó a transmitir la clase.`);
+    logAudit(req, 'tx.start',
+      [{ type: 'course', id: req.course._id, name: req.course.name }],
+      { sessionId: String(session._id), capa: r.capa });
+
+    res.json({ ok: true, capa: r.capa, aviso: r.aviso || '' });
+  } catch (err) { next(err); }
+});
+
+// POST /courses/:id/sala/transmision/cerrar
+router.post('/:id/sala/transmision/cerrar', async (req, res, next) => {
+  try {
+    if (exigirPoderEmitir(req, res)) return;
+
+    const session = await sesionAbierta(req.course._id);
+    if (!session || !session.transmision?.activa) return res.json({ ok: true, yaEstaba: true });
+
+    await tx.cerrar(session, { cerradaPor: 'docente' });
+    await medios.cerrarSala(session._id);
+    await live.systemMessage(session, 'Terminó la transmisión de la clase.');
+    logAudit(req, 'tx.stop',
+      [{ type: 'course', id: req.course._id, name: req.course.name }],
+      { sessionId: String(session._id) });
+
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// POST /courses/:id/sala/transmision/modo — prende y apaga micrófono, pantalla y cámara.
+router.post('/:id/sala/transmision/modo', async (req, res, next) => {
+  try {
+    if (exigirPoderEmitir(req, res)) return;
+
+    const session = await sesionAbierta(req.course._id);
+    if (!session || !session.transmision?.activa) {
+      return fallar(req, res, 409, 'La transmisión no está al aire');
+    }
+
+    const cambios = {};
+    for (const k of ['micro', 'pantalla', 'camara']) {
+      if (k in (req.body || {})) cambios[k] = req.body[k] === true;
+    }
+    await tx.cambiarModo(session, cambios);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// POST /courses/:id/sala/transmision/ticket — LA ÚNICA PUERTA al proceso de medios.
+//
+// Ver D4: el proceso de medios no consulta Mongo ni conoce roles. Solo verifica esta firma.
+// Reimplementar los permisos allá sería fabricar la segunda copia que se queda vieja, que es
+// exactamente lo que produjo la fuga de datos por la API del curso.
+router.post('/:id/sala/transmision/ticket', async (req, res, next) => {
+  try {
+    if (exigirModulo(req, res)) return;
+
+    const session = await sesionAbierta(req.course._id);
+    if (!session) return fallar(req, res, 409, 'La sala está cerrada');
+
+    const ctx = ctxTx(req);
+    const emitir = tx.puedeEmitir(session, ctx);
+    // Quien no emite tiene que poder al menos mirar. Si no puede ninguna de las dos, no hay
+    // ticket: no existe un motivo legítimo para abrir el WebSocket.
+    if (!emitir && !tx.puedeVer(session, ctx)) {
+      return fallar(req, res, 403, 'No hay una transmisión para vos en esta sala');
+    }
+
+    const u = usuario(req);
+    const ticket = jwt.sign({
+      sid: String(session._id),
+      cid: String(req.course._id),
+      uid: String(u._id),
+      nom: u.name || '',
+      rol: u.role || '',
+      emitir,
+      // Un alumno con la palabra emite audio; la cámara es un permiso APARTE que da el docente.
+      video: emitir && (ctx.esGestor || session.transmision?.palabraCamara === true),
+    }, process.env.JWT_SECRET, { expiresIn: TICKET_TTL_S });
+
+    res.json({
+      ticket,
+      ttl:  TICKET_TTL_S,
+      capa: session.transmision?.capaMax || '360p',
+      // Lo que el alumno ve ANTES de decidir mirar (D12).
+      mbPorHora: aforo.estimarMB(session.transmision?.capaMax || '360p', 60),
+    });
+  } catch (err) { next(err); }
+});
+
+// POST /courses/:id/sala/transmision/mano — el alumno levanta o baja la mano.
+//
+// Va por HTTP y su resultado viaja por el POLL, no por el WebSocket: la cola de manos aguanta
+// perfectamente 4 segundos de retraso, y así el WebSocket queda solo para lo que de verdad no
+// puede esperar (D3).
+router.post('/:id/sala/transmision/mano', async (req, res, next) => {
+  try {
+    if (exigirModulo(req, res)) return;
+
+    const session = await sesionAbierta(req.course._id);
+    if (!session) return fallar(req, res, 409, 'La sala está cerrada');
+
+    const levantar = req.body?.levantar !== false;
+    const ctx = ctxTx(req);
+
+    if (levantar && !tx.puedeLevantarMano(session, ctx)) {
+      return fallar(req, res, 403, 'No podés pedir la palabra en este momento');
+    }
+
+    const manos = levantar
+      ? tx.levantarMano(session.transmision.manos, usuario(req))
+      : tx.bajarMano(session.transmision.manos, req.userId);
+
+    await tx.guardarManos(session._id, manos);
+
+    // Bajar la mano de quien TIENE la palabra se la quita: son la misma acción desde el punto
+    // de vista del alumno ("ya está, terminé").
+    if (!levantar && String(session.transmision.palabra || '') === String(req.userId)) {
+      await tx.quitarLaPalabra(session._id);
+    }
+
+    res.json({ ok: true, manos: manos.length });
+  } catch (err) { next(err); }
+});
+
+// POST /courses/:id/sala/transmision/palabra/:uid — el docente da o quita la palabra.
+router.post('/:id/sala/transmision/palabra/:uid', async (req, res, next) => {
+  try {
+    if (exigirPoderEmitir(req, res)) return;
+    if (!mongoose.isValidObjectId(req.params.uid)) {
+      return fallar(req, res, 400, 'Alumno no encontrado');
+    }
+
+    const session = await sesionAbierta(req.course._id);
+    if (!session) return fallar(req, res, 409, 'La sala está cerrada');
+
+    // `dar=false` quita la palabra a quien la tenga.
+    if (req.body?.dar === false) {
+      await tx.quitarLaPalabra(session._id);
+      logAudit(req, 'tx.revoke_mic',
+        [{ type: 'course', id: req.course._id, name: req.course.name },
+         { type: 'user',   id: req.params.uid, name: '' }],
+        { sessionId: String(session._id) });
+      return res.json({ ok: true });
+    }
+
+    const alumno = req.course.students.find(s => String(s._id) === req.params.uid);
+    if (!alumno) return fallar(req, res, 404, 'Ese alumno no está en la materia');
+
+    const motivo = tx.porQueNoLaPalabra(session, alumno._id);
+    if (motivo) return fallar(req, res, 409, motivo);
+
+    const camara = req.body?.camara === true;
+    await tx.darLaPalabra(session._id, alumno._id, { camara });
+    await live.systemMessage(session,
+      `${usuario(req).name} le dio la palabra a ${alumno.name}.`);
+
+    logAudit(req, 'tx.grant_mic',
+      [{ type: 'course', id: req.course._id, name: req.course.name },
+       { type: 'user',   id: alumno._id,     name: alumno.name }],
+      { sessionId: String(session._id), camara });
+
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

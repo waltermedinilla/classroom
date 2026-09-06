@@ -310,6 +310,18 @@ function presenceSummary(presences = [], roster = [], now = new Date()) {
 // Solo aplica a sesiones ABIERTAS: una ya cerrada nunca vuelve a evaluarse.
 function shouldAutoClose(session, now = new Date()) {
   if (!session || session.closedAt) return false;
+
+  // ⭐ Una transmisión al aire ES actividad, aunque nadie escriba.
+  //
+  // EL BUG QUE ESTO EVITA: una clase expositiva es exactamente el caso en que el chat se queda
+  // mudo —los chicos están escuchando, no tecleando—, así que sin esta línea el autocierre le
+  // cerraría la sala a la docente a los 30 minutos, EN EL MEDIO DE SU EXPLICACIÓN, y a la clase
+  // le desaparecería el video sin ningún motivo visible.
+  //
+  // Va acá y no tocando `lastActivityAt` con un latido, porque un latido más sería otra
+  // escritura en el camino caliente para responder algo que ya está en el documento.
+  if (session.transmision && session.transmision.activa) return false;
+
   const last = new Date(session.lastActivityAt || session.openedAt).getTime();
   if (Number.isNaN(last)) return false;
   return now.getTime() - last > AUTO_CLOSE_MS;
@@ -538,6 +550,17 @@ async function closeSession(session, user = null, { auto = false, now = new Date
     { new: true }
   );
   if (!cerrada) return session;   // otro worker la cerró primero
+
+  // Cerrar la sala corta la transmisión (RN-1 de specs/transmision-en-vivo.spec.md). Va acá y
+  // no en la ruta porque la sala también se cierra SOLA (closeStaleSessions), y una transmisión
+  // que sobreviviera a su sala quedaría consumiendo puerto sin sala a la que pertenecer.
+  //
+  // El require va adentro de la función a propósito: services/transmision.js requiere a este
+  // archivo, y en el tope sería una dependencia circular.
+  if (session.transmision?.activa) {
+    const tx = require('./transmision');
+    await tx.cerrar(cerrada, { cerradaPor: 'cierre-sala' });
+  }
 
   await systemMessage(
     cerrada,

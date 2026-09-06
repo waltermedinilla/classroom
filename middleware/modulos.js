@@ -12,7 +12,7 @@
 // Eso funciona para un flag GLOBAL de variable de entorno, y no para uno por escuela: el
 // montaje ocurre una sola vez al arrancar el proceso, y para entonces todavía no hay request
 // del que sacar la escuela.
-const { MODULOS_BY_ID, moduloActivo } = require('../config/modulos');
+const { MODULOS_BY_ID, moduloActivo, moduloActivoPara } = require('../config/modulos');
 
 // Mismo status y mismo texto que middleware/admin.js y middleware/sections.js, para que el
 // usuario vea siempre la misma pantalla de rechazo. La rama JSON existe porque los paneles
@@ -44,4 +44,19 @@ const requireModulo = (id) => {
     moduloActivo(res.locals.school, id) ? next() : denegar(req, res);
 };
 
-module.exports = { requireModulo };
+// La misma guarda, pero para los módulos de DOS EJES (config/modulos.js, campo `alcance`):
+// además de que la escuela lo tenga, ESTA persona tiene que estar habilitada.
+//
+// Se usa donde quien hace el request es la persona que va a usar el módulo — en `transmision`,
+// la o el docente que abre la emisión. Ojo con esto, porque es donde se puede poner al revés:
+// las rutas de MIRAR una transmisión NO llevan esta guarda, porque el alumno no está (ni tiene
+// por qué estar) en ninguna lista. Ver el comentario largo de moduloActivoPara().
+const requireModuloPara = (id) => {
+  if (!MODULOS_BY_ID[id]) {
+    throw new Error(`requireModuloPara: no existe el módulo "${id}" en config/modulos.js`);
+  }
+  return (req, res, next) =>
+    moduloActivoPara(res.locals.school, res.locals.user, id) ? next() : denegar(req, res);
+};
+
+module.exports = { requireModulo, requireModuloPara };

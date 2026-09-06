@@ -93,5 +93,37 @@ module.exports = {
     // Si crashea más de 10 veces en 30 min, PM2 deja de reiniciarlo (evita bucle infinito)
     max_restarts:   10,
     min_uptime:     '30s',
+  }, {
+    // ── Proceso de medios (transmisión en vivo) ──────────────────────────────
+    //
+    // ⭐ FORK Y UNA SOLA INSTANCIA. No es una preferencia, es la condición para que la feature
+    // funcione: un `router` de mediasoup vive en la MEMORIA de un proceso. En cluster, la
+    // señalización de un alumno puede caer en un worker mientras el router de su clase está en
+    // el otro — y como PM2 reparte por conexión, fallaría LA MITAD DE LAS VECES, al azar.
+    // Ver D2 de specs/transmision-en-vivo.spec.md.
+    //
+    // Está separado de `classroom` además por una razón práctica: el `max_memory_restart` de
+    // arriba reinicia a los workers de Express sin avisar, y con la transmisión adentro eso
+    // cortaría la clase en el medio.
+    name:      'classroom-media',
+    script:    'media/servidor.js',
+    instances: 1,
+    exec_mode: 'fork',
+
+    // Más alto que el de Express: cada worker de mediasoup mantiene sus buffers de RTP. Aun
+    // así es un techo, no un objetivo — un SFU no transcodifica y no debería acercarse.
+    max_memory_restart: '600M',
+    watch: false,
+
+    env: { NODE_ENV: 'production' },
+
+    log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    error_file:      'logs/media-error.log',
+    out_file:        'logs/media-out.log',
+    merge_logs:      true,
+
+    restart_delay: 5000,
+    max_restarts:  10,
+    min_uptime:    '30s',
   }],
 };

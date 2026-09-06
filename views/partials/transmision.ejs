@@ -1,0 +1,155 @@
+<%#
+  Transmisión en vivo, embebida en views/partials/live-room.ejs.
+
+  Se incluye SOLO si la escuela tiene el módulo `transmision` (config/modulos.js). Para una
+  escuela sin el módulo, este archivo no se renderiza y el navegador no baja ni el bundle de
+  mediasoup ni transmision.js — 240 KB que no se piden.
+
+  Espera en locals: course, sala (con sala.transmision), esGestor, esAlumno.
+%>
+<style>
+  .tx-card { background:var(--surface); border:1px solid var(--border); border-radius:12px;
+             padding:14px 16px; margin-bottom:12px; }
+  .tx-barra { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  .tx-titulo { display:flex; align-items:center; gap:8px; font-size:14px; font-weight:500; }
+
+  <%# El punto rojo del "al aire". Es la convención de toda la vida en televisión y no hace
+      falta explicarla; el texto al lado la refuerza para quien no la conozca. %>
+  .tx-punto { width:9px; height:9px; border-radius:50%; background:#d93025; flex:none; }
+  .tx-punto.off { background:#9aa0a6; }
+  @media (prefers-reduced-motion: no-preference) {
+    .tx-punto:not(.off) { animation: tx-latido 2s ease-in-out infinite; }
+  }
+  @keyframes tx-latido { 50% { opacity:.35 } }
+
+  .tx-acciones { display:flex; gap:8px; flex-wrap:wrap; }
+
+  <%# El cuadro de video. `background` explícito y no heredado: un <video> sin fuente es
+      transparente, y sobre la tarjeta clara quedaba un hueco que no se leía como un video. %>
+  .tx-cuadro { position:relative; background:#202124; border-radius:10px; overflow:hidden;
+               margin-top:12px; aspect-ratio:16/9; }
+  .tx-cuadro video { width:100%; height:100%; object-fit:contain; display:block; background:#202124; }
+  .tx-sinvideo { position:absolute; inset:0; display:flex; flex-direction:column; gap:6px;
+                 align-items:center; justify-content:center; color:#e8eaed; font-size:13.5px;
+                 text-align:center; padding:16px; }
+  .tx-sinvideo .material-symbols-outlined { font-size:38px; opacity:.8; }
+
+  <%# Los botones de micrófono, pantalla y cámara. El estado "prendido" NO se marca solo con
+      color: lleva también el borde y el icono relleno, porque distinguir "prendido" de
+      "apagado" por el color es justo lo que no puede hacer alguien con daltonismo. %>
+  .tx-toggle { display:inline-flex; align-items:center; gap:6px; padding:7px 12px; font-size:13px;
+               border:1px solid var(--border); border-radius:20px; background:var(--surface);
+               color:var(--text); cursor:pointer; }
+  .tx-toggle .material-symbols-outlined { font-size:19px; }
+  .tx-toggle.activo { background:#e8f0fe; border-color:#1a73e8; color:#174ea6; font-weight:500; }
+  [data-theme="dark"] .tx-toggle.activo { background:#1a3a5c; border-color:#8ab4f8; color:#d2e3fc; }
+
+  .tx-aviso { margin-top:10px; padding:9px 12px; border-radius:8px; font-size:13px; display:none; }
+  .tx-atencion { background:#fef7e0; border:1px solid #fdd663; color:#5f4b00; }
+  .tx-error    { background:#fce8e6; border:1px solid #f28b82; color:#5f1409; }
+
+  <%# La cola de manos levantadas. Es lo que Meet no tiene: el ORDEN de llegada. %>
+  .tx-manos { margin-top:12px; }
+  .tx-mano { display:flex; align-items:center; gap:10px; padding:7px 0;
+             border-top:1px solid var(--border); font-size:13.5px; }
+  .tx-mano-n { width:22px; height:22px; border-radius:50%; background:var(--bg); flex:none;
+               display:flex; align-items:center; justify-content:center; font-size:11px;
+               color:var(--text-secondary); }
+  .tx-mano-nombre { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tx-hablando { background:#e6f4ea; border:1px solid #a8dab5; border-radius:8px;
+                 padding:8px 12px; font-size:13.5px; color:#0d652d; margin-top:10px;
+                 display:flex; align-items:center; gap:8px; justify-content:space-between; }
+  [data-theme="dark"] .tx-hablando { background:#0f3a1e; border-color:#2d7d46; color:#a8dab5; }
+
+  .tx-consumo { font-size:12px; color:var(--text-secondary); margin-top:8px; }
+
+  @media (max-width: 600px) {
+    .tx-acciones { width:100%; }
+    .tx-toggle { flex:1; justify-content:center; padding:10px 8px; }
+  }
+</style>
+
+<div class="tx-card" id="txCard" style="display:none">
+  <div class="tx-barra">
+    <div class="tx-titulo">
+      <span class="tx-punto off" id="txPunto"></span>
+      <span id="txEstadoTexto">La clase no se está transmitiendo</span>
+    </div>
+
+    <div class="tx-acciones">
+      <% if (esGestor) { %>
+        <button class="btn btn-primary" id="txAbrir" style="display:none">
+          <span class="material-symbols-outlined">cast</span> Transmitir
+        </button>
+        <button class="btn btn-outline" id="txCerrar" style="display:none">
+          <span class="material-symbols-outlined">cast_pause</span> Terminar
+        </button>
+      <% } %>
+
+      <%# El alumno TIENE que tocar para empezar a recibir (D12). No es cosmético: en una clase
+          presencial los 30 están en la misma aula que el docente, y arrancar solo mandaría el
+          video a Contabo y de vuelta 30 veces para ver lo que está proyectado en la pared. %>
+      <button class="btn btn-primary" id="txVer" style="display:none">
+        <span class="material-symbols-outlined">play_arrow</span> Ver la clase
+      </button>
+      <button class="btn btn-outline" id="txNoVer" style="display:none">
+        <span class="material-symbols-outlined">stop</span> Dejar de ver
+      </button>
+    </div>
+  </div>
+
+  <%# Los tres interruptores del emisor. La cámara arranca APAGADA (D6). %>
+  <% if (esGestor) { %>
+    <div class="tx-acciones" id="txControles" style="display:none;margin-top:12px">
+      <button class="tx-toggle" id="txBtnMicro" type="button">
+        <span class="material-symbols-outlined">mic</span> Micrófono
+      </button>
+      <button class="tx-toggle" id="txBtnPantalla" type="button">
+        <span class="material-symbols-outlined">screen_share</span> Pantalla
+      </button>
+      <button class="tx-toggle" id="txBtnCamara" type="button">
+        <span class="material-symbols-outlined">videocam</span> Cámara
+      </button>
+    </div>
+  <% } %>
+
+  <div class="tx-cuadro" id="txCuadro" style="display:none">
+    <video id="txVideo" playsinline autoplay></video>
+    <div class="tx-sinvideo" id="txSinVideo" style="display:none">
+      <span class="material-symbols-outlined">graphic_eq</span>
+      <span>Estás escuchando la clase. La cámara y la pantalla están apagadas.</span>
+    </div>
+  </div>
+  <%# El audio va en su propio elemento y no pegado al <video>: si el docente apaga la cámara,
+      el <video> se queda sin pista de video y algunos navegadores dejan de reproducir también
+      el audio. Separados, la voz sigue aunque no haya imagen. %>
+  <audio id="txAudio" autoplay></audio>
+
+  <div class="tx-aviso" id="txAviso"></div>
+  <div class="tx-consumo" id="txConsumo" style="display:none"></div>
+
+  <%# Quién está hablando ahora y quién espera turno. Se pinta con los datos del POLL, no del
+      WebSocket (D3): la cola aguanta perfectamente 4 segundos de retraso. %>
+  <div class="tx-hablando" id="txHablando" style="display:none">
+    <span id="txHablandoTexto"></span>
+    <% if (esGestor) { %>
+      <button class="btn btn-outline" id="txQuitarPalabra" style="padding:3px 10px;font-size:12px">
+        Cortar
+      </button>
+    <% } %>
+  </div>
+
+  <div class="tx-manos" id="txManos" style="display:none"></div>
+
+  <% if (esAlumno) { %>
+    <div style="margin-top:12px">
+      <button class="btn btn-outline" id="txMano" style="display:none">
+        <span class="material-symbols-outlined">front_hand</span>
+        <span id="txManoTexto">Levantar la mano</span>
+      </button>
+    </div>
+  <% } %>
+</div>
+
+<script src="/js/mediasoup-client.bundle.js"></script>
+<script src="/js/transmision.js"></script>

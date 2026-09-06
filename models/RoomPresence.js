@@ -31,6 +31,20 @@ const roomPresenceSchema = new mongoose.Schema({
   // NO como lastPingAt − firstSeenAt: un alumno que entra al principio, se va, y vuelve al
   // final daría "toda la clase" con la resta, cuando estuvo dos minutos.
   pings: { type: Number, default: 1 },
+
+  // ── Transmisión en vivo ────────────────────────────────────────────────────
+  //
+  // Estos tres campos son de DIAGNÓSTICO, no de asistencia. La distinción es deliberada y es
+  // la decisión D8 de specs/transmision-en-vivo.spec.md: este documento SIGUE SIENDO el único
+  // registro de asistencia. Si "miró la transmisión" fuera un registro aparte, la escuela
+  // tendría dos números distintos de presentes en la misma clase, y el día que difieran nadie
+  // va a saber cuál mirar.
+  //
+  // Lo que contestan es otra pregunta, la que aparece cuando la familia reclama: "a este chico
+  // se le cortó nueve veces".
+  txSegundos: { type: Number, default: 0 },   // cuánto tiempo estuvo recibiendo
+  txCapaMax:  { type: String, default: '' },  // la mejor calidad que llegó a recibir
+  txCortes:   { type: Number, default: 0 },   // cuántas veces se le cayó la conexión
 }, { timestamps: true });
 
 // Un solo documento por persona y sesión. Es la clave del upsert de touchPresence().

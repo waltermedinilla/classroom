@@ -62,6 +62,52 @@ const roomSessionSchema = new mongoose.Schema({
     studentsCanShareImages: { type: Boolean, default: true },
   },
 
+  // La transmisión en vivo de ESTA clase. Ver specs/transmision-en-vivo.spec.md.
+  //
+  // Va adentro de la sesión y no en una colección propia por el mismo motivo que `settings` y
+  // `mutedStudents`: la transmisión no sobrevive a la clase, empieza y termina adentro. Una
+  // colección aparte obligaría a una query más en el camino MÁS caliente de la app (el poll,
+  // cada 4 s por cada persona de la sala).
+  //
+  // El registro histórico —cuánto duró, cuánta gente, cuántos bytes— sí es una colección
+  // aparte (models/Transmision.js): eso se consulta una vez por mes, no cada 4 segundos.
+  transmision: {
+    activa:     { type: Boolean, default: false },
+    iniciadaAt: { type: Date,    default: null },
+
+    // Qué está publicando. Los tres son independientes: se puede tener micrófono sin cámara y
+    // pantalla sin micrófono. `camara` arranca en false a propósito (ver D6 de la spec): el
+    // modo por defecto de una clase no es la cara del docente, es lo que está mostrando.
+    micro:    { type: Boolean, default: false },
+    pantalla: { type: Boolean, default: false },
+    camara:   { type: Boolean, default: false },
+
+    // Techo de calidad VIGENTE. Puede haberlo bajado el gobernador (media/aforo.js) y no el
+    // docente, y por eso se guarda junto con el motivo: sin `degradadaPor`, la docente ve que
+    // su clase se ve peor y no tiene forma de saber que no es su internet.
+    capaMax:      { type: String, enum: ['audio', '180p', '360p'], default: '360p' },
+    degradadaPor: { type: String, default: '' },   // '' | 'aforo' | 'red' | 'docente'
+
+    // Quién tiene la palabra AHORA. Vive en la base y no en la memoria del proceso de medios
+    // para que un reinicio de ese proceso no le regale el micrófono a nadie ni se lo saque a
+    // quien lo tenía. Ver D7.
+    palabra:       { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    palabraDesde:  { type: Date,    default: null },
+    palabraCamara: { type: Boolean, default: false },
+
+    // Cola de manos levantadas, EN ORDEN DE LLEGADA. Es un array y no un Set ni un campo en
+    // RoomPresence justamente porque el orden ES el dato: "quién levantó la mano primero" es
+    // la pregunta que hace el docente, y es lo que Meet no sabe contestar.
+    manos: [{
+      _id:    false,
+      user:   { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      // Snapshot del nombre, mismo criterio que RoomMessage.authorName: la cola se pinta en
+      // cada poll y resolverla con populate agregaría una query al camino más caliente.
+      nombre: { type: String, default: '' },
+      desde:  { type: Date,   default: Date.now },
+    }],
+  },
+
   // Silenciados SOLO en esta sesión. No vive en User ni en Course a propósito: silenciar a
   // alguien es una medida para el rato que dura la clase, no una marca que lo persiga. El
   // silenciado sigue leyendo y sigue contando como presente; solo pierde el cuadro de escribir.

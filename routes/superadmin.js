@@ -174,7 +174,19 @@ router.get('/schools/:id/edit', async (req, res) => {
   if (idMalo(req, res, 'Escuela no encontrada')) return;
   const school = await School.findById(req.params.id);
   if (!school) return res.status(404).send('Escuela no encontrada');
-  res.render('superadmin/school-form', { school, MODULOS });
+
+  // Los módulos de dos ejes (config/modulos.js, alcance 'escuela+persona') necesitan además la
+  // lista de personas elegibles. Hoy el único es `transmision` y sus personas son quienes dan
+  // clase, así que se traen los docentes de ESTA escuela.
+  //
+  // Se consulta solo si hace falta: una instalación sin módulos de dos ejes no paga la query.
+  const necesitaPersonas = MODULOS.some(m => m.alcance === 'escuela+persona');
+  const docentes = necesitaPersonas
+    ? await User.find({ school: school._id, role: 'teacher' })
+        .select('name email').sort({ name: 1 }).lean()
+    : [];
+
+  res.render('superadmin/school-form', { school, MODULOS, docentes });
 });
 
 router.post('/schools/:id/edit', async (req, res) => {
@@ -195,8 +207,30 @@ router.post('/schools/:id/edit', async (req, res) => {
     const modulosPedidos = req.body.modules;
     if (modulosPedidos && typeof modulosPedidos === 'object') {
       for (const m of MODULOS) {
-        if (m.id in modulosPedidos) {
-          cambios[`modules.${m.id}.enabled`] = modulosPedidos[m.id]?.enabled === true;
+        if (!(m.id in modulosPedidos)) continue;
+        const pedido = modulosPedidos[m.id] || {};
+        cambios[`modules.${m.id}.enabled`] = pedido.enabled === true;
+
+        // Segundo eje: a qué personas. Solo para los módulos que lo declaran — un `personas`
+        // que llegue para un módulo de un eje se ignora, igual que se ignora una llave
+        // inventada. El catálogo sigue siendo lo único que decide qué existe.
+        if (m.alcance !== 'escuela+persona') continue;
+
+        cambios[`modules.${m.id}.alcance`] = pedido.alcance === 'todos' ? 'todos' : 'lista';
+
+        // ⚠️ Las personas se VALIDAN contra los usuarios de esta escuela, no se guardan como
+        // vinieron. Sin esto, un request armado a mano podría habilitar a cualquier usuario
+        // del sistema —de otra escuela incluida— para transmitir en ésta.
+        const pedidas = Array.isArray(pedido.personas) ? pedido.personas : [];
+        if (pedidas.length) {
+          const validas = await User.find({
+            _id:    { $in: pedidas.filter(id => mongoose.isValidObjectId(id)) },
+            school: req.params.id,
+            role:   'teacher',
+          }).select('_id').lean();
+          cambios[`modules.${m.id}.personas`] = validas.map(u => u._id);
+        } else {
+          cambios[`modules.${m.id}.personas`] = [];
         }
       }
     }

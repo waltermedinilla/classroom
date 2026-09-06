@@ -127,6 +127,29 @@ const schoolSchema = new Schema({
     recursos: {
       enabled: { type: Boolean, default: false },
     },
+
+    // Transmisión en vivo. Es el primer módulo de DOS EJES: la escuela lo prende, y adentro se
+    // elige a qué docentes. Ver D10 de specs/transmision-en-vivo.spec.md y el campo `alcance`
+    // del catálogo en config/modulos.js.
+    //
+    // Por qué este módulo sí necesita el segundo eje y `recursos` no: reservar la sala de
+    // computación es un asunto interno de la escuela, pero transmitir consume el PUERTO DE
+    // SALIDA del servidor, que es de todas las escuelas a la vez. Lo sensato es arrancar con
+    // dos o tres docentes y mirar qué pasa.
+    transmision: {
+      enabled: { type: Boolean, default: false },
+
+      // 'lista' es el default a propósito, y es la mitad de la seguridad de esta feature:
+      // prender el interruptor de la ESCUELA no puede repartirle la transmisión a sesenta
+      // docentes de golpe. Prender la escuela y no habilitar a nadie es un estado válido y
+      // esperado — es por donde se empieza.
+      alcance: { type: String, enum: ['todos', 'lista'], default: 'lista' },
+
+      // Los docentes habilitados cuando alcance === 'lista'. Se valida contra los usuarios de
+      // ESTA escuela al guardar (routes/superadmin.js): sin eso, un request armado a mano
+      // podría meter el id de cualquiera.
+      personas: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    },
   },
 }, { timestamps: true });
 
