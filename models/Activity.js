@@ -73,10 +73,19 @@ const activitySchema = new mongoose.Schema({
   type: { type: String, enum: ['tarea', 'evaluacion', 'tp'], default: 'tarea' },
   // Flag que habilita entregas fuera de término (lo activa/desactiva el docente con toggle-late)
   allowLateSubmissions: { type: Boolean, default: false },
-  // Flag que permite al alumno editar/reenviar su entrega después de la primera vez
-  // (lo activa/desactiva el docente). Default false: una vez entregada, queda fija
-  // y el alumno solo puede visualizarla (no editarla).
-  allowResubmission: { type: Boolean, default: false },
+  // Flag que permite al alumno editar su entrega después de la primera vez (lo activa/
+  // desactiva el docente con el check "Edición del alumno").
+  //
+  // Default TRUE desde el 2026-09-04: antes era false y eso congelaba 1350 de las 1852
+  // entregas de la base sin que ningún docente lo hubiera decidido — el alumno que subía el
+  // archivo equivocado se quedaba con eso puesto (ver specs/edicion-de-la-entrega.spec.md).
+  // Ahora el docente lo DESTILDA para congelar una evaluación, que es la decisión que
+  // realmente quiere tomar a mano.
+  //
+  // Este flag ya NO alcanza para decidir si el alumno puede editar: la regla completa vive
+  // en public/js/edicionEntrega.js y cierra la edición igual cuando el docente corrigió o
+  // cuando venció el plazo. Los documentos SIN el campo se leen como marcados.
+  allowResubmission: { type: Boolean, default: true },
   // Presente solo si la actividad fue instanciada desde una plantilla del gestor
   // (ver services/autoGrader.js para la evaluación). Actividades "clásicas" no lo llevan.
   templateSnapshot: { type: templateSnapshotSchema, default: undefined },

@@ -1556,7 +1556,10 @@ function openEditModal(actId) {
   document.getElementById('editAvailableFrom').value = toLocal(act.availableFrom);
   // Al abrir ya tiene que decir si esta actividad está programada, no solo al tocar la fecha
   avisoProgramada('editAvailableFrom', 'editAvailableHint');
-  document.getElementById('editAllowResubmission').checked = !!act.allowResubmission;
+  // `!== false` y no `!!`: un documento sin el campo se lee como marcado. Con `!!`, abrir
+  // y guardar el modal de una actividad vieja le congelaba la entrega al alumno sin que el
+  // docente hubiera tocado el check.
+  document.getElementById('editAllowResubmission').checked = act.allowResubmission !== false;
 
   document.getElementById('editError').textContent = '';
   document.getElementById('editActivityModal').classList.add('show');
@@ -1853,6 +1856,41 @@ function attachmentSection(attachments) {
 }
 
 // Carga el detalle de actividad para el DOCENTE
+// "Permitir que lo rehaga": la salida del docente para los dos casos que la regla sola no
+// cubre — ya le puso nota pero quiere que el trabajo se rehaga igual, o corrigió por error.
+// La reapertura le gana a la nota, al plazo vencido y al check destildado, y se apaga sola
+// cuando vuelve a poner nota. Ver specs/edicion-de-la-entrega.spec.md.
+function botonRehacer(actId, studentId, sub) {
+  if (!sub) return '';
+  return sub.reopenedAt
+    ? `<button class="gt-rehacer is-open" onclick="permitirRehacer('${actId}','${studentId}',false)"
+        title="Volver a cerrarle la entrega">
+        <span class="material-symbols-outlined">lock_open_right</span>Puede rehacerla · cerrar
+      </button>`
+    : `<button class="gt-rehacer" onclick="permitirRehacer('${actId}','${studentId}',true)"
+        title="Habilitar a este alumno a rehacer su entrega, aunque ya tenga nota o haya vencido el plazo">
+        <span class="material-symbols-outlined">lock_open_right</span>Permitir que lo rehaga
+      </button>`;
+}
+
+// Llama a POST /activities/:id/reopen-submission y redibuja la tabla. Se recarga entera y no
+// solo el botón porque la celda muestra también la fecha de actualización de la entrega, que
+// cambia en cuanto el alumno rehace.
+async function permitirRehacer(actId, studentId, reabrir) {
+  try {
+    const res = await fetch('/activities/' + actId + '/reopen-submission', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ studentId, reabrir }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showUploadErrModal('No se pudo cambiar la entrega', data.error || 'Error'); return; }
+    await loadTeacherDetail(actId);
+  } catch {
+    showUploadErrModal('Error de conexión', 'No se pudo cambiar la entrega. Verificá tu conexión.');
+  }
+}
+
 // Hace dos fetches en paralelo: grades (notas por alumno) y submissions (entregas)
 // Construye subMap (studentId → submission) para mostrar estado de entrega por alumno
 async function loadTeacherDetail(activityId) {
@@ -1975,6 +2013,7 @@ async function loadTeacherDetail(activityId) {
               data-att-url="${escAtt('/activities/submission-file/' + f.filename)}" data-att-mime="${f.mime||''}"
               onclick="handleAttachmentClick(this)" role="button" tabindex="0">
               <span class="material-symbols-outlined">attach_file</span>${f.name}</span>`).join('')}
+            ${botonRehacer(activity._id, sg._id, sub)}
           </div>`
         : `<span class="gt-sub-badge gt-sub-pending">
             <span class="material-symbols-outlined">schedule</span>Pendiente
@@ -2267,24 +2306,33 @@ async function loadStudentDetail(activityId) {
   // lugar del formulario de archivos + texto. La calificación es automática
   // server-side al enviar (endpoint /activities/:id/submit ya extendido).
   if (act.templateSnapshot && Array.isArray(act.templateSnapshot.questions)) {
-    renderRunnerSection(activityId, act, subData.submission, isBlocked);
+    renderRunnerSection(activityId, act, subData.submission);
   } else {
-    renderSubmissionSection(activityId, subData.submission, isBlocked, !!act.allowResubmission);
+    renderSubmissionSection(activityId, subData.submission, act);
   }
 }
 
 // Renderiza la sección "Mi entrega" cuando la actividad es una plantilla interactiva.
 // Usa task-runner.js (ya cargado en views/course.ejs). El submit no se pisa si el
 // docente puso override manual — el server ya lo respeta.
-function renderRunnerSection(activityId, act, submission, isBlocked) {
+//
+// Comparte la regla de edición con el formulario de archivos (edicionEntrega.js), y por eso
+// la autocalificación NO cuenta como corrección: si contara, el cuestionario quedaría
+// cerrado en el mismo instante en que el alumno lo responde y el check del docente —que acá
+// significa "puede volver a intentar"— no serviría para nada.
+function renderRunnerSection(activityId, act, submission) {
   const section = document.getElementById('submissionSection');
-  if (isBlocked && !submission) {
+  const veredicto = EdicionEntrega.puedeEditar({
+    act, grade: act.myGrade || null, hayEntrega: !!submission,
+    reabierta: !!submission?.reopenedAt, ahora: new Date(),
+  });
+  if (!veredicto.puede && !submission) {
     section.innerHTML = '<div class="deadline-warning"><span class="material-symbols-outlined">lock</span> No se puede responder: el plazo venció.</div>';
     return;
   }
   const alreadyAnswered = submission && submission.autoGraded;
-  // locked: ya respondió y el docente no habilitó que edite/reenvíe — solo puede ver el resultado
-  const locked = alreadyAnswered && !act.allowResubmission;
+  // locked: ya respondió y su entrega está cerrada — solo puede ver el resultado
+  const locked = !veredicto.puede;
   section.innerHTML = `
     <div style="margin-top:16px;padding:14px 16px;background:var(--bg);border-radius:8px;font-size:13px;color:var(--text-secondary)">
       <span class="material-symbols-outlined" style="vertical-align:-4px;color:var(--primary)">quiz</span>
@@ -2292,11 +2340,11 @@ function renderRunnerSection(activityId, act, submission, isBlocked) {
     </div>
     ${locked ? `<div class="deadline-info" style="margin-top:12px">
       <span class="material-symbols-outlined" style="font-size:18px">lock</span>
-      Ya enviaste tus respuestas. El docente no permite modificarlas — podés ver tu resultado abajo.
+      Ya enviaste tus respuestas. ${veredicto.texto} Podés ver tu resultado abajo.
     </div>` : `
     <div id="runnerContainer" class="runner-container" style="margin-top:12px"></div>
     <div class="runner-footer" style="margin-top:16px">
-      <button class="btn btn-primary btn-full" id="btnSubmitRun" ${isBlocked ? 'disabled' : ''}>
+      <button class="btn btn-primary btn-full" id="btnSubmitRun">
         <span class="material-symbols-outlined">check</span>
         ${alreadyAnswered ? 'Volver a enviar' : 'Enviar respuestas'}
       </button>
@@ -2332,9 +2380,10 @@ function renderRunnerSection(activityId, act, submission, isBlocked) {
 // Array temporal de archivos seleccionados para la entrega (File objects antes de subir)
 window._subFiles = [];
 
-// Renderiza la sección de "Mi entrega" en el modal del alumno
-// isBlocked=true → solo muestra el mensaje de plazo vencido, sin formulario
-// submission puede ser null (primera entrega) o el objeto Submission existente (reenvío)
+// Renderiza la sección de "Mi entrega" en el modal del alumno.
+// submission puede ser null (todavía no entregó) o el objeto Submission existente.
+// Si puede editarla —y si no, por qué— lo decide public/js/edicionEntrega.js: la MISMA
+// regla que aplican las rutas de entrega (specs/edicion-de-la-entrega.spec.md).
 // Configuración compartida con el server (routes/activities.js: EXT_SUBMISSIONS + SUBMISSION_MAX_SIZE)
 // Documentos que acepta la entrega. Las IMÁGENES no están acá: las decide Adjuntos.esImagen()
 // —la misma lista que usa el servidor— y viajan por /upload-submission-image, que las
@@ -2344,19 +2393,35 @@ window._subFiles = [];
 const SUB_ALLOWED_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'zip', 'dwg', 'dxf'];
 const SUB_MAX_SIZE     = 20 * 1024 * 1024; // 20 MB
 
-function renderSubmissionSection(actId, submission, isBlocked = false, allowResubmission = false) {
+function renderSubmissionSection(actId, submission, act, veredictoDelServidor) {
   const container = document.getElementById('submissionSection');
   if (!container) return;
 
-  // Archivos ya pre-subidos ({ storagePath, name, filename, mime, size }) — se mandan al enviar.
-  // Uploads en curso: se cuentan para deshabilitar el botón Entregar hasta que todos terminen.
-  window._subUploadedFiles = [];
-  window._subPendingUploads = 0;
+  act = act || window._activities[actId] || {};
 
-  // canEdit: puede entregar por primera vez o reenviar. Falso si el plazo venció,
-  // o si ya entregó y el docente no habilitó la edición de entregas — en ese caso
-  // la entrega queda fija y solo se puede visualizar (no editar).
-  const canEdit = !isBlocked && (!submission || allowResubmission);
+  // Estado de la edición. Va en window porque uploadSubFile() y los botones de las tarjetas
+  // corren fuera de este scope y sobreviven a los re-renders.
+  //   _subUploadedFiles → los archivos NUEVOS, ya pre-subidos, que se mandan al guardar.
+  //   _subKeepFiles     → los de la entrega que SOBREVIVEN. Arranca con todos: la X saca de
+  //                       acá y Deshacer los devuelve. Nada se borra del servidor hasta que
+  //                       el alumno guarda, que es la mitad del pedido: si la X borrara en
+  //                       el acto, un clic al pasar destruiría el archivo sin vuelta atrás.
+  window._subUploadedFiles  = [];
+  window._subPendingUploads = 0;
+  window._subKeepFiles      = (submission?.files || []).map(f => f.filename);
+  window._subTieneEntrega   = !!submission;
+
+  // La regla única, la misma que aplican las rutas de entrega del servidor. El motivo y su
+  // texto salen de ahí: el cartel de esta pantalla y el error del 403 dicen lo mismo porque
+  // SON lo mismo. Ver public/js/edicionEntrega.js.
+  // `veredictoDelServidor` solo llega cuando una ruta ya contestó 403: la entrega se cerró
+  // con el modal abierto (el docente corrigió, o venció el plazo) y el cache local todavía
+  // no tiene con qué darse cuenta. Manda él, que es el que sabe.
+  const veredicto = veredictoDelServidor || EdicionEntrega.puedeEditar({
+    act, grade: act.myGrade || null, hayEntrega: !!submission,
+    reabierta: !!submission?.reopenedAt, ahora: new Date(),
+  });
+  const canEdit = veredicto.puede;
 
   let html = `<div style="margin-top:24px;border-top:1px solid var(--divider);padding-top:20px">
     <h4 style="font-size:15px;margin:0 0 12px;display:flex;align-items:center;gap:8px">
@@ -2378,11 +2443,14 @@ function renderSubmissionSection(actId, submission, isBlocked = false, allowResu
         Última actualización: ${fmtShort(submission.updatedAt)}
       </div>` : ''}`;
 
-    if (submission.text) {
+    // El comentario y los archivos se muestran acá SOLO cuando la entrega está cerrada. Si
+    // es editable van abajo, en el textarea y en el mismo grid que los recién subidos: son
+    // lo que se está editando, no un resumen de lo que quedó.
+    if (submission.text && !canEdit) {
       html += `<p style="font-size:13px;color:var(--text-secondary);margin:0 0 8px;white-space:pre-line">${submission.text}</p>`;
     }
 
-    if (submission.files && submission.files.length > 0) {
+    if (!canEdit && submission.files && submission.files.length > 0) {
       html += `<div class="att-list" style="margin-top:4px">`;
       submission.files.forEach(f => {
         const { ext, color } = extColor(f.name);
@@ -2404,19 +2472,28 @@ function renderSubmissionSection(actId, submission, isBlocked = false, allowResu
     if (!canEdit) {
       html += `<div style="display:flex;align-items:center;gap:5px;margin-top:8px;color:var(--text-hint);font-size:12px">
         <span class="material-symbols-outlined" style="font-size:14px">lock</span>
-        ${isBlocked ? 'El plazo de entrega venció.' : 'El docente no permite modificar la entrega una vez enviada.'} Solo podés visualizarla.
+        ${veredicto.texto}
       </div>`;
     }
 
     html += `</div>`;
-  } else if (isBlocked) {
+  } else if (!canEdit) {
     html += `<div class="deadline-warning">
       <span class="material-symbols-outlined" style="font-size:18px">lock</span>
       No podés enviar tu entrega porque el plazo ha vencido.
     </div>`;
   }
 
-  // Formulario de entrega / reenvío — solo si está permitido editar.
+  // El docente lo habilitó a rehacerla: se lo decimos, porque si no el alumno no tiene
+  // forma de enterarse de que la puerta que estaba cerrada se volvió a abrir.
+  if (canEdit && veredicto.motivo === 'reabierta') {
+    html += `<div class="deadline-info" style="margin-bottom:14px">
+      <span class="material-symbols-outlined" style="font-size:18px">lock_open_right</span>
+      ${veredicto.texto}
+    </div>`;
+  }
+
+  // Formulario de entrega / edición — solo si está permitido editar.
   // Layout equivalente al del docente en views/activities/new.ejs: card "Adjuntar" con
   // botón circular grande + grid de previsualizaciones abajo. Reusa las clases CSS
   // .creator-att-*/att-preview-* que ya tiene el docente para un look consistente.
@@ -2437,16 +2514,23 @@ function renderSubmissionSection(actId, submission, isBlocked = false, allowResu
           <span>Subir</span>
         </label>
       </div>
-      <div id="subFilePreviews" class="att-preview-grid" style="padding:0 24px 20px;margin-top:4px"></div>
+      <div id="subFilePreviews" class="att-preview-grid" style="padding:0 24px 20px;margin-top:4px">
+        ${(submission?.files || []).map(f => tarjetaArchivoEntregado(f)).join('')}
+      </div>
     </div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <button class="btn btn-primary" onclick="submitWork('${actId}')">
-        <span class="material-symbols-outlined">send</span>
-        ${submission ? 'Reenviar' : 'Entregar'}
+        <span class="material-symbols-outlined">${submission ? 'save' : 'send'}</span>
+        ${submission ? 'Guardar cambios' : 'Entregar'}
       </button>
+      ${submission ? `<button class="btn btn-outline" onclick="retirarEntrega('${actId}')"
+        title="Borra tu entrega y la actividad te vuelve a figurar como pendiente">
+        <span class="material-symbols-outlined">undo</span>
+        Retirar entrega
+      </button>` : ''}
       <span id="subMsg" style="font-size:13px;color:var(--secondary);display:none">
         <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px">check_circle</span>
-        Entrega enviada
+        Entrega guardada
       </span>
     </div>`;
   }
@@ -2463,9 +2547,74 @@ function renderSubmissionSection(actId, submission, isBlocked = false, allowResu
   }
 }
 
+// Tarjeta de un archivo YA ENTREGADO dentro del grid de edición. Mismo look que la del
+// archivo recién subido que arma uploadSubFile(), con dos diferencias: la vista previa sale
+// de la ruta de la entrega (y no de la de archivos "staged"), y la X no lo borra: lo marca.
+function tarjetaArchivoEntregado(f) {
+  const { ext, color } = extColor(f.name);
+  const url  = '/activities/submission-file/' + f.filename;
+  const attr = `data-att-type="file" data-att-name="${escAtt(f.name)}" data-att-url="${escAtt(url)}" data-att-mime="${f.mime || ''}"`;
+  return `<div class="att-preview-card" id="subexist-${escAtt(f.filename)}">
+    <div class="att-preview-thumb" style="background:${color};cursor:pointer" ${attr}
+      onclick="handleAttachmentClick(this)" role="button" tabindex="0" title="Ver archivo">
+      <span class="att-preview-ext">${ext}</span>
+    </div>
+    <div class="att-preview-name" title="${escAtt(f.name)}" ${attr}
+      onclick="handleAttachmentClick(this)" style="cursor:pointer">${f.name}</div>
+    <button class="att-preview-remove" title="Quitar de la entrega"
+      onclick="event.stopPropagation();quitarArchivoEntregado('${escAtt(f.filename)}')">
+      <span class="material-symbols-outlined">close</span>
+    </button>
+    <div class="att-preview-borrando">
+      <span>Se elimina al guardar</span>
+      <button type="button" onclick="event.stopPropagation();deshacerQuitarArchivo('${escAtt(f.filename)}')">Deshacer</button>
+    </div>
+  </div>`;
+}
+
+// Marca un archivo entregado para eliminarlo. NO lo borra: lo saca de la lista que viaja al
+// guardar y tacha la tarjeta. Mientras no se guarde, Deshacer lo devuelve intacto — que es
+// justamente lo que esta feature vino a resolver: que una equivocación tenga vuelta atrás.
+function quitarArchivoEntregado(filename) {
+  window._subKeepFiles = (window._subKeepFiles || []).filter(n => n !== filename);
+  document.getElementById('subexist-' + filename)?.classList.add('por-borrar');
+}
+
+function deshacerQuitarArchivo(filename) {
+  if (!(window._subKeepFiles || []).includes(filename)) window._subKeepFiles.push(filename);
+  document.getElementById('subexist-' + filename)?.classList.remove('por-borrar');
+}
+
+// Retira la entrega entera (DELETE /activities/:id/submission): la actividad vuelve a
+// figurar como pendiente. Es destructivo y no tiene vuelta atrás, así que el diálogo nombra
+// lo que se pierde. Quedarse sin entrega no puede ser el residuo de haber sacado el último
+// archivo — por eso es un botón aparte y no lo que pasa al guardar una entrega vacía.
+async function retirarEntrega(actId) {
+  const archivos = (window._subKeepFiles || []).length;
+  const detalle  = archivos
+    ? `Se ${archivos === 1 ? 'va a borrar tu archivo' : 'van a borrar tus ' + archivos + ' archivos'}. `
+    : '';
+  if (!confirm(`¿Retirar tu entrega?\n\n${detalle}La actividad te va a volver a figurar como pendiente. Esto no se puede deshacer.`)) return;
+
+  try {
+    const res  = await fetch('/activities/' + actId + '/submission', { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showUploadErrModal('No se pudo retirar la entrega', data.error || 'Error al retirar');
+      return;
+    }
+  } catch {
+    showUploadErrModal('Error de conexión', 'No se pudo retirar la entrega. Verificá tu conexión e intentá de nuevo.');
+    return;
+  }
+
+  renderSubmissionSection(actId, null, window._activities[actId] || {});
+  marcarActividadNoEntregada(actId);
+}
+
 // Sincroniza el botón "Entregar" con la cantidad de uploads pendientes.
 // Espejo de syncCreateBtn() en views/activities/new.ejs (docente).
-function syncSubmitBtn(submission) {
+function syncSubmitBtn() {
   const btn = document.querySelector('#submissionSection .btn-primary');
   if (!btn) return;
   const pending = window._subPendingUploads || 0;
@@ -2474,7 +2623,11 @@ function syncSubmitBtn(submission) {
     btn.innerHTML = `<span class="material-symbols-outlined">hourglass_empty</span> ${pending === 1 ? 'Subiendo archivo...' : `Subiendo ${pending} archivos...`}`;
   } else {
     btn.disabled  = false;
-    btn.innerHTML = `<span class="material-symbols-outlined">send</span> ${submission ? 'Reenviar' : 'Entregar'}`;
+    // El texto sale de `window._subTieneEntrega` y no de un parámetro: uploadSubFile() llama
+    // a esta función SIN argumentos, así que antes el botón volvía a decir "Entregar" en
+    // medio de una edición apenas terminaba de subir un archivo.
+    const editando = !!window._subTieneEntrega;
+    btn.innerHTML = `<span class="material-symbols-outlined">${editando ? 'save' : 'send'}</span> ${editando ? 'Guardar cambios' : 'Entregar'}`;
   }
 }
 
@@ -2684,6 +2837,18 @@ window.marcarActividadEntregada = function (actId, submission) {
   refrescarProximasEntregas();
 };
 
+// La contracara: al retirar la entrega la actividad vuelve a figurar como pendiente en el
+// acto, sin recargar. Mismo mecanismo que marcarActividadEntregada() —tocar el cache y
+// redibujar—, porque el problema es el mismo al revés: si no, lo que el alumno acaba de
+// retirar le seguiría diciendo "Entregada" hasta que apretara F5.
+window.marcarActividadNoEntregada = function (actId) {
+  const act = window._activities[actId];
+  if (!act) return;
+  act.mySubmission = null;
+  reemplazarTarjetaActividad(actId);
+  refrescarProximasEntregas();
+};
+
 // Envía la entrega del alumno (POST /activities/:id/submit como JSON con archivos ya subidos)
 // Después de éxito: re-renderiza la sección de entrega con los datos actualizados
 async function submitWork(actId) {
@@ -2692,9 +2857,9 @@ async function submitWork(actId) {
     return;
   }
 
-  const hasExisting = !!document.querySelector('#submissionSection .sub-existing');
-  if (hasExisting && !confirm('¿Querés reemplazar tu entrega anterior? La nueva entrega sobrescribirá los archivos anteriores.')) return;
-
+  // Antes acá había un confirm: "¿Querés reemplazar tu entrega anterior?". Se fue con el
+  // reemplazo: guardar ya no pisa nada: agrega lo que el alumno subió y saca lo que marcó
+  // con la X, y esas dos cosas las está viendo en pantalla mientras aprieta el botón.
   const textEl = document.getElementById('subText');
   const btn    = document.querySelector('#submissionSection .btn-primary');
 
@@ -2706,6 +2871,11 @@ async function submitWork(actId) {
     text:          textEl?.value?.trim() || '',
     uploadedFiles: window._subUploadedFiles.map(({ uid, ...rest }) => rest),
   };
+  // `keepFiles` solo viaja cuando hay una entrega que editar. Su ausencia NO es lo mismo que
+  // mandarlo vacío: el servidor lee "ausente" como el flujo viejo (conservar todo) y `[]`
+  // como "no conservo ninguno". Mandarlo siempre convertiría la primera entrega en una orden
+  // de borrado sobre una entrega que no existe.
+  if (window._subTieneEntrega) body.keepFiles = window._subKeepFiles || [];
 
   let data;
   try {
@@ -2716,7 +2886,23 @@ async function submitWork(actId) {
     });
     data = await res.json();
     if (!res.ok) {
-      showUploadErrModal('No se pudo enviar la entrega', data.error || 'Error al enviar');
+      showUploadErrModal('No se pudo guardar la entrega', data.error || 'Error al enviar');
+      // Si la entrega se cerró mientras el alumno tenía el modal abierto —el docente la
+      // corrigió, o venció el plazo— no alcanza con el cartel: hay que repintar, o le queda
+      // un formulario puesto que ya no lleva a ninguna parte. `motivo` lo manda el 403 de
+      // exigirAlumnoQuePuedeEntregar, y el re-render vuelve a preguntarle a la regla.
+      if (data.motivo && data.motivo !== 'editable') {
+        const res2 = await fetch('/activities/' + actId + '/my-submission').catch(() => null);
+        const sub2 = res2 && res2.ok ? (await res2.json()).submission : null;
+        // El veredicto va FORZADO al del servidor en vez de tocarle el cache a la actividad
+        // para que la regla local llegue sola a la misma conclusión: el cache no tiene el
+        // dato nuevo (la nota que el docente acaba de poner) y falsearlo sería inventar una
+        // corrección que nadie hizo.
+        renderSubmissionSection(actId, sub2, window._activities[actId], {
+          puede: false, motivo: data.motivo, texto: data.error || '',
+        });
+        return;
+      }
       btn.disabled = false;
       syncSubmitBtn();
       return;
@@ -2730,7 +2916,7 @@ async function submitWork(actId) {
 
   window._subUploadedFiles = [];
   const act = window._activities[actId] || {};
-  renderSubmissionSection(actId, data.submission, false, !!act.allowResubmission);
+  renderSubmissionSection(actId, data.submission, act);
 
   marcarActividadEntregada(actId, data.submission);
 

@@ -18,7 +18,11 @@ const ACTIONS = {
 
   // ── Entregas ──────────────────────────────────────────────────────────────
   'submission.create':    { label: 'entregó',                  icon: 'assignment_turned_in', color: '#137333', category: 'submission' },
-  'submission.update':    { label: 'reenvió su entrega',       icon: 'refresh',              color: '#137333', category: 'submission' },
+  // "editó", no "reenvió": desde el 2026-09-04 el alumno agrega y saca archivos sueltos en
+  // vez de reemplazar la entrega entera (specs/edicion-de-la-entrega.spec.md).
+  'submission.update':    { label: 'editó su entrega',        icon: 'edit',                 color: '#137333', category: 'submission' },
+  'submission.withdraw':  { label: 'retiró su entrega',       icon: 'undo',                 color: '#b06000', category: 'submission' },
+  'submission.reopen':    { label: 'habilitó a rehacer',      icon: 'lock_open_right',      color: '#9334e6', category: 'submission' },
   'submission.grade':     { label: 'calificó una entrega',     icon: 'grade',                color: '#9334e6', category: 'submission' },
 
   // ── Novedades ─────────────────────────────────────────────────────────────
@@ -53,6 +57,23 @@ const ACTIONS = {
   'room.share_file':     { label: 'compartió un archivo en la sala', icon: 'attach_file', color: '#1a73e8', category: 'course' },
   'room.delete_message': { label: 'borró un mensaje de la sala',     icon: 'delete',      color: '#ea4335', category: 'course' },
   'room.mute':           { label: 'silenció a un alumno en la sala', icon: 'volume_off',  color: '#ea8600', category: 'course' },
+
+  // Transmisión en vivo (specs/transmision-en-vivo.spec.md).
+  //
+  // 'tx.grant_mic' se audita y 'mano levantada' no, y la diferencia es el criterio de siempre:
+  // levantar la mano es del alumno y no le abre nada; DARLE la palabra le abre el micrófono a
+  // un menor, y eso queda anotado con quién lo hizo y cuándo.
+  //
+  // 'tx.degraded' y 'tx.rejected' son de otra especie: no auditan a una persona, auditan al
+  // SISTEMA. Son la prueba de que el techo de ancho de banda actuó, y lo que convierte un "el
+  // video andaba mal el martes" en una línea con hora y número.
+  'tx.start':       { label: 'empezó a transmitir la clase',        icon: 'cast',            color: '#137333', category: 'course' },
+  'tx.stop':        { label: 'terminó la transmisión',              icon: 'cast_pause',      color: '#ea8600', category: 'course' },
+  'tx.grant_mic':   { label: 'le dio la palabra a un alumno',       icon: 'mic',             color: '#1a73e8', category: 'course' },
+  'tx.revoke_mic':  { label: 'le quitó la palabra a un alumno',     icon: 'mic_off',         color: '#ea8600', category: 'course' },
+  'tx.kick':        { label: 'sacó a alguien de la transmisión',    icon: 'person_remove',   color: '#ea4335', category: 'course' },
+  'tx.degraded':    { label: 'bajó la calidad por ancho de banda',  icon: 'network_check',   color: '#ea8600', category: 'course' },
+  'tx.rejected':    { label: 'rechazó una transmisión por aforo',   icon: 'block',           color: '#ea4335', category: 'course' },
 
   // Asistencia de preceptoría. Categoría 'division' y no 'course' porque la asistencia es
   // del CURSO (3°2°), no de una materia.
@@ -97,6 +118,17 @@ const ACTIONS = {
   'section.create':       { label: 'creó una sección',         icon: 'groups',               color: '#1a73e8', category: 'section' },
   'section.edit':         { label: 'editó una sección',        icon: 'edit',                 color: '#1a73e8', category: 'section' },
   'section.delete':       { label: 'eliminó una sección',      icon: 'delete',               color: '#ea4335', category: 'section' },
+
+  // ── Verificación de contacto (specs/verificacion-de-contacto.spec.md) ─────
+  // 'verificacion.staff' es la verificación ASISTIDA: alguien de la escuela confirma el correo
+  // o el celular de otra persona porque lo chequeó en persona o por teléfono. Este registro es
+  // lo que la hace honesta y no un botón de "poner verde todo" — queda firmado quién lo hizo.
+  // Los reintentos de envío NO se auditan (sería el mismo ruido que las 30 marcas de un pase
+  // de lista): se registra el pedido, no cada vez que se aprieta el botón.
+  'verificacion.enviada':  { label: 'pidió verificar un contacto', icon: 'send',           color: '#1a73e8', category: 'user' },
+  'verificacion.ok':       { label: 'verificó su contacto',        icon: 'verified',       color: '#137333', category: 'user' },
+  'verificacion.staff':    { label: 'verificó el contacto de',     icon: 'how_to_reg',     color: '#137333', category: 'user' },
+  'verificacion.revocada': { label: 'quitó la verificación de',    icon: 'gpp_maybe',      color: '#ea8600', category: 'user' },
 
   // ── Usuarios ──────────────────────────────────────────────────────────────
   'user.create':          { label: 'creó un usuario',          icon: 'person_add',           color: '#137333', category: 'user' },

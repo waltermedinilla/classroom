@@ -1,6 +1,9 @@
 node_modules/
+# TODO lo que empiece con .env, no solo los dos nombres exactos: el 2026-09-01 quedó un
+# `.env.backup-verif` en la raíz con el JWT_SECRET y el MONGODB_URI reales, y un `git add -A`
+# lo habría subido. Un patrón general es la única defensa que no depende de acordarse.
 .env
-.env.test
+.env.*
 logs/
 public/archivos/
 archivos/entregas/

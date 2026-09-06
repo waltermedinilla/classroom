@@ -1059,12 +1059,22 @@ const specs = [
     title: 'El docente crea una actividad',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state }) {
-      // allowResubmission=1 porque el suite hace varios submits secuenciales sobre esta misma actividad
+      // Ya no manda allowResubmission: desde el 2026-09-04 la edición viene habilitada de
+      // fábrica y este suite hace varios submits seguidos sobre la misma actividad.
       const res = await client.post('scopedTeacher', '/activities/create', {
-        body: { courseId: state.courseId, title: 'Actividad de smoke test', type: 'tarea', points: '10', allowResubmission: '1' },
+        body: { courseId: state.courseId, title: 'Actividad de smoke test', type: 'tarea', points: '10' },
         expectStatus: 201,
       });
       state.activityId = res.json.activity._id;
+
+      // Segunda actividad, SIN corregir nunca: la usan los specs que entregan DESPUÉS de
+      // 'activity-grade'. Sobre la de arriba ya no pueden, y con razón — desde que existe
+      // specs/edicion-de-la-entrega.spec.md, la entrega corregida no se toca más.
+      const libre = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: 'Actividad sin corregir (smoke)', type: 'tarea', points: '10' },
+        expectStatus: 201,
+      });
+      state.actSinCorregirId = libre.json.activity._id;
     },
   },
   {
@@ -1885,6 +1895,207 @@ const specs = [
       // El server debe filtrarlo silenciosamente: la entrega queda sin ese archivo
       const hasEvil = submit.json.submission.files.some(f => f.filename === 'hack.pdf');
       assert(!hasEvil, 'no debería haberse aceptado un archivo con storagePath ajeno');
+    },
+  },
+  /* ─── El alumno corrige su entrega antes de que la corrijan ───
+     specs/edicion-de-la-entrega.spec.md. De punta a punta sobre una actividad PROPIA: este
+     spec califica y retira, y hacerlo sobre la del suite rompería los specs de notas.
+
+     Sin el arreglo, el paso 2 falla en el primer renglón: subir un archivo a una actividad
+     ya entregada daba 403 salvo que el docente hubiera tildado el check, y aun tildándolo el
+     archivo nuevo BORRABA los anteriores. */
+  {
+    id: 'edicion-de-la-entrega',
+    title: 'El alumno agrega y saca archivos de su entrega hasta que el docente la corrige',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const subirPdf = async (actId, nombre) => {
+        const fd = new FormData();
+        fd.append('file', new Blob([`%PDF-1.4 ${nombre}`], { type: 'application/pdf' }), nombre);
+        const up = await client.post('scopedStudent', `/activities/${actId}/upload-submission-file`, {
+          form: fd, expectStatus: 200,
+        });
+        return up.json;
+      };
+      const guardar = async (actId, body, expectStatus = 200) =>
+        client.post('scopedStudent', `/activities/${actId}/submit`, { body, expectStatus });
+
+      // ── Actividad nueva. NO manda allowResubmission: el default del modelo tiene que
+      //    alcanzar, que es la decisión D1 de la spec.
+      const nueva = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: 'Edición de la entrega (smoke)', type: 'tarea', points: '10' },
+        expectStatus: 201,
+      });
+      const actId = nueva.json.activity._id;
+      assert(nueva.json.activity.allowResubmission === true,
+        'una actividad creada sin tocar el check tiene que nacer con la edición habilitada');
+
+      // ── 1. Primera entrega, un archivo ────────────────────────────────────
+      const a = await subirPdf(actId, 'primero.pdf');
+      const e1 = await guardar(actId, { text: 'Mi primera versión', uploadedFiles: [a] });
+      assert(e1.json.submission.files.length === 1, 'la entrega debería tener 1 archivo');
+
+      // ── 2. Agrega un segundo SIN perder el primero ────────────────────────
+      // Es la mitad del pedido: antes, subir uno nuevo borraba del disco los anteriores.
+      const b = await subirPdf(actId, 'segundo.pdf');
+      const e2 = await guardar(actId, {
+        text: 'Ahora con los dos', uploadedFiles: [b], keepFiles: [a.filename],
+      });
+      const nombres2 = e2.json.submission.files.map(f => f.filename);
+      assert(nombres2.length === 2, `deberían quedar 2 archivos, quedaron ${nombres2.length}`);
+      assert(nombres2.includes(a.filename) && nombres2.includes(b.filename),
+        'tienen que estar el viejo y el nuevo');
+      // Y los dos se pueden bajar de verdad: que figuren en la entrega no prueba que el
+      // archivo siga en el disco.
+      for (const f of [a, b]) {
+        await client.get('scopedStudent', `/activities/submission-file/${f.filename}`, { expectStatus: 200 });
+      }
+
+      // ── 3. Saca el primero ────────────────────────────────────────────────
+      const e3 = await guardar(actId, { text: 'Solo el segundo', keepFiles: [b.filename] });
+      assert(e3.json.submission.files.length === 1, 'debería quedar 1 archivo');
+      assert(e3.json.submission.files[0].filename === b.filename, 'el que queda es el segundo');
+      await client.get('scopedStudent', `/activities/submission-file/${a.filename}`, { expectStatus: 404 });
+
+      // ── 4. keepFiles con un filename ajeno se ignora ──────────────────────
+      // El navegador elige cuál de SUS archivos sobrevive, no qué archivo existe.
+      const e4 = await guardar(actId, {
+        text: 'Con un nombre inventado', keepFiles: [b.filename, 'inventado-1234.pdf'],
+      });
+      assert(e4.json.submission.files.length === 1,
+        'un filename que no está en su propia entrega no puede sumar un archivo');
+
+      // ── 5. keepFiles AUSENTE ≠ vacío ──────────────────────────────────────
+      // Sin el campo rige el comportamiento viejo: sin archivos nuevos, se conservan todos.
+      const e5 = await guardar(actId, { text: 'Solo cambio el texto' });
+      assert(e5.json.submission.files.length === 1,
+        'sin keepFiles y sin archivos nuevos, la entrega no se toca');
+
+      // ── 6. La entrega no se vacía por esta ruta ───────────────────────────
+      const vacia = await guardar(actId, { text: '', keepFiles: [] }, 400);
+      assert(/Retirar entrega/.test(vacia.json.error || ''),
+        `el 400 tiene que mandar a "Retirar entrega": dijo ${JSON.stringify(vacia.json)}`);
+      const sigue = await client.get('scopedStudent', `/activities/${actId}/my-submission`, { expectStatus: 200 });
+      assert(sigue.json.submission?.files?.length === 1, 'el 400 no puede haber borrado nada');
+
+      // ── 7. Una DEVOLUCIÓN SIN NOTA **NO** cierra la edición ───────────────
+      // "Rehacé el punto 3" ES el pedido de rehacer: cerrar ahí le trabaría al alumno
+      // exactamente lo que el docente le está pidiendo que haga.
+      await client.post('scopedTeacher', `/activities/${actId}/grade`, {
+        body: { studentId: state.scopedStudentId, feedback: 'Rehacé el punto 3' },
+        expectStatus: 200,
+      });
+      await guardar(actId, { text: 'Rehecho, como me pidió' });
+
+      // ── 8. La NOTA sí cierra, y cierra las cuatro puertas ─────────────────
+      await client.post('scopedTeacher', `/activities/${actId}/grade`, {
+        body: { studentId: state.scopedStudentId, points: '6' }, expectStatus: 200,
+      });
+      const cerrada = await guardar(actId, { text: 'Intento después de la nota' }, 403);
+      assert(cerrada.json.motivo === 'corregida',
+        `el 403 tiene que decir por qué: ${JSON.stringify(cerrada.json)}`);
+      // La subida se rechaza ANTES de multer: el archivo no llega a tocar el disco.
+      const fd = new FormData();
+      fd.append('file', new Blob(['%PDF-1.4 tarde'], { type: 'application/pdf' }), 'tarde.pdf');
+      await client.post('scopedStudent', `/activities/${actId}/upload-submission-file`, {
+        form: fd, expectStatus: 403,
+      });
+      // Y tampoco puede retirarla: si el docente ya le puso nota, retirarla le borraría de
+      // abajo lo que acaba de corregir.
+      await client.delete('scopedStudent', `/activities/${actId}/submission`, { expectStatus: 403 });
+
+      // ── 8.bis "Permitir que lo rehaga": la salida del docente ─────────────
+      // Le gana a la nota ya puesta. Es el pedido del usuario del 2026-09-04: "pero ahora
+      // cómo tengo que corregir".
+      await client.post('scopedTeacher', `/activities/${actId}/reopen-submission`, {
+        body: { studentId: state.scopedStudentId }, expectStatus: 200,
+      });
+      const rehecha = await guardar(actId, { text: 'Rehecho con la nota puesta' });
+      assert(rehecha.json.submission.reopenedAt,
+        'la entrega tiene que quedar marcada como reabierta para que el alumno vea el aviso');
+
+      // Y volver a poner nota la cierra de nuevo: rehizo, la corregí, se cerró.
+      await client.post('scopedTeacher', `/activities/${actId}/grade`, {
+        body: { studentId: state.scopedStudentId, points: '9' }, expectStatus: 200,
+      });
+      const cerradaOtraVez = await guardar(actId, { text: 'Un tercer intento' }, 403);
+      assert(cerradaOtraVez.json.motivo === 'corregida',
+        `poner nota tiene que volver a cerrar la reapertura: ${JSON.stringify(cerradaOtraVez.json)}`);
+
+      // El docente la reabre de nuevo para poder seguir con el resto del spec.
+      await client.post('scopedTeacher', `/activities/${actId}/reopen-submission`, {
+        body: { studentId: state.scopedStudentId }, expectStatus: 200,
+      });
+      await guardar(actId, { text: 'Reabierta' });
+
+      // ── 9. Retirar ────────────────────────────────────────────────────────
+      const retiro = await client.delete('scopedStudent', `/activities/${actId}/submission`, { expectStatus: 200 });
+      assert(retiro.json.archivos === 1, `debería informar el archivo borrado: ${JSON.stringify(retiro.json)}`);
+      const tras = await client.get('scopedStudent', `/activities/${actId}/my-submission`, { expectStatus: 200 });
+      assert(tras.json.submission === null, 'retirada, la entrega no existe más');
+      await client.get('scopedStudent', `/activities/submission-file/${b.filename}`, { expectStatus: 404 });
+
+      // Y del lado del docente la entrega desaparece: el "N entregaron" de su tabla baja.
+      const delDocente = await client.get('scopedTeacher', `/activities/${actId}/submissions`, { expectStatus: 200 });
+      assert(delDocente.json.submissions.length === 0,
+        `retirada, el docente no puede seguir viendo la entrega: ${delDocente.json.submissions.length}`);
+
+      // Y la actividad le vuelve a figurar como pendiente: es lo que ve en la tarjeta.
+      const lista = await client.get('scopedStudent', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      const enLista = lista.json.activities.find(x => x._id === actId);
+      assert(enLista && enLista.mySubmission === null,
+        'retirada, mySubmission tiene que volver a null o la tarjeta le sigue diciendo "Entregada"');
+
+      // ── 10. Retirar tampoco se puede con la nota puesta ───────────────────
+      // (la reapertura del paso 8.bis murió con el retiro: la Submission se borró entera)
+      await guardar(actId, { text: 'Entrego de nuevo' });
+      await client.post('scopedTeacher', `/activities/${actId}/grade`, {
+        body: { studentId: state.scopedStudentId, points: '7' }, expectStatus: 200,
+      });
+      const conNota = await guardar(actId, { text: 'Después de la nota' }, 403);
+      assert(conNota.json.motivo === 'corregida', 'la nota cierra la edición');
+
+      // ── 11. Reabrir a alguien que no entregó no inventa nada ──────────────
+      const otra = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: 'Sin entregar (smoke)', type: 'tarea', points: '10' },
+        expectStatus: 201,
+      });
+      await client.post('scopedTeacher', `/activities/${otra.json.activity._id}/reopen-submission`, {
+        body: { studentId: state.scopedStudentId }, expectStatus: 404,
+      });
+
+      // ── 12. El ALUMNO no puede reabrirse la entrega a sí mismo ────────────
+      await client.post('scopedStudent', `/activities/${actId}/reopen-submission`, {
+        body: { studentId: state.scopedStudentId }, expectStatus: 403,
+      });
+    },
+  },
+  {
+    id: 'edicion-congelada-por-el-docente',
+    title: 'El docente destilda el check y la entrega queda congelada',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // El check sigue existiendo para la evaluación que el docente quiere fijar: lo que
+      // cambió es de qué lado está el default.
+      const nueva = await client.post('scopedTeacher', '/activities/create', {
+        body: {
+          courseId: state.courseId, title: 'Evaluación congelada (smoke)', type: 'evaluacion',
+          points: '10', allowResubmission: '',
+        },
+        expectStatus: 201,
+      });
+      const actId = nueva.json.activity._id;
+      assert(nueva.json.activity.allowResubmission === false,
+        'destildado explícito tiene que guardar false');
+
+      // La primera entrega entra igual: lo que el check cierra es la EDICIÓN.
+      await client.post('scopedStudent', `/activities/${actId}/submit`, {
+        body: { text: 'Mi única oportunidad' }, expectStatus: 200,
+      });
+      const r = await client.post('scopedStudent', `/activities/${actId}/submit`, {
+        body: { text: 'Me arrepentí' }, expectStatus: 403,
+      });
+      assert(r.json.motivo === 'congelada', `esperaba motivo congelada: ${JSON.stringify(r.json)}`);
     },
   },
   {
@@ -4535,13 +4746,15 @@ const specs = [
         // con el "no se puede decodificar" del optimizador, que es justo lo que queremos saber.
         const fd2 = new FormData();
         fd2.append('file', new Blob([contenido], { type: mime }), `tp5 plano${ext}`);
-        const ent = await client.post('scopedStudent', `/activities/${state.activityId}/upload-submission-file`, {
+        // Sobre la actividad SIN corregir: la del suite ya tiene nota puesta y desde
+        // specs/edicion-de-la-entrega.spec.md eso cierra la entrega.
+        const ent = await client.post('scopedStudent', `/activities/${state.actSinCorregirId}/upload-submission-file`, {
           form: fd2, expectStatus: 200, timeoutMs: 30000,
         });
         assert(ent.json.filename.endsWith(ext),
           `la entrega debería conservar la extensión, quedó: ${ent.json.filename}`);
 
-        const submit = await client.post('scopedStudent', `/activities/${state.activityId}/submit`, {
+        const submit = await client.post('scopedStudent', `/activities/${state.actSinCorregirId}/submit`, {
           body: { text: `Plano del TP5 (${ext})`, uploadedFiles: [ent.json] }, expectStatus: 200,
         });
         assert(submit.json.submission.files.some(f => f.filename === ent.json.filename),
@@ -4709,9 +4922,14 @@ const specs = [
     async run({ client, state, assert }) {
       // Es el caso que peor se ve: el alumno adjunta algo grande, espera la subida entera y
       // al final recibe un error genérico con una referencia de soporte. multer corta antes
-      // que el handler, así que este 413 llega aunque la entrega estuviera cerrada por otro
-      // motivo (plazo vencido, reenvío no permitido) — el tamaño se evalúa primero.
-      assert(state.activityId, 'falta la actividad de prueba');
+      // que el handler.
+      //
+      // ⚠️ Desde el 2026-09-04 eso ya NO significa que el 413 le gane a todo: la guarda de
+      // entrega (exigirAlumnoQuePuedeEntregar) se movió ANTES de multer, así que a quien
+      // tiene la entrega cerrada le contesta 403 sin dejarlo empujar los 21 MB — que es
+      // justamente para lo que se movió. Por eso este spec va sobre la actividad SIN
+      // corregir: la del suite ya tiene nota y contestaría 403 antes de mirar el tamaño.
+      assert(state.actSinCorregirId, 'falta la actividad de prueba');
       // Relogin: 'cache-invalidation-on-disable' corre antes que este spec y deja al alumno
       // SIN cookie (deshabilitarlo hace que el middleware la borre; la cuenta se rehabilita
       // pero la sesión no vuelve sola). Sin esto, todo lo que haga este actor de acá en
@@ -4722,7 +4940,7 @@ const specs = [
 
       const fd = new FormData();
       fd.append('files', new Blob([Buffer.alloc(21 * 1024 * 1024, 0x41)], { type: 'application/pdf' }), 'pesada.pdf');
-      const r = await client.post('scopedStudent', `/activities/${state.activityId}/submit`, {
+      const r = await client.post('scopedStudent', `/activities/${state.actSinCorregirId}/submit`, {
         form: fd, expectStatus: 413, timeoutMs: 60000,
       });
       assert(/20 MB/.test(r.json?.error || ''),
@@ -9713,6 +9931,15 @@ const specs = [
       }
     },
   },
+  // ── Verificación de contacto (specs/verificacion-de-contacto.spec.md) ────
+  //
+  // Solo lo que NO depende de tener el módulo prendido para la escuela ni un proveedor de
+  // envío configurado: la puerta del enlace del mail, que es la única ruta sin sesión de toda
+  // la feature y por lo tanto la que más importa que esté bien.
+  //
+  // El flujo completo (pedir código → confirmar) exige VERIF_EMAIL_PROVEEDOR distinto de 'off'
+  // y el módulo prendido, así que vive fuera de esta suite: se prueba a mano con el proveedor
+  // 'log' (`node tools/probar-canal.js --estado` dice cómo está configurado).
   {
     // Los audit logs generados por esta corrida se identifican por dos vías:
     //  1. Los IDs reales de los recursos de smoke (curso, división, usuarios, actividad)

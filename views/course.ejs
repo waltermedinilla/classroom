@@ -522,6 +522,9 @@
           <input type="checkbox" id="editAllowResubmission">
           Permitir que el alumno edite su entrega después de enviarla
         </label>
+        <p style="font-size:12px;color:var(--text-hint);margin:-8px 0 14px;padding-left:26px">
+          Se cierra sola cuando le pongas nota o devolución, o cuando venza el plazo.
+        </p>
         <div class="form-error" id="editError" style="margin-bottom:12px"></div>
         <div style="display:flex;justify-content:flex-end;gap:12px">
           <button class="btn btn-outline" onclick="closeEditModal()">Cancelar</button>
@@ -763,6 +766,10 @@
        course.js, que la usa en addStudentActivityCard() para el chip y en el sidebar de
        "Próximas entregas". -->
   <script src="/js/estadoActividad.js"></script>
+  <!-- ¿Puede el alumno todavía tocar su entrega? (corregida / vencida / el check del
+       docente). La misma regla que aplican las rutas de entrega. Va ANTES de course.js, que
+       la usa en renderSubmissionSection() y en renderRunnerSection(). -->
+  <script src="/js/edicionEntrega.js"></script>
   <!-- Diagnóstico de subidas fallidas. Va ANTES de course.js, que lo usa en uploadSubFile(). -->
   <script src="/js/subida-diagnostico.js"></script>
   <!-- Qué adjunto es una imagen (la misma regla que aplica el servidor). Va ANTES de

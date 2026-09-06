@@ -23,6 +23,16 @@ const submissionSchema = new mongoose.Schema({
   text:     { type: String, default: '', trim: true },
   // Fecha de la primera entrega (se setea una sola vez en el upsert via $setOnInsert)
   firstSubmittedAt: { type: Date, default: null },
+  // El docente habilitó a ESTE alumno a rehacer su entrega ("Permitir que lo rehaga").
+  // Es una autorización explícita y puntual, y por eso le gana a todo lo que normalmente
+  // cerraría la edición: la nota ya puesta, el plazo vencido y el check destildado. Ver
+  // public/js/edicionEntrega.js y specs/edicion-de-la-entrega.spec.md.
+  //
+  // Se apaga sola cuando el docente le vuelve a poner NOTA (POST /:id/grade): rehizo, lo
+  // corregí de nuevo, se cierra. Si no se apagara, la primera reapertura le dejaría la
+  // puerta abierta para siempre.
+  reopenedAt: { type: Date, default: null },
+  reopenedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   // Respuestas estructuradas cuando la actividad viene de una plantilla interactiva.
   // Array libre indexado por questionId; el formato lo entiende services/autoGrader.
   // Ej: [{ questionId, mc: {selected: [optId,...]}, tf: {answer: true}, ... }]

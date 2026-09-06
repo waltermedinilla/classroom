@@ -23,11 +23,17 @@
   --radius-sm: 8px;
   --radius-xs: 4px;
   --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  /* Verde LEGIBLE como texto chico, que no es el mismo que --secondary (#34a853 da 3,06:1
+     sobre la tarjeta clara: sirve de fondo o de ícono, no de texto de 11px). Ningún verde
+     único llega a 4,5:1 en los dos temas —es la misma restricción aritmética de los grises,
+     ver la memoria de contraste—, así que van dos: 5,95:1 acá y 6,65:1 en oscuro. */
+  --verde-texto: #137333;
 }
 /* ─── Dark Mode ─── */
 [data-theme="dark"] {
   --bg: #111418;
   --surface: #1e2124;
+  --verde-texto: #5bb974;
   --text: #e3e5e8;
   --text-secondary: #b0b8c1;
   --text-hint: #72777e;
@@ -499,7 +505,12 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
   display: flex; align-items: center; gap: 10px;
   background: #fef7e0; border: 1px solid #fde293; padding: 12px 16px;
   border-radius: var(--radius-sm); font-size: 13px; margin-bottom: 20px;
+  /* El color del texto es obligatorio, no decorativo: el fondo está fijado en hex y por lo
+     tanto NO cambia con el tema, pero el texto sin declarar hereda el del tema y en modo
+     oscuro salía casi blanco sobre amarillo claro (1,3:1, ilegible). #6b4e00 da 7,2:1. */
+  color: #6b4e00;
 }
+.warning-banner a { color: #6b4e00; text-decoration: underline; }
 .warning-icon { font-size: 20px !important; color: #ea8600; }
 /* ─── Course Header ─── */
 .course-header {
@@ -706,6 +717,30 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
 }
 .att-preview-remove .material-symbols-outlined { font-size: 14px; }
 .att-preview-remove:hover { background: rgba(0,0,0,0.7); }
+
+/* Archivo de la entrega marcado para eliminar (specs/edicion-de-la-entrega.spec.md).
+   La X no borra nada en el acto: tacha la tarjeta y ofrece deshacer, y el archivo se elimina
+   recién al guardar. Si borrara al instante, un clic accidental destruiría el archivo sin
+   vuelta atrás — que es literalmente el problema que esta feature vino a resolver.
+   El rojo se lo lleva el BORDE, no el texto: --danger no llega a 4,5:1 sobre la tarjeta en
+   ninguno de los dos temas (3,92 en claro, 4,12 en oscuro, medido el 2026-09-04). Como borde
+   le alcanza 3:1 porque no es texto; como texto de 11px, no. El aviso va en
+   --text-secondary (6,05 y 8,07) y el Deshacer en --text-primary. */
+.att-preview-card.por-borrar .att-preview-thumb,
+.att-preview-card.por-borrar .att-preview-name { opacity: .38; }
+.att-preview-card.por-borrar .att-preview-name { text-decoration: line-through; }
+.att-preview-card.por-borrar { border-color: var(--danger); }
+.att-preview-card.por-borrar .att-preview-remove { display: none; }
+.att-preview-borrando { display: none; }
+.att-preview-card.por-borrar .att-preview-borrando {
+  display: block; padding: 4px 8px 6px; font-size: 11px; line-height: 1.3;
+  color: var(--text-secondary); border-top: 1px solid var(--border); text-align: center;
+}
+.att-preview-borrando button {
+  display: block; width: 100%; margin-top: 2px; padding: 0;
+  background: none; border: none; cursor: pointer;
+  font: inherit; font-weight: 600; color: var(--text-primary); text-decoration: underline;
+}
 
 /* Modal de error de subida de archivos */
 .upl-modal-overlay {
@@ -2053,6 +2088,25 @@ select, .select-input {
 .gt-sub-file:hover { text-decoration: underline; }
 .gt-sub-file .material-symbols-outlined { font-size: 13px !important; flex-shrink: 0; }
 
+/* "Permitir que lo rehaga" — la salida del docente cuando ya corrigió o venció el plazo.
+   Ver specs/edicion-de-la-entrega.spec.md.
+   Los dos estados usan variables del tema y no hex. El abierto va con --verde-texto (el par
+   claro/oscuro declarado arriba) y NO con --secondary, que sobre la tarjeta clara da 3,06:1
+   y no se lee. */
+.gt-rehacer {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 4px;
+  font-size: 11px; font-weight: 600; font-family: inherit;
+  padding: 3px 8px; border-radius: 999px; cursor: pointer;
+  background: none; border: 1px solid var(--border); color: var(--text-secondary);
+}
+.gt-rehacer:hover { background: var(--bg); color: var(--text-primary); }
+.gt-rehacer .material-symbols-outlined { font-size: 13px !important; }
+.gt-rehacer.is-open {
+  border-color: var(--verde-texto); color: var(--verde-texto);
+  background: color-mix(in srgb, var(--verde-texto) 10%, transparent);
+}
+.gt-rehacer.is-open:hover { background: color-mix(in srgb, var(--verde-texto) 18%, transparent); color: var(--verde-texto); }
+
 /* Summary line above table */
 .gt-summary {
   display: flex; align-items: center; gap: 10px;
@@ -2800,3 +2854,66 @@ table.acciones-fijas, table.nombre-fijo { overflow: clip; }
   /* El nombre de la escuela en su tarjeta es el enlace para entrar y medía 19 px. */
   .subject-card-name a { display: inline-block; padding: 6px 0; margin: -6px 0; }
 }
+
+/* ─── Chip de verificación de contacto ────────────────────────────────────────
+   specs/verificacion-de-contacto.spec.md · lo usa views/partials/chip-verificado.ejs
+
+   Vive acá como CLASES y no como estilos inline en el partial por una razón concreta que este
+   proyecto ya pagó cara: un color puesto en un `style=` inline le gana a la variante oscura,
+   y así fue como quedó texto a 1,10:1 —invisible— en las citas de la sala en vivo. Un fondo
+   en hex obliga a declarar su color de texto en hex; entonces los dos se declaran acá, con su
+   pareja de modo oscuro al lado.
+
+   Los verdes no son los de --secondary (#34a853): sobre --secondary-light dan 2,4:1, que no
+   llega a AA para texto. Los de abajo dan 6,3:1 en claro y 7,0:1 en oscuro. */
+.chip-verif {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 9px 2px 6px; border-radius: 20px;
+  font-size: 12px; font-weight: 500; line-height: 18px; white-space: nowrap;
+  vertical-align: middle;
+}
+.chip-verif .material-symbols-outlined { font-size: 15px; }
+
+.chip-verif--ok { background: var(--secondary-light); color: #0d652d; }
+[data-theme="dark"] .chip-verif--ok { color: #5bc98a; }
+
+/* Pendiente y sin-dato comparten aspecto a propósito: para la escuela son el mismo problema
+   ("no le puedo escribir"). El texto los distingue; el color no tiene por qué. */
+.chip-verif--neutro {
+  background: transparent; color: var(--text-secondary);
+  border: 1px solid var(--border);
+  padding: 1px 8px 1px 5px;
+}
+/* NO se usa --text-hint acá: no llega a AA en ningún tema (2,39-2,82:1) y esto es información,
+   no adorno. */
+
+/* La fila de un canal en "Mi perfil": el dato, su chip y el botón de verificar. */
+.verif-fila { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.verif-fila .verif-acciones { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.verif-codigo-caja { display: none; margin-top: 12px; }
+.verif-codigo-caja.abierta { display: block; }
+.verif-codigo-input {
+  font-family: monospace; font-size: 22px; letter-spacing: 8px; text-align: center;
+  padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text); width: 100%; max-width: 220px; outline: none;
+}
+.verif-codigo-input:focus { border-color: var(--primary); }
+
+@media (max-width: 600px) {
+  /* En el celular la fila se apila y el botón deja de estar empujado a la derecha, donde
+     quedaba pegado al borde y con la mitad del área táctil fuera de la tarjeta. */
+  .verif-fila .verif-acciones { margin-left: 0; width: 100%; }
+  .verif-codigo-input { max-width: 100%; }
+}
+
+/* Cartel de éxito. Existe porque el patrón que había —`style="background:#e6f4ea;color:#137333"`
+   repetido en cada vista— es el bug de modo oscuro esperando a pasar: fondo claro fijo con texto
+   verde oscuro fijo, ilegible sobre el tema oscuro en cuanto algo cambie alrededor. Acá los dos
+   colores se declaran juntos y con su pareja oscura. Las vistas viejas se pueden migrar a esta
+   clase de a una; la de verificación ya nace usándola. */
+.alert-ok {
+  background: var(--secondary-light); color: #0d652d;
+  padding: 10px 14px; border-radius: var(--radius-sm);
+  font-size: 14px; margin-bottom: 16px;
+}
+[data-theme="dark"] .alert-ok { color: #5bc98a; }

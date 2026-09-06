@@ -90,8 +90,15 @@ El admin puede "ver como" cualquier otro usuario (excepto el admin protegido):
 ### 8. Admin Perfil Usuario (`/admin/users/:id`)
 - Ver datos, cambiar rol, ver cursos del usuario
 - Botón "Ver como este usuario" (suplantación)
+- Botón "Restablecer contraseña" — la deja en el DNI (o `Classroom1234` si no tiene), y el
+  cartel muestra **el correo y la contraseña juntos**: son los dos datos que hay que dictar
 - Botón "Eliminar usuario"
-- El usuario `waltermedinilla@gmail.com` muestra candado y no tiene esos botones
+- El usuario `waltermedinilla@gmail.com` y cualquier `superadmin` muestran candado y no tienen
+  esos botones. **Rige igual para el admin y para el superadmin**: no es un permiso que le falte
+  a nadie, es la protección de la cuenta dueña
+- Aviso de **cuenta melliza**: si otra cuenta de la escuela tiene el mismo DNI, la ficha lo dice
+  al lado del correo, con enlace a la otra. Sin eso se restablece la contraseña de una ficha y se
+  intenta entrar con el correo de la otra — el síntoma es "la cambié y no anda"
 
 ### 9. Admin Materias (`/admin/subjects`)
 - Grid de cards con color visual y cantidad de cursos asociados
@@ -486,7 +493,248 @@ inferido. Lo funcional que ya figura en el Roadmap no se repite.
 
 ---
 
+## Escalado a varias máquinas — plan del 2026-08-31 (PROPUESTA)
+
+Pedido del usuario: dos o más máquinas, la base configurable como servicio para crecer
+horizontalmente, y sin problemas al expandirse en roles y usuarios. El plan completo —10 fases,
+cada una entera y con vuelta atrás— está en **`specs/escalado-multi-maquina.spec.md`**.
+
+**La medición que reordena todo:** el dump de la base pesa decenas de MB y los archivos 16 GB.
+El problema de escala **no son las queries** (115 mil documentos), **son los archivos**. Por eso
+sacar los archivos del disco va antes que cualquier cosa de base de datos, y por eso el
+*sharding* está a años — lo que hace falta pronto es un **replica set**, y por disponibilidad.
+
+**Los dos bloqueantes duros** (los otros seis están en la spec):
+- **Los archivos viven en el disco del nodo que atendió la subida.** Con dos nodos, la mitad de
+  las descargas dan 404. Conecta directo con el punto 2 de la auditoría de arriba
+  (`public/archivos` servido sin guarda): al mover a almacenamiento de objetos hay que decidir
+  qué queda público y qué va con URL firmada — **un solo trabajo cierra los dos**.
+- **El webhook de deploy actualiza un solo nodo y verifica su propio disco**, así que escribiría
+  `OK deploy verificado` con media flota atrasada (`server.js:225`). Es el Frankenstein del
+  changelog 2026-07-28, distribuido y silencioso.
+
+**Lo que ya está listo y no hay que tocar:** la sesión no tiene estado (JWT en cookie, no hacen
+falta *sticky sessions*), no hay WebSockets ni SSE, y el cache de 45 s ya asume varios procesos
+—su ventana de inconsistencia **no crece** al sumar máquinas—. `connect-mongo` está declarado en
+`package.json` y **nadie lo requiere**: es dependencia muerta, se puede borrar.
+
+**Lo único que se encarece con el tiempo:** aprobar `specs/identidad-multiescuela.spec.md` antes
+de sumar escuelas. Migrar 1.448 usuarios es un rato; migrar 15.000 con cuentas duplicadas ya
+creadas, no.
+
+---
+
 ## Historial de Cambios (Changelog)
+
+### 2026-09-04 — El alumno puede corregir su entrega hasta que el docente la corrige
+
+Pedido del usuario: *"el alumno cuando quiere entregar un trabajo, si por error se equivoca le
+queda deshabilitado (…) el alumno puede editar su entrega incluyendo archivos o
+eliminándolos"*. Ver `specs/edicion-de-la-entrega.spec.md`.
+
+**Eran dos problemas encadenados, y el segundo sobrevivía al primero.**
+
+**1. La entrega se cerraba sola.** El bloqueo era `existing && !activity.allowResubmission`, y
+ese flag es un checkbox del docente **apagado por defecto**, en la barra lateral de crear
+actividad, abajo de todo. Medido sobre el espejo local: de 697 actividades solo 102 lo tenían
+encendido, y eso dejaba **1350 de 1852 entregas (73%) congeladas** sin que ningún docente lo
+hubiera decidido.
+
+**2. Reenviar borraba lo anterior.** Con archivos nuevos, el submit borraba del disco los
+viejos y los reemplazaba. El que entregó tres archivos y quería agregar el cuarto perdía los
+tres; el que quería sacar **uno solo** no tenía cómo. **751 entregas (40,6%) tienen dos o más
+archivos**, con un máximo de 19.
+
+**Lo que hay ahora.** La entrega se puede editar mientras **nadie la haya corregido y el plazo
+no haya vencido**. El alumno agrega archivos sin perder los que tenía, saca los que no quiere y
+edita su comentario; el botón dice *Guardar cambios* y el `confirm` de *"¿reemplazar tu entrega
+anterior?"* se fue con el reemplazo. La **X de un archivo ya entregado no borra nada en el
+acto**: lo tacha, avisa *"se elimina al guardar"* y ofrece **Deshacer** — si borrara al
+instante, un clic al pasar destruiría el archivo sin vuelta atrás, que es justo el problema que
+esta feature vino a resolver. Y hay un botón aparte para **retirar la entrega** entera, con su
+confirmación: quedarse sin entrega no puede ser el residuo de haber sacado el último archivo
+(guardar una entrega vacía da 400 y manda ahí).
+
+**Corregida = la NOTA, y solo la nota** (ver la entrada de abajo, del mismo día). La
+**autocalificación** de las actividades interactivas (`manual: false`) **no** es corrección del
+docente: si lo fuera, el cuestionario quedaría cerrado en el instante en que el alumno lo
+responde.
+
+**El checkbox del docente sigue existiendo**, con la misma etiqueta, pero ahora **nace
+marcado**: lo destilda para congelar una evaluación. Y aunque esté marcado, corregida o vencida
+cierran igual — el flag abre la puerta, no la mantiene abierta.
+
+**La regla, en un solo archivo.** `public/js/edicionEntrega.js`, cuarta hermana de
+`visibilidadActividad.js`, `estadoActividad.js` y `pendienteActividad.js`. Estaba escrita a
+mano en **cinco lugares** (tres rutas del servidor y dos pantallas), y una de las tres corría
+**después de multer**: quien no podía entregar igual alcanzaba a empujar 20 MB al disco antes de
+leer el 403. Ahora las tres pasan por `exigirAlumnoQuePuedeEntregar`, antes de multer.
+
+**Migración**: `migrate-permitir-edicion.js` (con `--dry-run`) enciende el flag en las
+actividades ya cargadas **cuya entrega sigue abierta**: 133 de las 595 sin flag. A las vencidas
+con las tardías cerradas no las toca — la regla las cierra igual por fecha, y escribirles el
+flag solo les movería el `updatedAt` a todas el mismo día. Efecto medido: **180 entregas pasan
+a ser editables**.
+
+> ⚠️ **Requiere correr la migración en producción** después del deploy. Sin ella, lo ya
+> cargado sigue congelado; con ella, nada se abre que no deba (la regla evita corregida y
+> vencida por su cuenta).
+
+Tests: `tests/unit/edicionEntrega.test.js` (la matriz de la regla + el cableado + el barrido
+que impide que vuelva a haber una condición escrita a mano) y dos specs de smoke,
+`edicion-de-la-entrega` (agregar, sacar, `keepFiles` ajeno, ausente ≠ vacío, el 400, la nota
+que cierra, la reapertura, retirar) y `edicion-congelada-por-el-docente`.
+Verificado además en el navegador con una entrega real de tres fotos.
+
+### 2026-09-04 (más tarde) — Corregir no puede trabar al alumno: la devolución deja de cerrar, y el docente puede reabrir
+
+Reporte del usuario, el mismo día: *"pero ahora como tengo que corregir, arreglar esto"*.
+
+**Era un error de diseño de la entrada de arriba.** La regla cerraba la edición con la
+**devolución escrita sin nota**, y en la práctica del aula esa devolución es justamente **el
+pedido de rehacer**: *"te faltó el punto 3, rehacelo y te subo la nota"*. O sea que el sistema
+le cerraba al alumno exactamente la puerta que el docente le estaba abriendo. Y si el docente
+ya había puesto nota, no había ninguna forma de devolverle la posibilidad.
+
+**Dos cambios:**
+
+**1. Corregida = la NOTA, y solo la nota.** Si falta la nota, la corrección no terminó y la
+entrega queda abierta, tenga o no comentario del docente. (Los 6 casos de devolución sin nota
+que había en la base pasan a ser editables, que es lo que corresponde.)
+
+**2. `Permitir que lo rehaga`**, un botón en la fila del alumno dentro de la tabla de notas.
+Marca `submission.reopenedAt` y **le gana a los tres motivos de bloqueo**: la nota puesta, el
+plazo vencido y el check destildado. Es una autorización explícita, sobre *ese* alumno y
+posterior a todo lo demás: si el docente apretó el botón y el plazo se lo impidiera, el sistema
+le estaría contestando que no a algo que acaba de decir que sí.
+
+**Se apaga sola cuando el docente le vuelve a poner NOTA** —rehizo, lo corregí de nuevo, se
+cerró— o a mano con el mismo botón, que pasa a decir *"Puede rehacerla · cerrar"*. Sin eso, la
+primera reapertura le dejaría la puerta abierta para siempre. Mandar solo devolución **no** la
+cierra, por el cambio 1.
+
+El alumno ve un aviso —*"El docente te habilitó a rehacer esta entrega"*— porque si no, no
+tiene forma de enterarse de que la puerta se volvió a abrir.
+
+Ruta nueva: `POST /activities/:id/reopen-submission` (`{ studentId, reabrir? }`), permiso de
+`course.canManage`, auditada como `submission.reopen`. **No** pasa por
+`exigirAlumnoQuePuedeEntregar`, y no es un olvido: esa guarda contesta 403 justamente en el
+estado en el que esta ruta hace falta.
+
+De paso, una variable nueva de tema: **`--verde-texto`** (`#137333` claro / `#5bb974` oscuro).
+`--secondary` da **3,06:1** sobre la tarjeta clara, así que sirve de fondo o de ícono pero no
+de texto de 11px; y ningún verde único llega a 4,5:1 en los dos temas — es la misma
+restricción aritmética de los grises. El test **calcula** los dos ratios.
+
+### 2026-08-31 — Restablecer contraseña: el cartel ahora da la contraseña, y la ficha avisa de las cuentas mellizas
+
+Reporte del usuario: *"como superadmin, si quiero resetear una contraseña, no puedo; sin embargo
+como administrador puedo hacerlo"* — en concreto, le restableció la contraseña a un docente,
+intentó entrar con sus credenciales y no pudo; repitió la operación como administrador y ahí sí.
+
+**Lo primero, porque es lo que más confunde: el permiso no era el problema.** Se verificó de punta
+a punta —sesión real de superadministrador en el navegador— que `POST /admin/users/:id/reset-password`
+contesta 200 para el superadmin, que la ficha `/admin/users/:id` le abre igual (`requireAdmin`
+acepta los dos roles y con `school: null` el chequeo de escuela ni se evalúa), y que con la
+contraseña resultante el docente entra. Ninguna de las actualizaciones de esta semana toca esa
+ruta. **La única asimetría real entre los dos roles es la protección de la cuenta dueña**
+(`waltermedinilla@gmail.com` y cualquier `superadmin` no se pueden restablecer), y ésa rige
+igual para los dos.
+
+Lo que se arregló son las dos cosas que hacen que una contraseña restablecida "no ande":
+
+**1. El cartel de éxito decía cómo se llamaba la contraseña, no cuál era.** Devolvía
+`hint: 'DNI del usuario'`, así que había que ir a buscar el número tres párrafos más arriba en la
+ficha y re-tipearlo a mano. Ahora la respuesta trae la contraseña literal y el cartel muestra
+**el correo y la contraseña juntos**, que son los dos datos que hay que dictar. La auditoría
+sigue guardando el *origen* (`DNI` | `default`) y nunca el valor.
+
+**2. Hay 60 DNIs con DOS cuentas en la misma escuela** (medido sobre el espejo de producción). La
+carga por padrón y el alta manual dejan dos fichas de la misma persona: una con el correo
+institucional y otra con el personal. Es la trampa exacta de esta pantalla — se restablece la
+contraseña de una ficha y se intenta entrar con el correo de la otra, las dos pantallas contestan
+que salió todo bien, y no se entra. La ficha ahora avisa, pegado al correo, con el enlace a la
+otra cuenta.
+
+**El hallazgo de fondo, que queda pendiente**: el índice único `{ school, dni }` que declara
+`models/User.js` **no existe en la base**. Los índices se crean solos al arrancar (el nuevo
+`{school, emailVerifiedAt}` está), pero éste no puede construirse mientras esos 60 duplicados
+existan, y el error se pierde sin que nadie lo vea. Es decir: la regla "un DNI por escuela" está
+escrita pero no la hace cumplir nadie más que el chequeo de la ruta de alta. Fusionar los 60 y
+crear el índice es trabajo aparte (hay herramienta: `services/dbFixes.js`, diagnóstico
+`dni-duplicado-en-curso`).
+
+De paso, `.warning-banner` tenía el fondo fijado en hex (`#fef7e0`) y **ningún color de texto
+declarado**: en modo oscuro heredaba el texto claro del tema y quedaba en ~1,3:1 (ilegible). Ahora
+declara `#6b4e00` (7,2:1). Afecta también a las 3 pantallas que ya lo usaban (importar, dashboard).
+
+**Tests**: dos specs nuevos en `tests/smoke/specs.js` —
+`reset-password-devuelve-una-contrasena-que-sirve` (el superadmin restablece y con lo que le
+devuelven **se entra**, que es el paso que nadie ataba) y
+`ficha-avisa-cuando-hay-otra-cuenta-con-el-mismo-dni`.
+
+### 2026-08-31 — Verificación de correo y celular: la plataforma aprendió a mandar mensajes
+
+Pedido del usuario: *"un validador de correo electrónico y de celular, típico que te envían un
+correo y hacés click a un enlace o te envían un código, que sea opcional, y lo mismo para el
+celular… que funcione y también marque a los usuarios si está validada o no."*
+
+Spec completa en `specs/verificacion-de-contacto.spec.md`. **El correo queda completo; el celular
+queda preparado con el proveedor en `off`.** Módulo opcional `verificacion`, apagado por escuela
+hasta que el superadmin lo prenda.
+
+**El punto de partida**: hasta hoy la plataforma **no sabía mandar nada hacia afuera** — no había
+`nodemailer`, ni SMTP, ni proveedor de SMS. Y `email` (que es la llave de entrada: se inicia
+sesión con él) solo estaba validado por un regex de 4 caracteres. Un correo mal tipeado en la
+importación de Excel es una cuenta que su dueño no puede usar.
+
+**Dónde se ve**: en **Mi perfil**, que es la misma pantalla para el alumno, el docente y
+cualquier rol. Botón "Verificar", campo de 6 dígitos y cuenta regresiva de 60 s en el reenvío. El
+chip de estado va además en 8 pantallas más (listados de admin y superadmin, fichas del
+directivo y del preceptor), con filtro "sin verificar" en `/admin/users`.
+
+**Lo que no es obvio:**
+
+- **El mail lleva enlace Y código**, porque cada uno falla en un lugar distinto: el enlace se abre
+  en el celular mientras la sesión está en la netbook del aula, y el código sirve cuando el
+  webmail corta la URL.
+- **El GET del enlace NO verifica: muestra un botón, y el POST confirma.** Los antivirus de los
+  servidores de correo hacen GET a todas las URLs que ven; si el GET verificara, el enlace
+  llegaría quemado y el usuario vería "este enlace ya se usó" sin haber tocado nada.
+- **La verificación asistida** (el preceptor confirma desde la ficha el número que ya conoce)
+  cubre el canal del celular **sin costo**, y es lo que permite arrancar con el SMS apagado. En
+  Argentina el SMS se paga y muchos alumnos de 1° y 2° no tienen celular propio. Queda firmada:
+  el chip dice *"Verificado por la escuela"*, no *"Verificado"* a secas.
+- **La regla de oro**: toda escritura de `email`/`phone` borra su verificación. No se cumple
+  acordándose — son `setEmail()`/`setPhone()`/`camposDeContacto()` en el modelo más
+  `tests/unit/verificacionRegla.test.js`, que barre `routes/` y `services/` y falla ante
+  cualquier asignación directa. **Eran 4 lugares y no 6**, y uno no estaba en la spec: la fusión
+  de DNI duplicados (`services/dbFixes.js`) **intercambia correos entre dos cuentas**.
+- **E.164 argentino** (`services/telefonoAR.js`): el `15` del marcado local y el `9` del
+  internacional se pisan, así que `+54 261 15 555-1234` está mal de dos formas a la vez y es lo
+  que la gente escribe. `phone` no se toca; al lado va `phoneE164`, y **si no se puede
+  normalizar no se manda nada**.
+- **`APP_URL` es nueva y hacía falta**: el proyecto no tenía ninguna config con su propia URL
+  pública. No se deriva de `req.headers.host` — ese header lo controla el cliente y convertiría
+  el mail en un phishing firmado por la escuela.
+
+**Trampa nueva, que no estaba anticipada**: un `.select()` que no traiga los campos nuevos hace
+que el chip diga "Sin verificar" **para todo el mundo**, sin dar ningún error. Se resolvió con la
+constante `CAMPOS_SELECT` y se aplicó en las tres fichas que lo necesitaban.
+
+Archivos nuevos: `services/telefonoAR.js`, `services/verificacionContacto.js`,
+`services/canales/` (smtp · whatsapp · twilio · log), `models/ContactVerification.js`,
+`config/verificacion.js`, `routes/verificacion.js`, `public/js/estadoVerificacion.js`,
+`views/verificacion/resultado.ejs`, `views/partials/chip-verificado.ejs`,
+`tools/probar-canal.js`, `migrate-phone-e164.js`. Única dependencia nueva: `nodemailer`.
+
+Tests: **122 unitarios nuevos** (`telefonoAR`, `estadoVerificacion`, `verificacionRegla`) + 3
+specs de smoke. `ContactVerification` va en `EXCLUIDAS_DEL_BACKUP` a propósito — son tokens con
+TTL de 24 h; lo que hay que conservar son cinco campos de `User`, que viajan en `users`.
+
+**Para encenderlo**: `VERIF_EMAIL_PROVEEDOR=smtp` + las 5 variables de SMTP en el `.env`,
+`node tools/probar-canal.js --email <dirección>` para comprobar, `node migrate-phone-e164.js
+--dry-run` y después sin `--dry-run`, y prender el módulo en `/superadmin/schools`.
 
 ### 2026-08-31 — La actividad vencida dejaba al alumno sin el material de la clase
 
@@ -4975,8 +5223,175 @@ verde: **735 unitarios · 386 smoke · matriz de roles sin hallazgos**.
   "qué hay hoy en la sala" de un vistazo.
 
 ### Funcionalidades faltantes — mayor complejidad
-- Notificaciones (in-app / email / push).
+- Notificaciones (in-app / email / push). **Precondición ya especificada**: la plataforma no
+  sabe mandar nada hacia afuera (no hay `nodemailer`, SMTP ni proveedor de SMS/WhatsApp en
+  `package.json`). El caño de salida lo instala `specs/verificacion-de-contacto.spec.md` — ver
+  el renglón de abajo.
 - Preview de temas para el admin antes de aceptarlos.
+
+### Verificación de correo y celular — ✅ IMPLEMENTADA el 2026-08-31
+
+`specs/verificacion-de-contacto.spec.md`. Ver el changelog. **El correo está completo; el celular
+queda preparado con el proveedor en `off`.** Lo que falta es de configuración, no de código:
+
+1. Elegir proveedor de correo y cargar `VERIF_EMAIL_PROVEEDOR` + las 5 variables de SMTP.
+   Comprobar con `node tools/probar-canal.js --email <dirección>`.
+2. Correr `node migrate-phone-e164.js --dry-run` y después sin `--dry-run` (backfill de los
+   celulares ya cargados; sin eso nadie ve el botón de verificar su celular).
+3. Prender el módulo `verificacion` por escuela en `/superadmin/schools`.
+4. Decidir si se enciende un proveedor de celular (WhatsApp Cloud o Twilio, los dos escritos y
+   apagados) o si alcanza con la verificación asistida, que no cuesta nada.
+
+Lo que quedó **fuera de alcance a propósito** y ahora es posible: recuperación de contraseña por
+correo (encima de esto, exigiendo `emailVerifiedAt`), notificaciones y login por enlace mágico.
+
+Qué resuelve: hoy `User.email` y `User.phone` solo se validan de forma (un regex de 4 caracteres
+y `sanitizePhone()`), y **el correo es la llave de entrada al sistema**. Un correo mal tipeado en
+la importación de Excel es una cuenta que su dueño no puede usar; `contact-info.ejs` ya arma
+enlaces `tel:` y `wa.me/` con lo que haya guardado.
+
+Las tres ideas que no son obvias:
+
+- **"Opcional" son dos ejes**, y los dos tienen que ser ciertos: módulo por escuela
+  (`config/modulos.js`, fail-closed) **y** nunca una puerta para la persona — prohibido cualquier
+  middleware que consulte `emailVerifiedAt` para dejar pasar.
+- **La verificación asistida** (el preceptor confirma el número que ya conoce, y queda firmado en
+  `AuditLog`) cubre el canal del celular **sin costo**, que es lo que permite arrancar con el
+  proveedor de SMS en `off`. En Argentina el SMS se paga y muchos alumnos de 1° y 2° no tienen
+  celular propio: el número que figura es el de la madre.
+- **La regla de oro**: toda escritura de `email`/`phone` borra su verificación, en los 6 lugares
+  que hoy los escriben. El remedio no es acordarse — son métodos del modelo más un test estático
+  que falla ante cualquier `.email =` suelto en `routes/`.
+
+Trampas ya detectadas y anotadas en la spec: **no existe hoy ninguna config con la URL pública**
+del servidor (y derivarla de `req.headers.host` convierte el mail en un phishing firmado por la
+escuela), la normalización a E.164 tiene que lidiar con el `15` y el `9` argentinos que se pisan,
+y `ContactVerification` va a hacer fallar `backupCobertura.test.js` hasta que se decida su lugar
+(propuesta: `EXCLUIDAS_DEL_BACKUP`, son tokens con TTL de 24 h).
+
+Deja el camino abierto —pero **fuera de alcance**— para recuperación de contraseña por correo,
+notificaciones y login por enlace mágico.
+
+### Transmisión en vivo del docente — IMPLEMENTADA (Fase 1) el 2026-08-31, desplegada APAGADA
+
+`specs/transmision-en-vivo.spec.md`. Pedido del usuario: "algo muy similar a cómo transmite
+Google Meet", para el rol docente, dentro de la sala en vivo, cuidando el ancho de banda.
+
+**Se despliega APAGADA para todas las escuelas.** El usuario la aprobó pidiendo poder
+habilitarla "por escuela o por docente", y de ahí sale la pieza que se construyó primero: el
+**módulo de DOS EJES**. `config/modulos.js` gana un campo `alcance`; `escuela` es lo de siempre
+(`recursos`) y `escuela+persona` es el nuevo. `School.modules.transmision` guarda `enabled`
+(la escuela), `alcance` (`'todos'` o `'lista'`) y `personas` (los docentes). Se edita en
+/superadmin/schools → editar escuela.
+
+⭐ **La sutileza de ese eje, que si se invierte deja la feature al revés**: la pregunta "¿está
+habilitado?" se le hace a QUIEN EMITE, nunca a quien mira. Si se le hiciera al que mira, cada
+alumno tendría que estar en la lista para poder ver a su profesora. `moduloActivoPara()` lo
+tiene escrito en un comentario largo, y hay un test que lo fija.
+
+Qué resuelve: la sala ya tiene todo lo que **rodea** a una clase (presencia, chat, moderación,
+asistencia) y le falta la clase. Hoy la docente se va a Meet y ahí se pierde todo lo demás.
+
+Las cinco cosas que no son obvias:
+
+- **Es una transmisión, no una videollamada** (D1). Meet es una grilla: 30 publican y 30 reciben
+  29 flujos = **870 flujos por aula**. Acá emite uno y reciben N. Esa sola decisión divide el
+  problema por 30, y encima es la forma real de una clase.
+- **El cuello es el puerto (Mbit/s), NO el cupo mensual (TB).** Un aula de 30 a 720p son
+  76 Mbit/s: tres clases saturan el VPS y **lo que se cae es la plataforma entera**, incluido
+  quien está entregando en otra aula. El cupo de 32 TB nunca se toca (un mes completo a 360p da
+  ~8,2 TB).
+- **La escuela entera entra, en 180p**: los ~450 alumnos mirando a la vez son 71 Mbit/s, el 44 %
+  del presupuesto. El único techo real es el de la **calidad** (360p aguanta hasta ~222
+  espectadores simultáneos). Por eso el gobernador raciona **ancho de banda y no cantidad de
+  aulas**: un tope de clases contadas a mano habría rechazado la clase 13 con el 65 % del puerto
+  libre.
+- ⚠️ **La trampa de PM2, que hay que ver antes de escribir una línea** (D2): la app corre en
+  **cluster con 2 workers** y un router de mediasoup vive en la memoria de UN proceso. Si la
+  señalización cae en el worker A y el router está en el B, no hay clase — y fallaría **la mitad
+  de las veces, al azar**. El SFU va en un tercer proceso, fork, instancia única.
+- **El alumno no publica hasta que se le da la palabra** (D7), y la palabra es audio. Por ancho
+  de banda, sí, pero sobre todo porque son menores: es la misma decisión ya tomada con el chat,
+  con las fotos y con los adjuntos fuera de `/public`.
+
+Trampas de despliegue ya medidas en el VPS: **no hay gcc/g++/make/meson/ninja** (si falla la
+descarga del binario precompilado de mediasoup, el `npm install` del webhook compila y deja el
+Frankenstein de siempre); el `deployCmd` recarga solo la app `classroom` y **no recargaría el
+proceso nuevo**; y `ufw` permite 22/80/443 y nada más — sin el rango UDP abierto, todo conecta,
+el estado dice "transmitiendo" y **no hay audio**, que es el síntoma más difícil de diagnosticar.
+
+**Grabación: fuera de alcance, y no por lo técnico.** Es grabar a menores — necesita
+consentimiento de las familias y política de retención. Además obligaría a sumar esos archivos a
+`CARPETAS` de `routes/backup.js`, que es la deuda que ya quedó abierta con `SALAS_BASE`.
+
+#### Qué se construyó
+
+`media/servidor.js` (el SFU, **PM2 fork instancia única** — ver la trampa de arriba) ·
+`media/sfu.js` · `media/aforo.js` (el gobernador, lógica pura) · `config/transmision.js` ·
+`services/transmision.js` · `services/mediaClient.js` (el puente Express↔SFU, con cache de 3 s y
+que **nunca puede romper la sala**) · `models/Transmision.js` · `public/js/transmision.js` ·
+`views/partials/transmision.ejs` · 7 rutas nuevas en `routes/rooms.js` · el eje de persona en
+`config/modulos.js` + `middleware/modulos.js` + el panel de superadmin.
+
+**57 tests nuevos**, las tres suites verdes (878 unit · 394 humo · roles sin hallazgos).
+
+#### ⭐ El bug que NO daba ningún síntoma (y por qué hay tres defensas)
+
+Escuchando en `0.0.0.0` sin `announcedIp`, mediasoup **anuncia `0.0.0.0`** como dirección del
+candidato ICE, y nadie puede conectarse ahí. Lo grave es cómo se ve: señalización perfecta,
+transporte creado, productor creado, simulcast reportando sus capas, la app diciendo
+"transmitiendo"… y **`packetsSent` en 0 para siempre, sin un error en ningún log**. Los 11 tests
+de señalización pasaban con el bug puesto, porque la señalización estaba bien. Se encontró
+probándolo en el navegador.
+
+Tres defensas, porque para algo que no avisa una sola no alcanza: la IP **se detecta sola** (con
+orden de preferencia pública → LAN → Tailscale, porque en la máquina de desarrollo elegía la de
+Tailscale); el proceso **se niega a arrancar** si no puede determinar ninguna; y hay un **test**
+que falla si un candidato vuelve a anunciar `0.0.0.0`.
+
+#### El túnel del WebSocket lo hace Express, no Caddy
+
+Cambio durante la implementación (D13). El plan decía "un bloque en el Caddyfile", pero eso deja
+la feature **imposible de probar en desarrollo** —no hay Caddy— y suma un paso manual de deploy.
+Ahora Express reenvía el `upgrade` de `/rtc` a `127.0.0.1:4100`: el mismo código anda en las dos
+partes. **No reintroduce el problema del cluster**: los dos workers hacen proxy al mismo proceso
+único, y por ahí pasa solo señalización — el audio y el video van por UDP directo y nunca tocan
+Node.
+
+#### Dos bugs más que encontraron los tests mientras se construía
+
+- **Los mensajes del WebSocket se atendían en paralelo.** `hola` es asincrónico (crea el router),
+  así que un cliente que mandara `hola` y `crearTransporte` seguidos —lo normal, van en el mismo
+  tick— se comía un "falta el saludo" siendo perfectamente correcto. Se serializó por conexión
+  con una cadena de promesas.
+- **Un `capaCambiada` espurio en el primer ingreso**: la primera asignación de capa no es un
+  cambio, y avisarla mostraba "cambió tu calidad" a todo el que entraba.
+
+Y dos guards de la casa que atajaron lo suyo: `iconos.test.js` (tres veces — los iconos nuevos
+hay que sumarlos con `npm run iconos:actualizar` o se ven como texto en inglés) y
+`backupCobertura.test.js`, que atajó que Mongoose pluraliza `Transmision` como **`transmisions`**
+y no `transmisiones`: escribirlo "bien" habría hecho que el backup guardara una colección vacía.
+
+#### ✅ El media se verificó de punta a punta
+
+Con un `<canvas>` animado como fuente (un `MediaStreamTrack` real, sin necesidad de cámara):
+transporte `connecting → connected`, simulcast de 2 capas, **357 paquetes y 103 KB en 4
+segundos**. Y con una segunda conexión como receptor: los dos transportes `connected`, **cuadros
+decodificados** y el `<video>` con **640×360** reales. O sea, navegador → SFU → navegador.
+
+#### ⚠️ Lo que sigue sin probarse
+
+**Nadie miró todavía una clase real.** Falta juzgar calidad, eco, latencia percibida y el audio,
+que en la prueba sintética no se ejercitó. Y la Fase 0 de la spec (medir el puerto real con
+carga) sigue pendiente y sigue sin ser opcional. La Fase 2 (dar la palabra desde la interfaz)
+tiene el backend y las reglas hechas.
+
+#### ⚠️ Pasos de despliegue que no están en el código
+
+Quedaron **tres**, no cuatro: `ufw allow 40000:40199/udp` + `3478/tcp` (hoy solo pasan
+22/80/443, y sin esto **hay señalización y no hay audio**) · `pm2 start ecosystem.config.js` para
+levantar `classroom-media` · y sumarlo al `deployCmd` de `server.js`, recordando que ese arreglo
+**no se aplica a su propio deploy**. El bloque de Caddy ya no hace falta (D13).
 
 ### Pendientes del SOE (v2) — decididos fuera de alcance el 2026-08-18
 - **Adjuntos en el legajo** (informes escaneados, certificados). Bloqueado por una razón

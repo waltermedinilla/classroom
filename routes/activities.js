@@ -41,6 +41,10 @@ const {
 // Regla única de "¿esto todavía le cuenta como tarea pendiente?": la sin fecha de entrega y
 // la vencida con las tardías abiertas caducan solas. Ver specs/pendientes-vencidos.spec.md.
 const { sigueSiendoPendiente, porUrgencia } = require('../public/js/pendienteActividad');
+// Regla única de "¿el alumno puede todavía tocar su entrega?" (corregida / vencida / el
+// check del docente). La comparten las tres rutas de entrega de acá abajo, el DELETE que
+// la retira y las dos pantallas del alumno. Ver specs/edicion-de-la-entrega.spec.md.
+const { puedeEditar: puedeEditarEntrega } = require('../public/js/edicionEntrega');
 // Regla compartida con el navegador sobre los adjuntos: qué es una imagen y qué URL puede
 // guardarse como adjunto. Ver public/js/adjuntosActividad.js y specs/actividad-imagenes.spec.md.
 const { esUrlDeAdjunto } = require('../public/js/adjuntosActividad');
@@ -300,7 +304,13 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
         const myGrade = act.grades.find(g => g.student.toString() === userId);
         // points puede venir null: es una devolución escrita sin nota. El front la muestra
         // como "Con devolución" (no como calificada) — ver renderStudentActivity en course.js.
-        obj.myGrade = myGrade ? { points: myGrade.points ?? null, feedback: myGrade.feedback || '' } : null;
+        // `manual` viaja porque public/js/edicionEntrega.js lo necesita para NO tomar una
+        // autocalificación como corrección del docente: sin él, el alumno vería cerrado el
+        // cuestionario que acaba de responder (el servidor decidiría bien igual, pero la
+        // pantalla le mostraría un cartel que no corresponde).
+        obj.myGrade = myGrade
+          ? { points: myGrade.points ?? null, feedback: myGrade.feedback || '', manual: myGrade.manual !== false }
+          : null;
         // Su propia entrega: { at } o null. Nunca los archivos ni el texto — para eso está
         // GET /activities/:id/my-submission, que es lo que abre el modal de detalle.
         const entregadaEl = entregaPorActividad[obj._id.toString()];
@@ -464,7 +474,10 @@ router.post('/create', requireAuth, uploadLimiter, subirAdjuntosDeActividad, asy
       availableFrom: availableFrom || new Date(), // Por defecto: disponible de inmediato
       points:        resolvedPoints,
       type:          type || 'tarea',
-      allowResubmission: !!allowResubmission,
+      // Ausente ≠ destildado. Un `!!undefined` acá le pasaría por encima al default true del
+      // modelo y cada actividad creada por un cliente que no manda el campo nacería
+      // congelada — que es exactamente el problema que esta feature vino a sacar.
+      allowResubmission: allowResubmission === undefined ? true : !!allowResubmission,
       attachments,
       ...(templateSnapshot ? { templateSnapshot } : {}),
     });
@@ -765,6 +778,17 @@ router.post('/:id/grade', requireAuth, async (req, res) => {
 
     await activity.save();
 
+    // Poner nota CIERRA una entrega que estuviera reabierta: rehizo, la corregí de nuevo,
+    // se cierra. Sin esto, la primera vez que el docente aprieta "Permitir que lo rehaga" le
+    // dejaría la puerta abierta para siempre. Solo con NOTA: una devolución escrita no
+    // cierra nada (ver esCorregida en public/js/edicionEntrega.js).
+    if (mandaNota) {
+      await Submission.updateOne(
+        { activity: req.params.id, student: studentId },
+        { $set: { reopenedAt: null, reopenedBy: null } },
+      );
+    }
+
     // Snapshot del alumno calificado (nombre para el log). Query minimal, solo name.
     const student = await User.findById(studentId).select('name').lean();
     logAudit(req, 'submission.grade',
@@ -784,6 +808,62 @@ router.post('/:id/grade', requireAuth, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ error: e.message });
+  }
+});
+
+// POST /activities/:id/reopen-submission
+// El docente habilita a UN alumno a rehacer su entrega. Body: { studentId, reabrir? }
+//
+// Es la salida para los dos casos que la regla sola no cubre:
+//   · el docente que ya puso nota y quiere que el alumno rehaga el trabajo igual;
+//   · el docente que corrigió por error y necesita devolverle la posibilidad.
+//
+// NO pasa por exigirAlumnoQuePuedeEntregar, y no es un olvido: esa guarda contesta 403
+// justamente en el estado en el que esta ruta hace falta. Acá el permiso es el del docente
+// que gestiona la materia.
+//
+// La reapertura le gana a la nota, al plazo vencido y al check destildado (ver
+// public/js/edicionEntrega.js); se apaga sola cuando el docente vuelve a poner nota, o a
+// mano mandando `reabrir: false`.
+router.post('/:id/reopen-submission', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Actividad no encontrada', { como: 'json' })) return;
+  try {
+    const { studentId } = req.body;
+    const reabrir = req.body.reabrir !== false; // por omisión, reabre
+
+    const activity = await Activity.findById(req.params.id);
+    if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
+
+    const course = await Course.findById(activity.course);
+    if (!course || !course.canManage(res.locals.user)) {
+      return res.status(403).json({ error: 'Sin acceso' });
+    }
+
+    const submission = await Submission.findOne({ activity: req.params.id, student: studentId });
+    // Sin entrega no hay nada que reabrir: al que no entregó lo habilita el plazo (y las
+    // entregas tardías), no esto.
+    if (!submission) {
+      return res.status(404).json({ error: 'Ese alumno todavía no entregó nada' });
+    }
+
+    submission.reopenedAt = reabrir ? new Date() : null;
+    submission.reopenedBy = reabrir ? res.locals.user._id : null;
+    await submission.save();
+
+    const student = await User.findById(studentId).select('name').lean();
+    logAudit(req, 'submission.reopen',
+      [
+        { type: 'activity', id: activity._id, name: activity.title },
+        { type: 'user',     id: studentId,    name: student?.name || '' },
+        { type: 'course',   id: course._id,   name: course.name },
+      ],
+      { accion: reabrir ? 'habilitó a rehacer' : 'volvió a cerrar' },
+    );
+
+    res.json({ ok: true, reopenedAt: submission.reopenedAt });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error al habilitar la edición' });
   }
 });
 
@@ -944,7 +1024,9 @@ router.put('/:id', requireAuth, async (req, res) => {
     activity.availableFrom = availableFrom || activity.availableFrom;
     activity.points        = points !== '' && points != null ? Number(points) : null;
     if (type) activity.type = type;
-    activity.allowResubmission = !!allowResubmission;
+    // Ausente = no se toca (mismo criterio que en la creación): editar el título desde un
+    // cliente que no manda el check no puede congelarle la entrega a nadie.
+    if (allowResubmission !== undefined) activity.allowResubmission = !!allowResubmission;
     await activity.save();
 
     logAudit(req, 'activity.edit',
@@ -1028,11 +1110,17 @@ router.get('/:id/staged-file/:filename', requireAuth, async (req, res) => {
   }
 });
 
-// Guard del alumno que va a entregar: existe la actividad, está inscripto, el plazo sigue
-// abierto y no tiene una entrega cerrada. Es exactamente lo que ya chequeaba a mano
-// /upload-submission-file, pero acá va ANTES de multer y esa es toda la gracia: multer recibe
-// el cuerpo ENTERO antes de que el handler corra, así que con el chequeo tardío alguien que
-// no puede entregar igual alcanza a empujar 20 MB. Misma regla que `exigirGestorDelCurso`.
+// Guard del alumno que va a entregar: existe la actividad, está inscripto, la ve, y su
+// entrega sigue abierta. La ÚNICA guarda de entrega del archivo: la usan las dos rutas de
+// subida, el submit y el DELETE que retira.
+//
+// Va ANTES de multer y esa es toda la gracia: multer recibe el cuerpo ENTERO antes de que
+// el handler corra, así que con el chequeo tardío alguien que no puede entregar igual
+// alcanza a empujar 20 MB al disco. `/upload-submission-file` lo hacía tarde justamente por
+// eso — tenía la condición copiada a mano en su propio handler.
+//
+// Lo que consulta queda en `req.entrega` para que el handler no lo vuelva a buscar: son tres
+// queries (actividad, curso, entrega) que el submit necesita igual.
 async function exigirAlumnoQuePuedeEntregar(req, res, next) {
   if (idMalo(req, res, 'Actividad no encontrada', { como: 'json' })) return;
   try {
@@ -1044,13 +1132,34 @@ async function exigirAlumnoQuePuedeEntregar(req, res, next) {
     if (!course || !course.students.map(s => s.toString()).includes(userId)) {
       return res.status(403).json({ error: 'No estás inscripto en este curso' });
     }
-    if (activity.dueDate && new Date(activity.dueDate) < new Date() && !activity.allowLateSubmissions) {
-      return res.status(403).json({ error: 'El plazo de entrega ha vencido. El docente debe habilitar las entregas tardías.' });
+
+    // Bloquea la entrega a una actividad que el alumno no debería estar viendo (programada
+    // para más adelante, u ocultada con el ojo). Por la interfaz no llega —el listado se las
+    // filtra—, pero sí por un link directo guardado de antes de que la bajaran.
+    if (!esVisibleParaAlumno(activity, new Date())) {
+      return res.status(403).json({ error: 'Esta actividad todavía no está disponible.' });
     }
-    const yaEntregada = await Submission.findOne({ activity: req.params.id, student: userId });
-    if (yaEntregada && !activity.allowResubmission) {
-      return res.status(403).json({ error: 'Esta actividad no permite modificar la entrega una vez enviada.' });
+
+    const submission = await Submission.findOne({ activity: req.params.id, student: userId });
+    // El motivo y su texto salen del módulo: el cartel que ve el alumno en la pantalla y
+    // este 403 dicen lo mismo porque SON lo mismo.
+    const veredicto = puedeEditarEntrega({
+      act:        activity,
+      grade:      activity.grades.find(g => g.student.toString() === userId) || null,
+      hayEntrega: !!submission,
+      reabierta:  !!submission?.reopenedAt,
+      ahora:      new Date(),
+    });
+    if (!veredicto.puede) {
+      // El plazo vencido conserva su mensaje histórico, que dice qué puede hacer el docente
+      // para reabrirlo; los otros dos motivos son nuevos y traen el suyo.
+      const error = veredicto.motivo === 'vencida'
+        ? 'El plazo de entrega ha vencido. El docente debe habilitar las entregas tardías.'
+        : veredicto.texto;
+      return res.status(403).json({ error, motivo: veredicto.motivo });
     }
+
+    req.entrega = { activity, course, submission, userId };
     next();
   } catch (err) {
     logDeRuta(err, res);
@@ -1122,12 +1231,12 @@ router.post('/:id/upload-submission-image', requireAuth, uploadLimiter,
 // en el JSON del submit final (ver POST /:id/submit).
 // Body multipart: { file }
 // Retorna: { storagePath, name, filename, mime, size }
-router.post('/:id/upload-submission-file', requireAuth, (req, res, next) => {
-  // La guarda va ANTES de multer a propósito: si el id no puede existir, no tiene sentido
-  // escribir el archivo en disco para después contestar 404 y dejarlo huérfano.
-  if (idMalo(req, res, 'Actividad no encontrada')) return;
-  next();
-}, uploadLimiter, (req, res, next) => {
+// La guarda va ANTES de multer a propósito, y desde el 2026-09-04 es la MISMA que usa la
+// ruta de imágenes: antes esta ruta repetía los chequeos a mano en su handler, o sea DESPUÉS
+// de que multer escribiera el archivo — quien no podía entregar igual empujaba sus 20 MB al
+// disco antes de leer el 403.
+router.post('/:id/upload-submission-file', requireAuth, uploadLimiter,
+  exigirAlumnoQuePuedeEntregar, (req, res, next) => {
   // Intercepta errores de multer para devolver JSON en español, como en /upload-attachment
   submissionUpload.single('file')(req, res, (err) => {
     if (err) {
@@ -1150,29 +1259,8 @@ router.post('/:id/upload-submission-file', requireAuth, (req, res, next) => {
       });
     }
 
-    const activity = await Activity.findById(req.params.id);
-    if (!activity) { fs.unlinkSync(req.file.path); return res.status(404).json({ error: 'Actividad no encontrada' }); }
-
-    const course = await Course.findById(activity.course);
-    const userId = res.locals.user._id.toString();
-
-    // Solo alumnos inscriptos: mismo chequeo que /submit
-    if (!course.students.map(s => s.toString()).includes(userId)) {
-      fs.unlinkSync(req.file.path);
-      return res.status(403).json({ error: 'No estás inscripto en este curso' });
-    }
-    // Bloquea si el plazo venció y no hay entregas tardías habilitadas
-    if (activity.dueDate && new Date(activity.dueDate) < new Date() && !activity.allowLateSubmissions) {
-      fs.unlinkSync(req.file.path);
-      return res.status(403).json({ error: 'El plazo de entrega ha vencido. El docente debe habilitar las entregas tardías.' });
-    }
-    // Bloquea si ya entregó antes y el docente no habilitó la edición
-    const existingSub = await Submission.findOne({ activity: req.params.id, student: userId });
-    if (existingSub && !activity.allowResubmission) {
-      fs.unlinkSync(req.file.path);
-      return res.status(403).json({ error: 'Esta actividad no permite modificar la entrega una vez enviada.' });
-    }
-
+    // Los chequeos de acceso ya corrieron en exigirAlumnoQuePuedeEntregar, antes de multer.
+    const { userId } = req.entrega;
     const schoolId = res.locals.user.school?.toString() || 'general';
     res.json({
       storagePath: [schoolId, req.params.id, userId, req.file.filename].join('/'),
@@ -1214,41 +1302,15 @@ const conditionalMultipart = (req, res, next) => {
   next();
 };
 
-router.post('/:id/submit', requireAuth, uploadLimiter, conditionalMultipart, async (req, res) => {
-  if (idMalo(req, res, 'Actividad no encontrada')) return;
+router.post('/:id/submit', requireAuth, uploadLimiter, exigirAlumnoQuePuedeEntregar,
+  conditionalMultipart, async (req, res) => {
   try {
-    const activity = await Activity.findById(req.params.id);
-    if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
-
-    const course = await Course.findById(activity.course);
-    const userId = res.locals.user._id.toString();
-
-    // Solo alumnos inscriptos en el curso pueden entregar
-    if (!course.students.map(s => s.toString()).includes(userId)) {
-      return res.status(403).json({ error: 'No estás inscripto en este curso' });
-    }
-
-    // Bloquea la entrega a una actividad que el alumno no debería estar viendo (programada
-    // para más adelante, u ocultada con el ojo). Por la interfaz no llega —el listado se las
-    // filtra—, pero sí por un link directo guardado de antes de que la bajaran.
-    if (!esVisibleParaAlumno(activity, new Date())) {
-      return res.status(403).json({ error: 'Esta actividad todavía no está disponible.' });
-    }
-
-    // Bloquea si el plazo venció y el docente no habilitó entregas tardías
-    if (activity.dueDate && new Date(activity.dueDate) < new Date() && !activity.allowLateSubmissions) {
-      return res.status(403).json({ error: 'El plazo de entrega ha vencido. El docente debe habilitar las entregas tardías.' });
-    }
-
-    // Si ya entregó antes y el docente no habilitó la edición, la entrega queda fija:
-    // el alumno solo puede visualizarla, no reenviarla.
-    const existing = await Submission.findOne({ activity: req.params.id, student: userId });
-    if (existing && !activity.allowResubmission) {
-      return res.status(403).json({ error: 'Esta actividad no permite modificar la entrega una vez enviada.' });
-    }
+    // Todo lo que sigue ya lo verificó y lo buscó exigirAlumnoQuePuedeEntregar: que la
+    // actividad exista, que el alumno esté inscripto, que la vea, y que su entrega siga
+    // abierta (no corregida, no vencida, no congelada por el docente).
+    const { activity, course, submission: existing, userId } = req.entrega;
 
     const schoolId = res.locals.user.school?.toString() || 'general';
-    const { text } = req.body;
 
     // Archivos pre-subidos vía /upload-submission-file (flujo nuevo)
     // Se filtran los storagePath para asegurar que apunten al userId del solicitante:
@@ -1278,20 +1340,58 @@ router.post('/:id/submit', requireAuth, uploadLimiter, conditionalMultipart, asy
 
     const newFiles = [...preUploadedFiles, ...multipartFiles];
 
+    // `keepFiles`: los filenames de la entrega anterior que SOBREVIVEN. Es lo que convierte
+    // el reenvío ("reemplazo todo") en una edición ("agrego este, saco aquel"), que es la
+    // mitad del pedido del 2026-09-04 — antes, subir un archivo más borraba del disco los
+    // que ya estaban.
+    //
+    // AUSENTE ≠ VACÍO, y esa diferencia es una red de seguridad, no un detalle: sin el campo
+    // (el flujo multipart viejo y cualquier cliente anterior a esta feature) rige el
+    // comportamiento histórico de abajo; `[]` es una orden explícita de no conservar
+    // ninguno. Si los tratáramos igual, un cliente con un bug que omitiera el campo borraría
+    // la entrega entera contestando 200, sin dejar rastro en ningún log.
+    const keepRaw = typeof req.body.keepFiles === 'string'
+      ? JSON.parse(req.body.keepFiles)
+      : req.body.keepFiles;
+    const mandaKeep = Array.isArray(keepRaw);
+
     let filesToSave;
-    if (newFiles.length > 0) {
-      // Con nuevos archivos: borra los anteriores del disco antes de guardar los nuevos
-      if (existing) {
-        existing.files.forEach(f => {
-          const fp = path.join(ENTREGAS_BASE, f.storagePath);
-          if (fs.existsSync(fp)) fs.unlinkSync(fp);
-        });
-      }
+    if (mandaKeep) {
+      // Los conservados salen de `existing.files`, NO de lo que mandó el cliente: el
+      // navegador elige cuál de los suyos sobrevive, no qué archivo existe. Un filename que
+      // no esté en su propia entrega se ignora en silencio.
+      const keep = new Set(keepRaw.map(String));
+      filesToSave = [...(existing?.files || []).filter(f => keep.has(f.filename)), ...newFiles];
+    } else if (newFiles.length > 0) {
+      // Sin `keepFiles`: comportamiento histórico. Con archivos nuevos, reemplaza todo.
       filesToSave = newFiles;
     } else {
-      // Sin nuevos archivos: mantiene los archivos anteriores (solo cambia el texto)
+      // Sin archivos nuevos: mantiene los anteriores (solo cambia el texto).
       filesToSave = existing?.files || [];
     }
+
+    // La entrega no se vacía por esta ruta. Retirarla es una decisión y tiene su botón, su
+    // confirmación y su ruta (DELETE /:id/submission): quedarse sin entrega no puede ser el
+    // residuo de haber sacado el último archivo. Las interactivas quedan afuera del chequeo
+    // porque su entrega son las respuestas, que no son ni archivo ni texto.
+    const textoFinal = (req.body.text || '').trim();
+    if (filesToSave.length === 0 && !textoFinal && !req.body.answers) {
+      return res.status(400).json({
+        error: existing
+          ? 'Tu entrega quedaría vacía. Si querés sacarla, usá «Retirar entrega».'
+          : 'Adjuntá al menos un archivo o escribí un comentario para entregar.',
+      });
+    }
+
+    // Lo que quedó afuera se borra del disco. Se compara por filename contra la lista final,
+    // así que también cubre el caso viejo (reemplazo total) sin repetir el recorrido.
+    const sobreviven = new Set(filesToSave.map(f => f.filename));
+    (existing?.files || []).forEach(f => {
+      if (sobreviven.has(f.filename)) return;
+      const fp = path.join(ENTREGAS_BASE, f.storagePath);
+      if (fs.existsSync(fp)) fs.unlinkSync(fp);
+    });
+    const borrados = (existing?.files || []).filter(f => !sobreviven.has(f.filename)).length;
 
     // Si la actividad viene de una plantilla interactiva, aceptar respuestas
     // estructuradas y autocalificar server-side. El campo `answers` viaja en el
@@ -1313,7 +1413,7 @@ router.post('/:id/submit', requireAuth, uploadLimiter, conditionalMultipart, asy
     // Upsert: crea la entrega si no existe, la actualiza si ya existe
     // $setOnInsert solo aplica en la creación: preserva la fecha original de la primera entrega
     const submissionUpdate = {
-      $set: { files: filesToSave, text: text?.trim() || '' },
+      $set: { files: filesToSave, text: textoFinal },
       $setOnInsert: { firstSubmittedAt: new Date() },
     };
     if (answersToSave) submissionUpdate.$set.answers = answersToSave;
@@ -1361,6 +1461,9 @@ router.post('/:id/submit', requireAuth, uploadLimiter, conditionalMultipart, asy
       ],
       {
         archivos: filesToSave.length,
+        // Solo si sacó alguno: en una entrega normal el renglón sería siempre "quitados: 0"
+        // y el registro de auditoría se lee peor.
+        ...(borrados ? { quitados: borrados } : {}),
         ...(activity.dueDate ? { tardia: wasLate ? 'sí' : 'no' } : {}),
       },
     );
@@ -1430,6 +1533,43 @@ router.get('/:id/export-grades', requireAuth, async (req, res) => {
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).send('Error al generar el archivo: ' + err.message);
+  }
+});
+
+// DELETE /activities/:id/submission
+// El alumno RETIRA su entrega: borra sus archivos del disco y el documento Submission.
+// La actividad le vuelve a figurar como pendiente.
+//
+// Existe porque el alumno tiene que poder deshacer una entrega equivocada, pero es una
+// decisión y no un residuo: sacar el último archivo desde `/submit` da 400 y manda acá. Por
+// eso vive en su propia ruta, con su confirmación en pantalla y su registro de auditoría.
+//
+// Misma guarda que editar: no se puede retirar una entrega corregida ni vencida. Si el
+// docente ya la miró, retirarla le borraría de abajo lo que acaba de corregir.
+router.delete('/:id/submission', requireAuth, exigirAlumnoQuePuedeEntregar, async (req, res) => {
+  try {
+    const { activity, course, submission } = req.entrega;
+    if (!submission) return res.status(404).json({ error: 'No tenés una entrega para retirar' });
+
+    submission.files.forEach(f => {
+      const fp = path.join(ENTREGAS_BASE, f.storagePath);
+      if (fs.existsSync(fp)) fs.unlinkSync(fp);
+    });
+    const archivos = submission.files.length;
+    await Submission.deleteOne({ _id: submission._id });
+
+    logAudit(req, 'submission.withdraw',
+      [
+        { type: 'activity', id: activity._id, name: activity.title },
+        { type: 'course',   id: course._id,   name: course.name },
+      ],
+      { archivos },
+    );
+
+    res.json({ ok: true, archivos });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error al retirar la entrega' });
   }
 });
 
