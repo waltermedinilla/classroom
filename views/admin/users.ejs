@@ -48,6 +48,20 @@
             <option value="student" <%= currentRole === 'student' ? 'selected' : '' %>>Alumno</option>
           </select>
         </div>
+        <%# Filtro de verificación de contacto. Contesta la pregunta operativa —"¿a quiénes
+            tengo que ir a buscar?"— que en el listado no se puede leer de un vistazo, porque
+            ahí solo se pinta el chip verde. %>
+        <% if (typeof verificacionEnabled !== 'undefined' && verificacionEnabled) { %>
+        <div>
+          <select name="verificacion" class="select-input" onchange="this.form.submit()">
+            <option value="">Verificación: todos</option>
+            <option value="email-sin"   <%= currentVerificacion === 'email-sin'   ? 'selected' : '' %>>Correo sin verificar</option>
+            <option value="email-ok"    <%= currentVerificacion === 'email-ok'    ? 'selected' : '' %>>Correo verificado</option>
+            <option value="celular-sin" <%= currentVerificacion === 'celular-sin' ? 'selected' : '' %>>Celular sin verificar</option>
+            <option value="celular-ok"  <%= currentVerificacion === 'celular-ok'  ? 'selected' : '' %>>Celular verificado</option>
+          </select>
+        </div>
+        <% } %>
         <button type="submit" class="btn btn-outline">Buscar</button>
       </form>
     </div>
@@ -92,7 +106,15 @@
                     </div>
                   </div>
                 </td>
-                <td class="td-email"><%= u.email %></td>
+                <td class="td-email">
+                  <%= u.email %>
+                  <%# Solo el chip VERDE en los listados: 500 chips grises de "sin verificar"
+                      son ruido, y lo que se busca de un vistazo es quién sí. Para ver a los
+                      que faltan está el filtro de arriba. %>
+                  <% if (typeof verificacionEnabled !== "undefined" && verificacionEnabled) { %>
+                    <%- include("../partials/chip-verificado", { person: u, canal: "email", soloVerificado: true }) %>
+                  <% } %>
+                </td>
                 <td><span class="role-badge role-<%= u.role %>"><%= roleNames[u.role] || u.role %></span></td>
                 <%
                   /* Curso: solo tiene sentido para el alumno. El resto de los roles no se

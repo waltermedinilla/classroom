@@ -63,6 +63,27 @@ const MODULOS = [
     // dos o tres docentes y mirar qué pasa, no repartirla de golpe.
     alcance:     'escuela+persona',
   },
+  {
+    id:          'verificacion',
+    label:       'Verificación de contacto',
+    icon:        'verified',
+    localsKey:   'verificacionEnabled',
+    descripcion: 'Cada persona confirma su correo (por enlace o código) y su celular desde su '
+               + 'perfil, y la escuela ve quién es contactable de verdad.',
+    // Sin solapas propias, mismo caso que la transmisión: los botones viven en "Mi perfil" —que
+    // ya existe para todos los roles— y los chips en las pantallas de usuarios que ya existen.
+    secciones:   [],
+    // Alcance de ESCUELA y no 'escuela+persona': verificar no consume ningún recurso compartido
+    // ni hay razón para dárselo a unos docentes sí y a otros no. El segundo eje que sí tiene
+    // esta feature es otro y no se configura acá — es que la verificación NUNCA bloquea a nadie
+    // (ver D1 de specs/verificacion-de-contacto.spec.md).
+    //
+    // ⚠️ Prenderlo con los dos canales en 'off' (config/verificacion.js) deja los chips y la
+    // verificación asistida —que es útil por sí sola— pero sin botón de "mandame un código".
+    // El botón no se dibuja si el canal no puede mandar: un botón que no hace nada es peor que
+    // no tener el botón.
+    alcance:     'escuela',
+  },
 ];
 
 const MODULOS_BY_ID = Object.fromEntries(MODULOS.map(m => [m.id, m]));

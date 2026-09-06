@@ -42,6 +42,9 @@ const { logDeRuta } = require('../middleware/route-log');
 // Guarda de forma del :id, en la primera línea de cada handler con parámetro.
 // Ver middleware/objectId.js y el issue conocido nº 10 de agente.md.
 const { idMalo } = require('../middleware/objectId');
+// Los campos de verificación de contacto que necesita el chip. Van por constante y no a mano:
+// un select que se los olvide muestra 'Sin verificar' para todo el mundo, sin dar ningún error.
+const { CAMPOS_SELECT } = require('../public/js/estadoVerificacion');
 
 const router = express.Router();
 // sectionGuard va ANTES de loadPreceptorScope para no pagar la query de divisiones en un
@@ -64,6 +67,9 @@ async function alumnoEnAlcance(studentId, scopeDivisionIds) {
   });
   return count > 0;
 }
+// Se exporta al pie del archivo (junto con el router) para que routes/verificacion.js use ESTA
+// función y no una copia: el alcance del preceptor es la única barrera entre él y los datos de
+// los otros cursos, y dos implementaciones de una barrera terminan siendo una sola barrera.
 
 /* ─── Inicio · grilla de cursos a cargo ──────────────────────────────────── */
 // Una tarjeta por división del alcance, con sus contadores. Los alumnos se cuentan ÚNICOS
@@ -201,7 +207,7 @@ router.get('/students/:id', async (req, res) => {
   if (idMalo(req, res, 'Alumno no encontrado')) return;
   try {
     const student = await User.findById(req.params.id)
-      .select('_id name email dni active role school phone createdAt');
+      .select('_id name email dni active role school phone createdAt ' + CAMPOS_SELECT);
     if (!student) return res.status(404).send('Alumno no encontrado');
     if (student.role !== 'student') return res.status(404).send('El usuario no es alumno');
     if (!await alumnoEnAlcance(student._id, req.scopeDivisionIds)) {
@@ -451,10 +457,14 @@ router.post('/students/:id/edit', async (req, res) => {
     if (nuevoDni !== student.dni)                     cambios.push('DNI');
     if ((phone ? String(phone).trim() : null) !== student.phone) cambios.push('teléfono');
 
-    student.name  = name.trim();
-    student.email = email.trim();
-    student.dni   = nuevoDni;
-    student.phone = phone ? String(phone).trim() : null;
+    student.name = name.trim();
+    student.dni  = nuevoDni;
+    // setEmail()/setPhone() y no asignación directa: cambiar el dato BORRA su verificación, y
+    // acá es donde más importa — el preceptor corrige el teléfono que le pasó la familia, y si
+    // la marca verde sobreviviera al cambio quedaría certificando un número que nadie confirmó.
+    // Ver la regla de oro en models/User.js.
+    student.setEmail(email);
+    student.setPhone(phone);
     await student.save({ validateModifiedOnly: true });
 
     // El doc vive cacheado 45s por worker: sin invalidar, el propio alumno seguiría viendo
@@ -713,3 +723,7 @@ router.get('/actividades/:divisionId/dia/:fecha', async (req, res) => {
 });
 
 module.exports = router;
+// Para routes/verificacion.js: la verificación asistida deja que el preceptor confirme el
+// celular de un alumno, y tiene que respetar exactamente el mismo alcance que este panel.
+// Mismo patrón que routes/backup.js con COLLECTIONS — una sola definición, varios consumidores.
+module.exports.alumnoEnAlcance = alumnoEnAlcance;

@@ -579,15 +579,20 @@ function presentarGruposDocentes(grupos) {
 // tengan el mismo valor ni por un instante. Si el proceso se cortara entre medio, la cuenta
 // que cede queda con ese temporal —se ve a simple vista y se arregla desde el panel de
 // administración—; la conservada nunca queda sin correo.
+// ⚠️ Cada $set pasa por User.camposDeContacto() y no escribe `email` a secas: mover un correo
+// de una cuenta a otra BORRA su verificación en las dos. Es la regla de oro de models/User.js, y
+// éste es el lugar donde más silenciosamente se rompería — la marca verde de la cuenta que cede
+// el correo terminaría certificando un correo que ya no es suyo.
 async function pasarCorreo({ keepId, correoConservada, donanteId, correoDonante, donanteEliminado }) {
+  const contacto = (email) => ({ $set: User.camposDeContacto({ email }) });
   if (donanteEliminado) {
-    await User.updateOne({ _id: keepId }, { $set: { email: correoDonante } });
+    await User.updateOne({ _id: keepId }, contacto(correoDonante));
     return;
   }
   const temporal = `fusion-en-curso-${donanteId}@invalido.local`;
-  await User.updateOne({ _id: donanteId }, { $set: { email: temporal } });
-  await User.updateOne({ _id: keepId },    { $set: { email: correoDonante } });
-  await User.updateOne({ _id: donanteId }, { $set: { email: correoConservada } });
+  await User.updateOne({ _id: donanteId }, contacto(temporal));
+  await User.updateOne({ _id: keepId },    contacto(correoDonante));
+  await User.updateOne({ _id: donanteId }, contacto(correoConservada));
 }
 
 // Pasa TODO lo que una cuenta de docente tiene a cargo a la cuenta que se conserva, y deja

@@ -1,0 +1,29 @@
+<%# Chip de estado de verificación de un contacto. UN solo lugar decide el ícono, el texto y el
+    color, para las 9 pantallas donde se muestra un correo o un celular.
+
+    Espera en el scope del include:
+      person  el User (documento, .lean() o JSON de una API)
+      canal   'email' | 'celular'
+      soloVerificado (opcional) true = no dibuja nada si NO está verificado. Sirve en los
+              listados largos, donde 500 chips grises de "sin verificar" son ruido y lo que
+              se busca es ver de un vistazo quién sí.
+
+    La regla vive en public/js/estadoVerificacion.js —la misma que usa el navegador— y llega acá
+    como `estadoContacto` en res.locals (server.js), NO con un require(): dentro de una plantilla
+    EJS `require` no existe. Los colores viven en public/css/style.css (.chip-verif*) y NO acá:
+    un color en un `style=` inline le gana a la variante oscura, que es como quedó texto
+    invisible en la sala en vivo.
+
+    Uso (el include va con la etiqueta de salida sin escape, igual que los demás partials):
+      include('../partials/chip-verificado', { person: alumno, canal: 'email' })
+%>
+<%
+const _e = estadoContacto(person, canal);
+const _soloVerificado = typeof soloVerificado !== 'undefined' && soloVerificado;
+%>
+<% if (!(_soloVerificado && _e.estado !== 'verificado')) { %>
+  <span class="chip-verif chip-verif--<%= _e.tono === 'ok' ? 'ok' : 'neutro' %>"
+        title="<%= _e.label %>: <%= _e.texto %><%= _e.desde ? ' · ' + fmt.diaMesLargo(_e.desde) : '' %>">
+    <span class="material-symbols-outlined"><%= _e.icono %></span><%= _e.texto %>
+  </span>
+<% } %>

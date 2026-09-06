@@ -127,6 +127,39 @@
           </span>
         </h2>
         <p style="color:var(--text-secondary);font-size:14px;margin-top:4px"><%= student.email %></p>
+
+        <%# ─── Verificación de contacto (verificación ASISTIDA, D6) ──────────────
+            Acá el preceptor confirma el correo y el celular que ya conoce: los chequeó en
+            persona, o llamó al número y atendió la familia. Es lo que cubre el canal del
+            celular SIN COSTO —el SMS se paga y muchos alumnos de 1° y 2° no tienen celular
+            propio, el número que figura es el de la madre— y el único camino posible para
+            quien no tiene casilla propia.
+
+            Lo que la hace honesta y no un botón de "poner verde todo": queda FIRMADA. El chip
+            dice "Verificado por la escuela", no "Verificado" a secas, y el evento va a la
+            auditoría con el nombre de quien lo apretó. %>
+        <% if (typeof verificacionEnabled !== 'undefined' && verificacionEnabled) { %>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
+            <span id="chipVerifEmail"><%- include('../partials/chip-verificado', { person: student, canal: 'email' }) %></span>
+            <button class="btn btn-outline" style="padding:4px 12px;font-size:12px"
+                    id="btnVerifEmail"
+                    onclick="alternarVerificacion('email', <%= student.emailVerifiedAt ? 'true' : 'false' %>)">
+              <%= student.emailVerifiedAt ? 'Quitar' : 'Confirmar correo' %>
+            </button>
+
+            <% if (student.phone) { %>
+              <span id="chipVerifCelular"><%- include('../partials/chip-verificado', { person: student, canal: 'celular' }) %></span>
+              <button class="btn btn-outline" style="padding:4px 12px;font-size:12px"
+                      id="btnVerifCelular"
+                      onclick="alternarVerificacion('celular', <%= student.phoneVerifiedAt ? 'true' : 'false' %>)">
+                <%= student.phoneVerifiedAt ? 'Quitar' : 'Confirmar celular' %>
+              </button>
+            <% } %>
+          </div>
+          <p style="font-size:11px;color:var(--text-secondary);margin-top:6px;line-height:1.4">
+            Confirmalo solo si lo chequeaste con el alumno o la familia. Queda registrado a tu nombre.
+          </p>
+        <% } %>
       </div>
       <div class="dashboard-actions">
         <button class="btn btn-outline" id="toggleActiveBtn"
@@ -539,6 +572,34 @@
       btn.style.borderColor = data.active ? '#ea4335' : '#34a853';
       btn.style.color       = data.active ? '#ea4335' : '#34a853';
     });
+
+    // ── Verificación asistida del contacto (D6) ──────────────────────────────
+    // Un solo handler para los dos canales y para los dos sentidos: el servidor distingue
+    // confirmar (POST) de quitar (DELETE) y el alcance lo valida él, no esta pantalla.
+    async function alternarVerificacion(canal, estabaVerificado) {
+      const ID    = '<%= student._id %>';
+      const Canal = canal === 'email' ? 'Email' : 'Celular';
+      const btn   = document.getElementById('btnVerif' + Canal);
+
+      if (!estabaVerificado &&
+          !confirm('¿Confirmás que este ' + (canal === 'email' ? 'correo' : 'celular') +
+                   ' es de ' + NOMBRE_ALUMNO + '? Queda registrado a tu nombre.')) return;
+
+      btn.disabled = true;
+      try {
+        const res = await fetch('/verificacion/staff/' + ID + '/' + canal, {
+          method: estabaVerificado ? 'DELETE' : 'POST',
+        });
+        const data = await res.json();
+        if (!res.ok) { alert(data.error || 'No se pudo.'); btn.disabled = false; return; }
+        // Recarga en vez de repintar: cambian el chip Y la etiqueta del botón, y esta pantalla
+        // no tiene el estado del alumno en memoria para recalcularlos.
+        location.reload();
+      } catch (e) {
+        alert('Error de conexión. Intentá de nuevo.');
+        btn.disabled = false;
+      }
+    }
   </script>
 </body>
 </html>

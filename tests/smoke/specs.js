@@ -9941,6 +9941,40 @@ const specs = [
   // y el módulo prendido, así que vive fuera de esta suite: se prueba a mano con el proveedor
   // 'log' (`node tools/probar-canal.js --estado` dice cómo está configurado).
   {
+    id: 'verificacion-enlace-va-sin-sesion',
+    title: 'El enlace de verificación del mail responde SIN sesión iniciada',
+    async run({ client, assert }) {
+      // Es la decisión D4 y el motivo por el que esta ruta se monta antes del requireAuth del
+      // router: el mail se abre en el celular mientras la sesión está en la netbook del aula.
+      // Si alguna vez alguien mueve el router.use(requireAuth) más arriba, esto lo caza.
+      const res = await client.get(null, '/verificacion/enlace/token-que-no-existe', { expectStatus: 200 });
+      assert(!/iniciar sesión/i.test(res.text || ''),
+        'el enlace no puede pedir login: se abre desde el correo, en otro dispositivo');
+    },
+  },
+  {
+    id: 'verificacion-token-invalido-no-revela-nada',
+    title: 'Un token inválido da una página normal, no un error ni un dato de nadie',
+    async run({ client, assert }) {
+      const res = await client.get(null, '/verificacion/enlace/aaaaaaaaaaaaaaaaaaaaaaaa', { expectStatus: 200 });
+      const html = res.text || '';
+      assert(/no reconocemos este enlace/i.test(html),
+        'debería mostrar el cartel de enlace no reconocido');
+      assert(!/quedó verificado/i.test(html),
+        'un token inválido no puede terminar mostrando que algo se verificó');
+    },
+  },
+  {
+    id: 'verificacion-exige-sesion-para-lo-demas',
+    title: 'Todo lo que no es el enlace exige sesión',
+    async run({ client, assert }) {
+      // Sin cookie: pedir un código no puede funcionar por más que el módulo esté prendido.
+      const res = await client.post(null, '/verificacion/email/enviar');
+      assert(res.status !== 200,
+        `pedir un código sin sesión devolvió 200 (fue ${res.status})`);
+    },
+  },
+  {
     // Los audit logs generados por esta corrida se identifican por dos vías:
     //  1. Los IDs reales de los recursos de smoke (curso, división, usuarios, actividad)
     //     — cualquier evento que los tenga en actor.userId o targets[].id se borra.

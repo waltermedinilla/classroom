@@ -241,6 +241,13 @@ const EXCLUIDAS_DEL_BACKUP = {
   // generar solo, se purgan por su cuenta y no describen a nadie de la escuela.
   // Restaurarlas no aporta y solo engorda el paquete.
   ratelimitsamples: 'telemetría del monitor; se regenera sola y se purga sola',
+
+  // Códigos y enlaces de verificación de contacto a medio usar. Son secretos hasheados con TTL
+  // de 24 horas como máximo, y restaurar un backup de la semana pasada los resucitaría vencidos:
+  // el usuario vería "ya te mandamos un código" por algo que expiró hace días. Lo que SÍ hay que
+  // conservar —quién tiene el correo y el celular verificados— son cinco campos de `User` y
+  // viaja en `users`, que ya está en COLLECTIONS.
+  contactverifications: 'códigos de verificación efímeros (TTL 24 h); el estado verificado vive en users',
 };
 
 // Qué hacer con cada carpeta de archivos al restaurar, según lo que el backup traiga.

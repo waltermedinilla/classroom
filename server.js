@@ -36,6 +36,7 @@ const { SECTIONS_BY_KEY, isAllowed, sectionForPath, normalizePath } = require('.
 // Módulos opcionales por escuela: acá solo se publican en res.locals para que los navs y
 // res.locals.can() los vean. El enforcement vive en middleware/modulos.js.
 const { MODULOS, moduloActivo } = require('./config/modulos');
+const { estadoContacto }        = require('./public/js/estadoVerificacion');
 // Túnel del WebSocket de la transmisión en vivo (ver el comentario donde se monta, más abajo).
 const { montarProxyRtc } = require('./middleware/rtc-proxy');
 
@@ -70,6 +71,7 @@ const suggestionRoutes   = require('./routes/suggestions');
 const messageRoutes      = require('./routes/messages');
 const messagesInboxRoutes = require('./routes/messagesInbox');
 const diagnosticoRoutes   = require('./routes/diagnostico');
+const verificacionRoutes  = require('./routes/verificacion');
 const auditRoutes        = require('./routes/audit');
 const tasksRoutes        = require('./routes/tasks');
 const rolesRoutes        = require('./routes/roles');
@@ -446,6 +448,12 @@ app.use((req, res, next) => {
   for (const m of MODULOS) {
     res.locals[m.localsKey] = moduloActivo(res.locals.school, m.id);
   }
+  // La regla de "¿este contacto está verificado?", para las vistas. Va por res.locals y no con
+  // un require() dentro del .ejs porque en una plantilla EJS `require` no existe: el template
+  // se compila a una función con `with(locals)` y no tiene el scope del módulo. Mismo camino
+  // que `fmt` acá abajo. La regla en sí vive en public/js/estadoVerificacion.js, compartida
+  // con el navegador.
+  res.locals.estadoContacto = estadoContacto;
   // Helper único para las vistas: ¿este usuario ve esta solapa? Resuelve de una sola vez
   // el rol, los permisos que la escuela configuró en /superadmin/roles y el feature flag,
   // para que los *-nav.ejs no tengan que combinar tres condiciones distintas y se puedan
@@ -770,6 +778,10 @@ app.use('/messages',    messagesInboxRoutes);
 // Reportes de falla que el navegador manda porque el servidor no puede verlos solo — hoy,
 // subidas que se cortaron en camino y por lo tanto no dejaron línea en el access log.
 app.use('/diagnostico', diagnosticoRoutes);
+// Verificación de correo y celular. El router se monta SIEMPRE (la guarda por escuela es
+// requireModulo, adentro), y una de sus rutas —el enlace del mail— va sin sesión a propósito:
+// el correo se abre en el celular mientras la sesión está en la netbook del aula.
+app.use('/verificacion', verificacionRoutes);
 
 // ── Manejador de errores global ──────────────────────────────────────────────
 // Captura cualquier error no manejado en los middlewares/rutas.
@@ -803,6 +815,12 @@ process.on('uncaughtException', (err) => {
   logger.error('uncaughtException', { error: err.message, stack: err.stack });
   process.exit(1);
 });
+
+// Configuración de la verificación de contacto. Va ANTES de escuchar y tira si algo está mal
+// (un proveedor inexistente, el modo 'log' en producción —que escribiría códigos en claro al
+// disco—, o el canal de correo activo sin APP_URL, que mandaría mails con enlaces rotos).
+// El momento de descubrir un error de configuración es el `pm2 reload`, no el primer mail.
+require('./config/verificacion').validarConfiguracion();
 
 // ── Inicio del servidor (espera a que MongoDB esté listo) ────────────────────
 connectDB().then(() => {

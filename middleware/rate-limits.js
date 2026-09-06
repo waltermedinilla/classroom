@@ -138,7 +138,51 @@ const attendanceCheckinLimiter = rateLimit({
   message:         { error: 'Esperá un momento antes de volver a intentar.' },
 });
 
+// Pedir un código de verificación de contacto: 5 por hora POR USUARIO.
+//
+// A diferencia de todos sus hermanos, éste no protege una escritura ni el ancho de banda:
+// protege PLATA. Cada envío al celular le cuesta a la escuela (~USD 0,05 el SMS), así que el
+// número sale de cuántos reintentos legítimos tiene alguien que de verdad no recibió el mensaje
+// —no llegó, fue a spam, se equivocó de número, lo borró sin querer— y no de cuánto aguanta el
+// servidor. Cinco son de sobra para eso y ridículamente pocos para una campaña.
+//
+// El límite fino de verdad es el cooldown de 60 segundos, que vive en
+// services/verificacionContacto.js y se mide contra la base: es lo que corta el doble click, que
+// es el 90% del "abuso" real. Este limiter es el techo de la hora, no el del segundo.
+//
+// Por usuario y no por IP, mismo motivo que roomMessageLimiter: la escuela entera sale por una
+// sola IP pública NAT, y con clave por IP los primeros 20 alumnos de la mañana dejarían a los
+// otros 580 sin poder verificar.
+const verificacionEnvioLimiter = rateLimit({
+  windowMs:        60 * 60 * 1000,
+  max:             5,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator:    (req) => req.userId || ipKeyGenerator(req.ip),
+  message:         { error: 'Pediste demasiados códigos. Probá de nuevo en una hora.' },
+});
+
+// Probar un código: 20 por hora POR USUARIO.
+//
+// El tope que importa es el de 5 intentos POR CÓDIGO, que quema la verificación y vive en el
+// service. Éste existe para lo que aquel no cubre: quemar un código, pedir otro, quemarlo, y así
+// — con 5 pedidos por hora y 5 intentos cada uno, 20 es holgado para el que se equivoca de
+// verdad y cierra el bucle del que automatiza.
+//
+// El enlace del correo NO pasa por acá: va sin sesión (ver D4), así que no hay `req.userId` con
+// el cual contar, y su secreto son 48 bytes al azar en vez de 6 dígitos. Lo cubre el
+// generalLimiter de server.js.
+const verificacionCodigoLimiter = rateLimit({
+  windowMs:        60 * 60 * 1000,
+  max:             20,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator:    (req) => req.userId || ipKeyGenerator(req.ip),
+  message:         { error: 'Demasiados intentos. Probá de nuevo en una hora.' },
+});
+
 module.exports = {
   uploadLimiter, roomMessageLimiter, roomUploadLimiter, roomStudentImageLimiter,
   messageSendLimiter, messageReplyLimiter, attendanceCheckinLimiter,
+  verificacionEnvioLimiter, verificacionCodigoLimiter,
 };

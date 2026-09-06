@@ -22,6 +22,8 @@ const { requireAdmin } = require('../middleware/admin');
 // lo que requireAdmin ya concedió, nunca agregar (ver middleware/sections.js).
 const { sectionGuard } = require('../middleware/sections');
 const { invalidateUser, invalidateSchool } = require('../middleware/cache');
+// La regla del estado de verificación de contacto, compartida con las vistas y el navegador.
+const { filtroSinVerificar, filtroVerificado } = require('../public/js/estadoVerificacion');
 const { logAudit } = require('../middleware/audit');
 // Matrícula de alumnos en las materias de una división. Extraída a services/ porque el
 // panel de preceptoría (routes/preceptor.js) da de alta alumnos con la misma semántica.
@@ -162,7 +164,7 @@ router.get('/', async (req, res) => {
 /* ─── Users ─── */
 router.get('/users', async (req, res) => {
   const school = res.locals.user.school;
-  const { role, search } = req.query;
+  const { role, search, verificacion } = req.query;
   const LIMIT = 25;
   const page  = Math.max(1, parseInt(req.query.page) || 1);
 
@@ -172,6 +174,14 @@ router.get('/users', async (req, res) => {
     { name:  { $regex: search, $options: 'i' } },
     { email: { $regex: search, $options: 'i' } },
   ];
+  // Filtro de verificación de contacto. La pregunta que contesta es operativa: "¿a quiénes
+  // tengo que ir a buscar?". El filtro sale de public/js/estadoVerificacion.js —la misma regla
+  // que dibuja el chip— y no de un `{ emailVerifiedAt: null }` escrito acá, para que la lista
+  // y el chip no puedan decir cosas distintas sobre la misma persona.
+  if (verificacion === 'email-sin')    Object.assign(filter, filtroSinVerificar('email'));
+  if (verificacion === 'email-ok')     Object.assign(filter, filtroVerificado('email'));
+  if (verificacion === 'celular-sin')  Object.assign(filter, filtroSinVerificar('celular'));
+  if (verificacion === 'celular-ok')   Object.assign(filter, filtroVerificado('celular'));
 
   const [users, total] = await Promise.all([
     User.find(filter).sort({ createdAt: -1 }).skip((page - 1) * LIMIT).limit(LIMIT),
@@ -214,8 +224,8 @@ router.get('/users', async (req, res) => {
   const activityStats = await getUserActivityStats(users.map(u => u._id));
 
   const totalPages  = Math.ceil(total / LIMIT);
-  const queryParams = { ...(role && { role }), ...(search && { search }) };
-  res.render('admin/users', { users, enrolledMap, cursoMap, activityStats, divisions, currentRole: role || '', search: search || '', page, totalPages, total, queryParams });
+  const queryParams = { ...(role && { role }), ...(search && { search }), ...(verificacion && { verificacion }) };
+  res.render('admin/users', { users, enrolledMap, cursoMap, activityStats, divisions, currentRole: role || '', search: search || '', currentVerificacion: verificacion || '', page, totalPages, total, queryParams });
 });
 
 router.get('/users/create', async (req, res) => {
@@ -584,7 +594,6 @@ router.post('/users/:id/reset-password', async (req, res) => {
       { origen: target.dni ? 'DNI' : 'default' },
       { schoolId: target.school || null },
     );
-
     res.json({ ok: true, hint: target.dni ? 'DNI del usuario' : 'Classroom1234' });
   } catch (err) {
     logDeRuta(err, res);

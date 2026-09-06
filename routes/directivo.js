@@ -20,6 +20,9 @@ const liveRoom = require('../services/liveRoom');
 // specs/directivo-actividades-diarias.spec.md.
 const actDia = require('../services/actividadesDelDia');
 const { logDeRuta } = require('../middleware/route-log');
+// Los campos de verificación de contacto que necesita el chip. Van por constante y no a mano:
+// un select que se los olvide muestra "Sin verificar" para todo el mundo, sin dar ningún error.
+const { CAMPOS_SELECT } = require('../public/js/estadoVerificacion');
 // Guarda de forma del :id. Sin ella un id que no es ObjectId sale como 500 en vez de 404
 // (o deja el request colgado, en los handlers sin try/catch). Ver middleware/objectId.js.
 const { idMalo } = require('../middleware/objectId');
@@ -540,7 +543,7 @@ router.get('/students/:id', async (req, res) => {
   const school = res.locals.user.school;
   if (idMalo(req, res, 'Alumno no encontrado')) return;
   try {
-    const student = await User.findById(req.params.id).select('_id name email dni active role school createdAt phone instagram facebook bio interests futureGoal');
+    const student = await User.findById(req.params.id).select('_id name email dni active role school createdAt phone instagram facebook bio interests futureGoal ' + CAMPOS_SELECT);
     if (!student) return res.status(404).send('Alumno no encontrado');
     if (student.role !== 'student') return res.status(404).send('El usuario no es alumno');
     if (school && student.school?.toString() !== school.toString()) return res.status(403).send('Acceso denegado');
@@ -832,7 +835,7 @@ router.get('/teachers/:id', async (req, res) => {
   const school = res.locals.user.school;
   if (idMalo(req, res, 'Docente no encontrado')) return;
   try {
-    const teacher = await User.findById(req.params.id).select('_id name email active role school createdAt phone instagram facebook bio interests futureGoal');
+    const teacher = await User.findById(req.params.id).select('_id name email active role school createdAt phone instagram facebook bio interests futureGoal ' + CAMPOS_SELECT);
     if (!teacher) return res.status(404).send('Docente no encontrado');
     // Admins también pueden ser owner de un curso; el listado /directivo/teachers los incluye
     // así que este perfil debe aceptarlos, sino los links caerían en 404.

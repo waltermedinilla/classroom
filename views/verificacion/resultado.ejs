@@ -1,0 +1,107 @@
+<%
+/* Página de aterrizaje del enlace del mail de verificación.
+ *
+ * Es una página SUELTA (sin el header de la app) a propósito: se abre desde el correo, casi
+ * siempre en un dispositivo donde no hay sesión iniciada. Mostrar el nav de la plataforma a
+ * alguien que no está logueado es prometerle cosas que no va a poder tocar.
+ *
+ * Los dos estados que importan y que no son obvios:
+ *
+ *   listo-para-confirmar → el GET del enlace. NO verificó nada todavía: muestra un botón, y
+ *     recién el POST confirma. Es lo que evita que el antivirus del servidor de correo —que
+ *     hace GET a todas las URLs que ve— consuma el enlace antes de que la persona lo toque.
+ *
+ *   ya-estaba → verificado antes (típicamente con el código, y después abrió el mail igual).
+ *     Se muestra en VERDE, como un éxito. Es lo que pasa siempre y un cartel rojo ahí sería
+ *     asustar a alguien que hizo todo bien.
+ */
+const PANTALLAS = {
+  'listo-para-confirmar': {
+    icono: '✉️', tono: 'neutro',
+    titulo: 'Confirmá tu correo',
+    detalle: 'Tocá el botón para terminar de verificar esta dirección.',
+  },
+  verificado: {
+    icono: '✅', tono: 'ok',
+    titulo: '¡Listo! Tu correo quedó verificado',
+    detalle: 'Ya podés cerrar esta pestaña.',
+  },
+  'ya-estaba': {
+    icono: '✅', tono: 'ok',
+    titulo: 'Tu correo ya estaba verificado',
+    detalle: 'No hacía falta hacer nada más. Podés cerrar esta pestaña.',
+  },
+  expirado: {
+    icono: '⌛', tono: 'aviso',
+    titulo: 'El enlace venció',
+    detalle: 'Los enlaces valen 24 horas. Entrá a tu perfil y pedí uno nuevo.',
+  },
+  usado: {
+    icono: '🔁', tono: 'aviso',
+    titulo: 'Este enlace ya se usó',
+    detalle: 'Si ya verificaste tu correo, no tenés que hacer nada. Si no, pedí uno nuevo desde tu perfil.',
+  },
+  cambiado: {
+    icono: '📝', tono: 'aviso',
+    titulo: 'Cambiaste tu correo',
+    detalle: 'Este enlace confirmaba la dirección anterior. Pedí uno nuevo desde tu perfil.',
+  },
+  invalido: {
+    icono: '❓', tono: 'aviso',
+    titulo: 'No reconocemos este enlace',
+    detalle: 'Puede estar cortado por el programa de correo. Probá con el código de 6 números que venía en el mismo mensaje.',
+  },
+  error: {
+    icono: '⚠️', tono: 'aviso',
+    titulo: 'Algo salió mal',
+    detalle: 'Probá de nuevo en un rato, o usá el código de 6 números que venía en el mensaje.',
+  },
+};
+const p = PANTALLAS[estado] || PANTALLAS.error;
+%><!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= p.titulo %></title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="auth-body">
+  <div class="auth-container">
+    <div class="auth-card" style="text-align:center">
+
+      <div style="font-size:52px;line-height:1;margin:6px 0 14px"><%= p.icono %></div>
+
+      <h2 style="margin:0 0 10px"><%= p.titulo %></h2>
+
+      <% if (usuario && usuario.email) { %>
+        <p style="font-size:14px;color:var(--text-secondary);margin:0 0 6px;word-break:break-all">
+          <%= usuario.email %>
+        </p>
+      <% } %>
+
+      <p class="auth-subtitle" style="margin:0 0 20px"><%= p.detalle %></p>
+
+      <% if (estado === 'listo-para-confirmar' && token) { %>
+        <%# El POST es el que verifica. Formulario de verdad y no fetch(): esta página se abre en
+            el navegador del correo, que a veces es un WebView con el JavaScript recortado. %>
+        <form method="POST" action="/verificacion/enlace/<%= token %>">
+          <button type="submit" class="btn btn-primary" style="width:100%">
+            Sí, este correo es mío
+          </button>
+        </form>
+      <% } else { %>
+        <a href="/login" class="btn btn-primary" style="width:100%;display:block;text-decoration:none">
+          Ir a la plataforma
+        </a>
+      <% } %>
+
+      <p style="font-size:12px;color:var(--text-secondary);margin:18px 0 0">
+        Si no pediste esto, podés ignorarlo: no se cambia nada en tu cuenta.
+      </p>
+
+    </div>
+  </div>
+</body>
+</html>

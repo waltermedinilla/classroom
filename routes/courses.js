@@ -325,6 +325,21 @@ function sanitizeSocialHandle(raw, domain) {
   return { value, error: null };
 }
 
+// ¿Cada canal de verificación puede mandar algo AHORA? Lo consulta views/profile.ejs para
+// decidir si dibuja el botón "Verificar" o el cartel de "pedile a un administrador".
+//
+// Es distinto de `verificacionEnabled` (que sale de config/modulos.js y dice si la ESCUELA
+// tiene la feature): acá la pregunta es si el SERVIDOR tiene un proveedor configurado. Una
+// escuela puede tener el módulo prendido con el celular en 'off' —de hecho es el caso normal
+// al arrancar— y ahí el celular se verifica por la vía asistida, no con un botón.
+//
+// Un botón que no puede hacer nada es peor que no tener el botón: promete y falla.
+const { canalActivo } = require('../config/verificacion');
+const flagsDeVerificacion = () => ({
+  emailPuedeEnviar:   canalActivo('email'),
+  celularPuedeEnviar: canalActivo('celular'),
+});
+
 // Permisos de la solapa "Mi perfil" (config/sections.js). Un solo router.use en vez de
 // repetir la guarda en las 7 rutas de /profile: así una ruta nueva de perfil queda
 // cubierta sin que haya que acordarse. Cubre la vista y también las mutaciones (avatar,
@@ -338,7 +353,7 @@ router.get('/profile', requireAuth, async (req, res) => {
       const joinedCourses = await Course.find({ students: req.userId })
         .populate('owner', 'name email')
         .populate('division', 'name');
-      return res.render('profile', { joinedCourses, createdCourses: [], activityCount: 0, totalStudents: 0, systemOwnerEmail: SYSTEM_OWNER_EMAIL, INTERESTS, MAX_INTERESTS });
+      return res.render('profile', { joinedCourses, createdCourses: [], activityCount: 0, totalStudents: 0, systemOwnerEmail: SYSTEM_OWNER_EMAIL, INTERESTS, MAX_INTERESTS, ...flagsDeVerificacion() });
     }
     const [createdCourses, activityCount] = await Promise.all([
       // Incluye materias co-dictadas (ver Course.coTeachers), mismo motivo que en GET /courses.
@@ -348,7 +363,7 @@ router.get('/profile', requireAuth, async (req, res) => {
       Activity.countDocuments({ author: req.userId }),
     ]);
     const totalStudents = createdCourses.reduce((sum, c) => sum + c.students.length, 0);
-    res.render('profile', { createdCourses, activityCount, totalStudents, joinedCourses: [], systemOwnerEmail: SYSTEM_OWNER_EMAIL, INTERESTS, MAX_INTERESTS });
+    res.render('profile', { createdCourses, activityCount, totalStudents, joinedCourses: [], systemOwnerEmail: SYSTEM_OWNER_EMAIL, INTERESTS, MAX_INTERESTS, ...flagsDeVerificacion() });
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).send('Error del servidor');
@@ -466,7 +481,10 @@ router.post('/profile/change-email', requireAuth, async (req, res) => {
     }
 
     const oldEmail = user.email;
-    user.email = normalized;
+    // setEmail() y no `user.email =`: cambiar el correo BORRA su verificación. Ver la regla de
+    // oro en models/User.js — la marca verde no puede quedar pegada a un correo que nadie
+    // confirmó nunca.
+    user.setEmail(normalized);
     await user.save();
     invalidateUser(user._id);
 
@@ -502,8 +520,11 @@ router.patch('/profile/contact', requireAuth, async (req, res) => {
     const error = phoneResult.error || instaResult.error || facebookResult.error;
     if (error) return res.status(400).json({ error });
 
+    // camposDeContacto() es la otra mitad de la regla de oro, para el camino de
+    // findByIdAndUpdate donde no hay documento sobre el que llamar setPhone(): además de
+    // guardar el celular, recalcula phoneE164 y borra la verificación anterior.
     const user = await User.findByIdAndUpdate(req.userId, {
-      phone:     phoneResult.value || null,
+      ...User.camposDeContacto({ phone: phoneResult.value || null }),
       instagram: instaResult.value || null,
       facebook:  facebookResult.value || null,
     }, { new: true, runValidators: true });

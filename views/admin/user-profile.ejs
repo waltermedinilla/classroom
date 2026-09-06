@@ -45,6 +45,27 @@
         <h2><%= target.name %></h2>
         <% if (target.dni) { %><p style="font-family:monospace;font-size:13px;color:var(--text-secondary);margin-bottom:2px">DNI: <%= target.dni %></p><% } %>
         <p class="profile-email"><%= target.email %></p>
+        <%# Verificación de contacto. El admin ve el estado de los dos canales y puede
+            confirmarlos él (verificación asistida, D6): queda firmado a su nombre en la
+            auditoría y el chip pasa a decir "Verificado por la escuela". %>
+        <% if (typeof verificacionEnabled !== 'undefined' && verificacionEnabled) { %>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px 0 8px">
+            <%- include('../partials/chip-verificado', { person: target, canal: 'email' }) %>
+            <% if (target.phone) { %>
+              <%- include('../partials/chip-verificado', { person: target, canal: 'celular' }) %>
+            <% } %>
+            <button class="btn btn-outline" style="padding:3px 10px;font-size:12px"
+                    onclick="verifStaff('email', <%= target.emailVerifiedAt ? 'true' : 'false' %>)">
+              <%= target.emailVerifiedAt ? 'Quitar correo' : 'Confirmar correo' %>
+            </button>
+            <% if (target.phone) { %>
+              <button class="btn btn-outline" style="padding:3px 10px;font-size:12px"
+                      onclick="verifStaff('celular', <%= target.phoneVerifiedAt ? 'true' : 'false' %>)">
+                <%= target.phoneVerifiedAt ? 'Quitar celular' : 'Confirmar celular' %>
+              </button>
+            <% } %>
+          </div>
+        <% } %>
         <span class="role-badge role-<%= target.role %>" style="font-size:14px;padding:6px 16px"><%= roleNames[target.role] || target.role %></span>
         <p class="profile-date">Registrado el <%= fmt.diaMesLargoHora(target.createdAt) %></p>
         <% const totalStudents = createdCourses.reduce((sum, c) => sum + c.students.length, 0); %>
@@ -501,6 +522,24 @@
       if (res.ok) window.location.href = '/admin/users';
       else { const d = await res.json(); alert(d.error); }
     });
+    <% } %>
+
+    <% if (typeof verificacionEnabled !== 'undefined' && verificacionEnabled) { %>
+    // Verificación asistida (D6). El alcance y el "nadie se auto-verifica" los valida el
+    // servidor; esta pantalla solo pregunta y recarga.
+    async function verifStaff(canal, estabaVerificado) {
+      const que = canal === 'email' ? 'correo' : 'celular';
+      if (!estabaVerificado &&
+          !confirm('¿Confirmás que este ' + que + ' es de <%= target.name %>? Queda registrado a tu nombre.')) return;
+      try {
+        const res = await fetch('/verificacion/staff/<%= target._id %>/' + canal, {
+          method: estabaVerificado ? 'DELETE' : 'POST',
+        });
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'No se pudo.');
+        location.reload();
+      } catch (e) { alert('Error de conexión. Intentá de nuevo.'); }
+    }
     <% } %>
   </script>
 </body>

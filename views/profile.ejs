@@ -81,6 +81,11 @@
           <p style="font-family:monospace;font-size:13px;color:var(--text-secondary);margin-bottom:2px">DNI: <%= user.dni %></p>
         <% } %>
         <p class="profile-email" id="profileEmailText"><%= user.email %></p>
+        <% if (typeof verificacionEnabled !== 'undefined' && verificacionEnabled) { %>
+          <p style="margin:2px 0 8px" id="verifChipEmailCabecera">
+            <%- include('partials/chip-verificado', { person: user, canal: 'email' }) %>
+          </p>
+        <% } %>
         <span class="role-badge role-<%= user.role %>" style="font-size:14px;padding:6px 16px"><%= roleNames[user.role] || user.role %></span>
         <% if (school) { %>
           <p style="font-size:13px;color:var(--text-secondary);margin-top:8px;display:flex;align-items:center;gap:6px">
@@ -230,6 +235,117 @@
       </section>
 
     </div>
+
+    <%# ─── Verificación de contacto ─────────────────────────────────────────────
+        specs/verificacion-de-contacto.spec.md
+
+        Esta es LA pantalla de la feature, y es la misma para el alumno, el docente y
+        cualquier otro rol: "Mi perfil" existe para todos. La verificación NO bloquea nada
+        —quien no verifica sigue usando la plataforma igual—, así que esto es informativo y
+        opcional a propósito.
+
+        La sección entera desaparece si la escuela no tiene el módulo prendido
+        (verificacionEnabled sale de config/modulos.js vía server.js). %>
+    <% if (typeof verificacionEnabled !== 'undefined' && verificacionEnabled) { %>
+    <section class="section" style="margin-top:32px">
+      <div class="section-header">
+        <span class="material-symbols-outlined section-icon">verified_user</span>
+        <h3>Verificación de contacto</h3>
+      </div>
+      <div class="profile-action-card">
+
+        <p style="font-size:13px;color:var(--text-secondary);margin:0 0 18px;line-height:1.5">
+          Confirmar tu correo y tu celular le sirve a la escuela para saber que puede
+          contactarte de verdad. Es opcional: no verificar no te impide usar nada.
+        </p>
+
+        <div class="form-error" id="verifError"></div>
+        <div id="verifOk" class="alert-ok" style="display:none"></div>
+
+        <%# ── Correo ── %>
+        <div style="padding:14px 0;border-top:1px solid var(--border)">
+          <div class="verif-fila">
+            <span class="material-symbols-outlined" style="color:var(--text-secondary)">mail</span>
+            <span style="font-size:14px;word-break:break-all"><%= user.email %></span>
+            <span id="verifChipEmail"><%- include('partials/chip-verificado', { person: user, canal: 'email' }) %></span>
+            <span class="verif-acciones">
+              <% if (!user.emailVerifiedAt && emailPuedeEnviar) { %>
+                <button class="btn btn-outline" id="verifBtnEmail" onclick="pedirCodigo('email')">
+                  <span class="material-symbols-outlined" style="font-size:18px">send</span>
+                  Verificar
+                </button>
+              <% } else if (!user.emailVerifiedAt) { %>
+                <%# Sin proveedor configurado no se dibuja el botón: uno que no hace nada es
+                    peor que no tenerlo. %>
+                <span style="font-size:12px;color:var(--text-secondary)">
+                  Pedile a un administrador que lo confirme
+                </span>
+              <% } else { %>
+                <button class="btn btn-outline" onclick="quitarVerificacion('email')">Ya no es mío</button>
+              <% } %>
+            </span>
+          </div>
+
+          <div class="verif-codigo-caja" id="verifCajaEmail">
+            <p style="font-size:13px;color:var(--text-secondary);margin:0 0 10px" id="verifTextoEmail"></p>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <input class="verif-codigo-input" id="verifCodigoEmail" inputmode="numeric"
+                     autocomplete="one-time-code" maxlength="6" placeholder="······">
+              <button class="btn btn-primary" onclick="confirmarCodigo('email')">Confirmar</button>
+              <button class="btn btn-outline" id="verifReenvioEmail" onclick="pedirCodigo('email')">Reenviar</button>
+            </div>
+          </div>
+        </div>
+
+        <%# ── Celular ── %>
+        <div style="padding:14px 0;border-top:1px solid var(--border)">
+          <div class="verif-fila">
+            <span class="material-symbols-outlined" style="color:var(--text-secondary)">smartphone</span>
+            <% if (user.phone) { %>
+              <span style="font-size:14px"><%= user.phone %></span>
+              <span id="verifChipCelular"><%- include('partials/chip-verificado', { person: user, canal: 'celular' }) %></span>
+            <% } else { %>
+              <span style="font-size:14px;color:var(--text-secondary)">
+                No cargaste tu celular todavía — lo podés poner acá arriba, en «Contacto y redes».
+              </span>
+            <% } %>
+            <span class="verif-acciones">
+              <% if (user.phone && !user.phoneVerifiedAt && !user.phoneE164) { %>
+                <%# El número está cargado pero no se pudo interpretar. NO se manda nada a un
+                    número sin normalizar: sería pagar por un mensaje que va a ningún lado, o
+                    peor, que llega al teléfono equivocado. %>
+                <span style="font-size:12px;color:var(--text-secondary)">
+                  Revisá el número: no pudimos interpretarlo como un celular argentino
+                </span>
+              <% } else if (user.phone && !user.phoneVerifiedAt && celularPuedeEnviar) { %>
+                <button class="btn btn-outline" id="verifBtnCelular" onclick="pedirCodigo('celular')">
+                  <span class="material-symbols-outlined" style="font-size:18px">send</span>
+                  Verificar
+                </button>
+              <% } else if (user.phone && !user.phoneVerifiedAt) { %>
+                <span style="font-size:12px;color:var(--text-secondary)">
+                  Pedile a tu preceptor o a un administrador que lo confirme
+                </span>
+              <% } else if (user.phoneVerifiedAt) { %>
+                <button class="btn btn-outline" onclick="quitarVerificacion('celular')">Ya no es mío</button>
+              <% } %>
+            </span>
+          </div>
+
+          <div class="verif-codigo-caja" id="verifCajaCelular">
+            <p style="font-size:13px;color:var(--text-secondary);margin:0 0 10px" id="verifTextoCelular"></p>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <input class="verif-codigo-input" id="verifCodigoCelular" inputmode="numeric"
+                     autocomplete="one-time-code" maxlength="6" placeholder="······">
+              <button class="btn btn-primary" onclick="confirmarCodigo('celular')">Confirmar</button>
+              <button class="btn btn-outline" id="verifReenvioCelular" onclick="pedirCodigo('celular')">Reenviar</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+    <% } %>
 
     <!-- Stats -->
     <% if (user.role !== 'student') { %>
@@ -638,6 +754,153 @@
         saveBtn.innerHTML = originalLabel;
       }
     }
+
+    /* ─── Verificación de contacto ────────────────────────────────────────────
+       specs/verificacion-de-contacto.spec.md
+
+       Dos canales, una sola pareja de funciones: la única diferencia entre verificar el correo
+       y verificar el celular es el texto del cartel. El servidor ya trata a los dos igual
+       (un modelo, un service), así que duplicar acá sería crear la divergencia justo en el
+       último tramo. */
+    const VERIF_CHIPS = {
+      email:   ['verifChipEmail', 'verifChipEmailCabecera'],
+      celular: ['verifChipCelular'],
+    };
+
+    function verifMensaje(texto, esError) {
+      const err = document.getElementById('verifError');
+      const ok  = document.getElementById('verifOk');
+      if (!err || !ok) return;
+      err.classList.remove('show');
+      ok.style.display = 'none';
+      if (esError) {
+        err.textContent = texto;
+        err.classList.add('show');
+      } else {
+        ok.textContent = texto;
+        ok.style.display = 'block';
+      }
+    }
+
+    // Cuenta regresiva del botón de reenvío. Es lo que corta el doble click, que es el 90% del
+    // "abuso" real — el servidor igual lo rechaza (cooldown de 60s), pero un botón que se ve
+    // apretable y contesta 429 parece que está roto.
+    function verifCuentaRegresiva(idBoton, segundos) {
+      const btn = document.getElementById(idBoton);
+      if (!btn) return;
+      const etiqueta = btn.dataset.etiqueta || btn.textContent.trim();
+      btn.dataset.etiqueta = etiqueta;
+      let quedan = segundos;
+      btn.disabled = true;
+      btn.textContent = etiqueta + ' (' + quedan + ')';
+      const t = setInterval(() => {
+        quedan -= 1;
+        if (quedan <= 0) {
+          clearInterval(t);
+          btn.disabled = false;
+          btn.textContent = etiqueta;
+        } else {
+          btn.textContent = etiqueta + ' (' + quedan + ')';
+        }
+      }, 1000);
+    }
+
+    async function pedirCodigo(canal) {
+      const Canal = canal === 'email' ? 'Email' : 'Celular';
+      verifMensaje('', false);
+      document.getElementById('verifOk').style.display = 'none';
+
+      try {
+        const res  = await fetch('/verificacion/' + canal + '/enviar', { method: 'POST' });
+        const data = await res.json();
+
+        if (!res.ok) {
+          verifMensaje(data.error || 'No pudimos enviar el código.', true);
+          // El 429 del cooldown trae cuántos segundos faltan: se los muestra en el botón en vez
+          // de dejar a la persona apretando a ciegas.
+          if (data.esperaSegundos) verifCuentaRegresiva('verifReenvio' + Canal, data.esperaSegundos);
+          return;
+        }
+
+        document.getElementById('verifCaja' + Canal).classList.add('abierta');
+        document.getElementById('verifTexto' + Canal).textContent =
+          canal === 'email'
+            ? 'Te mandamos un correo a ' + data.destino + '. Tocá el enlace, o escribí acá el código de 6 números.'
+            : 'Te mandamos un código a ' + data.destino + '. Escribilo acá abajo.';
+        document.getElementById('verifCodigo' + Canal).focus();
+        verifCuentaRegresiva('verifReenvio' + Canal, data.esperaSegundos || 60);
+
+        const botonPedir = document.getElementById('verifBtn' + Canal);
+        if (botonPedir) botonPedir.style.display = 'none';
+      } catch (e) {
+        verifMensaje('Error de conexión. Intentá de nuevo.', true);
+      }
+    }
+
+    async function confirmarCodigo(canal) {
+      const Canal  = canal === 'email' ? 'Email' : 'Celular';
+      const codigo = document.getElementById('verifCodigo' + Canal).value.trim();
+
+      try {
+        const res = await fetch('/verificacion/' + canal + '/codigo', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ codigo }),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          verifMensaje(data.error || 'El código no es correcto.', true);
+          return;
+        }
+
+        document.getElementById('verifCaja' + Canal).classList.remove('abierta');
+        verifMensaje(canal === 'email' ? '¡Listo! Tu correo quedó verificado.'
+                                       : '¡Listo! Tu celular quedó verificado.', false);
+        refrescarChips();
+      } catch (e) {
+        verifMensaje('Error de conexión. Intentá de nuevo.', true);
+      }
+    }
+
+    async function quitarVerificacion(canal) {
+      if (!confirm('¿Sacar la marca de verificado? Vas a poder volver a verificarlo cuando quieras.')) return;
+      try {
+        const res  = await fetch('/verificacion/' + canal, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) { verifMensaje(data.error || 'No se pudo.', true); return; }
+        location.reload(); // cambian los botones, no solo el chip
+      } catch (e) {
+        verifMensaje('Error de conexión. Intentá de nuevo.', true);
+      }
+    }
+
+    // Repinta los chips sin recargar. Usa la MISMA regla que el servidor
+    // (public/js/estadoVerificacion.js, cargado como <script> más abajo): si acá se decidiera
+    // el texto por las suyas, la pantalla y el resto del sistema podrían decir cosas distintas
+    // sobre el mismo dato.
+    async function refrescarChips() {
+      try {
+        const res  = await fetch('/verificacion/estado');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        for (const canal of ['email', 'celular']) {
+          const e = window.EstadoVerificacion.estadoContacto(data.user, canal);
+          const html = '<span class="chip-verif chip-verif--' + (e.tono === 'ok' ? 'ok' : 'neutro') + '">'
+                     + '<span class="material-symbols-outlined">' + e.icono + '</span>' + e.texto + '</span>';
+          for (const id of VERIF_CHIPS[canal]) {
+            const nodo = document.getElementById(id);
+            if (nodo) nodo.innerHTML = html;
+          }
+        }
+      } catch (e) { /* el chip se actualiza igual al recargar; no vale romper la pantalla por esto */ }
+    }
   </script>
+  <%# La regla del chip, la misma que usa el servidor. Va al final para que las funciones de
+      arriba la encuentren cargada cuando se las llama (nunca en el parseo). %>
+  <% if (typeof verificacionEnabled !== 'undefined' && verificacionEnabled) { %>
+    <script src="/js/estadoVerificacion.js"></script>
+  <% } %>
 </body>
 </html>

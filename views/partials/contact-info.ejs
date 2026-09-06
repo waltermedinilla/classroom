@@ -14,6 +14,14 @@
         <span class="material-symbols-outlined" style="font-size:16px;color:#25d366">chat</span>
         WhatsApp
       </a>
+      <%# El estado del celular va JUNTO a los enlaces que lo usan, y no en otra parte de la
+          ficha, porque es acá donde alguien está por apretar "llamar" o "WhatsApp": es el
+          momento en que saber si el número está confirmado cambia lo que hace. Solo se muestra
+          si está verificado (soloVerificado) — en un listado de contactos, un chip gris en cada
+          fila es ruido; el verde es la información. %>
+      <% if (typeof verificacionEnabled !== 'undefined' && verificacionEnabled) { %>
+        <%- include('chip-verificado', { person, canal: 'celular', soloVerificado: true }) %>
+      <% } %>
     <% } %>
     <% if (person.instagram) { %>
       <a href="https://instagram.com/<%= person.instagram %>" target="_blank" rel="noopener noreferrer"

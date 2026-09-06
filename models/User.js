@@ -55,6 +55,47 @@ const userSchema = new mongoose.Schema({
     trim: true,
     default: null,      // Celular de contacto; se valida formato en la ruta, no acá
   },
+
+  // ── Verificación de contacto ───────────────────────────────────────────────
+  // specs/verificacion-de-contacto.spec.md. Responden una pregunta que el resto del modelo
+  // no puede: `email` y `phone` solo están validados DE FORMA (un regex y sanitizePhone),
+  // así que la plataforma cree todo lo que le escriben. Y el correo es la llave de entrada
+  // al sistema — se inicia sesión con él.
+  //
+  // `null` = no verificado. NO hay booleano a propósito: la fecha es el dato, porque
+  // "verificado hace 8 meses" no es lo mismo que "verificado ayer".
+  //
+  // ⚠️ LA REGLA DE ORO DE TODA LA FEATURE: cambiar el dato BORRA su verificación. No se
+  // cumple acordándose en cada ruta — se cumple usando setEmail()/setPhone() más abajo, y
+  // tests/unit/verificacionRegla.test.js falla si alguna ruta asigna `.email =` directo.
+  emailVerifiedAt: {
+    type: Date,
+    default: null,
+  },
+  emailVerifiedVia: {
+    // 'enlace'|'codigo' = lo hizo la propia persona · 'staff' = lo confirmó la escuela
+    // (ver D6) · 'importacion' reservado para un backfill futuro desde una fuente confiable.
+    type: String,
+    enum: ['enlace', 'codigo', 'staff', 'importacion', null],
+    default: null,
+  },
+  phoneVerifiedAt: {
+    type: Date,
+    default: null,
+  },
+  phoneVerifiedVia: {
+    type: String,
+    enum: ['codigo', 'staff', null],
+    default: null,
+  },
+  // El celular en E.164 (`+5492615551234`), que es el único formato que entiende un proveedor
+  // de SMS o WhatsApp. Va APARTE de `phone` y no lo reemplaza: `phone` es lo que la persona
+  // escribió y lo que leen las fichas y el link de wa.me. Lo calcula services/telefonoAR.js.
+  // null = hay un número cargado que no se pudo interpretar (o no hay ninguno) → NO se manda.
+  phoneE164: {
+    type: String,
+    default: null,
+  },
   instagram: {
     type: String,
     trim: true,
@@ -134,6 +175,10 @@ userSchema.index(
 // + aggregate por rol filtrando lastSeen >= cutoff, refrescado cada pocos segundos)
 userSchema.index({ lastSeen: 1 });
 
+// Cobertura de verificación por escuela ("¿a cuántos les llega un correo?"). Sobre 600 usuarios
+// por escuela no es imprescindible, pero el contador se pinta en dos paneles y cuesta nada.
+userSchema.index({ school: 1, emailVerifiedAt: 1 });
+
 // Hook pre-save: hashea la contraseña antes de persistir
 // Solo se ejecuta si el campo password fue modificado (evita re-hashear en otros cambios)
 userSchema.pre('save', async function (next) {
@@ -147,6 +192,66 @@ userSchema.pre('save', async function (next) {
 // Retorna true si coinciden, false si no. Usado en POST /login
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);
+};
+
+// ── La regla de oro de la verificación de contacto ───────────────────────────
+// Cambiar el correo o el celular BORRA su verificación. Es el bug clásico que hunde estas
+// features: se verifica el correo, después se cambia por otro, y la marca verde queda pegada
+// a un dato que nadie confirmó nunca.
+//
+// Por qué son métodos y no un hook pre('save'): las rutas de este proyecto escriben usuarios
+// por los dos caminos —`user.email = x; await user.save()` y `findByIdAndUpdate(...)`— y un
+// hook de documento no ve el segundo. Un método que hay que llamar explícitamente sí se puede
+// exigir, y tests/unit/verificacionRegla.test.js falla ante cualquier `.email =` suelto en
+// routes/. Para los findByIdAndUpdate está camposDeContacto() acá abajo.
+//
+// No hay excepción por "es el mismo valor": el correo se normaliza a minúsculas y se recorta,
+// así que "Ana@X.com " y "ana@x.com" son el mismo correo y no borran nada; cualquier otra
+// diferencia es un correo distinto y sí lo borra.
+userSchema.methods.setEmail = function (nuevo) {
+  const normalizado = String(nuevo || '').toLowerCase().trim();
+  if (normalizado === this.email) return this;
+  this.email            = normalizado;
+  this.emailVerifiedAt  = null;
+  this.emailVerifiedVia = null;
+  return this;
+};
+
+userSchema.methods.setPhone = function (nuevo) {
+  // require() adentro para no crear un ciclo: services/telefonoAR.js es puro, pero el modelo
+  // lo cargan tests y scripts que no levantan la app entera.
+  const { normalizar } = require('../services/telefonoAR');
+  const limpio = nuevo ? String(nuevo).trim() : null;
+  if (limpio === this.phone) return this;
+  this.phone            = limpio;
+  this.phoneE164        = normalizar(limpio).e164;
+  this.phoneVerifiedAt  = null;
+  this.phoneVerifiedVia = null;
+  return this;
+};
+
+// La misma regla para el otro camino de escritura: findByIdAndUpdate / updateOne, donde no hay
+// documento sobre el que llamar un método. Devuelve el objeto de campos a mezclar en el $set.
+//
+//   await User.findByIdAndUpdate(id, { ...otrosCampos, ...camposDeContacto({ phone }) })
+//
+// Solo incluye los canales que se pasan: `camposDeContacto({ phone })` no toca el correo.
+userSchema.statics.camposDeContacto = function ({ email, phone } = {}) {
+  const { normalizar } = require('../services/telefonoAR');
+  const campos = {};
+  if (email !== undefined) {
+    campos.email            = String(email || '').toLowerCase().trim();
+    campos.emailVerifiedAt  = null;
+    campos.emailVerifiedVia = null;
+  }
+  if (phone !== undefined) {
+    const limpio = phone ? String(phone).trim() : null;
+    campos.phone            = limpio;
+    campos.phoneE164        = normalizar(limpio).e164;
+    campos.phoneVerifiedAt  = null;
+    campos.phoneVerifiedVia = null;
+  }
+  return campos;
 };
 
 // Override toJSON: elimina el campo password al serializar el doc (p.ej. en res.json)

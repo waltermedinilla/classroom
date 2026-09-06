@@ -131,7 +131,15 @@
                     </div>
                   </div>
                 </td>
-                <td class="td-email"><%= u.email %></td>
+                <td class="td-email">
+                  <%= u.email %>
+                  <%# Solo el chip VERDE en los listados: 500 chips grises de "sin verificar"
+                      son ruido, y lo que se busca de un vistazo es quién sí. Para ver a los
+                      que faltan está el filtro de arriba. %>
+                  <% if (typeof verificacionEnabled !== "undefined" && verificacionEnabled) { %>
+                    <%- include("../partials/chip-verificado", { person: u, canal: "email", soloVerificado: true }) %>
+                  <% } %>
+                </td>
                 <td><span class="role-badge role-<%= u.role %>"><%= roleNames[u.role] || u.role %></span></td>
                 <td>
                   <%- include('../partials/user-activity-stats', { stats: activityStats.get(u._id.toString()) }) %>
