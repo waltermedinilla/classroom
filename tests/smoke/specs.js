@@ -439,6 +439,122 @@ const specs = [
     },
   },
   {
+    // El caso que reportó el dueño el 2026-08-31: "le restablecí la contraseña a un docente y
+    // después no pude entrar con sus credenciales". El servidor SÍ la cambiaba —eso nunca
+    // estuvo roto, y este spec lo deja documentado— pero la respuesta NOMBRABA la contraseña
+    // ("DNI del usuario") en vez de darla, así que había que ir a leer el número a otro lado
+    // de la ficha y re-tipearlo. La suite cubría la guarda de :id inválido de esa ruta y
+    // nada más: nadie ataba el reseteo con el login que viene después.
+    //
+    // Va con el superadmin como actor porque ése fue el rol donde se notó. La ruta es la
+    // misma para los dos (requireAdmin acepta ambos) y con school:null el chequeo de escuela
+    // ni se evalúa; si alguna vez alguien le suma un filtro por escuela a esa guarda, el
+    // superadmin dejaría de poder restablecer nada y este spec lo caza.
+    id: 'reset-password-devuelve-una-contrasena-que-sirve',
+    title: 'El superadmin restablece una contraseña y con la que devuelve se puede entrar',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, env, assert }) {
+      // Logins inline, mismo criterio que 'alta-teacher-por-superadmin': el login es
+      // idempotente, y así este spec se puede correr solo con --only cuando hay que
+      // comprobar que falla sin el arreglo. Depender de la cookie que dejó un spec 3000
+      // líneas más arriba lo haría imposible.
+      await client.post('admin', '/login', {
+        body: { email: env.SMOKE_ADMIN_EMAIL, password: env.SMOKE_ADMIN_PASSWORD },
+        expectStatus: 200,
+      });
+      await client.post('superadmin', '/login', {
+        body: { email: env.SMOKE_SUPERADMIN_EMAIL, password: env.SMOKE_SUPERADMIN_PASSWORD },
+        expectStatus: 200,
+      });
+
+      // Cuenta propia y descartable: restablecerle la contraseña al docente de la suite le
+      // rompería el login a los specs que vienen después.
+      const dni   = dniSmoke(40);
+      const email = `reset.smoke.${RUN_ID}@example.com`;
+      const alta  = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke Reset ${RUN_ID}`, email, password: 'provisoria1234', role: 'teacher', dni },
+        expectStatus: 201,
+      });
+      const id = alta.json.user._id;
+
+      try {
+        const res = await client.post('superadmin', `/admin/users/${id}/reset-password`, { expectStatus: 200 });
+        assert(res.json.password === dni,
+          `el reseteo tiene que devolver la contraseña LITERAL: esperaba el DNI ${dni} y devolvió ${JSON.stringify(res.json.password)}`);
+        assert(res.json.origen === 'DNI',
+          `esperaba origen 'DNI', recibió ${JSON.stringify(res.json.origen)}`);
+
+        // El paso que faltaba y que es todo el punto del spec: que con eso se entre.
+        await client.post('resetProbe', '/login', {
+          body: { email, password: res.json.password },
+          expectStatus: 200,
+        });
+      } finally {
+        await client.post('admin', `/admin/users/${id}/delete`, { expectStatus: 200 });
+      }
+    },
+  },
+  {
+    // La otra mitad del mismo problema. En el espejo de producción hay 60 DNIs con DOS
+    // cuentas en la MISMA escuela: la carga por padrón y el alta manual dejan dos fichas de
+    // la misma persona, una con el correo institucional y otra con el personal. Restablecer
+    // la contraseña de una y después intentar entrar con el correo de la otra da exactamente
+    // el síntoma "la cambié y no anda", con las dos pantallas contestando que salió bien.
+    //
+    // ⚠️ El duplicado se inserta DIRECTO en Mongo a propósito, y no es una comodidad del
+    // test: POST /admin/users/create lo rechaza (busca { school, dni } antes de crear), así
+    // que por la API no se puede fabricar. Los 60 que existen son históricos, de antes de
+    // ese chequeo — y el índice único { school, dni } que declara models/User.js NO está
+    // creado en la base justamente porque no puede construirse mientras esos 60 existan.
+    id: 'ficha-avisa-cuando-hay-otra-cuenta-con-el-mismo-dni',
+    title: 'La ficha del usuario avisa si otra cuenta de la escuela tiene su mismo DNI',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, assert }) {
+      // Login inline, mismo motivo que el spec de arriba: que se pueda correr aislado.
+      await client.post('admin', '/login', {
+        body: { email: env.SMOKE_ADMIN_EMAIL, password: env.SMOKE_ADMIN_PASSWORD },
+        expectStatus: 200,
+      });
+
+      const dni   = dniSmoke(41);
+      const email = `gemela.a.${RUN_ID}@example.com`;
+      const alta  = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke Gemela ${RUN_ID}`, email, password: 'provisoria1234', role: 'teacher', dni },
+        expectStatus: 201,
+      });
+      const id     = alta.json.user._id;
+      const school = alta.json.user.school;
+      const emailGemela = `gemela.b.${RUN_ID}@example.com`;
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+
+        // Primero SIN gemela: el aviso no puede aparecer siempre.
+        const sinGemela = await client.get('admin', `/admin/users/${id}`, { expectStatus: 200 });
+        assert(!sinGemela.text.includes('con el DNI'),
+          'sin cuenta duplicada la ficha no tiene que avisar nada');
+
+        await mongo.db().collection('users').insertOne({
+          name: `Smoke Gemela B ${RUN_ID}`, email: emailGemela, password: 'no-se-usa',
+          role: 'teacher', dni, school: new ObjectId(school), active: true,
+          createdAt: new Date(), updatedAt: new Date(),
+        });
+
+        const conGemela = await client.get('admin', `/admin/users/${id}`, { expectStatus: 200 });
+        assert(conGemela.text.includes(`con el DNI ${dni}`),
+          'el aviso tendría que decir de qué DNI se trata');
+        assert(conGemela.text.includes(emailGemela),
+          'el aviso tendría que nombrar el correo de la otra cuenta, que es el dato que evita el error');
+      } finally {
+        try { await mongo.db().collection('users').deleteOne({ email: emailGemela }); } catch {}
+        try { await mongo.close(); } catch {}
+        await client.post('admin', `/admin/users/${id}/delete`, { expectStatus: 200 });
+      }
+    },
+  },
+  {
     id: 'scoped-teacher-login',
     title: 'El docente de la escuela inicia sesión',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],

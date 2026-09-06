@@ -366,11 +366,26 @@ router.get('/users/:id', async (req, res) => {
         .lean()
     : [];
 
+  // ¿Hay OTRA cuenta con este mismo DNI en la escuela? No es un caso de laboratorio: la carga
+  // por padrón y el alta manual dejan dos fichas de la misma persona —una con el correo
+  // institucional y otra con el personal— y en el espejo de producción hay 60 DNIs así.
+  //
+  // El aviso va en ESTA pantalla porque es la trampa exacta que tiende: se restablece la
+  // contraseña de una ficha y después se intenta entrar con el correo de la otra. Las dos
+  // operaciones responden que salió todo bien, y sin embargo no se entra.
+  //
+  // La consulta va por { school, dni }, que es el índice que ya existe (models/User.js), y no
+  // por { dni } suelto: los duplicados nacen de la carga de UNA escuela, y así no hay barrido.
+  const cuentasGemelas = (target.dni && target.school)
+    ? await User.find({ school: target.school, dni: target.dni, _id: { $ne: target._id } })
+        .select('name email role').lean()
+    : [];
+
   res.render('admin/user-profile', {
     target, createdCourses, joinedCourses, coTaughtCourses, PROTECTED_ADMIN_EMAIL,
     schoolDivisions,
     assignedDivisionIds: (target.assignedDivisions || []).map(d => d.toString()),
-    schoolCourses,
+    schoolCourses, cuentasGemelas,
   });
 });
 
@@ -594,7 +609,15 @@ router.post('/users/:id/reset-password', async (req, res) => {
       { origen: target.dni ? 'DNI' : 'default' },
       { schoolId: target.school || null },
     );
-    res.json({ ok: true, hint: target.dni ? 'DNI del usuario' : 'Classroom1234' });
+
+    // Se devuelve la contraseña LITERAL y no un rótulo ("DNI del usuario"): quien restablece
+    // tiene que poder leerla y dictarla sin ir a buscar el dato a otro lado de la pantalla —
+    // un rótulo obliga a re-tipear un número de 8 dígitos que está tres párrafos más arriba,
+    // y es ahí donde se cuela el error que después parece "no me anda la contraseña".
+    // No agrega exposición: solo la ve quien acaba de pedir el reseteo, sobre su propia
+    // sesión, y el DNI ya está impreso en esta misma ficha. La AUDITORÍA sigue guardando el
+    // origen ('DNI' | 'default') y nunca el valor.
+    res.json({ ok: true, password: newPassword, origen: target.dni ? 'DNI' : 'default' });
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });

@@ -45,6 +45,28 @@
         <h2><%= target.name %></h2>
         <% if (target.dni) { %><p style="font-family:monospace;font-size:13px;color:var(--text-secondary);margin-bottom:2px">DNI: <%= target.dni %></p><% } %>
         <p class="profile-email"><%= target.email %></p>
+        <%# Dos fichas de la misma persona (mismo DNI en la misma escuela). El aviso va JUSTO
+            acá, pegado al correo y al DNI, porque el error que evita es de lectura: se
+            restablece la contraseña de esta ficha y después se intenta entrar con el correo de
+            la otra. Las dos pantallas dicen que salió bien y sin embargo no se entra. %>
+        <% if (typeof cuentasGemelas !== 'undefined' && cuentasGemelas.length) { %>
+          <div class="warning-banner" style="align-items:flex-start;margin:10px 0;max-width:560px">
+            <span class="material-symbols-outlined warning-icon">group</span>
+            <div>
+              <strong>Hay <%= cuentasGemelas.length === 1 ? 'otra cuenta' : cuentasGemelas.length + ' cuentas más' %> con el DNI <%= target.dni %>.</strong>
+              La contraseña que restablezcas acá sirve para entrar con
+              <strong><%= target.email %></strong> y con ningún otro correo.
+              <ul style="margin:6px 0 0;padding-left:18px">
+                <% cuentasGemelas.forEach(g => { %>
+                  <li>
+                    <a href="/admin/users/<%= g._id %>"><%= g.email %></a>
+                    — <%= roleNames[g.role] || g.role %><%= g.name !== target.name ? ' · ' + g.name : '' %>
+                  </li>
+                <% }) %>
+              </ul>
+            </div>
+          </div>
+        <% } %>
         <%# Verificación de contacto. El admin ve el estado de los dos canales y puede
             confirmarlos él (verificación asistida, D6): queda firmado a su nombre en la
             auditoría y el chip pasa a decir "Verificado por la escuela". %>
@@ -512,7 +534,14 @@
       if (!confirm(`¿Restablecer la contraseña de <%= target.name %>?\nLa nueva contraseña será ${hint}.`)) return;
       const res = await fetch('/admin/users/<%= target._id %>/reset-password', { method: 'POST' });
       const data = await res.json();
-      if (res.ok) alert(`Contraseña restablecida. La nueva contraseña es: ${data.hint}`);
+      // La contraseña LITERAL y el correo con el que hay que usarla, juntos en el mismo
+      // cartel: son los dos datos que hay que dictar, y separarlos es lo que hace que se
+      // termine probando la contraseña de una cuenta con el correo de otra.
+      if (res.ok) alert(
+        'Contraseña restablecida.\n\n' +
+        'Correo:      <%= target.email %>\n' +
+        'Contraseña:  ' + data.password + '\n\n' +
+        (data.origen === 'DNI' ? 'Es el DNI del usuario.' : 'Es la contraseña por defecto.'));
       else alert(data.error);
     });
 
