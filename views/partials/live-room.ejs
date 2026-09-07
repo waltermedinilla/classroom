@@ -9,6 +9,18 @@
   De ahí dependen las dos cosas que necesitan al resto de esa página: el botón "Crear
   actividad" (usa su modal) y el botón "Ver actividad" de los avisos (abre su solapa).
 %>
+<%# El cursor del poll: qué se le pide al servidor y qué se hace con lo que contesta.
+    Ver specs/sala-poll-carrera.spec.md — es lo que arregla "escribo y se me borra".
+
+    Va ACÁ ADENTRO del partial, y no en las dos vistas que lo incluyen, para que no se pueda
+    olvidar en una de las dos.
+
+    Y va ARRIBA DE TODO, no pegado al <script> de abajo: ese script se ubica en la página con
+    `document.currentScript.previousElementSibling`, que tiene que seguir siendo el
+    <div class="lr-wrap"> (ver aLaVista()). Puesto ahí al lado, el hermano anterior pasaba a
+    ser esta etiqueta y la sala perdía la referencia a su propio contenedor — que es lo que
+    evita que se cuente presente a quien tiene la materia abierta en otra solapa. %>
+<script src="/js/salaPoll.js"></script>
 <style>
   <%# --lr-tenue es el gris de los textos secundarios del chat: la hora, el pie de las cards,
       los avisos del sistema, el "Mensaje eliminado" y los botones "responder" y "borrar".
@@ -443,7 +455,14 @@
   // usaba la zona horaria del equipo, y como las máquinas del aula tienen cualquier zona
   // puesta, el mismo mensaje se veía a una hora distinta en cada pantalla.
 
-  let seq       = SALA.seq || 0;
+  // El cursor del poll (public/js/salaPoll.js). Lleva el `seq`, el `sessionId` y el número de
+  // cada pedido, que es lo que permite tirar las respuestas que llegan tarde.
+  //
+  // EL BUG QUE ARREGLA (reclamo del usuario, 2026-09-07): "escriben, les figura y luego se
+  // borra". Con `seq` suelto acá, cuatro lugares distintos lo movían y dos pedidos en vuelo se
+  // pisaban: la respuesta vieja decía "el último es el 10" cuando la pantalla ya tenía el 11,
+  // eso se leía como "la sala se reinició" y se vaciaba el chat entero.
+  const cursor  = SalaPoll.crearCursor({ seq: SALA.seq, sessionId: SALA.sessionId });
   let estado    = SALA.estado;
   let timer     = null;
   const vistos  = new Set();
@@ -468,8 +487,11 @@
   // y el poll siguiente los agregaba de nuevo abajo — la conversación aparecía DUPLICADA cada
   // vez que alguien tocaba un emoji. Vaciar la lista de vistos y vaciar el chat tienen que ser
   // la misma operación, y esa operación es `pintarMensajes(..., true)`.
-  let forzarRepintado = false;
-  function repintarTodo() { forzarRepintado = true; seq = 0; pollear(); }
+  //
+  // El pedido sale con `desdeCero` y el cursor devuelve `reinicio` al recibir la respuesta —
+  // no antes. Si se bajara el cursor acá y ese poll fallara, la pantalla quedaría con el
+  // cursor en 0 y el chat pintado (ver pedir() en public/js/salaPoll.js).
+  function repintarTodo() { pollear({ desdeCero: true }); }
 
   const $ = (id) => document.getElementById(id);
 
@@ -505,6 +527,15 @@
   function pintarMensajes(msgs, reemplazar) {
     const chat = $('lrChat');
     if (reemplazar) { chat.innerHTML = ''; vistos.clear(); }
+
+    // El cartel de "todavía no hay mensajes" se saca antes de agregar, igual que en
+    // cardSubiendo(). Si no, queda de encabezado ARRIBA de la conversación: se vio al abrir
+    // una sala el 2026-09-07, donde el chat se vacía y enseguida se vuelve a llenar con el
+    // repedido (ver pollear()). Es un cartel, no un mensaje: no puede convivir con ellos.
+    if (msgs.length) {
+      const vacio = chat.querySelector('.lr-vacio');
+      if (vacio) vacio.remove();
+    }
 
     const pegadoAbajo = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60;
 
@@ -817,18 +848,26 @@
     return !!el && el.offsetParent !== null;
   }
 
-  async function pollear() {
+  async function pollear(opciones) {
     if (!aLaVista()) return;
+    // El pedido lleva su número de orden: es lo que le permite al cursor reconocer, cuando la
+    // respuesta vuelva, si mientras tanto salió otro pedido que la dejó atrás.
+    const pedido = cursor.pedir(opciones);
     try {
-      const r = await fetch(BASE + '/poll?since=' + seq, { headers: { Accept: 'application/json' } });
+      const r = await fetch(BASE + '/poll?since=' + pedido.since, { headers: { Accept: 'application/json' } });
       if (!r.ok) return;
       const s = await r.json();
 
-      // Si la sala se cerró y se volvió a abrir, el seq del servidor arranca de cero otra vez:
-      // hay que repintar todo en vez de quedarse esperando mensajes que nunca van a llegar.
-      // `forzarRepintado` es el mismo camino pedido a mano tras borrar o reaccionar.
-      const reinicio = forzarRepintado || s.sessionId !== SALA.sessionId || s.seq < seq;
-      if (reinicio) { SALA.sessionId = s.sessionId; seq = 0; forzarRepintado = false; }
+      const d = cursor.recibir(s, pedido);
+
+      // Una respuesta atrasada se tira ENTERA y antes de tocar el DOM: sus mensajes, su
+      // presencia y su `puedoEscribir` son igual de viejos. Este `return` es el arreglo del
+      // reclamo del 2026-09-07 — sin él, la respuesta lenta pisaba lo que ya estaba pintado.
+      if (d.descartar) return;
+
+      // `SALA.sessionId` NO se sincroniza acá: desde que existe el cursor, el dueño de ese dato
+      // es él y `SALA` solo aporta el valor inicial. Dos copias del mismo estado, movidas desde
+      // lugares distintos, son exactamente lo que causó el bug que este arreglo cierra.
 
       pintarEstado(s);
       // El estado de la transmisión llega en el MISMO poll, como una clave más (D3): quién
@@ -837,16 +876,20 @@
       SALA.transmision = s.transmision;
       pintarTransmision(s.transmision);
       pintarPresencia(s.presencia);
-      if (s.mensajes && s.mensajes.length) {
-        pintarMensajes(s.mensajes, reinicio);
-        seq = Math.max(seq, ...s.mensajes.map(m => m.seq));
-      } else if (reinicio) {
-        pintarMensajes([], true);
-      }
+      if (d.mensajes.length) pintarMensajes(d.mensajes, d.reinicio);
+      else if (d.reinicio)   pintarMensajes([], true);
+
       // Va afuera del if a propósito: si algún día el poll trae una tanda vacía, esto tiene que
       // seguir siendo un no-op y no quedar salteado a medias.
-      ponerLaMateriaAlDia(s.mensajes || []);
-      if (s.seq > seq) seq = s.seq;
+      ponerLaMateriaAlDia(d.mensajes);
+
+      // La sala es otra (recién abierta o reabierta): la tanda que vino se había pedido con el
+      // cursor de la anterior, así que el cursor no la dio por buena. Se pregunta de nuevo
+      // desde cero YA, en vez de dejar la pantalla vacía los 4 segundos del intervalo.
+      //
+      // `repedido: true` es lo que impide que esto se encadene: el cursor no vuelve a pedir
+      // un repedido, así que como mucho sale UN pedido extra por vuelta (ver recibir()).
+      if (d.repedir) pollear({ repedido: true });
     } catch (e) { /* un poll perdido no rompe nada: el próximo trae lo mismo */ }
   }
 
@@ -896,7 +939,10 @@
     // (visibilitychange lo corta), así que ahí el latido es lo único que queda.
     if (aLaVista() && !document.hidden) return;
     try {
-      await fetch(BASE + '/poll?since=' + seq, { headers: { Accept: 'application/json' } });
+      // Lee `cursor.seq` y NO llama a cursor.pedir(): el latido tira la respuesta, así que si
+      // numerara un pedido invalidaría el poll de verdad que estuviera en vuelo — la sala se
+      // congelaría cada 20 segundos justo para quien la está dando (RN-4).
+      await fetch(BASE + '/poll?since=' + cursor.seq, { headers: { Accept: 'application/json' } });
     } catch (e) { /* un latido perdido no rompe nada: el próximo va en 20 s */ }
   }
   if (GESTOR) setInterval(latir, LATIDO_MS);

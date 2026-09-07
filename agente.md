@@ -435,6 +435,7 @@ compara a los nueve y falla si se separan.
 11. En el listado de divisiones, **la suma de la columna "Alumnos" supera el total de alumnos de la escuela**. No es un error: los alumnos se cuentan únicos *dentro* de cada división, y un alumno puede cursar materias de más de una.
 12. ~~El superadmin entrando a `/admin` ve tres solapas que no llevan a ningún lado (Tema, Tareas y Plantillas, que son POR ESCUELA y él no tiene escuela).~~ **Arreglado el 2026-08-07** con el campo `needsSchool` de `config/sections.js` — ver el changelog de ese día. Las rutas siguen contestando lo mismo si se escribe la URL a mano: lo que cambió es que el nav ya no ofrece la puerta.
 13. **Variables CSS que se usan pero nunca se declaran.** `--background` y `--text-primary, #1a1a2e` se arreglaron el 2026-08-08 (ver el changelog), pero quedan: `--text-primary` sin fallback (47 usos), `--surface-variant` (10), `--divider` (8), y `--hover-bg`, `--success` y `--surface-2` (1 cada una). Para chequear el estado: `grep -rhoE '\bvar\(--[a-zA-Z0-9_-]+' public views | sed 's/var(//' | sort -u` contra los `--nombre:` declarados en `style.css`. Ojo con los falsos positivos: `--card-color` y `--stat-color` **sí** se definen, pero inline en el atributo `style` de la vista. La regla práctica: una `var()` sin declarar en una propiedad **heredada** (`color`) hace que el elemento herede la del padre y suele pasar desapercibida; en una **no heredada** o en un atajo (`background`, `border`) invalida la declaración entera y se pierde el estilo. Por eso `--divider` dentro de `border: 1px solid var(--divider)` deja el borde en `none` — pasa hoy en la textarea de entrega del alumno (`public/js/course.js:1946`).
+14. **El `seq` de un mensaje de la sala se reserva antes de que el mensaje exista.** `postMessage()` hace `$inc` sobre `RoomSession.lastSeq` y **después** `RoomMessage.create()`: entre las dos hay un `await`, así que durante unos milisegundos el número está tomado y el documento no está. Desde el 2026-09-07 el navegador ya no se cuelga de eso —el cursor no adopta el `seq` anunciado y no saltea un hueco, ver `specs/sala-poll-carrera.spec.md`—, pero **el hueco sigue existiendo del lado del servidor**. Cerrarlo de verdad es numerar e insertar en una sola operación, y eso toca la ruta más caliente de la app (el poll de cada persona de cada sala, cada 4 s), así que se dejó a propósito para cuando haya un motivo más fuerte que este. Si alguna vez se hace, el plazo de 10 s del hueco en `public/js/salaPoll.js` deja de tener sentido.
 
 ---
 
@@ -525,6 +526,65 @@ creadas, no.
 ---
 
 ## Historial de Cambios (Changelog)
+
+### 2026-09-07 — "Escribo en la sala y lo que escribí se borra": una carrera del poll
+
+**Palabras del usuario**: *"muchos se quejan de que escriben y lo que escriben les figura y luego
+se borra, puede ser problemas de conección o que puede ser problemas de procesador"*.
+
+**Ni la conexión ni el procesador: una condición de carrera en el navegador**, que la red del aula
+dispara mucho más seguido. En la base no se borraba nada — lo que se vaciaba era la pantalla.
+
+La sala pregunta *"¿qué hay después del mensaje N?"* cada 4 segundos, y **nada garantizaba que las
+respuestas se procesaran en el orden en que salieron los pedidos**: no había una sola guarda de
+concurrencia en `pollear()`. Tres lugares disparaban un pedido extra sin cancelar el anterior: al
+enviar un mensaje, al volver a la pestaña (`pollear()` y enseguida `arrancar()`, que vuelve a
+pollear) y al borrar o reaccionar.
+
+La secuencia del reclamo, con el cursor en 10:
+
+1. El intervalo pide *"desde el 10"*; el pedido queda viajando.
+2. La persona escribe: `enviar()` dispara un segundo pedido, también *"desde el 10"*.
+3. El segundo vuelve primero, trae el mensaje 11 y **lo pinta**.
+4. Vuelve el primero, más lento, con la foto vieja: `seq: 10`.
+5. `s.seq < seq` se leía como *"la sala se reinició"* → `chat.innerHTML = ''`. **Se borra.**
+
+A los 4 segundos volvía entero. Por eso el síntoma era *"aparece, se borra, y vuelve"*.
+
+⭐ **El segundo bug, que no vuelve nunca**: `postMessage()` reserva el número (`$inc` sobre
+`lastSeq`) y **después** inserta el documento. Un poll que caiga en ese hueco recibe `s.seq = 11`
+sin el mensaje 11, y `if (s.seq > seq) seq = s.seq` lo adoptaba igual: esa pantalla pasaba a pedir
+*"desde el 11"* y **el 11 no le llegaba nunca más**, solo recargando.
+
+**El arreglo** (solo navegador — ver `specs/sala-poll-carrera.spec.md`): la lógica del cursor sale
+del `.ejs` a **`public/js/salaPoll.js`**, donde se puede probar.
+
+- **Solo se procesa la respuesta del último pedido.** Las atrasadas se tiran enteras —mensajes,
+  presencia y `puedoEscribir` incluidos— antes de tocar el DOM.
+- **El único indicador de "otra sesión" es el `sessionId`.** Un `lastSeq` menor ya no vacía nada.
+- **El cursor avanza solo con mensajes recibidos**, y no saltea un hueco: si la tanda no arranca
+  donde corresponde, espera al poll siguiente (con plazo de 10 s, para que un número reservado que
+  nunca llegue a existir no deje la sala muda para siempre).
+
+**Tres cosas más salieron de verificarlo en el navegador**, y ninguna se habría visto en los tests:
+
+1. El `<script>` del módulo, puesto al lado del script inline, le robaba el
+   `previousElementSibling` con el que la sala se ubica en la página (`aLaVista()`). Va arriba de
+   todo el partial.
+2. **Un `repedir` que puede volver a pedir es un bucle**: alcanzaba con que el servidor contestara
+   sesiones distintas en dos respuestas seguidas. Se vieron diez pedidos en el mismo milisegundo.
+   Ahora no se encadena: el peor caso vuelve a ser esperar los 4 segundos.
+3. El cartel *"todavía no hay mensajes"* quedaba de encabezado arriba de la conversación cuando el
+   chat se vacía y se vuelve a llenar.
+
+**Verificado**: la carrera reproducida en el navegador demorando 6 s la respuesta de un poll — el
+mensaje se pinta y sigue ahí. Y los tests corridos contra la lógica anterior fallan 12 de 22.
+
+⚠️ **Entra con la próxima carga de la página**, por pedido del usuario (*"a partir del próximo
+docente que inicie una sala, para no perjudicar a los que están actualmente"*): es todo del lado
+del navegador, sin migración ni cambios en el servidor, así que quien esté en una clase sigue con
+el código que ya tiene cargado. Conviene desplegar **fuera del horario de clase** igual, porque el
+reinicio de Node corta los polls unos segundos.
 
 ### 2026-09-06 — El monitor tardaba 17 segundos: el escaneo de disco sale del request
 

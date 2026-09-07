@@ -175,7 +175,13 @@ const ponerAlDia = cuerpoDeSala('ponerLaMateriaAlDia');
 test('el poll pone la materia al día en cada vuelta', () => {
   // Va afuera del if de mensajes: si el poll trae una tanda vacía tiene que seguir siendo un
   // no-op, no quedar salteado.
-  assert.match(sala, /\n      ponerLaMateriaAlDia\(s\.mensajes \|\| \[\]\);/,
+  //
+  // El argumento pasó de `s.mensajes` (lo que contestó el servidor) a `d.mensajes` (lo que el
+  // cursor dio por bueno) con el arreglo de la carrera del poll, 2026-09-07 — ver
+  // specs/sala-poll-carrera.spec.md. Son los MISMOS mensajes que se pintan, que es lo que
+  // esta llamada tiene que acompañar: si un aviso queda esperando del otro lado de un hueco,
+  // la materia se pone al día cuando el aviso aparece, no antes.
+  assert.match(sala, /\n      ponerLaMateriaAlDia\(d\.mensajes\);/,
     'la llamada va al nivel del try del poll, no anidada en el if de mensajes');
 });
 
