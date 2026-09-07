@@ -28,6 +28,7 @@
     "test:roles": "node tests/roles/check-roles.js",
     "test:unit": "node --test --test-concurrency=1 tests/unit/*.test.js",
     "test:images": "node --test tests/images/*.test.js",
+    "verificar:arbol": "node tools/verificar-arbol.js",
     "optimize:images": "node optimize-existing-images.js",
     "optimize:images:dry": "node optimize-existing-images.js --dry-run",
     "migrate:examen": "node migrate-examen-to-evaluacion.js",

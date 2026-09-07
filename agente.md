@@ -526,6 +526,44 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-06 — El árbol commiteado se verifica con un comando: `npm run verificar:arbol`
+
+Antes de pushear hay que arrancar el árbol **commiteado** (`git archive HEAD`), no la carpeta de
+trabajo: el 502 del 2026-08-29 fue un `require` a un archivo que existía solo en la copia local, y
+los 686 tests de entonces pasaron justamente porque el archivo estaba ahí. Eso ya se hacía a mano.
+Lo que faltaba es que arrancarlo **no alcanza**.
+
+⭐ **Por qué no alcanza.** Arrancar el server ejecuta solo los `require` del arranque. El del 502
+era **perezoso** —vivía adentro de un handler—, así que un `/health` en verde no habría dicho nada:
+se descubre recién cuando alguien entra a esa pantalla. El barrido estático los mira todos, en
+segundos. Sobre `5ac55c6`: **658 `require` propios + 397 `include` de EJS, todos resuelven.**
+
+**El segundo barrido tapa un agujero que el junction a `node_modules` esconde**: un paquete que el
+código requiere y que `package.json` no declara. En la máquina de desarrollo anda —está instalado
+por transitivo o a mano— y en el VPS el `npm install --omit=dev` no lo trae. Distingue dos
+gravedades, y la distinción es lo que hace que el comando sirva: si el paquete **no resuelve**, el
+deploy muere seguro; si resuelve sin estar declarado, anda hoy y se rompe el día que la dependencia
+intermedia lo suelte. Hoy hay exactamente uno de esos: `mongodb`, que llega por `mongoose` y
+`connect-mongo`, y lo usan `migrate-to-prod.js`, `pull-from-prod.js` y el smoke — nada que corra al
+arrancar.
+
+⚠️ **Tres falsos positivos hubo que descartar, y no son cosmética**: un comando que nace en rojo es
+un comando que nadie mira más. (1) `.claude/` se saltea entero porque `worktrees/` guarda copias
+completas del repo — sin ese corte el barrido pasa de 181 archivos a 786 y repite cada hallazgo una
+vez por worktree. (2) `tests/` queda afuera del barrido de referencias: un test que arma un árbol de
+mentira escribe `require('../models/X')` como **texto**, indistinguible de uno real, y un test roto
+no llega a producción porque lo grita `test:unit`. (3) El `require('${APP_DIR}/package.json')` de
+`server.js` es shell dentro del `deployCmd`, no un require: se descarta cualquier interpolación.
+
+**Dónde vive**: `tools/arbol.js` (la lógica, exportada) + `tools/verificar-arbol.js` (el CLI, con la
+receta completa del `git archive` en el encabezado). Mismo patrón que `tools/iconos.js`. Sin
+argumento mira la carpeta de trabajo; con `-- <ruta>`, un árbol extraído.
+
+**Tests**: 18 casos en `tests/unit/verificarArbol.test.js`, entre ellos el `require` perezoso y los
+tres falsos positivos. **Verificados en rojo**: rompiendo las tres guardas a propósito fallan
+exactamente los tres casos que las cubren, más los dos que barren este repo de verdad. Suites
+completas: **unit 999/999 · images 18/18 · smoke 404/404 · roles sin hallazgos.**
+
 ### 2026-09-06 — La nota más baja es 1: se cierra la puerta por la que entraban los ceros
 
 Regla de la escuela, confirmada por el dueño el 2026-08-31. Hasta hoy la carga manual aceptaba el
