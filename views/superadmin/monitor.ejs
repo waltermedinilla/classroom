@@ -907,11 +907,17 @@
           }
 
           setText('m-app-total', formatSize(data.disk.appTotal));
-          // El desglose sale de un cache de 60s (escanear el árbol de archivos es caro),
-          // así que se avisa la antigüedad en vez de fingir que es del segundo exacto.
-          setText('m-app-fresh', data.disk.calculadoHace < 5
-            ? 'recién calculado'
-            : `calculado hace ${data.disk.calculadoHace}s`);
+          // El desglose sale de un cache que se refresca POR DETRÁS (services/diskStats.js):
+          // escanear el árbol son ~4 s y ningún request los espera. El precio es que el dato
+          // puede tener minutos, así que se avisa la antigüedad en vez de fingir que es del
+          // segundo exacto — y en minutos cuando pasa del minuto, que "calculado hace 287s"
+          // no se lee.
+          const hace = data.disk.calculadoHace;
+          setText('m-app-fresh',
+            hace === null   ? 'calculando…'
+            : hace < 5      ? 'recién calculado'
+            : hace < 60     ? `calculado hace ${hace}s`
+            : `calculado hace ${Math.round(hace / 60)} min`);
 
           // Desglose: cada carpeta + la base de datos, con barra proporcional al mayor
           const filas = data.disk.carpetas.map(c => ({

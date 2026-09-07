@@ -526,6 +526,50 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-06 — El monitor tardaba 17 segundos: el escaneo de disco sale del request
+
+**Síntoma**: `/superadmin/monitor/stats` promediaba **1.099 ms**, con **el 15,6% de las llamadas
+por encima de 3 segundos** y un pico de **17,5 s**. Solo lo sufre el superadmin —ningún alumno ni
+docente toca esa ruta—, pero mientras el panel está abierto le tira ese I/O al **mismo disco que
+sirve las entregas de los alumnos**.
+
+**La medición, en producción**: el escaneo del árbol de archivos son **4.436 ms** para
+**13.784 archivos y 17,5 GB**. El desglose importa porque explica hacia dónde va:
+
+| Carpeta | Archivos | Tamaño |
+|---|---|---|
+| `archivos/entregas` | 11.010 | 16 GB |
+| `public/archivos` | 1.509 | 1,3 GB |
+| `archivos/salas` | 1.265 | 248 MB |
+
+⭐ **El cache de 60 s no era el problema; el problema era pagarlo adentro del request.** El panel
+pide cada 5 segundos, así que una de cada doce respuestas se comía el escaneo entero. Y el número
+observado era **el doble** del que predice esa cuenta: el cache es una variable de módulo, o sea
+que **vive en cada worker**, y en cluster son dos caches que vencen por su cuenta.
+
+**El arreglo**: cuando el cache vence, `getDiskStats` **sirve el dato viejo al instante y dispara
+el refresco por detrás**. Ningún request vuelve a esperar los 4 segundos —salvo el primero de la
+vida del worker, cuando no hay nada que servir—. Va con una guarda para que dos requests
+simultáneos no disparen dos escaneos: con el panel pidiendo cada 5 s y un escaneo de 4, se
+solapaban solos.
+
+De paso el TTL sube de 60 s a **5 minutos**. Ahora que el refresco no se paga en el request, el TTL
+ya no gobierna la latencia sino cuánto I/O se le tira al disco: **12 escaneos por hora y por worker
+en vez de 60**.
+
+⚠️ **El precio, y por eso se avisa en pantalla**: el desglose puede tener minutos de atraso.
+`calculadoHace` ya viajaba en la respuesta; la vista ahora lo escribe en minutos cuando pasa del
+minuto, porque *"calculado hace 287s"* no se lee. Un dato de almacenamiento atrasado unos minutos
+no le cambia la decisión a nadie; una pantalla que tarda 17 segundos, sí.
+
+**Tests**: 9 casos nuevos en `tests/unit/diskStats.test.js`, que miden que el request **no esperó**
+(la demora del escaneo se inyecta desde el `mongoose` falso, que es lo único inyectable de
+`escanear`). **Verificados en rojo**: devolviendo el `await` al refresco y el TTL a 60 s fallan 5
+de los 9, incluidos los dos centrales. La suite escanea una carpeta temporal de dos archivos y no
+las de verdad —`rutasDePrueba()`—: con las reales tardaba 20 segundos y el resultado dependía de
+cuántos archivos tuviera la máquina de quien la corre. Suites completas: **unit 1008/1008 ·
+images 18/18 · smoke 404/404 · roles sin hallazgos**.
+
 ### 2026-09-06 — El árbol commiteado se verifica con un comando: `npm run verificar:arbol`
 
 Antes de pushear hay que arrancar el árbol **commiteado** (`git archive HEAD`), no la carpeta de

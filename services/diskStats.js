@@ -4,9 +4,27 @@
 //
 //   1. Espacio del volumen (fs.statfs) — una syscall, microsegundos. Se calcula siempre.
 //   2. Cuánto ocupa la app (recorrer el árbol de archivos) — O(cantidad de archivos), y
-//      hoy ya son 144 archivos / ~214 MB, con tendencia a crecer con cada entrega. El
-//      monitor refresca CADA 5 SEGUNDOS (ver views/superadmin/monitor.ejs), así que
+//      el monitor refresca CADA 5 SEGUNDOS (ver views/superadmin/monitor.ejs), así que
 //      escanear en cada tick sería tirar I/O a la basura. Va cacheado.
+//
+// ⭐ Y el cache NO alcanza: el escaneo tampoco puede correr DENTRO del request.
+//
+// Medido en producción el 2026-09-06: 13.784 archivos, 17,5 GB, **4.436 ms** el escaneo
+// (11.010 de esos archivos son entregas de alumnos, y crecen toda la clase, todo el año).
+// Con el cache venciendo cada 60 s y el panel pidiendo cada 5, una de cada doce respuestas
+// pagaba el escaneo entero: `/monitor/stats` promediaba 1.099 ms con picos de 17,5 s, y el
+// 15,6% de las llamadas pasaba de 3 segundos. El doble de lo que sugiere la cuenta, porque
+// este cache es una variable de módulo y **vive en cada worker**: en cluster son dos caches
+// que vencen por su cuenta, así que el escaneo se paga el doble de veces.
+//
+// Por eso el vencimiento NO bloquea: se sirve el dato viejo al instante y el refresco corre
+// por detrás. Ningún request vuelve a esperar los 4 segundos. La única excepción imposible
+// de evitar es el primero de todos, cuando no hay absolutamente nada que servir.
+//
+// El precio es que el desglose puede tener varios minutos de atraso — y por eso `calculadoHace`
+// viaja en la respuesta y la vista lo escribe al lado del número. Un dato de almacenamiento
+// atrasado unos minutos no le cambia la decisión a nadie; una pantalla que tarda 17 segundos,
+// sí.
 //
 // Todos los tamaños se devuelven en BYTES; el formateo a MB/GB es cosa de la vista.
 
@@ -30,8 +48,16 @@ const RUTAS = [
   { id: 'soe',       label: 'Material del gabinete (SOE)', dir: path.join(__dirname, '../archivos/soe') },
 ];
 
-const TTL_MS = 60 * 1000;
+// 5 minutos, no 60 segundos: como el refresco ya no se paga dentro del request, el TTL solo
+// gobierna cuánto I/O se le tira al disco. Y ese disco es el mismo que está sirviendo las
+// entregas de los alumnos, así que 12 escaneos por hora y por worker en vez de 60 es la
+// diferencia que importa. El espacio ocupado no cambia de minuto a minuto.
+const TTL_MS = 5 * 60 * 1000;
 let cache = { at: 0, data: null };
+
+// El refresco en curso, para que dos requests simultáneos no disparen dos escaneos. Con el
+// panel pidiendo cada 5 s y un escaneo de 4, se solapaban solos.
+let refresco = null;
 
 // Suma recursiva del tamaño de un directorio.
 //
@@ -109,22 +135,54 @@ async function tamanoBaseDatos(mongoose) {
   }
 }
 
+// Las carpetas que se escanean. Es RUTAS salvo que un test la reemplace: escanear las de
+// verdad hacía que la suite tardara 20 segundos y dependiera de cuántos archivos tenga la
+// máquina de quien la corre.
+let rutasActivas = RUTAS;
+
+// El escaneo caro, aislado. No toca el cache: de eso se encarga quien lo llama.
+async function escanear(mongoose) {
+  const medidos = await Promise.all(rutasActivas.map(async r => ({
+    id: r.id, label: r.label, ...(await tamanoDirectorio(r.dir)),
+  })));
+  const db = await tamanoBaseDatos(mongoose);
+  return { carpetas: medidos, db };
+}
+
+// Dispara el escaneo si no hay otro en curso y devuelve la promesa. Un fallo NO tumba el
+// cache viejo: seguir mostrando un desglose de hace un rato es mejor que no mostrar ninguno,
+// y el volumen —que es el dato que importa para no quedarse sin disco— se calcula aparte y
+// siempre.
+function refrescar(mongoose) {
+  if (refresco) return refresco;
+  refresco = escanear(mongoose)
+    .then((data) => { cache = { at: Date.now(), data }; })
+    .catch(() => { /* se conserva lo que haya en cache */ })
+    .finally(() => { refresco = null; });
+  return refresco;
+}
+
 // Devuelve el bloque completo para el monitor. `mongoose` se recibe por parámetro para
 // no acoplar este servicio a la conexión (y poder testearlo sin base).
 async function getDiskStats(mongoose) {
   const volumen = await espacioVolumen();
 
-  // El escaneo caro sale del cache si sigue fresco
-  const ahora = Date.now();
-  if (!cache.data || (ahora - cache.at) > TTL_MS) {
-    const medidos = await Promise.all(RUTAS.map(async r => ({
-      id: r.id, label: r.label, ...(await tamanoDirectorio(r.dir)),
-    })));
-    const db = await tamanoBaseDatos(mongoose);
-    cache = { at: ahora, data: { carpetas: medidos, db } };
+  const vencido = (Date.now() - cache.at) > TTL_MS;
+  if (!cache.data) {
+    // El primer request de la vida del worker: no hay nada viejo que servir, hay que esperar.
+    await refrescar(mongoose);
+  } else if (vencido) {
+    // ⭐ Acá está el arreglo: se dispara y NO se espera. Este request contesta con el dato
+    // viejo, en microsegundos, y el que venga después ya encuentra el nuevo.
+    refrescar(mongoose);
   }
 
-  const { carpetas, db } = cache.data;
+  // El escaneo puede no haber dejado nada (falló el primero de todos). El monitor tiene que
+  // seguir mostrando volumen, usuarios, RAM y carga igual.
+  const { carpetas, db } = cache.data || {
+    carpetas: [],
+    db: { disponible: false, datos: 0, storage: 0, indices: 0, documentos: 0 },
+  };
   const totalArchivos = carpetas.reduce((a, c) => a + c.bytes, 0);
 
   return {
@@ -133,15 +191,26 @@ async function getDiskStats(mongoose) {
     db,
     // Lo que ocupa la app = archivos subidos + storage real de Mongo
     appTotal: totalArchivos + (db.disponible ? db.storage : 0),
-    // Para que la vista pueda avisar que el desglose no es del segundo exacto
-    calculadoHace: Math.round((Date.now() - cache.at) / 1000),
+    // Para que la vista pueda avisar que el desglose no es del segundo exacto. Ahora importa
+    // más que antes: con el refresco por detrás puede llegar a los minutos. `null` cuando no
+    // hay nada calculado todavía — sin esto daría los 56 años que van desde el epoch.
+    calculadoHace: cache.data ? Math.round((Date.now() - cache.at) / 1000) : null,
   };
 }
 
-// Solo para tests: fuerza el próximo cálculo a ignorar el cache
-function invalidarCache() { cache = { at: 0, data: null }; }
+// Solo para tests: fuerza el próximo cálculo a ignorar el cache.
+function invalidarCache() { cache = { at: 0, data: null }; refresco = null; }
+
+// Solo para tests: la promesa del refresco en curso, o null si no hay ninguno. Es lo que
+// permite verificar que el request NO esperó y que el escaneo igual ocurrió.
+function refrescoPendiente() { return refresco; }
+
+// Solo para tests: apunta el escaneo a otras carpetas. Sin argumento vuelve a las de verdad.
+function rutasDePrueba(rutas) { rutasActivas = rutas || RUTAS; invalidarCache(); }
 
 // RUTAS se exporta para tests/unit/backupCarpetas.test.js: esta lista es el inventario de
 // carpetas que la app escribe, y el test la usa para exigir que cada una esté respaldada por
 // el backup o excluida a propósito.
-module.exports = { getDiskStats, invalidarCache, TTL_MS, RUTAS };
+module.exports = {
+  getDiskStats, invalidarCache, refrescoPendiente, rutasDePrueba, TTL_MS, RUTAS,
+};
