@@ -562,6 +562,25 @@ en vez de 60**.
 minuto, porque *"calculado hace 287s"* no se lee. Un dato de almacenamiento atrasado unos minutos
 no le cambia la decisión a nadie; una pantalla que tarda 17 segundos, sí.
 
+✅ **Medido en producción después de desplegarlo** (v1.0.81), contra las carpetas reales:
+
+```
+1a llamada (cache vacio):  5982 ms   13784 archivos
+2a llamada (cache fresco):    0 ms
+esperando que venza el TTL (300 s)...
+3a llamada (TTL VENCIDO):     1 ms   <- la que antes tardaba 4 s
+   sirvio un dato de hace 302 s, o sea el viejo
+   y el refresco de atras termino en 4188 ms
+```
+
+La tercera llamada es el caso que daba los picos: el cache recién vencido. **De 4.000-6.000 ms a
+1 ms.** Y el último renglón es el que hay que leer bien: **el escaneo sigue costando 4.188 ms**. No
+se hizo más rápido —no hay forma de medir 13.784 archivos sin recorrerlos—, cambió quién espera.
+
+⚠️ La primera llamada tardó 5.982 ms, más que los 4.436 de la medición original: es la misma
+operación con el disco frío. Se paga **una sola vez por worker**, la primera vez que alguien abre
+el monitor después de un reload, y es el único caso imposible de evitar.
+
 **Tests**: 9 casos nuevos en `tests/unit/diskStats.test.js`, que miden que el request **no esperó**
 (la demora del escaneo se inyecta desde el `mongoose` falso, que es lo único inyectable de
 `escanear`). **Verificados en rojo**: devolviendo el `await` al refresco y el TTL a 60 s fallan 5
