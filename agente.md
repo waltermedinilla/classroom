@@ -527,6 +527,73 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-08 (4) — RN-4: el ritmo se afloja cuando la sala está en silencio
+
+Cuarta y última entrega del día. Le saca a la sala la mitad de los requests.
+
+Una clase de 40 minutos son ráfagas de mensajes con silencio en el medio, y se preguntaba cada
+4 segundos igual, pasara algo o no. Ahora: **4 s con la sala viva, 8 s tras tres vueltas vacías
+(~12 s), y de vuelta a 4 en el acto** ante cualquier novedad. **232 req/s → ~120 en reposo.**
+
+**⭐ La presencia como señal salió gratis, y es el enganche bonito del día.** "Novedad" es:
+
+```js
+const hubo = d.mensajes.length > 0 || d.reinicio || !!(s.presencia && s.presencia.conectados);
+```
+
+Esa última condición **no costó una línea de servidor**: desde RN-2 las listas de presencia
+viajan *solo* cuando cambiaron, así que el hecho de que hayan venido ya dice que alguien entró
+o salió. Las dos reglas se enganchan solas.
+
+Y los polls **fuera de ciclo** (enviar, borrar, reaccionar) no necesitaron tratamiento aparte:
+su propia respuesta trae la novedad y resetea el contador. Esta regla **no toca ni uno de los
+manejadores de botones**.
+
+**La regla vive en `public/js/salaPoll.js` (`crearRitmo`), no en el partial**, por el mismo
+motivo que el cursor: dos estados y un contador es exactamente lo que "a ojo parece obvio" y
+después resulta que se queda pegado en lento, o que nunca afloja. El reseteo es a cero y de
+golpe, no un decremento: cuando arranca la conversación la sala tiene que estar rápida en la
+vuelta siguiente, no despertándose de a poco.
+
+**⚠️ El techo se deriva de POLL y tiene guarda.** `lento: POLL * 2`, no un `8000` escrito
+aparte, así los dos números no pueden divergir. Y no puede acercarse a `ONLINE_WINDOW_MS` (45 s):
+si el poll se espaciara más que esa ventana, la gente empezaría a **parpadear** dentro y fuera de
+la lista de conectados. Hay un test que lee el multiplicador del `.ejs` y lo compara contra las
+constantes reales, así que **subirlo rompe el test antes que la sala**.
+
+**Medido en el navegador** (los intervalos incluyen ~1 s de la alineación de timers que Chrome
+aplica con la pestaña en segundo plano):
+
+```
+arranque:            4996  4999  4998   →  8999  8999  9005     afloja en la 3ra vacía
+se abre la sala:     9009 → 38 → 4956  5009  4990               despierta en el acto
+silencio otra vez:   9003  9008
+se escribe:          3997  4999  4991  5012  →  9009            y vuelve a aflojar solo
+```
+
+El mensaje propio apareció en pantalla **2,6 s** después del POST, con la sala en ritmo lento.
+
+**⚠️ El costo, dicho claro**: el primer mensaje de una ráfaga puede tardar hasta 8 s en vez de 4
+en aparecerle a quien está mirando en silencio. A partir de ahí ya volvió a 4 s. Es la única de
+las cuatro reglas que alguien podría llegar a notar.
+
+**Tests**: bloque 7 nuevo en `tests/unit/salaPoll.test.js`, 7 casos — arranca rápido, afloja
+recién en la N-ésima vacía, vuelve de golpe y no de a poco, `despertar()`, `ms()` no registra, la
+guarda del techo contra la ventana de presencia, y el cableado. Total: 1.068 unitarios, 405 de
+smoke y roles sin hallazgos.
+
+### Dónde quedó la sala al final del día
+
+| | A la mañana | Ahora |
+|---|---|---|
+| CPU de `cargarSala` | ~2,6 núcleos | **~0** |
+| Ops de Mongo por poll | 8 | **4** |
+| Bajada del chat | ~1,16 MB/s | **~0,16 MB/s** |
+| Requests | 232/s | **~120/s** |
+| Escrituras | 232/s | 232/s ← RN-3, sin aprobar |
+
+Más el congelamiento de la sala, que era el bug con el que arrancó el día.
+
 ### 2026-09-08 (3) — RN-2: la fila de presencia viaja solo cuando cambia
 
 Tercera entrega del día, y la que le saca los bytes al poll.

@@ -1,7 +1,8 @@
 // Sala en vivo: el cursor del poll, o "escribo y se me borra lo que escribí".
 // Correr con: npm run test:unit    (node --test tests/unit/*.test.js)
 //
-// Ver specs/sala-poll-carrera.spec.md. Cuatro bloques:
+// Ver specs/sala-poll-carrera.spec.md (bloques 1 a 6) y specs/sala-en-vivo-escala.spec.md
+// (bloque 7). Siete bloques:
 //
 //   1. LA CARRERA — el reclamo del 2026-09-07, reproducido paso a paso: dos pedidos en
 //      vuelo y el viejo llegando último. Es EL test de este arreglo: con la lógica anterior
@@ -11,13 +12,18 @@
 //      un mensaje que está por aparecer, y que igual no se cuelgue esperándolo para siempre.
 //   4. EL CABLEADO — que el partial cargue el módulo y ya no lleve las dos reglas viejas.
 //      Sin esto, las tres reglas de arriba pueden estar perfectas y no aplicarse a nadie.
+//   5. LA INANICIÓN — el bug del 2026-09-08: con el viaje más lento que el intervalo, TODA
+//      respuesta llegaba tarde y se tiraba. La sala no se degradaba, se congelaba.
+//   6. EL CABLEADO DEL CICLO — que el poll se encadene en vez de salir por intervalo fijo,
+//      que tenga plazo, y que la cadena no se pueda cortar.
+//   7. EL RITMO (RN-4) — 4 s con la sala viva, 8 s en silencio, y de vuelta a 4 en el acto.
 
 const test   = require('node:test');
 const assert = require('node:assert');
 const fs     = require('node:fs');
 const path   = require('node:path');
 
-const { crearCursor, HUECO_MS } = require('../../public/js/salaPoll');
+const { crearCursor, crearRitmo, HUECO_MS } = require('../../public/js/salaPoll');
 
 const raiz  = path.join(__dirname, '..', '..');
 const leer  = (rel) => fs.readFileSync(path.join(raiz, rel), 'utf8');
@@ -486,4 +492,86 @@ test('la cadena no se puede cortar: la próxima vuelta se programa en un finally
   const bloque = sala.slice(desde, hasta).replace(/\/\/.*$/gm, '');
   assert.match(bloque, /finally\s*\{[^}]*programar\(\)/,
     'programar() va DENTRO del finally, no después del await');
+});
+
+// ── 7. El ritmo del ciclo (RN-4) ────────────────────────────────────────────
+//
+// 4 s con la sala viva, 8 s en silencio. Una clase de 40 minutos son ráfagas con silencio en el
+// medio, y preguntar cada 4 s durante el silencio es la mitad de los requests tirada.
+//
+// La regla vive en salaPoll.js y no en el partial por el mismo motivo que el cursor: dos
+// estados y un contador es exactamente lo que "a ojo parece obvio" y después resulta que se
+// queda pegado en lento, o que nunca afloja.
+
+const RAPIDO = 4000, LENTO = 8000, VUELTAS = 3;
+const ritmoDePrueba = () => crearRitmo({ rapido: RAPIDO, lento: LENTO, vueltas: VUELTAS });
+
+test('el ritmo arranca rápido', () => {
+  assert.equal(ritmoDePrueba().ms(), RAPIDO);
+});
+
+test('afloja recién a la N-ésima vuelta vacía, no antes', () => {
+  const r = ritmoDePrueba();
+  for (let i = 1; i < VUELTAS; i++) {
+    assert.equal(r.registrar(false), RAPIDO, `en la vuelta vacía ${i} todavía tiene que ir rápido`);
+  }
+  assert.equal(r.registrar(false), LENTO, `en la vuelta ${VUELTAS} afloja`);
+  assert.equal(r.registrar(false), LENTO, 'y se queda lento mientras siga el silencio');
+});
+
+test('⭐ vuelve a rápido EN EL ACTO, no de a poco', () => {
+  // El reseteo es a cero y de golpe. Si fuera un decremento, la sala tardaría varias vueltas en
+  // despertarse justo cuando arranca la conversación, que es el peor momento posible.
+  const r = ritmoDePrueba();
+  for (let i = 0; i < 10; i++) r.registrar(false);
+  assert.equal(r.ms(), LENTO, 'precondición: está lento');
+
+  assert.equal(r.registrar(true), RAPIDO, 'una sola novedad lo devuelve a rápido');
+  assert.equal(r.vueltasSinNovedad, 0);
+});
+
+test('despertar() lo devuelve a rápido sin gastar una vuelta', () => {
+  // Lo usa el regreso a la pestaña: quien vuelve a mirar quiere la sala al día ya.
+  const r = ritmoDePrueba();
+  for (let i = 0; i < 5; i++) r.registrar(false);
+  assert.equal(r.ms(), LENTO);
+  r.despertar();
+  assert.equal(r.ms(), RAPIDO);
+});
+
+test('ms() no registra nada: se puede consultar sin mover el contador', () => {
+  const r = ritmoDePrueba();
+  r.registrar(false);
+  const antes = r.vueltasSinNovedad;
+  r.ms(); r.ms(); r.ms();
+  assert.equal(r.vueltasSinNovedad, antes);
+});
+
+test('⭐ el ritmo lento tiene que quedar MUY por debajo de la ventana de presencia', () => {
+  // Si el poll se espaciara más que ONLINE_WINDOW_MS (45 s), la gente empezaría a parpadear
+  // dentro y fuera de la lista de conectados: dejaría de pinguear dentro de su propia ventana.
+  // Este test es la guarda de ese invariante, y va contra las CONSTANTES, no contra los números.
+  const { POLL_MS, ONLINE_WINDOW_MS } = require('../../services/liveRoom');
+
+  const m = sala.match(/lento:\s*POLL\s*\*\s*(\d+)/);
+  assert.ok(m, 'el ritmo lento tiene que derivarse de POLL, no escribirse a mano');
+  const lento = POLL_MS * Number(m[1]);
+
+  assert.ok(lento < ONLINE_WINDOW_MS / 3,
+    `el ritmo lento (${lento} ms) tiene que dejar al menos 3 vueltas dentro de la ventana de ${ONLINE_WINDOW_MS} ms`);
+});
+
+test('RN-4: el partial usa el ritmo para programar, y la presencia cuenta como novedad', () => {
+  const codigo = sala.replace(/\/\/.*$/gm, '');
+
+  assert.match(codigo, /SalaPoll\.crearRitmo\(/, 'el partial tiene que crear el ritmo');
+  assert.match(codigo, /setTimeout\(ciclo,\s*ms === undefined \? ritmo\.ms\(\) : ms\)/,
+    'programar() sin argumento tiene que preguntarle al ritmo');
+  assert.match(codigo, /ritmo\.registrar\(hubo\)/, 'cada vuelta tiene que registrarse');
+  assert.match(codigo, /ritmo\.despertar\(\)/, 'volver a la pestaña despierta el ritmo');
+
+  // La fila de presencia cuenta como novedad. Sale gratis: desde RN-2 las listas solo viajan
+  // cuando cambiaron, así que su sola presencia ya es la señal.
+  assert.match(codigo, /const hubo = d\.mensajes\.length > 0 \|\| d\.reinicio \|\| !!\(s\.presencia && s\.presencia\.conectados\)/,
+    'la novedad tiene que mirar mensajes, repintado y presencia');
 });

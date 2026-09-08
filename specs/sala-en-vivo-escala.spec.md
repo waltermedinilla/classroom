@@ -1,6 +1,6 @@
 # La sala en vivo a escala: 30 salas de 30
 
-Estado: **RN-1 y RN-2 IMPLEMENTADAS** (2026-09-08) · RN-3 y RN-4 siguen sin aprobar ·
+Estado: **RN-1, RN-2 y RN-4 IMPLEMENTADAS** (2026-09-08) · RN-3 sigue sin aprobar ·
 Módulo: `rooms` · Rol: todos los de la sala
 
 ## Problema
@@ -290,25 +290,74 @@ que se movieron los dos.
 
 ---
 
-## RN-4 · La cadencia se afloja cuando no pasa nada
+## RN-4 · La cadencia se afloja cuando no pasa nada — ✅ IMPLEMENTADA el 2026-09-08
 
-**232 req/s → ~120/s en reposo**, sin que nadie note nada.
+**232 req/s → ~120/s en reposo.**
 
-Una clase de 40 minutos tiene mensajes en ráfagas y silencio en el medio. Hoy se pregunta cada
-4 segundos igual, esté pasando algo o no.
+Una clase de 40 minutos tiene mensajes en ráfagas y silencio en el medio, y se preguntaba cada
+4 segundos igual, pasara algo o no.
 
-El ciclo encadenado que quedó hoy en `live-room.ejs` ya recibe el intervalo por parámetro
-(`programar(ms)`), así que **esto no agrega estructura, solo decide el número**:
+- Sale **4 s** mientras haya novedades.
+- Tras **3 vueltas sin nada** (~12 s), se afloja a **8 s**.
+- Vuelve a 4 s **en el acto** ante cualquier novedad.
 
-- Sale **4 s** mientras haya actividad (un mensaje propio o ajeno en la última vuelta).
-- Tras **N vueltas sin nada**, se afloja a **8 s**.
-- Vuelve a 4 s en el acto ante cualquier actividad: mensaje propio, cambio de presencia, o
-  cualquier acción de la persona.
+### Qué cuenta como novedad, y por qué la presencia sale gratis
 
-⚠️ **El techo del aflojado no puede pasar los 15 s de RN-3 ni acercarse a los 45 s de la
-ventana de presencia**: si el poll se espacia más que la ventana, la gente empieza a parpadear
-dentro y fuera de la lista de conectados. 8 s deja margen de sobra; **subirlo obliga a revisar
-las dos constantes**.
+```js
+const hubo = d.mensajes.length > 0 || d.reinicio || !!(s.presencia && s.presencia.conectados);
+```
+
+Mensajes nuevos, un repintado (borrar, reaccionar, sala reabierta), **o la fila de presencia**.
+Esa última **no costó una línea de servidor**: desde RN-2 las listas viajan *solo* cuando
+cambiaron, así que el hecho de que hayan venido ya es la señal de que alguien entró o salió.
+Las dos reglas se enganchan solas.
+
+Los polls **fuera de ciclo** (enviar, borrar, reaccionar) no necesitan tratamiento aparte: su
+propia respuesta trae la novedad y resetea el contador. Por eso esta regla no toca ni uno de los
+manejadores de botones.
+
+### Dónde vive la regla
+
+En `public/js/salaPoll.js` (`crearRitmo`), **no en el partial**, por el mismo motivo que el
+cursor: dos estados y un contador es exactamente lo que "a ojo parece obvio" y después resulta
+que se queda pegado en lento, o que nunca afloja. Se testea en `tests/unit/salaPoll.test.js`,
+bloque 7.
+
+El reseteo es **a cero y de golpe**, no un decremento: cuando arranca la conversación, la sala
+tiene que estar rápida en la vuelta siguiente y no ir despertándose de a poco — justo el peor
+momento para ir lento.
+
+`arrancar()` llama a `despertar()`: quien vuelve a la pestaña quiere la sala al día ya, no
+dentro de dos vueltas lentas.
+
+### ⚠️ El techo se DERIVA de POLL, y tiene su guarda
+
+`lento: POLL * 2`, no un `8000` escrito aparte: así los dos números no pueden divergir si alguien
+toca `POLL_MS`. Y **no puede acercarse a la ventana de "conectado ahora"** (`ONLINE_WINDOW_MS`,
+45 s): si el poll se espaciara más que esa ventana, la gente empezaría a parpadear dentro y
+fuera de la lista de conectados. Con 8 s quedan 5 vueltas de margen.
+
+Hay un test que lo sostiene (`el ritmo lento tiene que quedar MUY por debajo de la ventana de
+presencia`): lee el multiplicador del `.ejs` y lo compara contra las constantes reales, así que
+**subirlo rompe el test antes que la sala**.
+
+### Medido en el navegador
+
+Sala abierta, docente mirando. Los intervalos incluyen ~1 s de la alineación de timers que
+Chrome aplica con la pestaña en segundo plano:
+
+```
+arranque:            4996  4999  4998   →  8999  8999  9005      afloja en la 3ra vacía
+se abre la sala:     9009 → 38 → 4956  5009  4990                despierta en el acto
+silencio otra vez:   9003  9008
+se escribe:          3997  4999  4991  5012  →  9009             y vuelve a aflojar solo
+```
+
+El mensaje propio apareció en pantalla **2,6 s** después del POST, con la sala en ritmo lento.
+
+⚠️ **El costo, dicho claro**: el primer mensaje de una ráfaga puede tardar hasta 8 s en vez de 4
+en aparecerle a quien está mirando en silencio. A partir de ahí ya volvió a 4 s. Es la única de
+las cuatro reglas que alguien podría llegar a notar.
 
 ---
 

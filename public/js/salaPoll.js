@@ -238,8 +238,63 @@
     };
   }
 
+
+  /**
+   * El ritmo del ciclo: cada cuánto conviene volver a preguntar. RN-4 de
+   * specs/sala-en-vivo-escala.spec.md.
+   *
+   * QUÉ RESUELVE: una clase de 40 minutos tiene mensajes en ráfagas y silencio en el medio, y
+   * hasta acá se preguntaba cada 4 segundos igual, pasara algo o no. Durante el silencio eso es
+   * la mitad de los requests tirada — con sus 4 queries y su escritura de presencia cada uno.
+   *
+   * Vive acá y no adentro del <script> del partial por el mismo motivo que el cursor: una regla
+   * de dos estados con un contador es exactamente lo que "a ojo parece obvio" y después resulta
+   * que se queda pegada en lento, o que nunca afloja. Los tests están en
+   * tests/unit/salaPoll.test.js.
+   *
+   * @param rapido   ms entre vueltas mientras pasa algo
+   * @param lento    ms entre vueltas con la sala en silencio
+   * @param vueltas  cuántas vueltas seguidas sin novedades hacen falta para aflojar
+   */
+  function crearRitmo(opciones) {
+    opciones = opciones || {};
+    var rapido  = opciones.rapido;
+    var lento   = opciones.lento;
+    var vueltas = opciones.vueltas;
+
+    var sinNovedad = 0;
+
+    return {
+      /**
+       * Se llama con el resultado de cada vuelta. `hubo` es true si la pantalla cambió.
+       * Devuelve los ms que hay que esperar hasta la próxima.
+       *
+       * El reseteo es a CERO y de golpe, no un decremento: cuando la conversación arranca, la
+       * sala tiene que estar rápida en la vuelta siguiente y no ir bajando de a poco.
+       */
+      registrar: function (hubo) {
+        sinNovedad = hubo ? 0 : sinNovedad + 1;
+        return this.ms();
+      },
+
+      /** Los ms que corresponden al estado actual, sin registrar nada. */
+      ms: function () {
+        return sinNovedad >= vueltas ? lento : rapido;
+      },
+
+      /**
+       * Vuelve al ritmo rápido sin esperar una vuelta. Lo usa el regreso a la pestaña: alguien
+       * que vuelve a mirar la sala quiere verla al día ya, no dentro de dos vueltas lentas.
+       */
+      despertar: function () { sinNovedad = 0; },
+
+      get vueltasSinNovedad() { return sinNovedad; },
+    };
+  }
+
   return {
     crearCursor: crearCursor,
+    crearRitmo: crearRitmo,
     HUECO_MS: HUECO_MS,
   };
 });

@@ -874,6 +874,22 @@
   // AbortController y no AbortSignal.timeout(): las máquinas del aula no son nuevas.
   const PLAZO_MS = 15000;
 
+  // ── Ritmo del ciclo (RN-4 de specs/sala-en-vivo-escala.spec.md) ────────────
+  //
+  // 4 s mientras pasa algo, 8 s con la sala en silencio. Una clase de 40 minutos son ráfagas de
+  // mensajes con silencio en el medio, y preguntar cada 4 segundos durante el silencio es la
+  // mitad de los requests tirada — cada uno con sus queries y su escritura de presencia.
+  //
+  // ⚠️ EL LENTO SE DERIVA DE POLL, no se escribe aparte: así los dos números no pueden divergir
+  // si alguien toca POLL_MS en services/liveRoom.js. Y tiene que quedar MUY por debajo de la
+  // ventana de "conectado ahora" (ONLINE_WINDOW_MS, 45 s): si el poll se espaciara más que esa
+  // ventana, la gente empezaría a parpadear dentro y fuera de la lista de conectados. Con 8 s
+  // quedan 5 vueltas de margen. Subir el multiplicador obliga a mirar esa constante.
+  //
+  // Tres vueltas vacías (~12 s) antes de aflojar: lo suficiente para no aflojar en el hueco
+  // entre dos mensajes de la misma conversación.
+  const ritmo = SalaPoll.crearRitmo({ rapido: POLL, lento: POLL * 2, vueltas: 3 });
+
   async function pollear(opciones) {
     if (!aLaVista()) return;
     // El pedido lleva su número de orden: es lo que le permite al cursor reconocer, cuando la
@@ -924,6 +940,20 @@
       // seguir siendo un no-op y no quedar salteado a medias.
       ponerLaMateriaAlDia(d.mensajes);
 
+      // ── El ritmo de la vuelta siguiente (RN-4) ───────────────────────────
+      //
+      // "Novedad" es todo lo que movió la pantalla: mensajes nuevos, un repintado, o la fila de
+      // presencia. Esa última sale gratis: desde RN-2 las listas SOLO viajan cuando cambiaron,
+      // así que el hecho de que hayan venido ya es la señal.
+      const hubo = d.mensajes.length > 0 || d.reinicio || !!(s.presencia && s.presencia.conectados);
+      ritmo.registrar(hubo);
+
+      // Vuelve al ritmo rápido EN EL ACTO, sin esperar a que venza el temporizador lento que ya
+      // estaba corriendo. Hace falta sobre todo para los polls FUERA DE CICLO —enviar, borrar,
+      // reaccionar—, que no pasan por el `finally` de ciclo() y por lo tanto no reprograman
+      // nada: sin esto, el primer mensaje de una ráfaga seguiría esperando los 8 s viejos.
+      if (hubo && !detenido) programar();
+
       // La sala es otra (recién abierta o reabierta): la tanda que vino se había pedido con el
       // cursor de la anterior, así que el cursor no la dio por buena. Se pregunta de nuevo
       // desde cero YA, en vez de dejar la pantalla vacía los 4 segundos del intervalo.
@@ -953,9 +983,11 @@
   let detenido = false;
   let enVuelo  = false;
 
+  // Sin argumento, el intervalo lo decide el ritmo (RN-4): 4 s con la sala viva, 8 s en
+  // silencio. Con argumento —`programar(0)`— es "ya", que es lo que usa arrancar().
   function programar(ms) {
     if (timer) clearTimeout(timer);
-    timer = setTimeout(ciclo, ms === undefined ? POLL : ms);
+    timer = setTimeout(ciclo, ms === undefined ? ritmo.ms() : ms);
   }
 
   async function ciclo() {
@@ -981,6 +1013,9 @@
 
   function arrancar() {
     detenido = false;
+    // Quien vuelve a la pestaña quiere la sala al día YA, no dentro de dos vueltas lentas: se
+    // arranca siempre en ritmo rápido, aunque la sala estuviera en silencio cuando se fue.
+    ritmo.despertar();
     programar(0);   // sin esperar la primera vuelta: la sala se llena ya
   }
 
