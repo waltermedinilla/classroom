@@ -467,6 +467,20 @@
   let timer     = null;
   const vistos  = new Set();
 
+  // Huella de la fila de presencia que YA está pintada (RN-2 de sala-en-vivo-escala.spec.md).
+  //
+  // Viaja en cada poll como `pv` y el servidor manda las listas de conectados y ausentes solo
+  // si cambiaron: son 4.981 bytes que antes salían quince veces por minuto y por persona para
+  // decir lo mismo. Los contadores del cartel "N de M presentes" vienen siempre igual.
+  //
+  // ⚠️ NO vive en el cursor (public/js/salaPoll.js) a propósito: el cursor decide si una
+  // respuesta sirve y hasta dónde avanzar, y no sabe qué es pintar. Esto es exactamente lo
+  // contrario —un dato de lo que hay en pantalla— así que va del lado que toca el DOM. Se
+  // guarda DESPUÉS de pintar, y solo en respuestas que el cursor dio por buenas: si se
+  // guardara antes, un pintado que fallara dejaría al navegador diciendo que tiene algo que
+  // nunca llegó a mostrar, y el servidor no se lo mandaría nunca más.
+  let presenciaVer = SALA.presenciaVer || null;
+
   // ¿Puedo escribir ahora? Lo dice el servidor en cada poll; acá se guarda porque los
   // mensajes se pintan después de pintarEstado() y necesitan saber si mostrar "responder".
   let puedoEscribir = !!SALA.puedoEscribir;
@@ -869,7 +883,9 @@
     const corte  = new AbortController();
     const reloj  = setTimeout(() => corte.abort(), PLAZO_MS);
     try {
-      const r = await fetch(BASE + '/poll?since=' + pedido.since,
+      // `pv` es la huella de la fila de presencia que ya está pintada: el servidor manda las
+      // listas solo si cambiaron (RN-2). Sin `pv` —la primera vuelta— manda todo.
+      const r = await fetch(BASE + '/poll?since=' + pedido.since + (presenciaVer ? '&pv=' + encodeURIComponent(presenciaVer) : ''),
         { headers: { Accept: 'application/json' }, signal: corte.signal });
       if (!r.ok) return;
       const s = await r.json();
@@ -891,7 +907,16 @@
       // actualiza porque los manejadores de los botones lo leen.
       SALA.transmision = s.transmision;
       pintarTransmision(s.transmision);
-      pintarPresencia(s.presencia);
+
+      // La fila de presencia se repinta SOLO si el servidor mandó las listas (RN-2). Cuando
+      // vienen sin ellas quiere decir "es la misma que ya tenés", y no tocar el DOM es además
+      // lo correcto: repintar 36 círculos cada 4 segundos para dejarlos igual también cuesta.
+      //
+      // `pintarEstado(s)` de arriba ya usó `presentes` y `total`, que viajan siempre.
+      if (s.presencia && s.presencia.conectados) {
+        pintarPresencia(s.presencia);
+        presenciaVer = s.presenciaVer || null;
+      }
       if (d.mensajes.length) pintarMensajes(d.mensajes, d.reinicio);
       else if (d.reinicio)   pintarMensajes([], true);
 
@@ -1008,7 +1033,10 @@
       // Lee `cursor.seq` y NO llama a cursor.pedir(): el latido tira la respuesta, así que si
       // numerara un pedido invalidaría el poll de verdad que estuviera en vuelo — la sala se
       // congelaría cada 20 segundos justo para quien la está dando (RN-4).
-      await fetch(BASE + '/poll?since=' + cursor.seq, { headers: { Accept: 'application/json' } });
+      // Manda `pv` igual que el poll de verdad: la respuesta se tira, así que es solo para no
+      // hacerle armar al servidor 5 KB de presencia que nadie va a mirar.
+      await fetch(BASE + '/poll?since=' + cursor.seq + (presenciaVer ? '&pv=' + encodeURIComponent(presenciaVer) : ''),
+        { headers: { Accept: 'application/json' } });
     } catch (e) { /* un latido perdido no rompe nada: el próximo va en 20 s */ }
   }
   if (GESTOR) setInterval(latir, LATIDO_MS);

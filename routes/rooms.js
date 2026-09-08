@@ -254,7 +254,33 @@ const hayTransmision = (req) => moduloActivo(req.res.locals.school, 'transmision
 
 // Payload que consume la vista. Es la ÚNICA forma de la sala: la usan el render inicial y el
 // poll, para que no puedan divergir.
-async function estadoDeSala(req, session, since = 0) {
+// Qué parte de la presencia viaja en esta respuesta. RN-2 de specs/sala-en-vivo-escala.spec.md.
+//
+// El bloque completo son 4.981 bytes medidos (36 alumnos) y salía en CADA poll, aunque no
+// hubiera cambiado nada. `vista` es la huella que el navegador dice tener: si coincide, se le
+// manda solo lo que no puede faltarle.
+//
+// ⭐ LOS CONTADORES VAN SIEMPRE. `presentes` y `total` son 30 bytes y son los que sostienen el
+// cartel "N de M presentes" que pinta pintarEstado() en cada vuelta. Si la clave `presencia`
+// pudiera venir vacía, esa línea se quedaría sin dato y habría que enseñarle al navegador a
+// recordar dos cosas en vez de una. Lo que se ahorra son las DOS LISTAS, que es donde están
+// los bytes.
+//
+// La forma sigue siendo una sola: `presencia` es SIEMPRE un objeto con `presentes` y `total`.
+// Lo que puede faltar son `conectados` y `ausentes`, y su ausencia quiere decir exactamente
+// "las que ya tenés". El render inicial no manda huella, así que siempre recibe todo.
+function presenciaParaCliente(presencia, vista) {
+  const presenciaVer = live.huellaDePresencia(presencia);
+  const sinCambios   = !!vista && vista === presenciaVer;
+  return {
+    presencia: sinCambios
+      ? { presentes: presencia.presentes, total: presencia.total }
+      : presencia,
+    presenciaVer,
+  };
+}
+
+async function estadoDeSala(req, session, since = 0, presenciaVista = null) {
   const course = req.course;
 
   if (!session) {
@@ -262,7 +288,7 @@ async function estadoDeSala(req, session, since = 0) {
       estado: 'cerrada', sessionId: null, seq: 0, puedoEscribir: false,
       puedoCompartirImagen: false,
       mensajes: [], settings: { studentsCanWrite: true, reactionsOn: true, studentsCanShareImages: true },
-      presencia: { presentes: 0, total: course.students.length, conectados: [], ausentes: [] },
+      ...presenciaParaCliente({ presentes: 0, total: course.students.length, conectados: [], ausentes: [] }, presenciaVista),
       // Una forma SOLA, también con la sala cerrada: el navegador no tiene que preguntarse si
       // la clave existe. Mismo criterio que el resto de este objeto.
       transmision: hayTransmision(req) ? tx.estadoParaCliente(null, ctxTx(req)) : null,
@@ -312,7 +338,7 @@ async function estadoDeSala(req, session, since = 0) {
     // no puede quedar prometiendo algo que el servidor va a rechazar.
     puedoCompartirImagen: live.puedeCompartirImagen(session, ctx),
     settings:  session.settings,
-    presencia,
+    ...presenciaParaCliente(presencia, presenciaVista),
     mensajes:  mensajes.map(m => serializarMensaje(m, { ...ctx, courseId: course._id, salaAbierta: true })),
   };
 }
@@ -478,7 +504,9 @@ router.get('/:id/sala/poll', async (req, res, next) => {
       await live.touchPresence(session, usuario(req));
     }
 
-    res.json(await estadoDeSala(req, session, since));
+    // `pv` es la huella de la presencia que el navegador ya tiene pintada (RN-2). El render
+    // inicial no la manda, y por eso siempre recibe el bloque entero.
+    res.json(await estadoDeSala(req, session, since, req.query.pv || null));
   } catch (err) { next(err); }
 });
 

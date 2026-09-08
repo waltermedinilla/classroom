@@ -7662,6 +7662,54 @@ const specs = [
     },
   },
   {
+    id: 'sala-presencia-huella',
+    title: 'La fila de presencia viaja solo cuando cambia (RN-2)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const url = `/courses/${state.courseId}/sala/poll`;
+      const json = { Accept: 'application/json' };
+
+      // 1. Sin huella —una pestaña recién abierta— viene el bloque entero.
+      const completo = await client.get('scopedStudent', url, { expectStatus: 200, headers: json });
+      assert(Array.isArray(completo.json.presencia.conectados),
+        'sin `pv` tiene que venir la lista de conectados');
+      assert(Array.isArray(completo.json.presencia.ausentes),
+        'sin `pv` tiene que venir la lista de ausentes');
+      assert(/^[0-9a-f]{16}$/.test(completo.json.presenciaVer || ''),
+        `el servidor tiene que mandar la huella, mandó ${completo.json.presenciaVer}`);
+
+      const huella = completo.json.presenciaVer;
+      const bytesCompleto = JSON.stringify(completo.json.presencia).length;
+
+      // 2. Con la huella al día: solo los contadores.
+      const corto = await client.get('scopedStudent', `${url}?pv=${huella}`,
+        { expectStatus: 200, headers: json });
+      assert(corto.json.presencia.conectados === undefined,
+        'con la huella al día NO se mandan los conectados');
+      assert(corto.json.presencia.ausentes === undefined,
+        'con la huella al día NO se mandan los ausentes');
+      assert(typeof corto.json.presencia.presentes === 'number',
+        'los contadores van SIEMPRE: sostienen el cartel "N de M presentes"');
+      assert(typeof corto.json.presencia.total === 'number',
+        'el total también va siempre');
+      assert(corto.json.presenciaVer === huella,
+        'si no cambió nada, la huella tampoco');
+
+      const bytesCorto = JSON.stringify(corto.json.presencia).length;
+      assert(bytesCorto < bytesCompleto,
+        `el bloque recortado (${bytesCorto} B) tiene que pesar menos que el entero (${bytesCompleto} B)`);
+
+      // 3. Con una huella que no coincide, vuelve todo. Es lo que hace que un navegador que
+      //    perdió el hilo se recupere solo en la vuelta siguiente.
+      const otra = await client.get('scopedStudent', `${url}?pv=0000000000000000`,
+        { expectStatus: 200, headers: json });
+      assert(Array.isArray(otra.json.presencia.conectados),
+        'con una huella que no coincide se manda la lista entera de nuevo');
+      assert(otra.json.presenciaVer === huella,
+        'y la huella que devuelve es la del contenido real, no la que mandó el navegador');
+    },
+  },
+  {
     // specs/actividades-en-clase.spec.md — CA-05, CA-06.
     id: 'sala-crear-actividad',
     title: 'La docente crea una actividad desde la clase y la sala lo avisa',

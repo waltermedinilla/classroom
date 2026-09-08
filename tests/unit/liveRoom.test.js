@@ -11,7 +11,7 @@ const test   = require('node:test');
 const assert = require('node:assert');
 
 const {
-  isOnline, presenceSummary, shouldAutoClose, horaDeCierre, gestorEnLinea,
+  isOnline, presenceSummary, huellaDePresencia, shouldAutoClose, horaDeCierre, gestorEnLinea,
   sanitizeText, minutosPresente,
   hora, fechaDia, fechaLarga, fechaCorta, fechaHora, TZ,
   ONLINE_WINDOW_MS, STAFF_ONLINE_WINDOW_MS, AUTO_CLOSE_MS, MSG_MAX, POLL_MS,
@@ -445,4 +445,109 @@ test('extensiones aceptadas: nada ejecutable ni interpretable como HTML', () => 
 
 test('el techo de los archivos es 20 MB, el mismo que las entregas', () => {
   assert.strictEqual(MAX_ARCHIVO_BYTES, 20 * 1024 * 1024);
+});
+
+// ── RN-2: la huella de la presencia ─────────────────────────────────────────
+//
+// El bloque de presencia son 4.981 bytes medidos y viajaba en CADA poll, quince veces por
+// minuto y por persona, para decir casi siempre lo mismo. La huella es lo que le permite al
+// servidor contestar "es la que ya tenés". Ver specs/sala-en-vivo-escala.spec.md.
+
+test('huellaDePresencia: el mismo contenido da la misma huella', () => {
+  const r1 = presenceSummary([presencia('a1', 'student', 1000)], [alumno(1), alumno(2)], AHORA);
+  const r2 = presenceSummary([presencia('a1', 'student', 2000)], [alumno(1), alumno(2)], AHORA);
+  // Ping distinto, MISMO resultado visible: la huella no puede moverse por algo que no se ve.
+  assert.deepEqual(r1, r2);
+  assert.equal(huellaDePresencia(r1), huellaDePresencia(r2));
+});
+
+test('huellaDePresencia: es estable entre llamadas y mide 16 hex', () => {
+  const r = presenceSummary([presencia('a1', 'student', 1000)], roster25, AHORA);
+  const h = huellaDePresencia(r);
+  assert.equal(h, huellaDePresencia(r), 'dos veces la misma entrada, la misma salida');
+  assert.match(h, /^[0-9a-f]{16}$/);
+});
+
+test('huellaDePresencia: cambia si se conecta alguien', () => {
+  const solo  = presenceSummary([presencia('a1', 'student', 1000)], roster25, AHORA);
+  const dos   = presenceSummary([presencia('a1', 'student', 1000), presencia('a2', 'student', 1000)], roster25, AHORA);
+  assert.notEqual(huellaDePresencia(solo), huellaDePresencia(dos));
+});
+
+test('huellaDePresencia: cambia si se desconecta alguien', () => {
+  const dentro = presenceSummary([presencia('a1', 'student', 1000)], roster25, AHORA);
+  const fuera  = presenceSummary([presencia('a1', 'student', ONLINE_WINDOW_MS + 5000)], roster25, AHORA);
+  assert.notEqual(huellaDePresencia(dentro), huellaDePresencia(fuera));
+});
+
+test('⭐ huellaDePresencia: cambia si a un alumno le cambia el NOMBRE', () => {
+  // ES EL CASO QUE DECIDIÓ EL DISEÑO. La tentación era hacer la huella con la lista de ids,
+  // que es más barata. Pero el roster sale del cache de cursos (RN-1): si la huella solo
+  // mirara ids, renombrar a un alumno no la movería y esa pantalla mostraría el nombre viejo
+  // PARA SIEMPRE, porque el servidor nunca volvería a mandar la lista.
+  //
+  // Hasheando el contenido, esto es correcto por construcción y no hay que acordarse de nada.
+  const antes   = presenceSummary([presencia('a1', 'student', 1000)], [alumno(1)], AHORA);
+  const rebautizado = [{ _id: 'a1', name: 'Otro Nombre', avatar: null }];
+  const despues = presenceSummary([presencia('a1', 'student', 1000)], rebautizado, AHORA);
+
+  assert.equal(antes.presentes, despues.presentes, 'los contadores no cambian…');
+  assert.notEqual(huellaDePresencia(antes), huellaDePresencia(despues), '…pero la huella sí');
+});
+
+test('huellaDePresencia: cambia si se matricula un alumno nuevo', () => {
+  const chico = presenceSummary([], [alumno(1), alumno(2)], AHORA);
+  const grande = presenceSummary([], [alumno(1), alumno(2), alumno(3)], AHORA);
+  assert.notEqual(huellaDePresencia(chico), huellaDePresencia(grande));
+});
+
+test('huellaDePresencia: el orden importa (la fila se pinta en ese orden)', () => {
+  const a = presenceSummary([], [alumno(1), alumno(2)], AHORA);
+  const b = presenceSummary([], [alumno(2), alumno(1)], AHORA);
+  assert.notEqual(huellaDePresencia(a), huellaDePresencia(b));
+});
+
+test('huellaDePresencia: tolera null sin romper', () => {
+  // La sala cerrada arma su propio bloque vacío; que esto no explote es la red de seguridad.
+  assert.doesNotThrow(() => huellaDePresencia(null));
+  assert.match(huellaDePresencia(null), /^[0-9a-f]{16}$/);
+});
+
+// ── RN-2: el cableado, en las dos puntas ────────────────────────────────────
+
+test('RN-2: el navegador manda la huella y solo repinta si vinieron las listas', () => {
+  const fs   = require('node:fs');
+  const path = require('node:path');
+  const sala = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'views', 'partials', 'live-room.ejs'), 'utf8');
+  const codigo = sala.replace(/\/\/.*$/gm, '');
+
+  assert.match(codigo, /pv=.\s*\+\s*encodeURIComponent\(presenciaVer\)/,
+    'el poll tiene que mandar la huella como `pv`');
+  assert.match(codigo, /if\s*\(s\.presencia\s*&&\s*s\.presencia\.conectados\)/,
+    'solo se repinta cuando el servidor mandó las listas');
+  // Guardar la huella ANTES de pintar dejaría al navegador diciendo que tiene algo que nunca
+  // llegó a mostrar, y el servidor no se lo mandaría nunca más.
+  const bloque = codigo.slice(codigo.indexOf('if (s.presencia && s.presencia.conectados)'));
+  assert.ok(bloque.indexOf('pintarPresencia(') < bloque.indexOf('presenciaVer ='),
+    'la huella se guarda DESPUÉS de pintar');
+});
+
+test('RN-2: el servidor manda los contadores siempre, y las listas solo si cambiaron', () => {
+  const fs   = require('node:fs');
+  const path = require('node:path');
+  const rooms = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'routes', 'rooms.js'), 'utf8');
+
+  assert.match(rooms, /function presenciaParaCliente\(presencia, vista\)/,
+    'la decisión vive en una función sola');
+  assert.match(rooms, /\{ presentes: presencia\.presentes, total: presencia\.total \}/,
+    'sin cambios se mandan igual los contadores del cartel "N de M presentes"');
+  assert.match(rooms, /req\.query\.pv \|\| null/,
+    'la ruta del poll tiene que leer la huella del navegador');
+
+  // El render inicial NO pasa huella: siempre manda todo. Es lo que garantiza que una pestaña
+  // recién abierta reciba la fila entera.
+  assert.match(rooms, /const estado = await estadoDeSala\(req, session\);/,
+    'el render inicial no manda huella');
 });

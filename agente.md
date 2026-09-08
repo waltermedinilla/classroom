@@ -527,6 +527,63 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-08 (3) — RN-2: la fila de presencia viaja solo cuando cambia
+
+Tercera entrega del día, y la que le saca los bytes al poll.
+
+El bloque `presencia` —los alumnos con nombre, inicial, avatar, rol y etiqueta— salía en **cada
+poll**, quince veces por minuto y por persona, para decir casi siempre lo mismo: esa lista no
+cambia en toda la clase, solo cambia quién está conectado y muchas veces ni eso.
+
+Ahora el servidor le saca una **huella** al bloque y la manda como `presenciaVer`. El navegador
+la devuelve en el poll siguiente como `?pv=`, y si coincide el servidor manda solo los
+contadores.
+
+**Medido end-to-end, sala abierta, curso real de 36 alumnos:**
+
+| | Respuesta entera | Bloque de presencia |
+|---|---|---|
+| Primer poll, sin `pv` | 4.076 B | 3.273 B |
+| Vueltas siguientes | **570 B** | **26 B** |
+
+**3.506 bytes menos por poll, 86%.** A 930 personas eso es pasar de ~1,16 MB/s a ~0,16.
+
+**⚠️ Los contadores viajan siempre, y eso cambió el diseño sobre la marcha.** La idea original
+era contestar `presencia: null`, y no sirve: `pintarEstado()` usa `presentes` y `total` en cada
+vuelta para el cartel *"Sala abierta · N de M presentes"*, que se habría quedado sin dato. Lo
+que se manda igual son 26 bytes; **lo que se ahorra son las dos listas**, que es donde estaban
+los 3.273. `presencia` sigue siendo siempre un objeto: lo único que puede faltar son
+`conectados` y `ausentes`, y su ausencia quiere decir "las que ya tenés".
+
+**⭐ Se hashea el CONTENIDO, no una lista de ids**, y esa fue la decisión de esta regla. La
+huella barata sería la lista de ids, pero el roster sale del cache de RN-1: **si la huella solo
+mirara ids, renombrar a un alumno no la movería y esa pantalla mostraría el nombre viejo para
+siempre**, porque el servidor nunca volvería a mandar la lista. Hasheando el bloque, cualquier
+diferencia se ve — es correcto por construcción y no hay nada que recordar. Hay un test
+dedicado a ese caso.
+
+El render inicial **no manda huella**, así que siempre recibe el bloque entero: una pestaña
+recién abierta, o un navegador que perdió el hilo, se recuperan solos en la vuelta siguiente.
+
+**Verificado en el navegador**, con la sala abierta y 37 círculos pintados: la fila se mantiene
+a lo largo de 30 segundos de polls que ya no traen las listas, y el cartel sigue actualizándose.
+El tráfico muestra el protocolo funcionando — primer poll sin `pv`, todos los siguientes con la
+huella:
+
+```
+GET /sala/poll?since=0                        → 200
+GET /sala/poll?since=0&pv=853b7d94ab44fbcf    → 200
+GET /sala/poll?since=1&pv=853b7d94ab44fbcf    → 200   (×30)
+```
+
+**Tests**: 10 casos nuevos en `tests/unit/liveRoom.test.js` (la huella: estable, cambia al
+conectarse alguien, al desconectarse, al cambiar un nombre, al matricular, con el orden) más el
+cableado de las dos puntas, y un caso de smoke nuevo, `sala-presencia-huella`, que recorre el
+protocolo entero por HTTP. Total: 1.061 unitarios, 405 de smoke y roles sin hallazgos.
+
+**Lo que queda**: RN-3 (presencia con ventana de 15 s) y RN-4 (cadencia adaptativa) siguen sin
+aprobar. Con RN-1 y RN-2 puestas, el poll ya no gasta ni núcleos ni tráfico.
+
 ### 2026-09-08 (2) — RN-1 de la escala: el curso de la sala sale de un cache
 
 Segunda entrega del día. La primera sacó el congelamiento; ésta ataca el **costo** del poll, que

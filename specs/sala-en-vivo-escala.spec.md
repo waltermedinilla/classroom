@@ -1,6 +1,6 @@
 # La sala en vivo a escala: 30 salas de 30
 
-Estado: **RN-1 IMPLEMENTADA** (2026-09-08) · RN-2, RN-3 y RN-4 siguen sin aprobar ·
+Estado: **RN-1 y RN-2 IMPLEMENTADAS** (2026-09-08) · RN-3 y RN-4 siguen sin aprobar ·
 Módulo: `rooms` · Rol: todos los de la sala
 
 ## Problema
@@ -210,23 +210,63 @@ incorrecto para siempre.**
 
 ---
 
-## RN-2 · El roster no viaja en cada poll
-
-**4.981 bytes → ~400 en régimen**, y es el 90% de la bajada del chat.
+## RN-2 · El roster no viaja en cada poll — ✅ IMPLEMENTADA el 2026-09-08
 
 El bloque `presencia` lleva, en cada poll, los 30 alumnos con nombre, inicial, avatar, rol y
 etiqueta. Esa lista **es la misma durante toda la clase**: lo único que cambia es quién está
 conectado, y a veces ni eso.
 
 El servidor calcula el resumen igual (necesita `roompresences.find` para saber quién está), le
-saca una **marca de versión** y la manda. El navegador devuelve la marca que tiene en el poll
-siguiente; si coincide, el servidor contesta `presencia: null` y el navegador conserva lo que ya
-pintó.
+saca una **huella** (`presenciaVer`) y la manda. El navegador la devuelve en el poll siguiente
+como `?pv=`; si coincide, el servidor manda solo los contadores.
+
+**Medido end-to-end**, sala abierta, curso real de 36 alumnos con 1 conectado:
+
+| | Respuesta entera | Bloque de presencia |
+|---|---|---|
+| Primer poll, sin `pv` | 4.076 B | 3.273 B |
+| Vueltas siguientes, con `pv` | **570 B** | **26 B** |
+
+**3.506 bytes menos por poll — 86%.**
+
+### ⚠️ Los contadores viajan SIEMPRE (esto cambió respecto del diseño original)
+
+La primera redacción decía "el servidor contesta `presencia: null`". **No sirve**:
+`pintarEstado()` usa `s.presencia.presentes` y `s.presencia.total` en cada vuelta para el cartel
+*"Sala abierta · N de M presentes"*, y con `null` esa línea se queda sin dato.
+
+Lo que se manda sin cambios es `{ presentes, total }` — 26 bytes. **Lo que se ahorra son las dos
+listas**, que es donde están los 3.273. Así `presencia` sigue siendo **siempre un objeto**, y lo
+único que puede faltar son `conectados` y `ausentes`, cuya ausencia significa exactamente "las
+que ya tenés".
 
 ⚠️ **Se preserva la propiedad de "una sola forma"** que la sala defiende hoy (*"es la ÚNICA
 forma de la sala: la usan el render inicial y el poll, para que no puedan divergir"*): el render
-inicial manda **siempre** el bloque completo. `null` solo puede aparecer en un poll, y significa
-"lo que ya tenés". Un navegador que llegue sin marca recibe el bloque entero.
+inicial no manda huella, así que **siempre** recibe el bloque entero. Un navegador que llegue
+sin `pv` —una pestaña recién abierta, o uno que perdió el hilo— recibe todo en la vuelta
+siguiente y se recupera solo.
+
+### ⭐ Se hashea el CONTENIDO, no una lista de ids
+
+Fue la decisión de diseño de esta regla. La huella barata sería `conectados.map(c => c.id)`,
+pero el roster sale del cache de cursos de RN-1: **si la huella solo mirara ids, renombrar a un
+alumno no la movería y esa pantalla mostraría el nombre viejo para siempre**, porque el servidor
+nunca volvería a mandar la lista. Hasheando el bloque, cualquier diferencia —un nombre, un
+avatar, el orden, quién está conectado— se ve. Es correcto por construcción y no hay que
+acordarse de nada.
+
+16 caracteres hex son 64 bits: una colisión sería una fila sin repintar hasta el cambio
+siguiente, y a esta escala no pasa.
+
+### Dónde vive cada mitad
+
+La huella del navegador **no está en el cursor** (`public/js/salaPoll.js`) a propósito: el cursor
+decide si una respuesta sirve y hasta dónde avanzar, y no sabe qué es pintar. La huella es un
+dato de lo que hay en pantalla, así que vive del lado que toca el DOM.
+
+⚠️ Y se guarda **después** de pintar, solo en respuestas que el cursor dio por buenas: si se
+guardara antes, un pintado que fallara dejaría al navegador diciendo que tiene algo que nunca
+mostró, y el servidor no se lo mandaría nunca más.
 
 ---
 

@@ -8,6 +8,7 @@
 // que se testean en tests/unit/liveRoom.test.js. La segunda mitad toca Mongo.
 
 const mongoose = require('mongoose');
+const crypto   = require('crypto');
 
 const RoomSession  = require('../models/RoomSession');
 const RoomMessage  = require('../models/RoomMessage');
@@ -304,6 +305,32 @@ function presenceSummary(presences = [], roster = [], now = new Date()) {
   }
 
   return { presentes, total: roster.length, conectados, ausentes };
+}
+
+// Huella del bloque de presencia. RN-2 de specs/sala-en-vivo-escala.spec.md.
+//
+// EL PROBLEMA QUE RESUELVE: ese bloque —los 30 alumnos con nombre, inicial, avatar, rol y
+// etiqueta— son 4.981 bytes medidos, y viajaban en CADA poll: quince veces por minuto y por
+// persona. Pero la lista es la misma durante toda la clase; lo único que cambia es quién está
+// conectado, y muchas veces ni eso. A 930 personas eso es ~1,16 MB/s de pura repetición.
+//
+// El navegador devuelve la huella que tiene y el servidor le contesta el bloque completo solo
+// si cambió. Los CONTADORES (`presentes` y `total`) viajan siempre igual: son 30 bytes y son
+// los que sostienen el cartel "N de M presentes", que no puede quedarse sin dato nunca.
+//
+// ⭐ SE HASHEA EL CONTENIDO, no una lista de ids. Es la diferencia entre "correcto por
+// construcción" y "correcto hasta que alguien renombre a un alumno": el roster sale del cache
+// de cursos (RN-1), así que si la huella mirara solo los ids, un cambio de nombre no la movería
+// y esa pantalla mostraría el nombre viejo para siempre. Hasheando el bloque, cualquier
+// diferencia —un nombre, un avatar, el orden— se ve.
+//
+// 16 caracteres hex son 64 bits. Una colisión significaría una fila de presencia sin repintar
+// hasta el cambio siguiente; a esta escala, no pasa.
+function huellaDePresencia(presencia) {
+  return crypto.createHash('sha1')
+    .update(JSON.stringify(presencia || null))
+    .digest('hex')
+    .slice(0, 16);
 }
 
 // ¿Esta sesión quedó abierta y sin actividad más allá del límite?
@@ -944,7 +971,7 @@ module.exports = {
   horaSegundos, diaMes, diaMesAnio, diaMesHora, diaMesAnioHora, diaMesLargo, diaMesLargoHora,
   anio,
   // puras
-  isOnline, presenceSummary, shouldAutoClose, horaDeCierre, gestorEnLinea, sanitizeText,
+  isOnline, presenceSummary, huellaDePresencia, shouldAutoClose, horaDeCierre, gestorEnLinea, sanitizeText,
   minutosPresente, initial, pesoLegible, etiquetaExt, textoAdjunto,
   // permisos dentro de la sala (puros: reciben un contexto plano, no `req`)
   puedeEscribir, puedeCompartirImagen, puedeBorrarMensaje, citaDeMensaje,
