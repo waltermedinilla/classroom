@@ -343,7 +343,7 @@ número estaba mal definido**. Se contaba `RoomSession.countDocuments({ closedAt
 (`closeStaleSessions`) **solo corre adentro de `getOpenSessions()`**, que únicamente llaman los
 paneles de dirección y preceptoría. Una clase que terminó y a la que nadie volvió queda contada.
 
-La serie lo delató, porque las dos curvas **divergen**:
+La **sospecha** vino de que las dos curvas divergían:
 
 ```
 minuto   salas  personas
@@ -367,6 +367,25 @@ Y se guarda **además el crudo** (`sesionesSinCerrar`), porque **la diferencia e
 información**: "3 salas con gente, 6 sin cerrar" avisa que hay 3 colgadas y que el autocierre no
 está barriendo. El diagnóstico lo levanta como aviso —no alerta: el servidor está bien, lo que
 pasa es que dirección y preceptoría ven clases "en vivo" que no lo están.
+
+#### ⚠️ Y la primera medición con el número corregido NO confirmó la sospecha
+
+```
+salas con gente: 5   ·   sesiones sin cerrar: 5   ·   COLGADAS: 0   ·   personas: 42
+```
+
+**Cero colgadas.** Las dos cuentas coinciden, así que el 6 de más temprano bien pudo ser real
+—seis clases con poca gente cada una, al final de la jornada— y no sesiones muertas. La
+divergencia entre las curvas era circunstancial y **no alcanzaba para concluir lo que concluí**.
+
+Lo que el cambio sí compró, y sigue valiendo:
+
+1. **La tarjeta ahora dice lo que mide.** "Sesiones sin cerrar" y "salas con clase" son cosas
+   distintas, y el eje X del gráfico de escala necesita la segunda.
+2. **Ahora se puede VER si hay colgadas**, en vez de suponerlo. Hoy no hay.
+
+Queda anotado como advertencia sobre el propio panel: **una divergencia entre dos curvas es una
+pista, no una conclusión.** Este panel existe justamente para no razonar así.
 
 ### 5. El panel no decía desde cuándo tenía datos
 

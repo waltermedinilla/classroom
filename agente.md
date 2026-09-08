@@ -570,6 +570,17 @@ dirección y preceptoría ven clases "en vivo" que no lo están.
 La tarjeta ahora dice **"Salas con gente"** —no "Salas abiertas"— y abajo, cuando las hay,
 "+N abiertas sin nadie adentro".
 
+#### ⚠️ La primera medición con el número corregido NO confirmó la sospecha
+
+
+
+**Cero colgadas.** Las dos cuentas coinciden, así que el 6 de más temprano bien pudo ser real
+—seis clases con poca gente al final de la jornada— y no sesiones muertas. La divergencia entre
+las curvas era una pista circunstancial y **no alcanzaba para concluir lo que concluí**.
+
+Lo que el cambio sí compró: la tarjeta ahora dice lo que mide, y **ahora se puede VER si hay
+colgadas** en vez de suponerlo. Hoy no hay.
+
 **Tests**: 9 casos nuevos (6 en `salaStats`, 3 en `salaChart`), incluido que la diferencia no se
 invente cuando falta una de las dos cuentas y que nunca dé negativa. Total: 1.128 unitarios,
 405 de smoke y roles sin hallazgos.
