@@ -572,7 +572,9 @@ La tarjeta ahora dice **"Salas con gente"** —no "Salas abiertas"— y abajo, c
 
 #### ⚠️ La primera medición con el número corregido NO confirmó la sospecha
 
-
+```
+salas con gente: 5   ·   sesiones sin cerrar: 5   ·   COLGADAS: 0   ·   personas: 42
+```
 
 **Cero colgadas.** Las dos cuentas coinciden, así que el 6 de más temprano bien pudo ser real
 —seis clases con poca gente al final de la jornada— y no sesiones muertas. La divergencia entre
