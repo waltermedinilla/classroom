@@ -82,107 +82,62 @@ const courseSchema = new mongoose.Schema({
 // Seguro tanto si owner/coTeachers vienen sin popular (ObjectId crudo) como si vienen
 // populados (.populate('owner', 'name')) — en ese caso hay que comparar por ._id,
 // porque el .toString() de un documento completo NO es el mismo que el del ObjectId.
-// Tolera null/undefined: `owner` puede quedar colgado si se elimina al usuario docente
-// (populate('owner') devuelve null). Sin esto, isTeacher() tiraba un TypeError y con él
-// toda ruta que use canManage() — la materia se volvía inaccesible para todo el mundo.
-// Devuelve '' en ese caso: nunca coincide con un id real, así que no concede nada.
-function idToString(val) {
-  if (val === null || val === undefined) return '';
-  return (val._id ? val._id : val).toString();
-}
-courseSchema.methods.isTeacher = function (userId) {
-  if (!userId) return false;
-  const uid = userId.toString();
-  if (idToString(this.owner) === uid) return true;
-  return (this.coTeachers || []).some(t => idToString(t) === uid);
-};
+// ── Permisos: quién puede qué sobre esta materia ─────────────────────────────
+//
+// ⭐ LAS REGLAS NO VIVEN ACÁ: viven en services/cursoPermisos.js, como funciones puras, con
+// todos sus comentarios. Estos métodos son delegaciones de una línea, y existen para que las
+// ~60 llamadas que ya había (`course.canManage(user)`, `course.canView(user)`, …) sigan
+// funcionando sin tocarse.
+//
+// El motivo de la mudanza está escrito largo en ese archivo, y se resume así: un método de
+// schema obliga a tener un DOCUMENTO hidratado, y eso es lo que hacía que el poll de la sala
+// resolviera el curso entero con tres populate cada 4 segundos por persona (11,4 ms medidos).
+// Las funciones puras andan igual sobre el objeto plano de un `lean()`, que es lo que sí se
+// puede cachear sin compartir estado mutable.
+//
+// ⚠️ Al escribir código nuevo sobre una query `.lean()`, llamar a las funciones puras en vez
+// de copiar la regla a mano. Ya pasó una vez: routes/activities.js:333 tiene una copia
+// artesanal de canManage, con el comentario "porque esta query es .lean()".
+const permisos = require('../services/cursoPermisos');
 
-// "¿Puede gestionar esta materia?" — es isTeacher() MÁS los admins de la escuela y el
-// superadmin, con los mismos permisos que un docente (crear/editar actividades, calificar,
-// publicar novedades, gestionar alumnos). Decisión del usuario 2026-07-31: el admin entraba
-// a /courses/:id y le daba "Acceso denegado"; podía mirar solo suplantando a un docente.
-//
-// A diferencia de isTeacher() recibe el USUARIO COMPLETO, no el id: necesita el `role` y
-// la `school`. Pasarle un id suelto devuelve false para el caso admin (no rompe, pero no
-// concede nada) — usar siempre res.locals.user.
-//
-// Ojo con el `select` de la query: además de `owner coTeachers` tiene que traer `school`,
-// o el admin de la escuela cae en el `idToString(undefined)` y se lo rechaza por error.
-//
-// NO usar esto para armar listados de "mis materias" (dashboard, perfil): ahí sigue valiendo
-// la pertenencia real por owner/coTeachers, si no el admin vería las 419 materias como propias.
-courseSchema.methods.canManage = function (user) {
-  if (!user) return false;
-  if (this.isTeacher(user._id)) return true;
-  // El superadmin no tiene escuela asignada: llega a todas.
-  if (user.role === 'superadmin') return true;
-  if (user.role === 'admin') {
-    if (!user.school || !this.school) return false;
-    return idToString(this.school) === idToString(user.school);
-  }
-  return false;
-};
-
-// "¿Puede VER esta materia?" — quien la administra (canManage) o el alumno matriculado.
-//
-// Existe porque esta misma pregunta estaba respondida por separado en tres lugares y dos de
-// ellos se la habían olvidado. La pantalla del curso (GET /courses/:id) sí la hacía y devolvía
-// 403; pero `GET /courses/:id/data` y `GET /announcements/course/:id` solo pedían estar
-// logueado. Resultado, verificado el 2026-08-30 contra la base real: **cualquiera de las 1.448
-// cuentas —incluido un alumno de primer año— podía leer el listado completo de las 578
-// materias, con el nombre y el CORREO de cada alumno y del docente**, pidiendo la URL a mano.
-// La pantalla decía que no; la API decía que sí.
-//
-// Por eso la regla vive acá y no repetida en cada ruta: es la única forma de que no se vuelva
-// a olvidar en la cuarta. Ver el mismo criterio en canWatchLive() acá abajo.
-//
-// Ojo con el `select` de la query, igual que en canManage: hace falta traer `students` (y
-// `owner`/`coTeachers`/`school`), o esto rechaza por omisión a quien sí pertenece. Y `students`
-// puede venir populado (documentos) o crudo (ids): por eso el `s._id || s`.
-courseSchema.methods.canView = function (user) {
-  if (!user) return false;
-  if (this.canManage(user)) return true;
-  const uid = idToString(user._id);
-  return (this.students || []).some(s => idToString(s && s._id ? s._id : s) === uid);
-};
-
-// "¿Puede ENTRAR a la sala en vivo de esta materia?" — es canManage() MÁS el equipo directivo
-// de la escuela, MÁS el preceptor que tiene esta división en su alcance.
-//
-// Va SEPARADO de canManage() a propósito, y esa separación es el punto: canManage concede
-// crear actividades, calificar, borrar y publicar novedades. Sumar 'directivo' o 'preceptor'
-// allá para que puedan mirar una clase les abriría de golpe la gestión completa de las 419
-// materias de la escuela. Acá solo se concede entrar y leer: abrir la sala, cerrarla, moderar,
-// silenciar y configurarla siguen pidiendo canManage() en routes/rooms.js.
-//
-// El segundo argumento es el alcance del preceptor YA RESUELTO por loadPreceptorScope
-// (middleware/preceptor.js). No se resuelve acá adentro porque necesita una query a Division
-// y un método de instancia sincrónico no puede hacerla.
-//
-// FAIL-CLOSED: sin alcance no hay acceso. Nunca existe la convención "vacío = todas" — es la
-// misma regla que sostiene assignedDivisions en models/User.js, y por el mismo motivo: el rol
-// 'preceptor' se puede asignar por caminos que no preguntan por divisiones, y en todos ellos
-// el usuario queda sin alcance. Si "vacío" significara "todas", esos caminos entregarían las
-// salas de la escuela entera por omisión.
+courseSchema.methods.isTeacher    = function (userId) { return permisos.esDocente(this, userId); };
+courseSchema.methods.canManage    = function (user)   { return permisos.puedeGestionar(this, user); };
+courseSchema.methods.canView      = function (user)   { return permisos.puedeVer(this, user); };
 courseSchema.methods.canWatchLive = function (user, scopeDivisionIds = []) {
-  if (!user) return false;
-  if (this.canManage(user)) return true;
-
-  // Dirección ve toda su escuela. Sin escuela cargada de un lado o del otro no se concede
-  // nada (mismo cuidado con el `select` que documenta canManage: la query tiene que traer
-  // `school` o el chequeo falla por omisión, no por permiso).
-  if (user.role === 'directivo') {
-    if (!user.school || !this.school) return false;
-    return idToString(this.school) === idToString(user.school);
-  }
-
-  if (user.role === 'preceptor') {
-    if (!Array.isArray(scopeDivisionIds) || scopeDivisionIds.length === 0) return false;
-    if (!this.division) return false;
-    return scopeDivisionIds.map(String).includes(idToString(this.division));
-  }
-
-  return false;
+  return permisos.puedeMirarEnVivo(this, user, scopeDivisionIds);
 };
+
+// ── Invalidación del cache de cursos ─────────────────────────────────────────
+//
+// El poll de la sala lee el curso de un cache por-worker (middleware/cache.js, RN-1 de
+// specs/sala-en-vivo-escala.spec.md). Esto lo borra cuando el curso cambia.
+//
+// ⭐ VA EN EL SCHEMA Y NO EN CADA RUTA. Hay ~20 lugares que modifican un curso —routes/admin.js,
+// routes/courses.js, services/dbFixes.js, services/enrollment.js, services/joinByCode.js—, y
+// engancharlos uno por uno es más código y, sobre todo, es la clase de lista que nadie se
+// acuerda de actualizar cuando aparece el lugar 21. Acá pasan todos, incluidos los scripts de
+// mantenimiento y los que se escriban mañana.
+//
+// Y si alguno igual se escapara, no queda un dato incorrecto para siempre: el TTL de 45 s lo
+// corrige solo. Es el mismo trato que userCache le da a los cambios de rol.
+const { invalidateCourse, courseCache } = require('../middleware/cache');
+
+courseSchema.post('save', function (doc) {
+  if (doc && doc._id) invalidateCourse(doc._id);
+});
+
+// Las queries de actualización. Un filtro por `_id` suelto invalida esa entrada; cualquier
+// otra cosa (`{ _id: { $in: [...] } }`, un filtro por escuela, un updateMany) vacía el cache
+// entero. Son operaciones de administración —importar, fusionar, reasignar docentes—, raras y
+// en lote: repoblar el cache ahí es más barato que arriesgarse a servir un curso viejo.
+function invalidarPorFiltro() {
+  const filtro = typeof this.getFilter === 'function' ? this.getFilter() : null;
+  const id = filtro && filtro._id;
+  if (id && (typeof id === 'string' || id instanceof mongoose.Types.ObjectId)) invalidateCourse(id);
+  else courseCache.clear();
+}
+
+courseSchema.post(['findOneAndUpdate', 'updateOne', 'findOneAndDelete', 'deleteOne'], invalidarPorFiltro);
+courseSchema.post(['updateMany', 'deleteMany'], function () { courseCache.clear(); });
 
 module.exports = mongoose.model('Course', courseSchema);

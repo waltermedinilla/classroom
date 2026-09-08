@@ -1,6 +1,7 @@
 # La sala en vivo a escala: 30 salas de 30
 
-Estado: **propuesta, SIN APROBAR** (2026-09-08) · Módulo: `rooms` · Rol: todos los de la sala
+Estado: **RN-1 IMPLEMENTADA** (2026-09-08) · RN-2, RN-3 y RN-4 siguen sin aprobar ·
+Módulo: `rooms` · Rol: todos los de la sala
 
 ## Problema
 
@@ -162,11 +163,50 @@ intermitente según qué worker atienda. Es exactamente la clase de bug que cues
 **Recomendación: (b).** No es "código de más": es la misma lógica movida, y es lo que hace que
 el cache sea seguro en vez de seguro-por-ahora.
 
-### Invalidación
+### ✅ Decidido e implementado: (b), el 2026-09-08
 
-El cache se borra por `courseId` cuando cambia la matrícula o el plantel del curso. Los puntos
-de entrada ya existen y son pocos (alta/baja de alumnos, cambio de docente, importación). **Si
-alguno se olvida, el peor caso es 45 s de desactualización, no un dato incorrecto para siempre.**
+Las reglas viven en `services/cursoPermisos.js` como funciones puras (`esDocente`,
+`puedeGestionar`, `puedeVer`, `puedeMirarEnVivo`), con todos sus comentarios. Los métodos del
+schema **siguen existiendo y delegan ahí**, así que las ~60 llamadas que ya había
+(`course.canManage(user)`, `course.canView(user)`, …) no se tocaron.
+
+**Medido después del cambio, sobre el curso real de 36 alumnos:**
+
+```
+en frío:     4 queries · 102 ms
+en caliente: 0 queries ·   0,011 ms     ← el mismo objeto cacheado
+200 llamadas cacheadas: 0,0011 ms c/u
+```
+
+**La prueba que importa** (76.800 decisiones sobre datos reales del espejo: 120 cursos × 160
+usuarios × 4 reglas, comparando el método viejo sobre el documento contra la función nueva
+sobre el objeto plano):
+
+```
+diferencias: 0
+y no es vacío: concedió gestionar 305, ver 315, mirar en vivo 435
+```
+
+### Invalidación — resuelta en el schema, no en las rutas
+
+⭐ **No es una lista de puntos de entrada.** Hay ~20 lugares que modifican un curso
+(`routes/admin.js`, `routes/courses.js`, `services/dbFixes.js`, `enrollment.js`,
+`joinByCode.js`), y una lista así es exactamente lo que nadie actualiza cuando aparece el
+lugar 21. La invalidación vive en `models/Course.js`, enganchada al schema: pasan todos los
+caminos, incluidos los scripts de mantenimiento y los que se escriban mañana.
+
+Verificado contra Mongo, los cinco caminos:
+
+| Camino | Resultado |
+|---|---|
+| `updateOne` con filtro por `_id` | invalida esa entrada |
+| `updateMany` | vacía el cache |
+| `findOneAndUpdate` | invalida esa entrada |
+| `.save()` | invalida esa entrada |
+| `updateOne` con otro filtro | vacía el cache (conservador) |
+
+Y si algún camino igual se escapara, **el peor caso son 45 s de desactualización, no un dato
+incorrecto para siempre.**
 
 ---
 

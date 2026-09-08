@@ -31,6 +31,8 @@ const { subirImagen, guardarImagenOptimizada, ImagenInvalidaError } = require('.
 const { EXT_IMAGENES } = require('../config/imagePresets');
 const { logDeRuta, logRechazo } = require('../middleware/route-log');
 const live = require('../services/liveRoom');
+const { courseCache } = require('../middleware/cache');
+const permisos = require('../services/cursoPermisos');
 
 // ── Transmisión en vivo ──────────────────────────────────────────────────────
 // Módulo OPCIONAL y de dos ejes: la escuela lo prende y adentro se elige a qué docentes
@@ -111,28 +113,58 @@ function scopeSiEsPreceptor(req, res, next) {
 
 // Carga el curso de :id y decide si este usuario puede estar en su sala.
 // Deja en req: course, esAlumno, esGestor (puede abrir/cerrar/moderar), modo.
+// El curso de la sala: del cache si está, de la base si no.
+//
+// ⭐ ESTA ES LA FUNCIÓN QUE SOSTIENE LA ESCALA (RN-1 de specs/sala-en-vivo-escala.spec.md).
+// Las cuatro queries de acá abajo corrían en CADA poll, o sea cada 4 segundos por cada persona
+// que estuviera en una sala: 11,4 ms medidos, que a 30 salas de 30 alumnos son ~2,6 núcleos
+// saturados resolviendo una y otra vez una lista de alumnos que no cambia en toda la hora.
+//
+// `.lean()` no es un detalle de velocidad, es LA CONDICIÓN para poder cachear esto: un
+// documento de Mongoose es mutable y acá se comparte entre requests concurrentes. Por eso los
+// permisos se preguntan con las funciones puras de services/cursoPermisos.js y no con los
+// métodos del schema — ahí está escrito por qué `Course.hydrate()` no es la salida.
+//
+// La invalidación NO está acá: vive en models/Course.js, enganchada al schema, para que la
+// cubran todos los caminos de escritura y no una lista que haya que mantener a mano.
+async function cursoDeLaSala(id) {
+  const clave    = String(id);
+  const cacheado = courseCache.get(clave);
+  if (cacheado) return cacheado;
+
+  // El select tiene que traer school y division además de owner/coTeachers: puedeGestionar y
+  // puedeMirarEnVivo los necesitan, y sin ellos el chequeo falla por omisión.
+  const course = await Course.findById(clave)
+    .populate('students', 'name avatar dni')
+    .populate('division', 'name')
+    .populate('owner', 'name')
+    .lean();
+  if (!course) return null;
+
+  // Mismo orden que la solapa Personas (routes/courses.js): los nombres se cargan como
+  // "APELLIDO, Nombre", así que ordenar por el string completo alcanza.
+  //
+  // Se ordena UNA sola vez, al entrar al cache. Antes se reordenaban los 30 alumnos quince
+  // veces por minuto y por persona, para obtener siempre exactamente el mismo resultado.
+  course.students.sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+
+  courseCache.set(clave, course);
+  return course;
+}
+
 async function cargarSala(req, res, next) {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) {
       return fallar(req, res, 404, 'Curso no encontrado');
     }
 
-    // El select tiene que traer school y division además de owner/coTeachers: canManage y
-    // canWatchLive los necesitan, y sin ellos el chequeo falla por omisión (ver Course.js).
-    const course = await Course.findById(req.params.id)
-      .populate('students', 'name avatar dni')
-      .populate('division', 'name')
-      .populate('owner', 'name');
+    const course = await cursoDeLaSala(req.params.id);
     if (!course) return fallar(req, res, 404, 'Curso no encontrado');
-
-    // Mismo orden que la solapa Personas (routes/courses.js): los nombres se cargan como
-    // "APELLIDO, Nombre", así que ordenar por el string completo alcanza.
-    course.students.sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
 
     const user      = res.locals.user;
     const esAlumno  = course.students.some(s => s._id.toString() === req.userId);
-    const esGestor  = course.canManage(user);
-    const puedeVer  = esAlumno || course.canWatchLive(user, req.scopeDivisionIds || []);
+    const esGestor  = permisos.puedeGestionar(course, user);
+    const puedeVer  = esAlumno || permisos.puedeMirarEnVivo(course, user, req.scopeDivisionIds || []);
 
     if (!puedeVer) return fallar(req, res, 403, 'Acceso denegado');
 
@@ -144,7 +176,6 @@ async function cargarSala(req, res, next) {
     next(err);
   }
 }
-
 // ¿Este usuario puede pedir el modo observación?
 // EL MODO LO DECIDE EL ROL, NO LA URL. `?modo=observacion` solo tiene efecto para el equipo
 // directivo; para cualquier otro rol se ignora. Si el parámetro por sí solo habilitara el

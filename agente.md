@@ -527,6 +527,87 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-08 (2) — RN-1 de la escala: el curso de la sala sale de un cache
+
+Segunda entrega del día. La primera sacó el congelamiento; ésta ataca el **costo** del poll, que
+es lo que decide si la sala aguanta 30 salas de 30 (medido: el pico real fue **28 salas
+simultáneas** y **31 personas** en la más llena).
+
+`cargarSala` resolvía el curso entero —`findById` más tres `populate`— en **cada poll**, o sea
+cada 4 segundos por cada persona en una sala. **11,4 ms medidos**, que a 930 personas son
+**~2,6 núcleos** gastados en volver a averiguar una lista de alumnos que no cambia en toda la
+hora. Sobre los 4 vCPU del VPS chico de DonWeb eso es el 65% de la máquina.
+
+**Lo que impedía cachearlo, y por qué obligó a mover código.** Para cachear hay que guardar el
+objeto plano (`lean()`): un documento de Mongoose es **mutable** y esto se comparte entre
+requests concurrentes — es la razón por la que `middleware/auth.js` ya usa `.lean()` + copia.
+Pero `canManage` y `canWatchLive` eran **métodos del schema**, y un objeto plano no los tiene.
+
+⚠️ **`Course.hydrate()` parece la salida y no lo es.** Medido:
+
+```
+Course.hydrate(plano, undefined, { hydratedPopulatedDocs: true })
+  → canManage existe:   true       ← los métodos vuelven
+  → students:           undefined  ← los populados NO
+  → canManage(docente): FALSE      ← y no lanza ningún error
+```
+
+La docente habría perdido su propia sala, **en silencio**, de forma intermitente según qué
+worker la atendiera. Está documentado arriba de las funciones para que nadie lo reinvente.
+
+**El cambio**: las reglas pasan a `services/cursoPermisos.js` como funciones puras
+(`esDocente`, `puedeGestionar`, `puedeVer`, `puedeMirarEnVivo`), con todos sus comentarios. Los
+métodos del schema **siguen existiendo y delegan ahí**, así que las **~60 llamadas** que ya
+había no se tocaron. Andan igual sobre un documento y sobre un objeto plano, que es todo el
+punto.
+
+**La invalidación va en el schema, no en las rutas.** Hay ~20 lugares que modifican un curso, y
+una lista de ganchos es lo que nadie actualiza cuando aparece el lugar 21. Los hooks
+(`post save`, `post findOneAndUpdate/updateOne/updateMany/delete*`) cubren todos los caminos,
+incluidos los scripts de mantenimiento. Si alguno se escapara, el TTL de 45 s lo corrige solo.
+
+**Medido después:**
+
+```
+cargarSala en frío:     4 queries · 102 ms
+cargarSala en caliente: 0 queries ·   0,011 ms
+200 llamadas cacheadas: 0,0011 ms c/u
+```
+
+**⭐ La prueba que hacía falta para no tener sorpresas**: 120 cursos × 160 usuarios × 4 reglas
+del espejo real = **76.800 decisiones**, comparando el método viejo sobre el documento contra
+la función nueva sobre el objeto plano.
+
+```
+diferencias: 0
+y no es vacío: concedió gestionar 305, ver 315, mirar en vivo 435
+```
+
+Más los cinco caminos de permiso end-to-end por HTTP, pantalla **y** API (que es la lección de
+la fuga del 30/08: por cada pantalla que da 403, probar su endpoint JSON):
+
+| Quién | Pantalla | API |
+|---|---|---|
+| Docente (owner) | 200 | 200 |
+| Alumno de la materia | 200 | 200 |
+| Alumno de otra materia | **403** | **403** |
+| Preceptor sin esa división | **403** | **403** |
+| Directivo de la escuela | 200 | 200 |
+
+**Tests**: `tests/unit/cursoPermisos.test.js`, 14 casos nuevos — las reglas, la equivalencia
+función/método, el curso populado-y-plano (el caso que `hydrate` rompía) y el cache. Los 10 de
+`courseCanView.test.js` siguen pasando sin tocarse: son la red que prueba que la delegación no
+cambió nada. Total: 1.051 unitarios, 404 de smoke (20 de ellos de la sala) y roles sin
+hallazgos.
+
+**Visto al pasar, sin arreglar**: si a un alumno se le borra la cuenta, `populate('students')`
+deja un `null` en el array y el `.sort()` por `a.name` tira `TypeError` — la sala de esa materia
+queda caída para todos. Ya pasaba antes de este cambio y no se tocó para no mezclar; el arreglo
+es un `.filter(Boolean)`.
+
+**Lo que NO entró**: RN-2 (el roster no viaja en cada poll), RN-3 (presencia con ventana) y RN-4
+(cadencia adaptativa) siguen sin aprobar. RN-1 sola se lleva la parte grande del costo.
+
 ### 2026-09-08 — La sala congelada: el arreglo de ayer tenía un acantilado en los 4 segundos
 
 **Palabras del usuario**: *"utilizar un websocket para las charlas de chat en vivo, serviría para
