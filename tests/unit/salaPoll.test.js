@@ -337,3 +337,153 @@ test('RN-4: el latido no consume una generación de pedido', () => {
   assert.ok(!bloque.includes('cursor.pedir('), 'el latido NO pide por el cursor');
   assert.ok(bloque.includes('cursor.seq'),     'lee el cursor y nada más');
 });
+
+// ── 5. La inanición ─────────────────────────────────────────────────────────
+//
+// EL BUG DEL 2026-09-08, que es el precio que se pagó por el arreglo del 07/09.
+//
+// RN-1 comparaba contra el último pedido EMITIDO (`gen`), no contra la última respuesta
+// PINTADA. Con el poll saliendo cada 4 s pase lo que pase, alcanzaba con que el viaje
+// tardara más que el intervalo para que toda respuesta llegara con `gen` ya cambiado y se
+// tirara. No es una degradación: es un acantilado en los 4000 ms exactos. Por debajo, la
+// sala anda perfecto; por arriba, no pinta NADA, NUNCA, hasta que la red afloje.
+//
+// Reportado como las dos mitades del mismo síntoma: "entra pero la sala no carga" (se
+// descarta la primera respuesta y queda vacía) y "escribe pero no le llega al alumno" (se
+// descartan los polls del alumno y el mensaje no aparece jamás).
+//
+// Contexto medido ese día desde la escuela: 5% de pérdida, RTT 247-695 ms y TTFB de
+// 1,75-2,90 s contra /health, que es la ruta más barata que hay. Cruzar los 4 s en los malos
+// momentos no es un caso de laboratorio.
+
+test('EL BUG: la respuesta lenta NO se tira por el pedido que salió después', () => {
+  const cursor = enSala(10);
+
+  // 1. El ciclo pide "desde el 10". El viaje va a tardar más de 4 segundos.
+  const lento = cursor.pedir();
+
+  // 2. A los 4 s el intervalo dispara otro, sin que el primero haya vuelto todavía.
+  cursor.pedir();
+
+  // 3. Vuelve el primero, con el mensaje que el docente escribió. Es la ÚNICA respuesta
+  //    que llegó: no hay nada más nuevo pintado que pueda pisar.
+  const d = cursor.recibir(resp(SESION, 11, [11]), lento);
+
+  assert.equal(d.descartar, false, 'la única respuesta que llegó tiene que pintarse');
+  assert.deepEqual(seqs(d.mensajes), [11]);
+  assert.equal(cursor.seq, 11, 'y el cursor tiene que avanzar');
+});
+
+test('el criterio es lo ya PINTADO, no lo ya PEDIDO', () => {
+  // Las dos caras juntas, para que no se pueda arreglar una rompiendo la otra.
+  const cursor = enSala(10);
+  const a = cursor.pedir();
+  const b = cursor.pedir();
+  const c = cursor.pedir();
+
+  // `b` llega primero: no hay nada más nuevo pintado, se acepta.
+  assert.equal(cursor.recibir(resp(SESION, 11, [11]), b).descartar, false);
+  // `a` es ANTERIOR a lo que ya se pintó: se tira (el arreglo del 07/09 sigue en pie).
+  assert.equal(cursor.recibir(resp(SESION, 10, []), a).descartar, true,
+    'la vieja que llega tarde se sigue descartando');
+  // `c` es POSTERIOR: se acepta, aunque `b` haya vuelto antes.
+  //
+  // Contesta desde el 11 y no desde el 12: `c` salió con `since = 10` —el cursor todavía no
+  // había avanzado cuando se emitió—, así que el servidor le manda los dos. El 11 repetido no
+  // molesta: el Set `vistos` del partial no lo pinta dos veces. Pedirle [12] a secas sería una
+  // respuesta que el servidor nunca da, y ahí el cursor frena por hueco, con toda la razón.
+  const dc = cursor.recibir(resp(SESION, 12, [11, 12]), c);
+  assert.equal(dc.descartar, false);
+  assert.equal(cursor.seq, 12);
+});
+
+test('con el viaje más largo que el intervalo, la sala igual se llena', () => {
+  // La reproducción completa, con el reloj: 60 s de clase, 12 mensajes escritos, y el poll
+  // saliendo cada 4 s. Con la regla vieja esto pintaba CERO mensajes y descartaba 14
+  // respuestas seguidas, con el cursor clavado donde arrancó.
+  const POLL = 4000;
+
+  const corrida = (latencia) => {
+    const cursor  = enSala(10);
+    const enVuelo = [];
+    let pintados = 0, servidor = 10;
+
+    for (let t = 0; t <= 60000; t += 100) {
+      if (t % POLL === 0) enVuelo.push({ pedido: cursor.pedir(), llega: t + latencia });
+      if (t % 5000 === 0 && t > 0) servidor += 1;   // alguien escribe cada 5 s
+
+      for (let i = enVuelo.length - 1; i >= 0; i--) {
+        if (enVuelo[i].llega > t) continue;
+        const { pedido } = enVuelo.splice(i, 1)[0];
+        const msgs = [];
+        for (let s = pedido.since + 1; s <= servidor; s++) msgs.push(s);
+        const d = cursor.recibir(resp(SESION, servidor, msgs), pedido, t);
+        if (!d.descartar) pintados += d.mensajes.length;
+      }
+    }
+    return { pintados, cursor: cursor.seq, servidor };
+  };
+
+  // Por debajo del intervalo siempre anduvo, y tiene que seguir andando.
+  const buena = corrida(1200);
+  assert.equal(buena.pintados, 11, 'red buena: se pintan los 11 mensajes de la clase');
+
+  // Por arriba es donde se caía a cero.
+  for (const latencia of [4200, 6000, 9000]) {
+    const r = corrida(latencia);
+    assert.ok(r.pintados >= 11,
+      `con ${latencia} ms de viaje se pintaron ${r.pintados} mensajes de 11`);
+    assert.ok(r.cursor >= r.servidor - 1,
+      `con ${latencia} ms de viaje el cursor quedó en ${r.cursor} y el servidor en ${r.servidor}`);
+  }
+});
+
+// ── 6. El cableado del ciclo ────────────────────────────────────────────────
+
+test('el poll se encadena y no sale cada 4 s pase lo que pase', () => {
+  // La otra mitad del arreglo. Con `setInterval` los pedidos se apilan sin límite cuando la
+  // red se pone lenta: son requests que el servidor atiende enteras (7 queries cada una) para
+  // que el navegador tire casi todas. El ciclo encadenado saca UN pedido por vez.
+  // Sin los comentarios: el bloque del ciclo NOMBRA el `setInterval(pollear, POLL)` viejo para
+  // explicar por qué se fue, y buscar la cadena a secas da un falso positivo. Misma trampa que
+  // en RN-4.
+  const codigo = sala.replace(/\/\/.*$/gm, '');
+
+  assert.ok(!/setInterval\(\s*pollear/.test(codigo),
+    'el poll no puede volver a salir por intervalo fijo');
+  assert.ok(!/setInterval\(\s*ciclo/.test(codigo),
+    'tampoco encadenado por intervalo: la próxima vuelta se programa al terminar la anterior');
+  assert.match(codigo, /setTimeout\(\s*ciclo/,
+    'la vuelta siguiente se programa con setTimeout cuando la anterior terminó');
+});
+
+test('el pedido tiene plazo: un poll colgado no puede frenar el ciclo', () => {
+  // Con el ciclo encadenado, una request que nunca vuelve dejaría la sala muda para siempre
+  // — que es peor que el bug que este arreglo cierra. El corte lo pone un AbortController.
+  const desde = sala.indexOf('async function pollear');
+  const hasta = sala.indexOf('function programar', desde);
+  assert.ok(desde > 0 && hasta > desde, 'no se encontró el bloque del poll');
+
+  const bloque = sala.slice(desde, hasta);
+  assert.match(bloque, /AbortController/, 'el fetch del poll necesita su corte por tiempo');
+  assert.match(bloque, /signal/,          'y el signal tiene que llegar al fetch');
+});
+
+test('la cadena no se puede cortar: la próxima vuelta se programa en un finally', () => {
+  // Con el ciclo encadenado, la cadena es LO ÚNICO que mantiene viva la sala. Si `programar()`
+  // fuera después del `await`, cualquier excepción que se escapara de `pollear()` la saltearía
+  // y la sala quedaría muda hasta que alguien recargue — que es el mismo síntoma que este
+  // arreglo cierra, entrando por otra puerta.
+  //
+  // Hoy `pollear()` tiene su propio try/catch y no debería tirar nada. Pero eso lo garantiza el
+  // código de al lado, no la estructura: alcanza con que alguien mueva una línea fuera de ese
+  // try para reintroducir el congelamiento. Con el `setInterval` viejo no importaba, porque el
+  // intervalo disparaba igual.
+  const desde = sala.indexOf('async function ciclo');
+  const hasta = sala.indexOf('function arrancar', desde);
+  assert.ok(desde > 0 && hasta > desde, 'no se encontró el bloque del ciclo');
+
+  const bloque = sala.slice(desde, hasta).replace(/\/\/.*$/gm, '');
+  assert.match(bloque, /finally\s*\{[^}]*programar\(\)/,
+    'programar() va DENTRO del finally, no después del await');
+});

@@ -848,13 +848,29 @@
     return !!el && el.offsetParent !== null;
   }
 
+  // Plazo de un pedido. Con el ciclo encadenado de abajo, una request que no vuelve nunca
+  // dejaría la sala muda para siempre: la vuelta siguiente se programa recién cuando la
+  // anterior termina. Este es el corte que garantiza que siempre termine.
+  //
+  // 15 s es holgado A PROPÓSITO: con 350 ms de ida y vuelta y 5% de pérdida —lo medido en la
+  // escuela el 2026-09-08— un poll lento tarda segundos, y abortarlo antes sería tirar la
+  // respuesta que estaba por llegar. Esto no marca el ritmo del chat (ése es POLL), es la red
+  // de contención de un pedido colgado.
+  //
+  // AbortController y no AbortSignal.timeout(): las máquinas del aula no son nuevas.
+  const PLAZO_MS = 15000;
+
   async function pollear(opciones) {
     if (!aLaVista()) return;
     // El pedido lleva su número de orden: es lo que le permite al cursor reconocer, cuando la
-    // respuesta vuelva, si mientras tanto salió otro pedido que la dejó atrás.
+    // respuesta vuelva, si mientras tanto se PINTÓ algo más nuevo que la deja sin sentido.
+    // Ojo con el sujeto: pintado, no pedido. Ver RN-1 en public/js/salaPoll.js.
     const pedido = cursor.pedir(opciones);
+    const corte  = new AbortController();
+    const reloj  = setTimeout(() => corte.abort(), PLAZO_MS);
     try {
-      const r = await fetch(BASE + '/poll?since=' + pedido.since, { headers: { Accept: 'application/json' } });
+      const r = await fetch(BASE + '/poll?since=' + pedido.since,
+        { headers: { Accept: 'application/json' }, signal: corte.signal });
       if (!r.ok) return;
       const s = await r.json();
 
@@ -891,19 +907,69 @@
       // un repedido, así que como mucho sale UN pedido extra por vuelta (ver recibir()).
       if (d.repedir) pollear({ repedido: true });
     } catch (e) { /* un poll perdido no rompe nada: el próximo trae lo mismo */ }
+    finally { clearTimeout(reloj); }
+  }
+
+  // ── El ciclo ───────────────────────────────────────────────────────────────
+  //
+  // ⭐ SE ENCADENA, NO SALE POR INTERVALO (2026-09-08). Acá había un
+  // `setInterval(pollear, POLL)`, que sacaba un pedido cada 4 segundos pasara lo que pasara.
+  // Cuando el viaje del aula se pone más lento que el intervalo, esos pedidos se APILAN sin
+  // límite: el servidor los atiende enteros —7 queries cada uno— para que el navegador tire
+  // casi todos. Era el motor del congelamiento que arregla RN-1, y hay que sacarlo también:
+  // si no, la sala anda pero sigue fabricando el tráfico que nadie usa.
+  //
+  // Ahora la vuelta siguiente se programa cuando la anterior TERMINÓ, así que hay como mucho
+  // un pedido del ciclo en vuelo, y en una red lenta el ritmo se afloja solo.
+  //
+  // Los pedidos fuera de ciclo (enviar, borrar, reaccionar, el repedido) siguen saliendo
+  // aparte y a propósito: son la respuesta inmediata a algo que la persona acaba de hacer, y
+  // el cursor ya sabe ordenarlos.
+  let detenido = false;
+  let enVuelo  = false;
+
+  function programar(ms) {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(ciclo, ms === undefined ? POLL : ms);
+  }
+
+  async function ciclo() {
+    timer = null;
+    // Nunca dos cadenas a la vez. Pasa cuando `arrancar()` entra con un poll todavía en
+    // vuelo (volver a la pestaña); la cadena que ya está corriendo programa la próxima al
+    // terminar, así que salir de acá no la deja huérfana.
+    if (enVuelo) return;
+    enVuelo = true;
+    // ⚠️ La próxima vuelta se programa en el `finally`, NO después del `await`. Con el ciclo
+    // encadenado, la cadena es lo único que mantiene viva la sala: cualquier excepción que se
+    // escape de `pollear()` —hoy no debería, tiene su propio try/catch, pero eso lo garantiza
+    // el código de al lado y no la estructura— saltearía el `programar()` y la sala quedaría
+    // muda hasta que alguien recargue. Con el `setInterval` viejo eso no importaba, porque el
+    // intervalo volvía a disparar igual. Acá sí importa, y por eso no se deja librado a que
+    // nadie rompa el try/catch de abajo.
+    try { await pollear(); }
+    finally {
+      enVuelo = false;
+      if (!detenido) programar();
+    }
   }
 
   function arrancar() {
-    if (timer) clearInterval(timer);
-    pollear();                       // sin esperar el primer intervalo: la sala se llena ya
-    timer = setInterval(pollear, POLL);
+    detenido = false;
+    programar(0);   // sin esperar la primera vuelta: la sala se llena ya
+  }
+
+  function detener() {
+    detenido = true;
+    if (timer) clearTimeout(timer);
+    timer = null;
   }
 
   // Con la pestaña oculta no se pollea: no tiene sentido gastar requests (ni contar como
   // presente) cuando nadie está mirando. Al volver, se refresca en el acto.
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { clearInterval(timer); timer = null; }
-    else { pollear(); arrancar(); }
+    if (document.hidden) detener();
+    else arrancar();
   });
 
   // ── Latido de quien gestiona la sala ───────────────────────────────────────

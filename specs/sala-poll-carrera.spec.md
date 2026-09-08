@@ -81,18 +81,56 @@ const d      = cursor.recibir(respuesta, pedido);
 // d = { descartar, reinicio, mensajes, repedir }
 ```
 
-### RN-1 · Solo se procesa la respuesta del último pedido
+### RN-1 · Solo se descarta lo que llegó tarde respecto de lo que YA SE PINTÓ
 
-`pedir()` numera cada pedido (`gen`). `recibir()` **descarta entera** toda respuesta cuyo
-`gen` ya no sea el último emitido: no pinta, no vacía y no mueve el cursor.
+⚠️ **Corregida el 2026-09-08.** La primera redacción decía *"solo se procesa la respuesta del
+último pedido"*, comparando contra el último `gen` **emitido**, y estuvo un día en producción.
+Ver más abajo por qué congelaba la sala.
 
-Descartarla es correcto y no pierde nada: un pedido posterior salió con el mismo `since` o
-uno mayor, así que trae todo lo que traía el atrasado. En el peor caso —que el pedido nuevo
-se pierda— el intervalo vuelve a preguntar a los 4 segundos.
+`pedir()` numera cada pedido (`gen`); `recibir()` recuerda el número del último que dio por
+bueno (`genAceptado`). Se **descarta entera** toda respuesta con `pedido.gen <= genAceptado`:
+no pinta, no vacía y no mueve el cursor.
+
+Descartarla es correcto y no pierde nada: la respuesta que la pasó salió con el mismo `since`
+o uno mayor, así que **ya trajo** todo lo que traía la atrasada.
 
 Se descarta la respuesta **completa**, no solo sus mensajes: la presencia, el estado de la
 transmisión y `puedoEscribir` de una respuesta vieja son igual de viejos, y pintarlos hacía
 parpadear la fila de conectados.
+
+**Por qué el sujeto es "lo pintado" y no "lo pedido".** Con `pedido.gen !== gen`, el criterio
+dependía de un pedido que todavía podía no haber vuelto. El razonamiento *"el que la dejó atrás
+trae lo mismo"* es cierto **solo si ese llega**, y el poll salía cada 4 s pasara lo que pasara:
+si el viaje tardaba más que el intervalo, cada respuesta encontraba un pedido más nuevo ya
+emitido y se tiraba. Para siempre.
+
+No es una degradación gradual, es un **acantilado en los 4000 ms exactos**: por debajo la sala
+anda perfecto; por arriba no pinta nada, nunca. Se reportó como las dos mitades del mismo
+síntoma — *"entra pero la sala no carga"* y *"escribe pero no le llega al alumno"*. Medido en el
+navegador con la respuesta a 9 s: **0 repintados del DOM en 40 segundos**.
+
+Una respuesta lenta que todavía no pisó nadie es la mejor información que hay: es la única que
+llegó.
+
+### RN-5 · El ciclo se encadena, no sale por intervalo
+
+La otra mitad del mismo problema. `setInterval(pollear, POLL)` emitía un pedido cada 4 s pasara
+lo que pasara: en una red lenta se **apilan sin límite**, y son requests que el servidor atiende
+enteras —7 queries cada una— para que el navegador tire casi todas.
+
+La vuelta siguiente se programa cuando la anterior **terminó** (`programar()` / `ciclo()` en el
+partial). Así hay como mucho un pedido del ciclo en vuelo, y el ritmo se afloja solo cuando la
+red aprieta. Medido: con la respuesta a 9 s, 3 polls en 40 s contra los 9 del intervalo fijo.
+
+⚠️ **Con el ciclo encadenado, un pedido que no vuelve nunca dejaría la sala muda para siempre**
+— peor que el bug que esto cierra. Por eso el `fetch` del poll lleva un `AbortController` con
+plazo (`PLAZO_MS`, 15 s). Es holgado a propósito: con 350 ms de RTT y 5% de pérdida un poll
+lento tarda segundos, y abortarlo antes sería tirar la respuesta que estaba por llegar. Ese
+plazo no marca el ritmo del chat —ése es `POLL`—, es la red de contención.
+
+Los pedidos **fuera de ciclo** (enviar, borrar, reaccionar, el repedido de RN-2) siguen saliendo
+aparte y a propósito: son la respuesta inmediata a algo que la persona acaba de hacer, y con
+RN-1 corregida el cursor ya sabe ordenarlos.
 
 ### RN-2 · El único indicador de "otra sesión" es el `sessionId`
 
@@ -146,10 +184,40 @@ para quien gestiona.
 8. El cableado: las dos vistas cargan `/js/salaPoll.js` antes del partial, y el `.ejs` ya no
    contiene `s.seq < seq` ni `seq = s.seq`.
 
+### Agregados el 2026-09-08 (RN-1 corregida y RN-5)
+
+9. Con dos pedidos emitidos y **ninguna respuesta pintada todavía**, la respuesta del primero
+   **se pinta** y mueve el cursor: es la única que llegó.
+10. El orden se sigue respetando en la otra dirección: si `b` (posterior) volvió primero y se
+    pintó, la respuesta de `a` se descarta igual.
+11. Con el viaje **más largo que el intervalo** (4200, 6000 y 9000 ms), 60 s de clase pintan los
+    mismos mensajes que con la red buena y el cursor termina donde el servidor. Con la regla
+    vieja: 0 mensajes y el cursor clavado donde arrancó.
+12. El cableado del ciclo: el partial ya no contiene `setInterval(pollear` ni `setInterval(ciclo`
+    (leído **sin los comentarios**, que nombran el viejo para explicar por qué se fue), y la
+    vuelta siguiente se programa con `setTimeout(ciclo`.
+13. El `fetch` del poll lleva `AbortController` y le pasa el `signal`: sin plazo, un pedido
+    colgado frena el ciclo encadenado para siempre.
+
 ## Lo que NO entra
 
 - **Websockets.** Cambiar el transporte es otra discusión: con las respuestas ordenadas, el
   poll de 4 s hace lo que tiene que hacer.
+
+  **Repropuesto por el usuario el 2026-09-08** ("serviría para descongestionar el uso del
+  servidor"), y vuelve a quedar afuera, ahora con números. **No hay congestión que descongestionar**:
+  ese día producción llevaba 24,6 h de uptime sin un reciclado, la app respondía en 7 ms y el poll
+  de la sala ya está **exento del `generalLimiter`** (`LIVE_ROOM_PATHS` en `server.js`), así que no
+  puede agotarle el cupo al login de nadie. Lo que sí había era este bug, y RN-5 se lleva de paso
+  los polls apilados, que eran el gasto real.
+
+  Lo que un WebSocket **no** arregla es la causa de fondo, que es la red: 5% de pérdida y 261-350 ms
+  hasta Alemania (ver [[latencia-linea-base]]). Y trae el mismo problema con otra cara —una conexión
+  muerta hay que detectarla, reconectarla y resincronizar por `seq`, contra el doble NAT de la
+  escuela que mata conexiones ociosas—, más el **hub único** que exigen los 2 workers de PM2: un
+  mensaje que entra por el worker A no llega a quien está colgado del B. El patrón para eso ya
+  existe (`middleware/rtc-proxy.js` tuneliza el WS de la transmisión a un proceso único), pero es
+  la mitad del trabajo, no un detalle. **Si alguna vez se hace, va con spec propia.**
 - **Cerrar el hueco del `$inc` en el servidor.** Se podría insertar el mensaje y numerarlo
   en una sola operación, pero eso toca la ruta más caliente de la app y `RN-3` ya deja el
   síntoma sin efecto desde el navegador.

@@ -52,8 +52,20 @@
     var seq       = inicial.seq || 0;
     var sessionId = inicial.sessionId || null;
 
-    // Número del último pedido emitido. Todo lo que vuelva con otro número llegó tarde.
-    var gen = 0;
+    // Número del último pedido emitido, y el del último que se dio por bueno.
+    //
+    // ⭐ SON DOS NÚMEROS, Y ESA ES LA CORRECCIÓN DEL 2026-09-08. Con uno solo, "llegó tarde"
+    // se medía contra el último pedido EMITIDO, y el poll salía cada 4 segundos pasara lo que
+    // pasara: bastaba que el viaje del aula tardara más que el intervalo para que TODA
+    // respuesta volviera con `gen` ya cambiado y se tirara. La sala no se degradaba —se
+    // CONGELABA—, y el síntoma tenía las dos mitades del mismo reclamo: "entra pero la sala no
+    // carga" y "escribe pero no le llega al alumno".
+    //
+    // Lo que hay que descartar es lo que llega tarde respecto de lo que YA SE PINTÓ, no
+    // respecto de lo que ya se PIDIÓ. Una respuesta lenta que todavía no pisó nadie es la
+    // mejor información que hay: es la única que llegó.
+    var gen         = 0;
+    var genAceptado = 0;
 
     // Desde cuándo estamos esperando un mensaje que falta en el medio de la tanda. `null`
     // cuando no hay ninguno pendiente.
@@ -98,17 +110,22 @@
       pedido = pedido || {};
       ahora  = ahora  || Date.now();
 
-      // ── RN-1. ¿Es la respuesta del último pedido? ──────────────────────────
+      // ── RN-1. ¿Llegó tarde respecto de algo que YA se pintó? ───────────────
       //
-      // Si no, se tira ENTERA. No pierde nada: el pedido que la dejó atrás salió con el mismo
-      // `since` o con uno mayor, así que trae todo lo que traía esta. Y si ese se llegara a
-      // perder, el intervalo pregunta de nuevo en 4 segundos.
+      // Si sí, se tira ENTERA: la respuesta que la pasó salió con el mismo `since` o con uno
+      // mayor, así que ya trajo todo lo que traía esta. Se descarta también el estado
+      // (presencia, transmisión, puedoEscribir) y no solo los mensajes: son igual de viejos, y
+      // pintarlos hacía parpadear la fila de conectados.
       //
-      // Se descarta también el estado (presencia, transmisión, puedoEscribir) y no solo los
-      // mensajes: son igual de viejos, y pintarlos hacía parpadear la fila de conectados.
-      if (pedido.gen !== gen) {
+      // ⚠️ Acá decía `pedido.gen !== gen`, comparando contra el último pedido EMITIDO. El
+      // razonamiento era "el que la dejó atrás trae lo mismo", y es cierto — pero solo si ese
+      // llega. Con el viaje más lento que el intervalo no llegaba NINGUNO: cada respuesta
+      // encontraba un pedido más nuevo ya emitido y se tiraba, para siempre. Ver el bloque 5
+      // de tests/unit/salaPoll.test.js, que lo corre con el reloj.
+      if (pedido.gen <= genAceptado) {
         return { descartar: true, reinicio: false, mensajes: [], repedir: false };
       }
+      genAceptado = pedido.gen;
 
       var respSession = resp.sessionId || null;
       var mensajes    = resp.mensajes || [];

@@ -527,6 +527,73 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-08 — La sala congelada: el arreglo de ayer tenía un acantilado en los 4 segundos
+
+**Palabras del usuario**: *"utilizar un websocket para las charlas de chat en vivo, serviría para
+poder descongestionar el uso del servidor, porque sigo con problemas de los docentes que no se
+pueden conectar"*. Repreguntado, el síntoma tenía dos mitades: **"entra pero la sala no carga"** y
+**"escribe pero no le llega al alumno"**.
+
+**No era congestión, y el servidor no tenía nada que ver.** Medido ese día contra producción:
+24,6 h de uptime sin un solo reciclado, la app respondiendo en 7 ms, y el poll de la sala ya
+exento del `generalLimiter` desde siempre (`LIVE_ROOM_PATHS` en `server.js`) — por más polls que
+haya, no pueden agotarle el cupo a nadie.
+
+**Era el arreglo del día anterior.** RN-1 de `specs/sala-poll-carrera.spec.md` descartaba toda
+respuesta cuyo `gen` no fuera el del **último pedido emitido**, y el poll seguía saliendo por
+`setInterval(pollear, 4000)`, pase lo que pase. Las dos mitades juntas hacen un acantilado:
+
+> Si el viaje tarda **más** que el intervalo, cuando la respuesta llega ya salió otro pedido,
+> `gen` cambió, y se tira. Y la siguiente. Y la siguiente.
+
+No es una degradación gradual: **por debajo de 4000 ms la sala anda perfecto y por arriba no pinta
+nada, nunca**, hasta que la red afloje. El razonamiento original de RN-1 —"el pedido que la dejó
+atrás trae lo mismo"— es cierto, pero solo si ese pedido **llega**. En una red lenta no llegaba
+ninguno.
+
+Que se cruzaran los 4 s no es de laboratorio. Medido desde la escuela ese mismo día:
+`ping` con **5% de pérdida** y RTT de 247-695 ms, y `/health` —la ruta más barata que existe—
+con TTFB de **1,75 a 2,90 s** y handshakes TLS de 1,0-1,9 s donde TLS 1.3 debería costar 0,26.
+El poll es bastante más caro que `/health`. Ver [[latencia-linea-base]].
+
+**El arreglo, en dos mitades:**
+
+1. **`public/js/salaPoll.js` — dos números en vez de uno.** `gen` (último emitido) y `genAceptado`
+   (último dado por bueno). RN-1 pasa a ser `pedido.gen <= genAceptado`: se descarta lo que llega
+   tarde respecto de **lo que ya se pintó**, no respecto de lo que ya se pidió. Una respuesta lenta
+   que todavía no pisó nadie es la mejor información que hay — es la única que llegó. El bug del
+   07/09 sigue arreglado: la vieja que llega *después* de una más nueva se sigue tirando.
+2. **`views/partials/live-room.ejs` — el ciclo se encadena.** Fuera el `setInterval`: la vuelta
+   siguiente se programa cuando la anterior **terminó**. Así hay como mucho un pedido del ciclo en
+   vuelo y en una red lenta el ritmo se afloja solo. Con plazo de 15 s por `AbortController`, que
+   es lo que impide que un pedido colgado deje la sala muda para siempre — con el ciclo encadenado,
+   eso sería peor que el bug que cierra.
+
+**Medido en el navegador**, con la respuesta demorada a 9 s (2,25x el intervalo), 40 segundos de
+sala abierta:
+
+| | Código de v1.0.83 | Con el arreglo |
+|---|---|---|
+| Polls emitidos | 9 | 3 |
+| Máximo en vuelo a la vez | **3** (se apilan) | **1** |
+| **Repintados del DOM** | **0 — congelada** | **3 — uno por respuesta** |
+
+Los 9 polls contra 3 son el otro costo que nadie estaba pagando a propósito: **el servidor los
+atendía enteros —7 queries cada uno— para que el navegador tirara casi todos.**
+
+**Tests**: `tests/unit/salaPoll.test.js` pasa de 25 a 28 casos (bloques 5 y 6: la inanición y el
+cableado del ciclo). Los 5 nuevos fallan con el código de v1.0.83 y pasan con el arreglo.
+
+**Sobre los websockets**: la intuición de que la sala tenía un problema estructural era correcta;
+la causa, no. Un WebSocket esquivaría este bug de costado pero trae el mismo problema de fondo con
+otra cara —una conexión muerta hay que detectarla, reconectarla y resincronizar por `seq`— más el
+hub único que exigen los 2 workers de PM2 (el patrón ya existe en `middleware/rtc-proxy.js`). Es
+un proyecto con spec, no un arreglo. Sigue en "Lo que NO entra" de la spec de la sala.
+
+**Lo que sí ataca la causa de la lentitud** (ninguna de las dos es código nuestro): Cloudflare
+gratis adelante, que termina TCP y TLS en Buenos Aires y baja el handshake de 1-2 s a ~30 ms; o
+mudar el VPS a Argentina, medido en 26,6 ms y 0% de pérdida contra 245 ms y 10%.
+
 ### 2026-09-07 — "Escribo en la sala y lo que escribí se borra": una carrera del poll
 
 **Palabras del usuario**: *"muchos se quejan de que escriben y lo que escriben les figura y luego
