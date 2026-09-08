@@ -157,6 +157,22 @@ function diagnostico(resumen) {
     }
   }
 
+  // ── Salas que quedaron colgadas ──
+  //
+  // La diferencia entre "salas con gente" y "sesiones sin cerrar". El autocierre
+  // (`closeStaleSessions`) solo corre cuando alguien abre el panel de dirección o de
+  // preceptoría, así que una clase que terminó y a la que nadie volvió queda abierta.
+  //
+  // No es una falla del servidor: es una sala que dice "en vivo" y no lo está, y eso lo ven
+  // dirección y preceptoría en sus tarjetas. Aviso, no alerta.
+  if (r.salasColgadas >= 3) {
+    hallazgos.push({
+      nivel: 'aviso',
+      titulo: `${r.salasColgadas} salas quedaron abiertas sin nadie adentro`,
+      detalle: `Hay ${r.sesionesSinCerrar} sesiones sin cerrar y solo ${r.salasAbiertas} con gente. El autocierre solo barre cuando alguien abre el panel de dirección o preceptoría: hasta entonces esas clases figuran "en vivo" sin estarlo.`,
+    });
+  }
+
   // ── Las palancas ──
   const palancas = r.palancas || {};
   PALANCAS.forEach(p => {

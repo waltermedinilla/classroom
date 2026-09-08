@@ -418,9 +418,10 @@
     <div class="monitor-grid" style="margin-top:14px">
       <div class="metric-card">
         <span class="material-symbols-outlined metric-icon" style="color:#1a73e8">meeting_room</span>
-        <div class="metric-label">Salas abiertas</div>
+        <div class="metric-label">Salas con gente</div>
         <div class="metric-value" id="m-sala-salas">—</div>
         <div class="metric-sub" id="m-sala-personas">—</div>
+        <div class="metric-sub" id="m-sala-colgadas" style="color:var(--text-hint)">—</div>
       </div>
       <div class="metric-card">
         <span class="material-symbols-outlined metric-icon" style="color:#34a853">sync</span>
@@ -899,6 +900,14 @@
 
       $s('m-sala-salas').textContent    = r.salasAbiertas == null ? '—' : r.salasAbiertas;
       $s('m-sala-personas').textContent = r.personasEnSalas == null ? '—' : r.personasEnSalas + ' personas conectadas';
+
+      // Salas que quedaron sin cerrar y a las que no vuelve nadie. Se muestra la diferencia,
+      // no el crudo: el crudo suelto se lee como "salas" y es justo lo que confundía antes.
+      $s('m-sala-colgadas').textContent = r.salasColgadas == null
+        ? ''
+        : (r.salasColgadas > 0
+            ? '+' + r.salasColgadas + ' abiertas sin nadie adentro'
+            : 'ninguna colgada');
       $s('m-sala-polls').textContent    = SalaChart.corto(r.polls);
       $s('m-sala-ms').textContent       = (r.msPorPoll || 0) + ' ms';
       $s('m-sala-bytes').textContent    = SalaChart.bytesCortos(r.bytesPorPoll);

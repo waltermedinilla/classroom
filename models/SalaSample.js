@@ -17,7 +17,29 @@ const salaSampleSchema = new mongoose.Schema({
   pid:    { type: Number, required: true },
 
   // ── Contexto: cuántas salas y cuánta gente había (lo escribe UN worker) ────
+
+  // Salas CON GENTE ADENTRO: sesiones distintas entre las presencias frescas.
+  //
+  // ⚠️ NO es `RoomSession.countDocuments({ closedAt: null })`, y la diferencia importa. Eso
+  // cuenta "sesiones que nadie cerró", que no es lo mismo: el autocierre (`closeStaleSessions`)
+  // solo corre adentro de `getOpenSessions()`, o sea cuando alguien abre el panel de dirección
+  // o de preceptoría. Una sala que terminó y a la que nadie volvió queda contada para siempre.
+  //
+  // Medido en producción el 2026-09-08: el panel decía 6 salas con 22 personas —3,7 por sala,
+  // poquísimo para una clase— y al rato pasó a 3 salas con 36 personas. Las salas bajaron
+  // mientras la gente subía: había sesiones muertas infladas en el número.
+  //
+  // ⭐ Este campo es el EJE X del gráfico de "¿escala?". Con el eje inflado, esa curva compara
+  // peras con manzanas y no sirve para decidir un rediseño, que es justo para lo que existe.
   salasAbiertas:   { type: Number, default: null },
+
+  // El crudo: sesiones con `closedAt: null`, barra las que sean.
+  //
+  // Se guarda A PROPÓSITO además del de arriba, porque LA DIFERENCIA ENTRE LOS DOS ES EL DATO:
+  // "3 salas con gente, 6 sin cerrar" avisa que hay 3 salas colgadas y que el autocierre no
+  // está barriendo. Es la misma familia de las salas fantasma, por otra puerta.
+  sesionesSinCerrar: { type: Number, default: null },
+
   personasEnSalas: { type: Number, default: null },
 
   // ── Costo del poll ─────────────────────────────────────────────────────────

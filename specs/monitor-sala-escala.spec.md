@@ -333,7 +333,42 @@ Las dos correcciones:
   cuando esa persona no estaba conectada, por la definición que usa toda la app. Va a
   `mensajesDeReenganche`, que es un dato aparte y también útil.
 
-### 4. El panel no decía desde cuándo tenía datos
+### 4. ⭐ "Salas abiertas" contaba salas muertas
+
+Reclamo del usuario: *"¿por qué hay un tope de 6 salas, es correcto esto?"*.
+
+**Tope no era** —es un `countDocuments` sin `limit`, y de hecho bajó a 3 al rato— pero **el
+número estaba mal definido**. Se contaba `RoomSession.countDocuments({ closedAt: null })`, o sea
+*"sesiones que nadie cerró"*, que no es lo mismo que *"salas con clase en curso"*: el autocierre
+(`closeStaleSessions`) **solo corre adentro de `getOpenSessions()`**, que únicamente llaman los
+paneles de dirección y preceptoría. Una clase que terminó y a la que nadie volvió queda contada.
+
+La serie lo delató, porque las dos curvas **divergen**:
+
+```
+minuto   salas  personas
+19:00       6        22     ← 3,7 por sala: poquísimo para una clase
+19:30       6        19
+19:35       4        24
+19:55       3        39     ← 13 por sala: eso sí es una clase
+```
+
+Las salas bajaban mientras la gente subía.
+
+**Por qué importaba más de lo que parece**: ese número es el **eje X del gráfico de "¿escala?"**.
+Con el eje inflado de salas muertas, la curva compara peras con manzanas y no sirve para decidir
+un rediseño — que es justo para lo que existe.
+
+**El arreglo**: se cuentan las **sesiones distintas entre las presencias frescas**
+(`RoomPresence.distinct('session', { lastPingAt: { $gte: hace 45 s } })`). Una presencia fresca
+solo existe si alguien está polleando esa sala ahora mismo.
+
+Y se guarda **además el crudo** (`sesionesSinCerrar`), porque **la diferencia entre los dos es
+información**: "3 salas con gente, 6 sin cerrar" avisa que hay 3 colgadas y que el autocierre no
+está barriendo. El diagnóstico lo levanta como aviso —no alerta: el servidor está bien, lo que
+pasa es que dirección y preceptoría ven clases "en vivo" que no lo están.
+
+### 5. El panel no decía desde cuándo tenía datos
 
 Reclamo del usuario: *"no sé desde cuándo es que mide"*. Pedir "24h" con la telemetría
 desplegada hacía 18 minutos dibujaba un eje de 24 horas con 18 minutos de datos. Ahora la

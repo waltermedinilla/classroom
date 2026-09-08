@@ -918,11 +918,25 @@ connectDB().then(() => {
     const muestreoSala = setInterval(async () => {
       try {
         const desde = new Date(Date.now() - ONLINE_WINDOW_MS);
-        const [salasAbiertas, personasEnSalas] = await Promise.all([
+        const [sesionesConGente, sesionesSinCerrar, personasEnSalas] = await Promise.all([
+          // ⭐ SALAS CON GENTE ADENTRO. Las sesiones distintas entre las presencias frescas:
+          // una presencia fresca solo existe si alguien está polleando esa sala ahora mismo.
+          //
+          // ⚠️ Es lo que se dibuja como "salas abiertas", y NO el conteo de abajo. Ver el
+          // comentario largo de models/SalaSample.js: contar sesiones sin cerrar infla el
+          // número con clases que terminaron y a las que nadie volvió, y ese número es el eje
+          // X del gráfico que tiene que decir si la sala escala.
+          RoomPresence.distinct('session', { lastPingAt: { $gte: desde } }),
+          // El crudo, para poder ver la diferencia: si hay muchas más sin cerrar que con
+          // gente, el autocierre no está barriendo.
           RoomSession.countDocuments({ closedAt: null }),
           RoomPresence.countDocuments({ lastPingAt: { $gte: desde } }),
         ]);
-        salaStats.registrarContexto({ salasAbiertas, personasEnSalas });
+        salaStats.registrarContexto({
+          salasAbiertas: sesionesConGente.length,
+          sesionesSinCerrar,
+          personasEnSalas,
+        });
       } catch { /* telemetría: si Mongo no contesta, este minuto queda sin contexto y listo */ }
     }, 60 * 1000);
     if (typeof muestreoSala.unref === 'function') muestreoSala.unref();

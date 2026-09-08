@@ -198,3 +198,24 @@ test('los números grandes se leen cortos y en español', () => {
   assert.equal(chart.tiempoCorto(468000), '7,8 min');
   assert.equal(chart.tiempoCorto(250), '250 ms');
 });
+
+// ── Salas colgadas ──────────────────────────────────────────────────────────
+
+test('⭐ varias salas abiertas sin nadie adentro se avisan', () => {
+  // El autocierre solo barre cuando alguien abre el panel de dirección o preceptoría, así que
+  // una clase que terminó y a la que nadie volvió sigue figurando "en vivo" en sus tarjetas.
+  const h = chart.diagnostico(sano({ salasAbiertas: 3, sesionesSinCerrar: 6, salasColgadas: 3 }));
+  const x = h.find(y => /quedaron abiertas/i.test(y.titulo));
+  assert.ok(x, `esperaba el aviso de salas colgadas, hubo: ${titulos(sano({ salasColgadas: 3 }))}`);
+  assert.equal(x.nivel, 'aviso', 'es un aviso, no una alerta: el servidor está bien');
+  assert.match(x.detalle, /autocierre/i);
+});
+
+test('una o dos colgadas no molestan: es el ruido normal de una jornada', () => {
+  assert.ok(!chart.diagnostico(sano({ salasColgadas: 2 })).some(y => /quedaron abiertas/i.test(y.titulo)));
+  assert.ok(!chart.diagnostico(sano({ salasColgadas: 0 })).some(y => /quedaron abiertas/i.test(y.titulo)));
+});
+
+test('sin el dato de colgadas no se inventa un aviso', () => {
+  assert.ok(!chart.diagnostico(sano({ salasColgadas: null })).some(y => /quedaron abiertas/i.test(y.titulo)));
+});

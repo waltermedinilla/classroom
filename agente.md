@@ -527,6 +527,53 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-08 (8) — "Salas abiertas" contaba salas muertas
+
+Pregunta del usuario mirando el panel: *"¿por qué hay un tope de 6 salas que sale en el monitor,
+es correcto esto o no?"*.
+
+**Tope no era.** Es un `countDocuments` sin `limit`, y de hecho bajó a 3 al rato. **Pero el
+número estaba mal definido**, y eso sí era un problema.
+
+Se contaba `RoomSession.countDocuments({ closedAt: null })` — *"sesiones que nadie cerró"*, que
+no es lo mismo que *"salas con clase en curso"*. El autocierre (`closeStaleSessions`) **solo
+corre adentro de `getOpenSessions()`**, que únicamente llaman los paneles de dirección y
+preceptoría: una clase que terminó y a la que nadie volvió queda contada indefinidamente.
+
+**La serie lo delató, porque las dos curvas divergen:**
+
+```
+minuto   salas  personas
+19:00       6        22     ← 3,7 por sala: poquísimo para una clase
+19:30       6        19
+19:35       4        24
+19:55       3        39     ← 13 por sala: eso sí es una clase
+```
+
+Las salas bajaban mientras la gente subía.
+
+**Por qué importaba más de lo que parece**: ese número es el **eje X del gráfico de "¿escala?"**.
+Con el eje inflado de salas muertas, la curva compara peras con manzanas y no sirve para decidir
+un rediseño — que es exactamente para lo que existe.
+
+**El arreglo**: se cuentan las **sesiones distintas entre las presencias frescas**
+(`RoomPresence.distinct('session', { lastPingAt: { $gte: hace 45 s } })`). Una presencia fresca
+solo existe si alguien está polleando esa sala ahora mismo. Misma cantidad de queries.
+
+Y se guarda **además el crudo** (`sesionesSinCerrar`), porque **la diferencia entre los dos es
+información por sí sola**: "3 salas con gente, 6 sin cerrar" avisa que hay 3 colgadas y que el
+autocierre no está barriendo. Es la misma familia de las salas fantasma, por otra puerta.
+
+El diagnóstico lo levanta como **aviso y no alerta**: el servidor está bien; lo que pasa es que
+dirección y preceptoría ven clases "en vivo" que no lo están.
+
+La tarjeta ahora dice **"Salas con gente"** —no "Salas abiertas"— y abajo, cuando las hay,
+"+N abiertas sin nadie adentro".
+
+**Tests**: 9 casos nuevos (6 en `salaStats`, 3 en `salaChart`), incluido que la diferencia no se
+invente cuando falta una de las dos cuentas y que nunca dé negativa. Total: 1.128 unitarios,
+405 de smoke y roles sin hallazgos.
+
 ### 2026-09-08 (7) — El panel se corrigió a sí mismo con 18 minutos de datos reales
 
 El usuario abrió el monitor recién desplegado y preguntó dos cosas: *"dice que tengo un atraso

@@ -104,7 +104,7 @@ const SUMABLES = [
   'pollsAtrasados', 'pollsMuyAtrasados',
 ];
 const MAXIMOS  = ['entregaMsMax', 'atrasoMax'];
-const CONTEXTO = ['salasAbiertas', 'personasEnSalas'];
+const CONTEXTO = ['salasAbiertas', 'sesionesSinCerrar', 'personasEnSalas'];
 
 function puntoVacio(t) {
   const p = { t };
@@ -185,8 +185,14 @@ function resumir(muestras) {
     polls: t.polls,
     msPorPoll:    t.polls ? +(t.msTotal / t.polls).toFixed(2) : 0,
     bytesPorPoll: t.polls ? Math.round(t.bytesTotal / t.polls) : 0,
-    salasAbiertas:   t.salasAbiertas,
-    personasEnSalas: t.personasEnSalas,
+    salasAbiertas:     t.salasAbiertas,
+    personasEnSalas:   t.personasEnSalas,
+    // El crudo, y la diferencia contra el de arriba: salas que quedaron sin cerrar y a las
+    // que no vuelve nadie. Ver el comentario de models/SalaSample.js.
+    sesionesSinCerrar: t.sesionesSinCerrar,
+    salasColgadas: (t.sesionesSinCerrar != null && t.salasAbiertas != null)
+      ? Math.max(0, t.sesionesSinCerrar - t.salasAbiertas)
+      : null,
     palancas,
     // ── Los síntomas ──
     entrega: {
@@ -308,11 +314,12 @@ function registrarPoll(datos) {
 
 // El contexto: cuántas salas y cuánta gente hay. Lo llama UN SOLO worker desde server.js —
 // es un estado global de la escuela, no un contador de tráfico.
-function registrarContexto({ salasAbiertas, personasEnSalas }) {
+function registrarContexto({ salasAbiertas, sesionesSinCerrar, personasEnSalas }) {
   try {
     const b = baldeDe(new Date());
-    if (salasAbiertas   != null) b.salasAbiertas   = salasAbiertas;
-    if (personasEnSalas != null) b.personasEnSalas = personasEnSalas;
+    if (salasAbiertas     != null) b.salasAbiertas     = salasAbiertas;
+    if (sesionesSinCerrar != null) b.sesionesSinCerrar = sesionesSinCerrar;
+    if (personasEnSalas   != null) b.personasEnSalas   = personasEnSalas;
   } catch { /* idem */ }
 }
 

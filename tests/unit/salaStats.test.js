@@ -279,3 +279,55 @@ test('resumir expone los reenganches y el porcentaje de muy atrasados', () => {
   assert.equal(r.atraso.pctMuyAtrasados, 0.5);
   assert.equal(r.atraso.umbral, stats.ATRASO_GRAVE);
 });
+
+// ── 6. Salas con gente vs sesiones sin cerrar (corrección del 2026-09-08) ───
+//
+// El panel decía "6 salas" con 22 personas —3,7 por sala, poquísimo para una clase— y al rato
+// pasó a 3 salas con 36. Las salas bajaban mientras la gente subía: había sesiones muertas
+// infladas en el número, porque se contaba `closedAt: null` en vez de "tiene gente adentro".
+
+test('⭐ el contexto lleva las DOS cuentas, y la diferencia es el dato', () => {
+  const r = stats.resumir([muestra({ polls: 10, salasAbiertas: 3, sesionesSinCerrar: 6, personasEnSalas: 36 })]);
+  assert.equal(r.salasAbiertas, 3, 'las que tienen gente');
+  assert.equal(r.sesionesSinCerrar, 6, 'las que nadie cerró');
+  assert.equal(r.salasColgadas, 3, 'la diferencia: quedaron abiertas y no vuelve nadie');
+});
+
+test('sin salas colgadas la diferencia es cero, no null', () => {
+  const r = stats.resumir([muestra({ polls: 10, salasAbiertas: 4, sesionesSinCerrar: 4 })]);
+  assert.equal(r.salasColgadas, 0);
+});
+
+test('si falta una de las dos cuentas no se inventa la diferencia', () => {
+  // Un minuto sin muestreo de contexto (Mongo no contestó) no puede dibujar "0 colgadas",
+  // que se leería como "está todo bien".
+  const r = stats.resumir([muestra({ polls: 10, salasAbiertas: 3, sesionesSinCerrar: null })]);
+  assert.equal(r.salasColgadas, null);
+});
+
+test('la diferencia nunca es negativa', () => {
+  // No debería pasar, pero si una muestra vieja trae solo uno de los dos campos, el máximo
+  // entre workers puede dejar el par descolocado. Cero es la respuesta honesta, no un negativo.
+  const r = stats.resumir([muestra({ polls: 10, salasAbiertas: 5, sesionesSinCerrar: 3 })]);
+  assert.equal(r.salasColgadas, 0);
+});
+
+test('sesionesSinCerrar se agrega con MÁXIMO, igual que el resto del contexto', () => {
+  // Lo escribe un solo worker; el otro trae null. Sumarlos daría el doble.
+  const serie = stats.agregarSerie([
+    muestra({ pid: 1, polls: 10, salasAbiertas: 3, sesionesSinCerrar: 6 }),
+    muestra({ pid: 2, polls: 10, salasAbiertas: null, sesionesSinCerrar: null }),
+  ], 1);
+  assert.equal(serie[0].sesionesSinCerrar, 6, 'NO 12');
+  assert.equal(serie[0].salasAbiertas, 3);
+});
+
+test('registrarContexto acepta las dos cuentas por separado', () => {
+  stats._reset();
+  stats.registrarContexto({ salasAbiertas: 3, sesionesSinCerrar: 6, personasEnSalas: 36 });
+  const b = [...stats._buffer().values()][0];
+  assert.equal(b.salasAbiertas, 3);
+  assert.equal(b.sesionesSinCerrar, 6);
+  assert.equal(b.personasEnSalas, 36);
+  stats._reset();
+});
