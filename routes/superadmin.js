@@ -998,6 +998,59 @@ router.get('/monitor/stats', async (req, res) => {
 // de toda la colección para dibujar una curva que cambia una vez por minuto. Mismo criterio
 // (y casi el mismo número) que el cache de 60 s de services/diskStats.js.
 // El `ahora` NO se cachea: es el dato en vivo y sale del propio request.
+// ── Sala en vivo ─────────────────────────────────────────────────────────────
+const salaStats  = require('../services/salaStats');
+const SalaSample = require('../models/SalaSample');
+
+const salaCache = new Map(); // rango → { t, ... }
+const SALA_CACHE_MS = 30 * 1000;
+
+// GET /superadmin/monitor/sala?rango=1h|6h|24h|7d
+// Qué cuesta la sala en vivo, qué palanca lo sostiene, y si los mensajes están llegando.
+// Ver specs/monitor-sala-escala.spec.md.
+//
+// Devuelve tres cosas de naturaleza distinta:
+//   - `resumen`: los números de cabecera y la efectividad de cada palanca.
+//   - `serie`: el eje del TIEMPO, sumando los dos workers por bucket.
+//   - `porSalas`: ⭐ el eje que contesta "¿escala?" — el costo por poll contra la cantidad de
+//     salas abiertas. Plano escala; curvado hacia arriba no.
+router.get('/monitor/sala', async (req, res) => {
+  try {
+    const rango = salaStats.rangoValido(req.query.rango) ? req.query.rango : '1h';
+    const { ventanaMin, bucketMin } = salaStats.configDeRango(rango);
+    const desde = new Date(Date.now() - ventanaMin * 60 * 1000);
+
+    let cacheado = salaCache.get(rango);
+    if (!cacheado || Date.now() - cacheado.t > SALA_CACHE_MS) {
+      const muestras = await SalaSample.find({ minuto: { $gte: desde } })
+        .sort({ minuto: 1 })
+        .lean();
+
+      cacheado = {
+        t: Date.now(),
+        desde,
+        serie:    salaStats.agregarSerie(muestras, bucketMin),
+        resumen:  salaStats.resumir(muestras),
+        porSalas: salaStats.porCantidadDeSalas(muestras),
+      };
+      salaCache.set(rango, cacheado);
+    }
+
+    res.json({
+      rango,
+      bucketMin,
+      desde:    cacheado.desde,
+      hasta:    new Date(),
+      serie:    cacheado.serie,
+      resumen:  cacheado.resumen,
+      porSalas: cacheado.porSalas,
+    });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'No se pudo leer la telemetría de la sala' });
+  }
+});
+
 const rlCache = new Map(); // rango → { t, serie, resumen, desde }
 const RL_CACHE_MS = 30 * 1000;
 

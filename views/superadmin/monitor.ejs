@@ -387,6 +387,128 @@
       </div>
     </div>
 
+    <!-- ── Sala en vivo (specs/monitor-sala-escala.spec.md) ─────────────────── -->
+    <div class="section-title">Sala en vivo</div>
+
+    <!-- ⭐ El diagnóstico va PRIMERO, antes que cualquier número. Un panel de contadores
+         obliga a saber de antemano qué es normal; esto lo dice. -->
+    <div class="monitor-grid">
+      <div class="metric-card" style="grid-column: 1 / -1" id="m-sala-diag-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div>
+            <span class="material-symbols-outlined metric-icon" style="font-size:20px" id="m-sala-diag-icono">monitor_heart</span>
+            <span class="metric-label">Diagnóstico</span>
+          </div>
+          <div class="rl-rangos" id="m-sala-rangos">
+            <button class="rl-rango activo" data-rango="1h">1h</button>
+            <button class="rl-rango" data-rango="6h">6h</button>
+            <button class="rl-rango" data-rango="24h">24h</button>
+            <button class="rl-rango" data-rango="7d">7d</button>
+          </div>
+        </div>
+        <div id="m-sala-diag" style="margin-top:10px;font-size:13px;line-height:1.6">—</div>
+      </div>
+    </div>
+
+    <!-- Estado de ahora -->
+    <div class="monitor-grid" style="margin-top:14px">
+      <div class="metric-card">
+        <span class="material-symbols-outlined metric-icon" style="color:#1a73e8">meeting_room</span>
+        <div class="metric-label">Salas abiertas</div>
+        <div class="metric-value" id="m-sala-salas">—</div>
+        <div class="metric-sub" id="m-sala-personas">—</div>
+      </div>
+      <div class="metric-card">
+        <span class="material-symbols-outlined metric-icon" style="color:#34a853">sync</span>
+        <div class="metric-label">Polls del rango</div>
+        <div class="metric-value" id="m-sala-polls">—</div>
+        <div class="metric-sub">consultas al servidor</div>
+      </div>
+      <div class="metric-card">
+        <span class="material-symbols-outlined metric-icon" style="color:#ea8600">timer</span>
+        <div class="metric-label">Tiempo por poll</div>
+        <div class="metric-value" style="font-size:26px" id="m-sala-ms">—</div>
+        <div class="metric-sub">dentro del servidor</div>
+      </div>
+      <div class="metric-card">
+        <span class="material-symbols-outlined metric-icon" style="color:#9334e6">download</span>
+        <div class="metric-label">Peso por poll</div>
+        <div class="metric-value" style="font-size:26px" id="m-sala-bytes">—</div>
+        <div class="metric-sub">sin comprimir, como lo arma el servidor</div>
+      </div>
+    </div>
+
+    <!-- ⭐ Los síntomas: no si la sala es barata, sino si ANDA -->
+    <div class="monitor-grid" style="margin-top:14px">
+      <div class="metric-card" style="grid-column: span 2;border-top:3px solid #34a853">
+        <span class="material-symbols-outlined metric-icon" style="color:#34a853">schedule_send</span>
+        <div class="metric-label">Cuánto tarda un mensaje en llegar</div>
+        <div class="metric-value" style="font-size:26px" id="m-sala-p95">—</div>
+        <div class="metric-sub" id="m-sala-entrega-sub">—</div>
+      </div>
+      <div class="metric-card" style="grid-column: span 2;border-top:3px solid #ea4335">
+        <span class="material-symbols-outlined metric-icon" style="color:#ea4335">running_with_errors</span>
+        <div class="metric-label">Atraso máximo del cursor</div>
+        <div class="metric-value" style="font-size:26px" id="m-sala-atraso">—</div>
+        <div class="metric-sub" id="m-sala-atraso-sub">—</div>
+      </div>
+    </div>
+
+    <!-- Las cuatro palancas -->
+    <div class="monitor-grid" style="margin-top:14px">
+      <div class="metric-card" style="grid-column: 1 / -1">
+        <span class="material-symbols-outlined metric-icon" style="font-size:20px;color:#1a73e8">tune</span>
+        <span class="metric-label">Qué está sosteniendo ese número</span>
+        <div id="m-sala-palancas" style="margin-top:12px"></div>
+        <div style="font-size:11px;color:var(--text-hint);margin-top:12px;line-height:1.5">
+          El porcentaje es <strong>exacto</strong>: cuántas veces actuó la palanca sobre las que
+          pudo actuar. Lo que ahorró es una <strong>estimación</strong>, multiplicando ese conteo
+          por el costo unitario medido el <span id="m-sala-costos-fecha">—</span>.<br>
+          Todos los bytes de esta sección son <strong>sin comprimir</strong>: es como el servidor
+          arma la respuesta. Por el cable viaja bastante menos, porque la app usa gzip.
+        </div>
+      </div>
+    </div>
+
+    <!-- Los dos ejes -->
+    <div class="monitor-grid" style="margin-top:14px">
+      <div class="metric-card" style="grid-column: 1 / -1">
+        <span class="material-symbols-outlined metric-icon" style="font-size:20px;color:#ea8600">show_chart</span>
+        <span class="metric-label">Tiempo por poll, en el tiempo</span>
+        <svg class="rl-chart" viewBox="0 0 300 90" preserveAspectRatio="none" role="img"
+             aria-label="Tiempo por poll de la sala en vivo">
+          <polyline id="m-sala-linea" points="" fill="none" stroke="#ea8600" stroke-width="2"
+                    vector-effect="non-scaling-stroke"/>
+          <polyline id="m-sala-linea-salas" points="" fill="none" stroke="#1a73e8" stroke-width="1.5"
+                    stroke-dasharray="3 3" vector-effect="non-scaling-stroke" opacity=".8"/>
+        </svg>
+        <div class="rl-eje" id="m-sala-eje"></div>
+        <div class="rl-leyenda">
+          <span><i style="background:#ea8600"></i> ms por poll (tope <span id="m-sala-tope-ms">—</span>)</span>
+          <span><i style="background:#1a73e8"></i> salas abiertas (tope <span id="m-sala-tope-salas">—</span>)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="monitor-grid" style="margin-top:14px">
+      <div class="metric-card" style="grid-column: 1 / -1">
+        <span class="material-symbols-outlined metric-icon" style="font-size:20px;color:#9334e6">scatter_plot</span>
+        <span class="metric-label">⭐ ¿Escala? — costo por poll contra cantidad de salas</span>
+        <div class="metric-sub" id="m-sala-veredicto" style="margin:6px 0 10px">—</div>
+        <svg class="rl-chart" viewBox="0 0 300 90" preserveAspectRatio="none" role="img"
+             aria-label="Costo por poll segun cuantas salas hay abiertas">
+          <g id="m-sala-nube"></g>
+        </svg>
+        <div class="rl-eje" id="m-sala-eje-salas"></div>
+        <div style="font-size:11px;color:var(--text-hint);margin-top:12px;line-height:1.5">
+          Cada punto es un minuto, agrupado por cuántas salas había abiertas. <strong>Plano
+          significa que la sala escala</strong>; una nube que sube hacia la derecha significa que
+          el costo crece con la cantidad de salas y que la spec necesita otra vuelta.
+          Se omiten los minutos con menos de 3 salas: con la escuela vacía el número no dice nada.
+        </div>
+      </div>
+    </div>
+
     <!-- Memoria -->
     <div class="section-title">Memoria del servidor</div>
     <div class="monitor-grid">
@@ -525,6 +647,7 @@
   <!-- Matemática del gráfico de rate limit. Va aparte para poder testearla con node:test
        (tests/unit/ratelimitChart.test.js); las funciones quedan como globales. -->
   <script src="/js/ratelimit-chart.js"></script>
+  <script src="/js/sala-chart.js"></script>
   <script>
     const REFRESH_SECONDS = 5; // más frecuente que el resto del panel: bajo costo y da sensación de "tiempo real"
     let countdown = REFRESH_SECONDS;
@@ -707,6 +830,141 @@
       document.querySelectorAll('#m-rl-rangos .rl-rango').forEach(b => b.classList.toggle('activo', b === btn));
       fetchRateLimit();
     });
+
+
+    // ── Sala en vivo (specs/monitor-sala-escala.spec.md) ──────────────────────
+    //
+    // Se refresca cada 30 s y no junto con el resto del panel (cada 5 s): la telemetría se
+    // vuelca a Mongo una vez por minuto, así que pedirla más seguido solo gasta.
+    let salaRango = '1h';
+    const SALA_REFRESH_MS = 30 * 1000;
+    const SALA_COLOR = { ok: '#34a853', aviso: '#ea8600', alerta: '#ea4335' };
+    const SALA_ICONO = { ok: 'monitor_heart', aviso: 'warning', alerta: 'error' };
+
+    const $s = (id) => document.getElementById(id);
+
+    function pintarDiagnostico(resumen) {
+      const hallazgos = SalaChart.diagnostico(resumen);
+      const peor = hallazgos[0] ? hallazgos[0].nivel : 'ok';
+
+      $s('m-sala-diag-card').style.borderTop = '3px solid ' + SALA_COLOR[peor];
+      const icono = $s('m-sala-diag-icono');
+      icono.textContent = SALA_ICONO[peor];
+      icono.style.color = SALA_COLOR[peor];
+
+      $s('m-sala-diag').innerHTML = hallazgos.map(h =>
+        '<div style="margin-bottom:8px">' +
+          '<strong style="color:' + SALA_COLOR[h.nivel] + '">' + h.titulo + '</strong><br>' +
+          '<span style="color:var(--text-secondary)">' + h.detalle + '</span>' +
+        '</div>'
+      ).join('');
+    }
+
+    function pintarPalancas(resumen) {
+      const p = resumen.palancas || {};
+      const filas = [
+        { nombre: 'RN-1 · cache del curso', dato: p.cache, color: '#1a73e8',
+          ahorro: p.cache && p.cache.pct != null
+            ? SalaChart.corto(p.cache.queriesAhorradas) + ' queries · ' + SalaChart.tiempoCorto(p.cache.msAhorrados) + ' de CPU' : '' },
+        { nombre: 'RN-2 · huella de presencia', dato: p.presencia, color: '#9334e6',
+          ahorro: p.presencia && p.presencia.pct != null
+            ? SalaChart.bytesCortos(p.presencia.bytesAhorrados) + ' que no viajaron' : '' },
+        { nombre: 'RN-3 · ventana de escritura', dato: p.escrituras, color: '#34a853',
+          ahorro: p.escrituras && p.escrituras.pct != null
+            ? SalaChart.corto(p.escrituras.escriturasAhorradas) + ' escrituras evitadas' : '' },
+      ];
+
+      $s('m-sala-palancas').innerHTML = filas.map(f => {
+        const pct = f.dato && f.dato.pct != null ? f.dato.pct : null;
+        return '<div style="margin-bottom:10px">' +
+          '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">' +
+            '<span>' + f.nombre + '</span>' +
+            '<strong>' + (pct == null ? 'sin datos' : pct + '%') + '</strong>' +
+          '</div>' +
+          '<div class="bar-track"><div class="bar-fill" style="width:' + (pct || 0) + '%;background:' + f.color + '"></div></div>' +
+          '<div style="font-size:11px;color:var(--text-hint);margin-top:2px">' + (f.ahorro || '—') + '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    function pintarSala(d) {
+      const r = d.resumen || {};
+
+      pintarDiagnostico(r);
+      pintarPalancas(r);
+
+      $s('m-sala-salas').textContent    = r.salasAbiertas == null ? '—' : r.salasAbiertas;
+      $s('m-sala-personas').textContent = r.personasEnSalas == null ? '—' : r.personasEnSalas + ' personas conectadas';
+      $s('m-sala-polls').textContent    = SalaChart.corto(r.polls);
+      $s('m-sala-ms').textContent       = (r.msPorPoll || 0) + ' ms';
+      $s('m-sala-bytes').textContent    = SalaChart.bytesCortos(r.bytesPorPoll);
+      $s('m-sala-costos-fecha').textContent = (r.costos && r.costos.medidoEl) || '—';
+
+      // Síntomas
+      const e = r.entrega || {};
+      $s('m-sala-p95').textContent = e.p95 ? e.p95.etiqueta : '—';
+      $s('m-sala-entrega-sub').textContent = e.mensajes
+        ? 'p95 sobre ' + SalaChart.corto(e.mensajes) + ' entregas · promedio ' + (e.promMs || 0) + ' ms'
+        : 'no se entregó ningún mensaje en este rango';
+
+      const a = r.atraso || {};
+      $s('m-sala-atraso').textContent = (a.max || 0) + (a.max === 1 ? ' mensaje' : ' mensajes');
+      $s('m-sala-atraso-sub').textContent = a.max
+        ? a.pctPollsAtrasados + '% de los polls llegó atrasado'
+        : 'los navegadores están al día';
+
+      // Eje 1: el tiempo
+      const ms    = SalaChart.puntosDe(d.serie, 'msPorPoll');
+      const salas = SalaChart.puntosDe(d.serie, 'salasAbiertas');
+      $s('m-sala-linea').setAttribute('points', ms.points);
+      $s('m-sala-linea-salas').setAttribute('points', salas.points);
+      $s('m-sala-tope-ms').textContent    = ms.tope.toFixed(1) + ' ms';
+      $s('m-sala-tope-salas').textContent = salas.tope;
+      // El eje X: los bordes de la ventana. La hora se formatea con `Fecha` (public/js/fecha.js,
+      // que carga el footer), NUNCA con toLocaleTimeString — la zona la fija la escuela.
+      $s('m-sala-eje').textContent = (d.desde && d.hasta)
+        ? Fecha.hora(d.desde) + ' … ' + Fecha.hora(d.hasta)
+        : '';
+
+      // Eje 2: ⭐ contra la cantidad de salas
+      const c = SalaChart.curvaPorSalas(d.porSalas);
+      $s('m-sala-nube').innerHTML = c.puntos.map(p =>
+        '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="2.5" fill="#9334e6" opacity=".75"></circle>'
+      ).join('');
+      $s('m-sala-eje-salas').textContent = c.puntos.length
+        ? c.minX + ' salas' + ' … ' + c.maxX + ' salas'
+        : '';
+
+      const VEREDICTO = {
+        'sin-datos': ['—', 'Todavía no hay minutos suficientes con salas abiertas para trazar la curva.'],
+        'plano':     ['#34a853', 'Plano: el costo por poll no crece con la cantidad de salas. La sala escala.'],
+        'sube-poco': ['#ea8600', 'Sube despacio: cada 10 salas más agregan ' + ((c.porDiezSalas || 0).toFixed(1)) + ' ms al poll. Mirarlo, sin urgencia.'],
+        'sube':      ['#ea4335', '⚠️ Sube: cada 10 salas más agregan ' + ((c.porDiezSalas || 0).toFixed(1)) + ' ms al poll. Hay algo superlineal y la spec necesita otra vuelta.'],
+      };
+      const v = VEREDICTO[c.veredicto] || VEREDICTO['sin-datos'];
+      $s('m-sala-veredicto').textContent = v[1];
+      $s('m-sala-veredicto').style.color = v[0] === '—' ? 'var(--text-secondary)' : v[0];
+    }
+
+    async function fetchSala() {
+      try {
+        const res = await fetch('/superadmin/monitor/sala?rango=' + salaRango);
+        if (!res.ok) return;
+        pintarSala(await res.json());
+      } catch (e) { /* el panel no puede romperse por su propia telemetría */ }
+    }
+
+    document.getElementById('m-sala-rangos').addEventListener('click', (e) => {
+      const btn = e.target.closest('.rl-rango');
+      if (!btn) return;
+      salaRango = btn.dataset.rango;
+      // Acotado a ESTE grupo: la misma clase la usan el rango de rate limit y el del Funnel.
+      document.querySelectorAll('#m-sala-rangos .rl-rango').forEach(b => b.classList.toggle('activo', b === btn));
+      fetchSala();
+    });
+
+    fetchSala();
+    setInterval(fetchSala, SALA_REFRESH_MS);
 
     // ── Guardián del Funnel ───────────────────────────────────────────────────
     // Se refresca cada 30 s y no junto con el resto del panel (cada 5 s) por dos razones:

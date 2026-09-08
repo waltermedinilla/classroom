@@ -1,7 +1,10 @@
 # Monitor de la sala en vivo: qué cuesta y qué palanca lo está sosteniendo
 
-Estado: **DISEÑO, sin aprobar** (2026-09-08) · Módulo: `superadmin` + `rooms` ·
-Rol: superadmin
+Estado: **IMPLEMENTADA** (2026-09-08) · Módulo: `superadmin` + `rooms` · Rol: superadmin
+
+> El generador de carga local (`tools/carga-salas.js`) quedó **sin hacer**, por decisión del
+> usuario: el panel con datos reales alcanza para vigilar y para decidir. Se hace el día que
+> haya que contestar "¿aguanta el doble?", y para entonces el panel ya da la línea de base.
 
 ## Problema
 
@@ -100,6 +103,69 @@ Este es el valor real de la herramienta, y conviene escribirlo antes de construi
 | Ahorro de RN-4 en 0% | El `salaPoll.js` que llega al navegador es viejo, o el ritmo no se aplica |
 | `ms` por poll sube y el cache sigue alto | **Apareció una query nueva en el poll** |
 | `bytes` por poll sube con presencia omitida alta | Creció otra parte de la respuesta (mensajes, transmisión) |
+
+---
+
+## ⭐⭐ La otra mitad: medir los SÍNTOMAS, no solo el costo
+
+Agregado el 2026-09-08 a pedido del usuario:
+
+> *"que puedas medir a ciencia cierta cómo se comporta la spec de las salas, cosa que si hay
+> algún inconveniente en cuestión de tiempo o que no se leen los mensajes puedas identificarlo
+> rápidamente"*
+
+Los contadores de arriba dicen **cuánto cuesta** la sala. No dicen **si anda**. Son preguntas
+distintas: la mañana del 08/09 la sala estaba baratísima —no pintaba nada, así que no gastaba
+nada— y estaba rota. Un panel que solo mire el costo habría dado todo verde.
+
+Los dos síntomas que el usuario reporta cuando algo falla son siempre los mismos, y hay que
+medir esos dos:
+
+### 1. "Tarda" — el tiempo de entrega de un mensaje
+
+Cuando el poll serializa un mensaje ya tiene su `createdAt` a mano. La resta contra el momento
+de la entrega es, literalmente, **cuánto esperó ese mensaje para llegarle a esa persona**:
+
+```
+entregaMs = ahora − mensaje.createdAt
+```
+
+Se acumulan p50 y p95. Es una resta por mensaje **entregado**, no por poll: los mensajes son
+raros comparados con los polls, así que no cuesta nada.
+
+⚠️ **Qué mide y qué no**: mide de la base al navegador, o sea el poll y la cadencia. **No** mide
+el pintado ni el viaje de vuelta. Un p95 de ~8 s es lo NORMAL con RN-4 aflojando — el número a
+mirar no es el valor absoluto sino que se mantenga estable.
+
+### 2. ⭐ "No se leen los mensajes" — el cursor que no avanza
+
+Éste es el que hubiera cazado el bug de hoy a la mañana, y sale gratis: en cada poll el servidor
+ya sabe dos cosas, el `since` que trae el navegador y el `lastSeq` de la sesión.
+
+```
+atraso = lastSeq − since
+```
+
+En una sala sana el atraso es 0 casi siempre, y salta a 1 o 2 por un instante entre que alguien
+escribe y el poll siguiente lo trae. **Un atraso que crece y no vuelve a bajar significa que los
+navegadores no están avanzando el cursor**: reciben y no pintan, o descartan. Que es exactamente
+lo que pasaba esta mañana.
+
+Se acumulan `pollsAtrasados` (los que llegan con `since < lastSeq`) y `atrasoMax` (el peor caso
+del minuto, en cantidad de mensajes).
+
+### La tabla de diagnóstico de los síntomas
+
+| Lo que se ve | Qué está pasando |
+|---|---|
+| p95 de entrega ~8 s, estable | **Normal.** Es RN-4 aflojando en una sala en silencio |
+| p95 de entrega ≫ 8 s | La red del aula, o el poll tardando: mirar también `ms` por poll |
+| `atrasoMax` crece y no baja | ⭐ **El congelamiento.** Los navegadores no avanzan el cursor |
+| `pollsAtrasados` alto con p95 normal | Ráfaga: mucha gente escribiendo a la vez. No es una falla |
+| Todo en cero y `polls` en cero | No hay nadie en ninguna sala. Es un dato, no un problema |
+
+⚠️ **`atrasoMax` es el número que hay que mirar primero ante un "no me llegan los mensajes".**
+Los demás dicen cuánto cuesta la sala; éste dice si la sala **funciona**.
 
 ---
 
@@ -220,6 +286,54 @@ lo que creó**, nunca por curso ni por escuela.
   normal. Poner umbrales antes de tener una línea de base es inventar el umbral.
 - **Guardar para siempre.** Retención de **30 días**, como el resto de la telemetría. Al minuto,
   son ~43.000 documentos por mes entre los dos workers.
+
+---
+
+---
+
+## Lo que se aprendió construyéndola (2026-09-08)
+
+### ⭐ Medir el peso de una respuesta: dos caminos que NO funcionan
+
+Fue el único problema real de la implementación, y conviene dejarlo escrito porque los dos
+atajos obvios fallan **en silencio**, dando un número plausible pero falso:
+
+| Camino | Qué pasa |
+|---|---|
+| `res.getHeader('Content-Length')` | `compression()` se lo saca a toda respuesta que comprime. La mayoría de los polls reportaba **0**, y el promedio daba **44 bytes** cuando el real eran **570** |
+| delta de `res.socket.bytesWritten` | `finish` dispara **antes** de que zlib termine de volcar. También daba casi cero |
+
+**Lo que sí funciona**: serializar el cuerpo a mano (`JSON.stringify`) y mandarlo con
+`res.type('json').send(cuerpo)`. **No cuesta nada extra** — es el mismo `stringify` que iba a
+hacer `res.json()`, solo movido de lugar para saber el largo.
+
+⚠️ Corolario: **todos los bytes del panel son SIN COMPRIMIR.** Es como el servidor arma la
+respuesta; por el cable viaja bastante menos. La pantalla lo dice.
+
+### El costo de la instrumentación, medido
+
+El presupuesto era < 0,05 ms por poll. Medido con 200.000 llamadas:
+
+```
+poll típico, sin mensajes          0,000935 ms
+poll con 3 mensajes entregados     0,001077 ms   ← peor caso
+                                   = 0,03% de lo que ya cuesta un poll (3,4 ms)
+buffer tras 50.000 polls: 1 entrada (una por minuto)
+```
+
+**50 veces por debajo del presupuesto.** Y a 868 personas la sala hace ~52.000 operaciones de
+Mongo por minuto; esto agrega 6.
+
+### Dos guardas del proyecto que atajaron errores míos
+
+Las dos fallaron en la suite antes de que yo notara nada, que es exactamente para lo que están:
+
+1. **`backupCobertura.test.js`**: la colección nueva no estaba ni respaldada ni excluida a
+   propósito. Va a `EXCLUIDAS_DEL_BACKUP` — es telemetría regenerable, con TTL de 30 días, y no
+   describe a nadie.
+2. **`iconos.test.js`**: cinco iconos nuevos (`sync`, `timer`, `schedule_send`,
+   `running_with_errors`, `scatter_plot`) no estaban en el recorte de la fuente, y se habrían
+   visto como su nombre en inglés al lado del control. Lo arregla `npm run iconos:actualizar`.
 
 ---
 

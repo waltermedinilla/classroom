@@ -33,6 +33,7 @@ const { logDeRuta, logRechazo } = require('../middleware/route-log');
 const live = require('../services/liveRoom');
 const { courseCache } = require('../middleware/cache');
 const permisos = require('../services/cursoPermisos');
+const salaStats = require('../services/salaStats');
 
 // ── Transmisión en vivo ──────────────────────────────────────────────────────
 // Módulo OPCIONAL y de dos ejes: la escuela lo prende y adentro se elige a qué docentes
@@ -157,6 +158,10 @@ async function cargarSala(req, res, next) {
     if (!mongoose.isValidObjectId(req.params.id)) {
       return fallar(req, res, 404, 'Curso no encontrado');
     }
+
+    // ¿Va a salir del cache? Se pregunta ANTES, porque `cursoDeLaSala` no lo dice y esto es un
+    // lookup en un Map, gratis. Es el contador de efectividad de RN-1 en /superadmin/monitor.
+    req.cursoDelCache = courseCache.get(String(req.params.id)) !== undefined;
 
     const course = await cursoDeLaSala(req.params.id);
     if (!course) return fallar(req, res, 404, 'Curso no encontrado');
@@ -301,6 +306,18 @@ async function estadoDeSala(req, session, since = 0, presenciaVista = null) {
   let mensajes;
   if (since > 0) {
     mensajes = await RoomMessage.find({ ...query, seq: { $gt: since } }).sort({ seq: 1 });
+
+    // Cuánto esperó cada mensaje desde que se escribió hasta que se lo llevan. Es la métrica
+    // de "tarda" del monitor (specs/monitor-sala-escala.spec.md), y sale de una resta contra
+    // el `createdAt` que ya está acá.
+    //
+    // ⚠️ SOLO con `since > 0`. Con `since = 0` esto trae los últimos 100 mensajes de la clase,
+    // que pueden tener horas: no es demora de entrega, es historial, y mezclarlos convertiría
+    // el p95 en ruido.
+    if (mensajes.length) {
+      const ahoraMs = Date.now();
+      req._entregasMs = mensajes.map(m => ahoraMs - new Date(m.createdAt).getTime());
+    }
   } else {
     mensajes = (await RoomMessage.find(query).sort({ seq: -1 }).limit(100)).reverse();
   }
@@ -492,6 +509,7 @@ async function anunciarIngreso(req, session) {
 // GET /courses/:id/sala/poll?since=N — el latido de la sala.
 // Es la ruta más caliente de la feature: corre cada 4 s por cada persona conectada.
 router.get('/:id/sala/poll', async (req, res, next) => {
+  const t0 = process.hrtime.bigint();
   try {
     const session = await sesionAbierta(req.course._id);
     const since   = Math.max(0, parseInt(req.query.since, 10) || 0);
@@ -500,15 +518,68 @@ router.get('/:id/sala/poll', async (req, res, next) => {
     // La presencia se registra en el poll, no en el render: así el que deja la pestaña
     // abierta sigue contando como presente y el que la cierra desaparece solo.
     // En observación NO se registra: es lo que hace que dirección no aparezca.
+    //
+    // `escrito` dice si esta vuelta llegó a tocar la base o si RN-3 la frenó por tener el ping
+    // todavía fresco. Es lo único que se agrega acá, y es para la telemetría de más abajo.
+    let presenciaEscrita = false;
     if (session && req.modo !== 'observacion') {
-      await live.touchPresence(session, usuario(req));
+      const r = await live.touchPresence(session, usuario(req));
+      presenciaEscrita = !!r.escrito;
     }
 
     // `pv` es la huella de la presencia que el navegador ya tiene pintada (RN-2). El render
     // inicial no la manda, y por eso siempre recibe el bloque entero.
-    res.json(await estadoDeSala(req, session, since, req.query.pv || null));
+    const estado = await estadoDeSala(req, session, since, req.query.pv || null);
+
+    // Se serializa acá y no en res.json() para saber el peso exacto de la respuesta sin
+    // serializarla dos veces. Es el MISMO JSON.stringify que iba a hacer res.json().
+    const cuerpo = JSON.stringify(estado);
+
+    // ── Telemetría de la sala (specs/monitor-sala-escala.spec.md) ────────────
+    //
+    // ⚠️ ESTA ES LA RUTA MÁS CALIENTE DE LA APP. Lo que se agrega acá son incrementos de
+    // enteros en memoria: sin I/O, sin await, sin JSON. La base se toca una vez por minuto y
+    // por worker, no una vez por poll.
+    //
+    // Va en `finish` por una razón concreta: ahí ya está el `Content-Length` que calculó
+    // Express, así que el peso de la respuesta sale gratis. Calcularlo a mano sería serializar
+    // 4 KB una segunda vez solo para pesarlos, en cada poll.
+    res.on('finish', () => salaStats.registrarPoll({
+      ms:    Number(process.hrtime.bigint() - t0) / 1e6,
+
+      // El peso de la respuesta, sin comprimir. Sale del cuerpo que serializamos abajo.
+      //
+      // ⚠️ DOS CAMINOS DESCARTADOS, medidos el 2026-09-08, para que nadie los reintente:
+      //   · `Content-Length`: `compression()` se lo saca a toda respuesta que comprime, así
+      //     que la mayoría de los polls reportaba 0 y el promedio daba 44 bytes en vez de 570.
+      //   · el delta de `socket.bytesWritten`: `finish` dispara antes de que zlib termine de
+      //     volcar, así que también daba casi cero.
+      //
+      // Serializar a mano no cuesta nada extra: `res.json()` iba a hacer exactamente el mismo
+      // `JSON.stringify`. Solo se movió de lugar para saber el largo.
+      bytes: cuerpo.length,
+
+      cacheAcierto:     req.cursoDelCache === true,                            // RN-1
+      presenciaEnviada: !!(estado.presencia && estado.presencia.conectados),   // RN-2
+      presenciaEscrita,                                                        // RN-3
+
+      // ⭐ EL SÍNTOMA DE "NO ME LLEGAN LOS MENSAJES": cuántos mensajes de diferencia hay entre
+      // lo que el navegador dice tener (`since`) y lo que la sala tiene (`lastSeq`). En una
+      // sala sana es 0 casi siempre. Que crezca y no baje es el congelamiento del 08/09.
+      //
+      // Solo con `since > 0`: una pestaña recién abierta pide desde 0 y estaría "atrasada" por
+      // definición, lo cual no dice nada.
+      atraso: session && since > 0 ? Math.max(0, (session.lastSeq || 0) - since) : 0,
+
+      // Cuánto esperó cada mensaje entregado en esta respuesta. Lo arma estadoDeSala, que es
+      // donde están los documentos crudos con su `createdAt`.
+      entregasMs: req._entregasMs,
+    }));
+
+    res.type('json').send(cuerpo);
   } catch (err) { next(err); }
 });
+
 
 // ── Abrir / cerrar ───────────────────────────────────────────────────────────
 

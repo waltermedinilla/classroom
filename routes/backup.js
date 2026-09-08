@@ -242,6 +242,13 @@ const EXCLUIDAS_DEL_BACKUP = {
   // Restaurarlas no aporta y solo engorda el paquete.
   ratelimitsamples: 'telemetría del monitor; se regenera sola y se purga sola',
 
+  // Telemetría de la sala en vivo (specs/monitor-sala-escala.spec.md). Mismo criterio que la
+  // de arriba y por los mismos tres motivos: son contadores agregados por minuto que el
+  // sistema regenera solo, tienen índice TTL de 30 días, y no describen a nadie — no hay ni un
+  // nombre, ni un id de alumno, ni el contenido de un mensaje. Restaurar telemetría vieja
+  // dibujaría un gráfico de un día que ya pasó.
+  salasamples: 'telemetría de la sala en vivo; se regenera sola y se purga a los 30 días',
+
   // Códigos y enlaces de verificación de contacto a medio usar. Son secretos hasheados con TTL
   // de 24 horas como máximo, y restaurar un backup de la semana pasada los resucitaría vencidos:
   // el usuario vería "ya te mandamos un código" por algo que expiró hace días. Lo que SÍ hay que

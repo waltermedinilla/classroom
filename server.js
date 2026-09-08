@@ -22,6 +22,7 @@ const {
 } = require('./services/maintenanceWindow');
 const { logAudit } = require('./middleware/audit');
 const rateLimitStats = require('./services/rateLimitStats');
+const salaStats      = require('./services/salaStats');
 // Zona horaria de la escuela: services/liveRoom.js es el UNICO duenio de la hora (ver el
 // comentario de su bloque TZ). Se importa aca solo para publicarlo en res.locals.
 const { fmt: schoolFmt, diaEscolar } = require('./services/liveRoom');
@@ -896,11 +897,45 @@ connectDB().then(() => {
   // simplemente no existiría en el gráfico.
   rateLimitStats.iniciarVolcado();
 
+  // ── Telemetría de la sala en vivo ──────────────────────────────────────────
+  // Ver specs/monitor-sala-escala.spec.md. El volcado corre en TODOS los workers, igual que el
+  // de rate limit: cada uno atendió su porción de los polls y los contadores se suman al leer.
+  salaStats.iniciarVolcado();
+
+  // El CONTEXTO —cuántas salas abiertas y cuánta gente hay— lo muestrea UN SOLO worker.
+  //
+  // ⚠️ No es un contador de tráfico sino un ESTADO GLOBAL de la escuela. Con los dos workers
+  // escribiéndolo, el panel mostraría el doble de salas de las que existen. Es el mismo motivo
+  // por el que el promotor de mantenimiento corre en uno solo, y usa el mismo `schedulerWorker`.
+  //
+  // Costo: dos countDocuments por minuto, contra las ~52.000 operaciones por minuto que la sala
+  // ya hace en el pico medido. Es el 0,004%.
+  if (schedulerWorker) {
+    const RoomSession  = require('./models/RoomSession');
+    const RoomPresence = require('./models/RoomPresence');
+    const { ONLINE_WINDOW_MS } = require('./services/liveRoom');
+
+    const muestreoSala = setInterval(async () => {
+      try {
+        const desde = new Date(Date.now() - ONLINE_WINDOW_MS);
+        const [salasAbiertas, personasEnSalas] = await Promise.all([
+          RoomSession.countDocuments({ closedAt: null }),
+          RoomPresence.countDocuments({ lastPingAt: { $gte: desde } }),
+        ]);
+        salaStats.registrarContexto({ salasAbiertas, personasEnSalas });
+      } catch { /* telemetría: si Mongo no contesta, este minuto queda sin contexto y listo */ }
+    }, 60 * 1000);
+    if (typeof muestreoSala.unref === 'function') muestreoSala.unref();
+  }
+
   const shutdown = (signal) => {
     logger.info(`Cerrando servidor por ${signal} (PID ${process.pid})`);
     // Último volcado antes de cerrar: sin esto se pierde el minuto en curso en cada deploy,
     // y los deploys son justo el momento en el que uno mira estos números.
     rateLimitStats.volcar().catch(() => {});
+    // Mismo motivo para la sala: los deploys son justo el momento en el que uno mira estos
+    // números, y sin este volcado cada recarga se comería el minuto en curso.
+    salaStats.volcar().catch(() => {});
     server.close(() => {
       logger.info('Servidor cerrado correctamente.');
       process.exit(0);

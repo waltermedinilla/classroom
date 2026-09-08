@@ -527,6 +527,110 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-08 (6) — El monitor de la sala: qué cuesta, qué palanca la sostiene, y si ANDA
+
+Pedido del usuario: *"que puedas medir a ciencia cierta cómo se comporta la spec de las salas,
+cosa que si hay algún inconveniente en cuestión de tiempo o que no se leen los mensajes puedas
+identificarlo rápidamente"*.
+
+Sección nueva **"Sala en vivo"** en `/superadmin/monitor`. Ver `specs/monitor-sala-escala.spec.md`.
+
+#### ⭐ Mide dos cosas distintas, y ésa es la idea
+
+Los contadores de costo dicen **cuánto cuesta** la sala. No dicen **si anda**. Son preguntas
+distintas: la mañana de hoy la sala estaba baratísima —no pintaba nada, así que no gastaba
+nada— y estaba rota. Un panel que solo mirara el costo habría dado todo verde.
+
+**El costo, y qué palanca lo sostiene.** Una palanca prendida no se puede medir apagándola, así
+que se cuenta **lo que evitó**: cada acierto de cache, cada presencia omitida, cada ping no
+escrito. El porcentaje es exacto; lo que ahorró es una estimación, multiplicando el conteo por
+el costo unitario medido, con la fecha al lado.
+
+**Los síntomas.** Los dos que el usuario reporta cuando algo falla:
+- **"Tarda"**: la resta contra el `createdAt` de cada mensaje entregado da, literalmente, cuánto
+  esperó ese mensaje para llegarle a esa persona. Histograma con p50/p95.
+- ⭐ **"No se leen los mensajes"**: `lastSeq − since`, o sea cuántos mensajes de diferencia hay
+  entre lo que el navegador dice tener y lo que la sala tiene. **Sale gratis** — el servidor ya
+  sabe los dos números. Un atraso que crece y no baja es exactamente el congelamiento de esta
+  mañana, y lo habría cazado el mismo día.
+
+#### El diagnóstico va primero, antes que cualquier número
+
+Un panel de contadores obliga a saber de antemano qué es normal. `diagnostico()` traduce los
+números a hallazgos ordenados por gravedad, y es una función pura con 14 tests. Ejemplos:
+
+| Lo que se ve | Qué dice el panel |
+|---|---|
+| p95 de entrega ~8 s | **Nada.** Es RN-4 aflojando: lo normal |
+| `atrasoMax` ≥ 10 | ⭐ Alerta: los navegadores no avanzan el cursor |
+| Cache al 4% | Alerta: se invalida de más, o el TTL quedó en cero |
+| ms alto **con el cache sano** | Aviso: apareció una query nueva en el poll |
+| Sin polls | "No hay nadie en ninguna sala" — dato, no problema |
+
+Ese último no es un detalle: un panel que pinte rojo cuando no hay clase enseña a ignorarlo.
+
+#### El segundo eje: ¿escala?
+
+El gráfico de **costo por poll contra cantidad de salas abiertas**, con la pendiente calculada
+por mínimos cuadrados. Plano significa que la sala escala; una nube que sube hacia la derecha
+significa que hay algo superlineal y que la spec necesita otra vuelta. Es el único gráfico que
+puede decir "hay que rediseñar" antes de que se note en el aula.
+
+#### ⚠️ Lo que cuesta, medido antes de pushear
+
+El riesgo obvio de instrumentar la ruta más caliente es que la medición se vuelva la carga. El
+presupuesto de la spec era < 0,05 ms por poll:
+
+```
+poll típico, sin mensajes          0,000935 ms
+poll con 3 mensajes entregados     0,001077 ms   ← peor caso
+                                   = 0,03% de lo que ya cuesta un poll
+buffer tras 50.000 polls: 1 entrada
+```
+
+**50 veces por debajo.** Y a 868 personas la sala hace ~52.000 operaciones de Mongo por minuto:
+esto agrega **6** (4 escrituras + 2 lecturas). Las escrituras **no son por poll**: son una por
+worker por minuto.
+
+#### ⭐ Medir el peso de una respuesta: dos caminos que NO funcionan
+
+Fue el único problema real, y los dos atajos obvios fallan **en silencio**, dando un número
+plausible pero falso:
+
+| Camino | Qué pasa |
+|---|---|
+| `res.getHeader('Content-Length')` | `compression()` se lo saca. La mayoría reportaba 0 y el promedio daba **44 bytes** cuando el real eran **570** |
+| delta de `res.socket.bytesWritten` | `finish` dispara antes de que zlib vuelque. También daba casi cero |
+
+Lo que sí funciona: serializar a mano y mandar con `res.type('json').send(cuerpo)`. **No cuesta
+nada extra** — es el mismo `stringify` que iba a hacer `res.json()`, movido de lugar.
+
+#### Se copió el patrón, no se inventó nada
+
+`services/salaStats.js` ← `rateLimitStats.js` · `models/SalaSample.js` ← `RateLimitSample.js` ·
+`public/js/sala-chart.js` ← `ratelimit-chart.js`. Ese módulo ya había resuelto los tres
+problemas difíciles: volcado por minuto, el `pid` en la clave para que los dos workers se sumen,
+y buckets crecientes. Los rangos se **importan** en vez de copiarse, para que los dos gráficos
+del monitor no puedan divergir.
+
+⚠️ El **contexto** (salas abiertas, personas) lo muestrea UN SOLO worker y se agrega con
+**máximo, no con suma**: es un estado global de la escuela, no un contador de tráfico. Sumarlo
+entre workers mostraría el doble de salas de las que hay.
+
+#### Dos guardas del proyecto que atajaron errores míos
+
+1. `backupCobertura.test.js`: la colección nueva no estaba ni respaldada ni excluida. Va a
+   `EXCLUIDAS_DEL_BACKUP` — es telemetría regenerable, con TTL de 30 días, y no describe a nadie.
+2. `iconos.test.js`: cinco iconos nuevos no estaban en el recorte de la fuente y se habrían
+   visto como su nombre en inglés al lado del control.
+
+**Tests**: 33 casos nuevos entre `salaStats.test.js` y `salaChart.test.js`. Total: 1.112
+unitarios, 405 de smoke y roles sin hallazgos.
+
+**Sin hacer, por decisión del usuario**: `tools/carga-salas.js`, el generador de carga local. El
+panel con datos reales alcanza para vigilar; el generador se hace el día que haya que contestar
+"¿aguanta el doble?".
+
 ### 2026-09-08 (5) — RN-3, y la regresión de asistencia que destapó
 
 Última regla de la spec de escala. Pero lo importante de esta entrada no es RN-3: es **el bug
