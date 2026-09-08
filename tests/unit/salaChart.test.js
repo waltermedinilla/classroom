@@ -22,7 +22,7 @@ const sano = (o) => Object.assign({
     escrituras: { pct: 74, escriturasAhorradas: 7400 },
   },
   entrega: { mensajes: 120, promMs: 3200, maxMs: 7000, p95: { etiqueta: '≤ 8 s', ms: 8000 } },
-  atraso:  { max: 1, pctPollsAtrasados: 3 },
+  atraso:  { max: 1, pctPollsAtrasados: 3, muyAtrasados: 0, pctMuyAtrasados: 0, umbral: 10 },
 }, o);
 
 const nivelesDe = (r) => chart.diagnostico(r).map(h => h.nivel);
@@ -45,22 +45,33 @@ test('sin polls dice que no hay nadie, y eso NO es una alerta', () => {
   assert.match(h[0].titulo, /nadie/i);
 });
 
-test('⭐ un atraso grande del cursor es ALERTA: es la firma del congelamiento', () => {
-  // Es el hallazgo que hubiera cazado el bug del 2026-09-08 el mismo día. `atrasoMax` alto
-  // significa que los navegadores reciben y no pintan.
-  const h = chart.diagnostico(sano({ atraso: { max: 25, pctPollsAtrasados: 88 } }));
+test('⭐ el atraso REPETIDO es ALERTA: es la firma del congelamiento', () => {
+  // Un navegador congelado sigue polleando cada 4-8 s con el mismo `since` viejo, así que
+  // aporta decenas de polls muy atrasados por minuto. Lo que delata es la REPETICIÓN.
+  const h = chart.diagnostico(sano({
+    atraso: { max: 25, pctPollsAtrasados: 88, muyAtrasados: 600, pctMuyAtrasados: 12, umbral: 10 },
+  }));
   assert.equal(h[0].nivel, 'alerta');
-  assert.match(h[0].titulo, /25 mensajes atrás/);
+  assert.match(h[0].titulo, /12% de los polls/);
   assert.match(h[0].detalle, /cursor no está avanzando/i);
 });
 
-test('un atraso chico es solo un aviso: puede ser una ráfaga', () => {
-  const h = chart.diagnostico(sano({ atraso: { max: 5, pctPollsAtrasados: 20 } }));
-  assert.equal(h[0].nivel, 'aviso');
+test('⭐⭐ un PICO suelto de atraso NO es alerta: es una reconexión', () => {
+  // LA CORRECCIÓN DEL 2026-09-08, traída por los primeros datos reales. Un pico de 101
+  // mensajes de atraso resultó ser UNA reconexión —bajó solo a 6, 4 y 1 en los minutos
+  // siguientes— y con el máximo suelto se leía igual que un congelamiento.
+  const h = chart.diagnostico(sano({
+    atraso: { max: 101, pctPollsAtrasados: 13, muyAtrasados: 1, pctMuyAtrasados: 0.6, umbral: 10 },
+  }));
+  assert.ok(!h.some(x => x.nivel === 'alerta'),
+    `un pico suelto no puede ser alerta: ${titulos(sano({ atraso: { max: 101, muyAtrasados: 1, pctMuyAtrasados: 0.6 } }))}`);
+  assert.ok(h.some(x => /reconexion|reconexión/i.test(x.titulo)), 'pero sí se informa');
 });
 
 test('un atraso de 1 o 2 no dice nada: es lo normal entre que alguien escribe y el poll llega', () => {
-  assert.deepEqual(nivelesDe(sano({ atraso: { max: 2, pctPollsAtrasados: 10 } })), ['ok']);
+  assert.deepEqual(nivelesDe(sano({
+    atraso: { max: 2, pctPollsAtrasados: 10, muyAtrasados: 0, pctMuyAtrasados: 0, umbral: 10 },
+  })), ['ok']);
 });
 
 test('⭐ una entrega por encima de 20 s es ALERTA', () => {
@@ -114,11 +125,22 @@ test('el ms por poll alto CON el cache caído no acusa a una query nueva', () =>
 
 test('los hallazgos vienen ordenados por gravedad', () => {
   const h = chart.diagnostico(sano({
-    msPorPoll: 45,                                   // aviso
-    atraso: { max: 30, pctPollsAtrasados: 90 },      // alerta
+    msPorPoll: 45,                                                                    // aviso
+    atraso: { max: 30, pctPollsAtrasados: 90, muyAtrasados: 500, pctMuyAtrasados: 9 }, // alerta
   }));
   assert.equal(h[0].nivel, 'alerta', 'lo grave va primero');
   assert.ok(h.length >= 2);
+});
+
+test('el "todo bien" no aparece cuando hay algo que decir', () => {
+  // Una reconexión informada es un hallazgo `ok`, pero no es "todo bien": el resumen no tiene
+  // que taparlo ni duplicarse con él.
+  const h = chart.diagnostico(sano({
+    atraso: { max: 40, pctPollsAtrasados: 5, muyAtrasados: 2, pctMuyAtrasados: 0.4, umbral: 10 },
+  }));
+  const resumenes = h.filter(x => /como dice la spec/i.test(x.titulo));
+  assert.equal(resumenes.length, 1, 'el resumen general sigue estando una sola vez');
+  assert.equal(h[0].nivel, 'ok');
 });
 
 // ── Los gráficos ────────────────────────────────────────────────────────────

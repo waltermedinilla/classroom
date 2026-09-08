@@ -1029,6 +1029,12 @@ router.get('/monitor/sala', async (req, res) => {
       cacheado = {
         t: Date.now(),
         desde,
+        // ⭐ Desde cuándo hay datos DE VERDAD, que NO es el borde de la ventana pedida.
+        //
+        // Pedir "24h" con la telemetría desplegada hace 18 minutos dibujaba un eje de 24 horas
+        // con 18 minutos de datos, y nada decía cuáles eran cuáles. Reclamo del usuario el
+        // 2026-09-08: "no sé desde cuándo es que mide".
+        datosDesde: muestras.length ? muestras[0].minuto : null,
         serie:    salaStats.agregarSerie(muestras, bucketMin),
         resumen:  salaStats.resumir(muestras),
         porSalas: salaStats.porCantidadDeSalas(muestras),
@@ -1039,8 +1045,9 @@ router.get('/monitor/sala', async (req, res) => {
     res.json({
       rango,
       bucketMin,
-      desde:    cacheado.desde,
-      hasta:    new Date(),
+      desde:      cacheado.desde,
+      datosDesde: cacheado.datosDesde,
+      hasta:      new Date(),
       serie:    cacheado.serie,
       resumen:  cacheado.resumen,
       porSalas: cacheado.porSalas,

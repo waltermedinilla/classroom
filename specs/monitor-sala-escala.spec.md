@@ -291,6 +291,57 @@ lo que creó**, nunca por curso ni por escuela.
 
 ---
 
+## ⭐⭐ Lo que corrigieron los primeros datos reales (2026-09-08, v1.0.91)
+
+18 minutos de producción bastaron para encontrar **tres defectos del propio panel**. Ninguno se
+podía ver en la máquina de desarrollo, y los tres hacían que la pantalla mintiera. Es la mejor
+defensa de por qué esto había que construirlo.
+
+### 1. El "tiempo por poll" medía la red, no el servidor
+
+Decía **137 ms** de promedio; el handler real cuesta ~4. La causa: se medía en
+`res.on('finish')`, que dispara cuando la respuesta terminó de **salir por la red** — con 245 ms
+hasta Alemania eso mide el viaje. La tarjeta dice "dentro del servidor", así que tiene que medir
+eso: ahora se toma **antes de enviar**, y el listener de `finish` desapareció.
+
+### 2. y 3. ⭐ Una reconexión se veía igual que un congelamiento
+
+El panel mostró **"atraso máximo: 101 mensajes"** y **"los mensajes tardan 24 minutos"**. Las
+dos cosas eran falsas, y venían del mismo evento: **una persona que se reconectó y se bajó 101
+mensajes atrasados de una**.
+
+```
+minuto  msjs  entrega-prom  atrasoMax
+19:02    101      1438s        101   ← la reconexión
+19:03     56        13s          6
+19:04     40        40s          4
+19:05     21         7s          1   ← bajó solo
+```
+
+**Lo que las distingue no es el pico, es la repetición:**
+
+| | Reconexión | Cursor congelado |
+|---|---|---|
+| Polls muy atrasados | **uno**, y se acabó | **decenas por minuto**, minuto tras minuto |
+| Al minuto siguiente | ya está al día | sigue igual o peor |
+
+Las dos correcciones:
+
+- **`pollsMuyAtrasados`** (atraso ≥ 10) además del máximo. El diagnóstico mira el
+  **porcentaje**, no el pico: ≥ 2% es alerta, un pico suelto se informa como reconexión.
+- **La edad de un mensaje mayor a `ONLINE_WINDOW_MS` no es demora de entrega**: se escribió
+  cuando esa persona no estaba conectada, por la definición que usa toda la app. Va a
+  `mensajesDeReenganche`, que es un dato aparte y también útil.
+
+### 4. El panel no decía desde cuándo tenía datos
+
+Reclamo del usuario: *"no sé desde cuándo es que mide"*. Pedir "24h" con la telemetría
+desplegada hacía 18 minutos dibujaba un eje de 24 horas con 18 minutos de datos. Ahora la
+tarjeta dice **"Datos desde … · N min de mediciones"** y avisa cuando el rango elegido es más
+largo que lo que hay.
+
+---
+
 ## Lo que se aprendió construyéndola (2026-09-08)
 
 ### ⭐ Medir el peso de una respuesta: dos caminos que NO funcionan

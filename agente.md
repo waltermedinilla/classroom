@@ -527,6 +527,67 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-08 (7) — El panel se corrigió a sí mismo con 18 minutos de datos reales
+
+El usuario abrió el monitor recién desplegado y preguntó dos cosas: *"dice que tengo un atraso
+máximo del cursor"* y *"no sé desde cuándo es que mide"*. Las dos tenían razón, y encontrar la
+respuesta destapó **tres defectos del propio panel**.
+
+Ninguno se podía ver en la máquina de desarrollo, y los tres hacían que la pantalla mintiera.
+Es la mejor defensa de por qué esto había que construirlo.
+
+#### 1. El "tiempo por poll" medía la red, no el servidor
+
+Decía **137 ms** de promedio; el handler real cuesta ~4. Se medía en `res.on('finish')`, que
+dispara cuando la respuesta terminó de **salir por la red** — con 245 ms hasta Alemania, eso
+mide el viaje. La tarjeta dice "dentro del servidor", así que ahora se toma **antes de enviar**.
+
+#### 2. y 3. ⭐ Una reconexión se veía igual que un congelamiento
+
+El panel mostraba **"atraso máximo: 101 mensajes"** y **"los mensajes tardan 24 minutos"**. Las
+dos eran falsas y venían del mismo evento: una persona que se reconectó y se bajó 101 mensajes
+atrasados de una.
+
+```
+minuto  msjs  entrega-prom  atrasoMax
+19:02    101      1438s        101   ← la reconexión
+19:03     56        13s          6
+19:04     40        40s          4
+19:05     21         7s          1   ← bajó solo
+```
+
+**Lo que las distingue no es el pico, es la repetición.** Una reconexión aporta UN poll muy
+atrasado y se acabó; un navegador congelado sigue polleando cada 4-8 s con el mismo `since`
+viejo, así que aporta decenas por minuto, minuto tras minuto.
+
+Las dos correcciones:
+
+- **`pollsMuyAtrasados`** (atraso ≥ 10) además del máximo. El diagnóstico mira el
+  **porcentaje**, no el pico: ≥ 2% es alerta, un pico suelto se informa como reconexión y no
+  como problema.
+- **Un mensaje más viejo que `ONLINE_WINDOW_MS` no es una entrega lenta**: se escribió cuando
+  esa persona no estaba conectada, por la definición que usa toda la app. Va a
+  `mensajesDeReenganche`, que es un dato aparte y también útil (mucha gente entrando y saliendo).
+
+#### 4. El panel no decía desde cuándo tenía datos
+
+Pedir "24h" con la telemetría desplegada hacía 18 minutos dibujaba un eje de 24 horas con 18
+minutos de datos, y nada lo aclaraba. Ahora dice **"Datos desde … · N min de mediciones"** y
+avisa cuando el rango elegido es más largo que lo que hay.
+
+#### Lo que la medición SÍ confirmó
+
+- **RN-3 al 61-74%**: exactamente lo esperado. Con la ventana de 15 s y polls de 4-8 s, saltear
+  2 de cada 3 escrituras es el número correcto.
+- **RN-1 al 95-99%**: el cache anda.
+- **RN-2 al 67-99%**, más bajo que en local, y con explicación: los navegadores que no
+  recargaron desde antes de v1.0.87 **no mandan la huella**, así que reciben siempre el bloque
+  completo. Sube solo a medida que la gente recargue.
+- Contexto real en ese momento: **6 salas abiertas, 22 personas**.
+
+**Tests**: 7 casos nuevos y 3 reescritos (la regla del atraso cambió). Total: 1.119 unitarios,
+405 de smoke y roles sin hallazgos.
+
 ### 2026-09-08 (6) — El monitor de la sala: qué cuesta, qué palanca la sostiene, y si ANDA
 
 Pedido del usuario: *"que puedas medir a ciencia cierta cómo se comporta la spec de las salas,

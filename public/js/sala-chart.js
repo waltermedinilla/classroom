@@ -111,18 +111,30 @@ function diagnostico(resumen) {
   }
 
   // ── El síntoma que importa: ¿llegan los mensajes? ──
+  //
+  // ⭐ LO QUE DECIDE NO ES EL PICO, ES LA REPETICIÓN. Corregido el 2026-09-08 con los primeros
+  // datos reales: un pico de 101 mensajes de atraso resultó ser UNA reconexión, y bajó solo a
+  // 6, 4 y 1 en los minutos siguientes. Con el máximo suelto se leía como un congelamiento.
+  //
+  //   · una reconexión aporta UN poll muy atrasado y se acabó;
+  //   · un navegador congelado sigue polleando cada 4-8 s con el mismo `since` viejo, así que
+  //     aporta decenas por minuto, minuto tras minuto.
+  //
+  // Por eso se mira el PORCENTAJE de polls muy atrasados, no el peor caso.
   const atraso = r.atraso || {};
-  if (atraso.max >= 10) {
+  const umbral = atraso.umbral || 10;
+
+  if (atraso.pctMuyAtrasados >= 2) {
     hallazgos.push({
       nivel: 'alerta',
-      titulo: `Hay navegadores ${atraso.max} mensajes atrás`,
-      detalle: 'El cursor no está avanzando: reciben y no pintan, o descartan. Es la firma del congelamiento del 2026-09-08. Revisá que el salaPoll.js que llega al navegador sea el nuevo.',
+      titulo: `${atraso.pctMuyAtrasados}% de los polls llega más de ${umbral} mensajes atrás`,
+      detalle: 'No son reconexiones sueltas: se repite. El cursor no está avanzando — reciben y no pintan, o descartan. Es la firma del congelamiento del 2026-09-08. Revisá que el salaPoll.js que llega al navegador sea el nuevo.',
     });
-  } else if (atraso.max >= 4) {
+  } else if (atraso.muyAtrasados > 0) {
     hallazgos.push({
-      nivel: 'aviso',
-      titulo: `Atraso máximo de ${atraso.max} mensajes`,
-      detalle: 'Puede ser una ráfaga (mucha gente escribiendo a la vez) o el principio de un cursor trabado. Mirá si baja solo.',
+      nivel: 'ok',
+      titulo: `${atraso.muyAtrasados} reconexiones (pico de ${atraso.max} mensajes)`,
+      detalle: 'Alguien volvió después de estar desconectado y se bajó lo atrasado de una. Es normal: si fuera un cursor trabado, se repetiría poll tras poll.',
     });
   }
 
@@ -168,9 +180,9 @@ function diagnostico(resumen) {
     });
   }
 
-  if (!hallazgos.length) {
-    hallazgos.push({ nivel: 'ok', titulo: 'La sala se está comportando como dice la spec',
-                     detalle: 'Las palancas funcionan, los mensajes llegan y el atraso vuelve a cero.' });
+  if (!hallazgos.some(h => h.nivel !== 'ok')) {
+    hallazgos.unshift({ nivel: 'ok', titulo: 'La sala se está comportando como dice la spec',
+                        detalle: 'Las palancas funcionan, los mensajes llegan y el atraso vuelve a cero.' });
   }
 
   const orden = { alerta: 0, aviso: 1, ok: 2 };

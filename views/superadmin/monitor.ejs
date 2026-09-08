@@ -407,6 +407,10 @@
           </div>
         </div>
         <div id="m-sala-diag" style="margin-top:10px;font-size:13px;line-height:1.6">—</div>
+        <!-- Desde cuándo hay datos, que NO es el borde del rango elegido. Sin esto, pedir
+             "24h" con la telemetría recién desplegada muestra un eje de 24 horas con veinte
+             minutos de datos y nada lo aclara. -->
+        <div id="m-sala-desde" style="margin-top:10px;font-size:11px;color:var(--text-hint)">—</div>
       </div>
     </div>
 
@@ -899,6 +903,19 @@
       $s('m-sala-ms').textContent       = (r.msPorPoll || 0) + ' ms';
       $s('m-sala-bytes').textContent    = SalaChart.bytesCortos(r.bytesPorPoll);
       $s('m-sala-costos-fecha').textContent = (r.costos && r.costos.medidoEl) || '—';
+
+      // Desde cuándo hay datos de verdad. Si arrancan bastante después del borde del rango, se
+      // avisa: el gráfico dibuja la ventana entera pero solo una parte tiene información.
+      if (d.datosDesde) {
+        const inicio = new Date(d.datosDesde);
+        const cubre  = Math.round((new Date(d.hasta) - inicio) / 60000);
+        const parcial = (inicio - new Date(d.desde)) > 5 * 60 * 1000;
+        $s('m-sala-desde').textContent =
+          'Datos desde ' + Fecha.diaMesHora(inicio) + ' · ' + cubre + ' min de mediciones' +
+          (parcial ? ' (el rango elegido es más largo: el resto no tiene datos todavía)' : '');
+      } else {
+        $s('m-sala-desde').textContent = 'Todavía no hay mediciones en este rango.';
+      }
 
       // Síntomas
       const e = r.entrega || {};

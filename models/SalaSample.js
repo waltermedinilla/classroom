@@ -48,6 +48,15 @@ const salaSampleSchema = new mongoose.Schema({
   mensajesEntregados: { type: Number, default: 0 },
   entregaMsTotal:     { type: Number, default: 0 },
   entregaMsMax:       { type: Number, default: 0 },
+
+  // ⚠️ Mensajes de REENGANCHE: los que le llegan a alguien que estuvo desconectado y se baja
+  // el atrasado de golpe. NO cuentan como demora de entrega, y separarlos es una corrección
+  // del 2026-09-08 que salió de los primeros datos reales.
+  //
+  // Sin esta separación, una sola reconexión con 101 mensajes viejos ponía el promedio de
+  // entrega en 24 MINUTOS y el p95 en "> 20 s", cuando la sala estaba entregando en segundos.
+  // La edad de un mensaje atrasado no mide la sala: mide cuánto estuvo afuera esa persona.
+  mensajesDeReenganche: { type: Number, default: 0 },
   ent2s:   { type: Number, default: 0 },   // ≤ 2 s
   ent4s:   { type: Number, default: 0 },   // ≤ 4 s
   ent8s:   { type: Number, default: 0 },   // ≤ 8 s  ← lo normal con RN-4 aflojando
@@ -65,6 +74,21 @@ const salaSampleSchema = new mongoose.Schema({
   // que lo habría cazado el mismo día.
   pollsAtrasados: { type: Number, default: 0 },
   atrasoMax:      { type: Number, default: 0 },
+
+  // ⭐ EL QUE DE VERDAD DISTINGUE UN CURSOR TRABADO DE UNA RECONEXIÓN, y es la otra corrección
+  // del 2026-09-08 que trajeron los datos reales.
+  //
+  // `atrasoMax` es el peor caso del minuto, y ahí las dos cosas se ven IGUAL: una reconexión
+  // con 101 mensajes atrasados y un navegador congelado dan el mismo número. Lo que las separa
+  // es CUÁNTOS polls llegan muy atrasados:
+  //
+  //   · una reconexión aporta UNO y se acabó (el poll siguiente ya está al día);
+  //   · un navegador congelado sigue polleando cada 4-8 s con el mismo `since` viejo, así que
+  //     aporta decenas por minuto, minuto tras minuto.
+  //
+  // Medido en producción el 08/09: el pico de 101 fue UN poll en UN minuto y bajó solo a 6, 4
+  // y 1 en los siguientes. Era una reconexión, y con `atrasoMax` solo no se podía saber.
+  pollsMuyAtrasados: { type: Number, default: 0 },
 
   createdAt: { type: Date, default: Date.now },
 }, { versionKey: false });

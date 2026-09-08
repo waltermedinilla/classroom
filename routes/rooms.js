@@ -539,21 +539,23 @@ router.get('/:id/sala/poll', async (req, res, next) => {
     //
     // ⚠️ ESTA ES LA RUTA MÁS CALIENTE DE LA APP. Lo que se agrega acá son incrementos de
     // enteros en memoria: sin I/O, sin await, sin JSON. La base se toca una vez por minuto y
-    // por worker, no una vez por poll.
+    // por worker, no una vez por poll. Medido: 0,001 ms por poll.
     //
-    // Va en `finish` por una razón concreta: ahí ya está el `Content-Length` que calculó
-    // Express, así que el peso de la respuesta sale gratis. Calcularlo a mano sería serializar
-    // 4 KB una segunda vez solo para pesarlos, en cada poll.
-    res.on('finish', () => salaStats.registrarPoll({
-      ms:    Number(process.hrtime.bigint() - t0) / 1e6,
+    // ⚠️⚠️ SE MIDE ACÁ Y NO EN `res.on('finish')`, y la diferencia no es cosmética. `finish`
+    // dispara cuando la respuesta terminó de SALIR POR LA RED: con 245 ms hasta Alemania eso
+    // mide el viaje, no el trabajo del servidor. Medido en producción el 2026-09-08: daba
+    // 137 ms de promedio cuando el handler real cuesta ~4. La tarjeta dice "dentro del
+    // servidor", así que tiene que medir eso.
+    salaStats.registrarPoll({
+      ms: Number(process.hrtime.bigint() - t0) / 1e6,
 
-      // El peso de la respuesta, sin comprimir. Sale del cuerpo que serializamos abajo.
+      // El peso de la respuesta, sin comprimir.
       //
       // ⚠️ DOS CAMINOS DESCARTADOS, medidos el 2026-09-08, para que nadie los reintente:
       //   · `Content-Length`: `compression()` se lo saca a toda respuesta que comprime, así
       //     que la mayoría de los polls reportaba 0 y el promedio daba 44 bytes en vez de 570.
-      //   · el delta de `socket.bytesWritten`: `finish` dispara antes de que zlib termine de
-      //     volcar, así que también daba casi cero.
+      //   · el delta de `socket.bytesWritten`: al terminar el handler zlib todavía no volcó,
+      //     así que también daba casi cero.
       //
       // Serializar a mano no cuesta nada extra: `res.json()` iba a hacer exactamente el mismo
       // `JSON.stringify`. Solo se movió de lugar para saber el largo.
@@ -565,16 +567,21 @@ router.get('/:id/sala/poll', async (req, res, next) => {
 
       // ⭐ EL SÍNTOMA DE "NO ME LLEGAN LOS MENSAJES": cuántos mensajes de diferencia hay entre
       // lo que el navegador dice tener (`since`) y lo que la sala tiene (`lastSeq`). En una
-      // sala sana es 0 casi siempre. Que crezca y no baje es el congelamiento del 08/09.
+      // sala sana es 0 casi siempre.
+      //
+      // Un valor alto SUELTO no es una falla: es alguien que se reconectó y se baja el
+      // atrasado. Lo que delata un cursor congelado es que se repita poll tras poll — de eso
+      // se ocupa `pollsMuyAtrasados` en services/salaStats.js.
       //
       // Solo con `since > 0`: una pestaña recién abierta pide desde 0 y estaría "atrasada" por
       // definición, lo cual no dice nada.
       atraso: session && since > 0 ? Math.max(0, (session.lastSeq || 0) - since) : 0,
 
       // Cuánto esperó cada mensaje entregado en esta respuesta. Lo arma estadoDeSala, que es
-      // donde están los documentos crudos con su `createdAt`.
+      // donde están los documentos crudos con su `createdAt`. Los muy viejos los separa
+      // salaStats como reenganche: no son entregas lentas.
       entregasMs: req._entregasMs,
-    }));
+    });
 
     res.type('json').send(cuerpo);
   } catch (err) { next(err); }

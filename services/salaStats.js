@@ -19,6 +19,25 @@ const SalaSample = require('../models/SalaSample');
 // que los dos gráficos del monitor no puedan divergir en los buckets.
 const { truncarAlMinuto, rangoValido, configDeRango, RANGOS } = require('./rateLimitStats');
 
+// La ventana de "conectado ahora". Se importa en vez de copiarse: es la misma constante que
+// define, en toda la app, si alguien estaba o no en la sala.
+const { ONLINE_WINDOW_MS } = require('./liveRoom');
+
+// ── Los dos umbrales que separan un problema de una reconexión ───────────────
+//
+// Nacieron de los primeros datos reales (2026-09-08): sin ellos, una sola persona que se
+// reconecta y se baja 101 mensajes atrasados hacía que el panel dijera "los mensajes tardan 24
+// minutos" y "hay navegadores 101 mensajes atrás". La sala estaba perfecta.
+
+// Un mensaje más viejo que esto, al entregarse, NO mide la sala: mide cuánto estuvo afuera esa
+// persona. Es la definición que ya usa toda la app para "estaba conectado".
+const ENTREGA_MAX_MS = ONLINE_WINDOW_MS;
+
+// A partir de cuántos mensajes de diferencia un poll cuenta como "muy atrasado". Lo que importa
+// no es este número sino CUÁNTOS polls lo cruzan: una reconexión aporta uno, un cursor
+// congelado aporta decenas por minuto.
+const ATRASO_GRAVE = 10;
+
 const VOLCADO_MS = 60 * 1000;
 
 // ── Costos unitarios medidos, para estimar lo que ahorró cada palanca ────────
@@ -80,9 +99,9 @@ const SUMABLES = [
   'cacheAciertos', 'cacheFallos',
   'presenciaOmitida', 'presenciaEnviada',
   'presenciaNoEscrita', 'presenciaEscrita',
-  'mensajesEntregados', 'entregaMsTotal',
+  'mensajesEntregados', 'entregaMsTotal', 'mensajesDeReenganche',
   'ent2s', 'ent4s', 'ent8s', 'ent20s', 'entMas',
-  'pollsAtrasados',
+  'pollsAtrasados', 'pollsMuyAtrasados',
 ];
 const MAXIMOS  = ['entregaMsMax', 'atrasoMax'];
 const CONTEXTO = ['salasAbiertas', 'personasEnSalas'];
@@ -172,6 +191,9 @@ function resumir(muestras) {
     // ── Los síntomas ──
     entrega: {
       mensajes: t.mensajesEntregados,
+      // Los que llegaron a alguien que había estado desconectado. Es un dato aparte y útil:
+      // muchos reenganches significan gente entrando y saliendo, no una sala lenta.
+      reenganches: t.mensajesDeReenganche,
       promMs:   t.mensajesEntregados ? Math.round(t.entregaMsTotal / t.mensajesEntregados) : null,
       maxMs:    t.entregaMsMax || null,
       p95:      percentilEntrega(t),
@@ -179,6 +201,10 @@ function resumir(muestras) {
     atraso: {
       max: t.atrasoMax || 0,
       pctPollsAtrasados: t.polls ? Math.round(t.pollsAtrasados * 100 / t.polls) : 0,
+      // ⭐ Los dos que separan el cursor trabado de la reconexión.
+      muyAtrasados: t.pollsMuyAtrasados || 0,
+      pctMuyAtrasados: t.polls ? +(t.pollsMuyAtrasados * 100 / t.polls).toFixed(2) : 0,
+      umbral: ATRASO_GRAVE,
     },
     costos: COSTOS,
   };
@@ -258,12 +284,19 @@ function registrarPoll(datos) {
     if (atraso > 0) {
       b.pollsAtrasados++;
       if (atraso > b.atrasoMax) b.atrasoMax = atraso;
+      // ⭐ El contador que distingue el cursor trabado de la reconexión. Ver el comentario de
+      // ATRASO_GRAVE y el de models/SalaSample.js.
+      if (atraso >= ATRASO_GRAVE) b.pollsMuyAtrasados++;
     }
 
     const entregas = datos.entregasMs;
     if (entregas && entregas.length) {
       for (let i = 0; i < entregas.length; i++) {
         const ms = entregas[i];
+        // ⚠️ Un mensaje viejo NO es una entrega lenta: es alguien que estuvo desconectado y se
+        // baja el atrasado. Contarlo arruinaba el promedio y el p95 — medido el 08/09, un solo
+        // reenganche puso el promedio en 24 minutos.
+        if (ms > ENTREGA_MAX_MS) { b.mensajesDeReenganche++; continue; }
         b.mensajesEntregados++;
         b.entregaMsTotal += ms;
         if (ms > b.entregaMsMax) b.entregaMsMax = ms;
@@ -337,7 +370,7 @@ function _reset()  { buffer.clear(); detenerVolcado(); }
 module.exports = {
   // puras
   casilleroDeEntrega, percentilEntrega, agregarSerie, resumir, porCantidadDeSalas, efectividad,
-  rangoValido, configDeRango, RANGOS, COSTOS, CORTES_ENTREGA,
+  rangoValido, configDeRango, RANGOS, COSTOS, CORTES_ENTREGA, ENTREGA_MAX_MS, ATRASO_GRAVE,
   // con estado
   registrarPoll, registrarContexto, volcar, iniciarVolcado, detenerVolcado,
   VOLCADO_MS, _buffer, _reset,

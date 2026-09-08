@@ -194,3 +194,88 @@ test('porCantidadDeSalas: los minutos sin polls no entran', () => {
   const curva = stats.porCantidadDeSalas([muestra({ salasAbiertas: 10, polls: 0 })], 3);
   assert.equal(curva.length, 0, 'dividir por cero polls daría NaN en el gráfico');
 });
+
+// ── 5. Reconexión vs cursor trabado (corrección del 2026-09-08) ─────────────
+//
+// Los primeros datos reales mostraron que las dos cosas se veían IGUAL: una persona que se
+// reconecta y se baja 101 mensajes atrasados daba el mismo `atrasoMax` que un navegador
+// congelado, y su edad arruinaba el promedio de entrega (24 minutos).
+
+test('⭐ un mensaje viejo NO cuenta como entrega lenta: es un reenganche', () => {
+  stats._reset();
+  stats.registrarPoll({
+    ms: 1, bytes: 1,
+    // Uno fresco y dos que ya estaban ahí de antes.
+    entregasMs: [3000, stats.ENTREGA_MAX_MS + 1, 30 * 60 * 1000],
+  });
+  const b = [...stats._buffer().values()][0];
+
+  assert.equal(b.mensajesEntregados, 1, 'solo el fresco cuenta como entrega');
+  assert.equal(b.entregaMsTotal, 3000, 'y el promedio no se contamina con los viejos');
+  assert.equal(b.mensajesDeReenganche, 2, 'los otros dos van a su propio contador');
+  stats._reset();
+});
+
+test('el borde del reenganche es la ventana de conectado', () => {
+  // No es un número libre: un mensaje más viejo que ONLINE_WINDOW_MS se escribió cuando esa
+  // persona NO estaba conectada, por la definición que usa toda la app.
+  const { ONLINE_WINDOW_MS } = require('../../services/liveRoom');
+  assert.equal(stats.ENTREGA_MAX_MS, ONLINE_WINDOW_MS);
+
+  stats._reset();
+  stats.registrarPoll({ ms: 1, bytes: 1, entregasMs: [stats.ENTREGA_MAX_MS] });
+  assert.equal([...stats._buffer().values()][0].mensajesEntregados, 1, 'el borde es inclusivo');
+  stats._reset();
+});
+
+test('⭐ pollsMuyAtrasados es lo que separa la reconexión del congelamiento', () => {
+  stats._reset();
+  // Una reconexión: UN poll muy atrasado.
+  stats.registrarPoll({ ms: 1, bytes: 1, atraso: 101 });
+  // Y muchos polls normales.
+  for (let i = 0; i < 99; i++) stats.registrarPoll({ ms: 1, bytes: 1, atraso: 0 });
+
+  const b = [...stats._buffer().values()][0];
+  assert.equal(b.atrasoMax, 101, 'el pico se guarda igual, sirve de contexto');
+  assert.equal(b.pollsMuyAtrasados, 1, 'pero solo UN poll lo cruzó');
+  assert.equal(b.polls, 100);
+  stats._reset();
+});
+
+test('un cursor congelado deja MUCHOS polls muy atrasados', () => {
+  stats._reset();
+  // El mismo navegador polleando 30 veces sin avanzar.
+  for (let i = 0; i < 30; i++) stats.registrarPoll({ ms: 1, bytes: 1, atraso: 40 + i });
+  for (let i = 0; i < 70; i++) stats.registrarPoll({ ms: 1, bytes: 1, atraso: 0 });
+
+  const b = [...stats._buffer().values()][0];
+  assert.equal(b.pollsMuyAtrasados, 30, 'ésta es la señal, no el máximo');
+
+  const r = stats.resumir([{ ...b, minuto: new Date(), pid: 1 }]);
+  assert.equal(r.atraso.pctMuyAtrasados, 30);
+  assert.ok(r.atraso.pctMuyAtrasados >= 2, 'y cruza el umbral que dispara la alerta');
+  stats._reset();
+});
+
+test('un atraso por debajo del umbral no cuenta como muy atrasado', () => {
+  stats._reset();
+  stats.registrarPoll({ ms: 1, bytes: 1, atraso: stats.ATRASO_GRAVE - 1 });
+  const b = [...stats._buffer().values()][0];
+  assert.equal(b.pollsAtrasados, 1, 'sí cuenta como atrasado…');
+  assert.equal(b.pollsMuyAtrasados, 0, '…pero no como MUY atrasado');
+  stats._reset();
+});
+
+test('resumir expone los reenganches y el porcentaje de muy atrasados', () => {
+  const r = stats.resumir([muestra({
+    polls: 200, mensajesEntregados: 10, entregaMsTotal: 20000, ent2s: 10,
+    mensajesDeReenganche: 101, pollsMuyAtrasados: 1, atrasoMax: 101, pollsAtrasados: 26,
+  })]);
+  assert.equal(r.entrega.mensajes, 10);
+  assert.equal(r.entrega.reenganches, 101);
+  assert.equal(r.entrega.promMs, 2000, 'el promedio es de las entregas de verdad');
+  assert.equal(r.atraso.max, 101);
+  assert.equal(r.atraso.muyAtrasados, 1);
+  assert.equal(r.atraso.pctMuyAtrasados, 0.5);
+  assert.equal(r.atraso.umbral, stats.ATRASO_GRAVE);
+});
