@@ -527,6 +527,80 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-08 (5) — RN-3, y la regresión de asistencia que destapó
+
+Última regla de la spec de escala. Pero lo importante de esta entrada no es RN-3: es **el bug
+que apareció al implementarla, y que ya estaba en producción desde la entrega anterior**.
+
+#### ⚠️⚠️ RN-4 estaba corrompiendo los minutos de asistencia
+
+`pings` no era un contador decorativo: de ahí salían los "minutos estimados" del **CSV de
+asistencia** y de la pantalla de historial de clase, calculados como `pings × POLL_MS`.
+
+Esa cuenta suponía que **un ping vale siempre 4 segundos**. La cadencia adaptativa de RN-4 la
+rompió el mismo día en que se desplegó:
+
+```
+Un alumno que estuvo los 40 minutos enteros de la clase:
+  polleando cada 4 s (antes de RN-4):  600 pings → reporta 40 min
+  polleando cada 8 s (con RN-4):       300 pings → reporta 20 min
+```
+
+**El CSV que la escuela usa decía 20 de 40, sin ruido de ningún tipo.** Nadie se habría enterado
+hasta que alguien comparara ese número con la realidad. RN-3, tal como estaba especificada, lo
+habría llevado a 1/4.
+
+**El arreglo**: se acumula tiempo REAL en `msPresente` en vez de contar pings. Cada escritura
+acredita lo transcurrido desde la anterior, **topeado con `ONLINE_WINDOW_MS`** — y ese tope *es*
+la regla: un hueco mayor a 45 s es, por definición, tiempo en el que la persona no estaba, y
+acreditarlo entero contaría su ausencia como presencia. Es lo mismo que `models/RoomPresence.js`
+ya defendía con el ejemplo del alumno que entra al principio, se va y vuelve al final.
+
+Los documentos anteriores no tienen el campo y siguen con la cuenta vieja. **No se migran**:
+migrarlos sería inventar un dato que nunca se midió.
+
+#### RN-3
+
+La presencia se escribe solo si el `lastPingAt` guardado tiene más de 15 s, en vez de en cada
+poll. **465 escrituras/s → ~124** a 930 personas.
+
+⚠️ **Dos números que la spec traía mal, corregidos**: `touchPresence` no hacía una escritura por
+poll sino **dos** —la presencia y el `lastActivityAt` de la sesión— más una lectura. El poll no
+eran 8 operaciones sino **10**, y las escrituras no eran 232/s sino **465/s**.
+
+**⭐ El invariante es más fuerte que "escribe menos"**: las escrituras dependen del TIEMPO, no
+del ritmo del poll. Medido sobre una clase de 40 minutos:
+
+| Cadencia | Polls | Escrituras | Ahorro |
+|---|---|---|---|
+| 4 s | 601 | **151** | 75% |
+| 8 s | 301 | **151** | 50% |
+
+O sea que **el ahorro de RN-3 no es un número fijo**: con RN-4 aflojando a 8 s recorta la mitad,
+no tres cuartos. Prometer 75% a secas sería prometer algo que no aparece.
+
+La decisión vive en `decidirPing(previo, ahora)`, pura y fuera de `touchPresence`, que toca
+Mongo. **Es la regla que se rompió**: parecía inofensiva y se cayó sola en cuanto la cadencia
+dejó de ser fija, así que tiene que poder correrse con un reloj inyectado y sin base.
+
+**Verificado contra Mongo** con reloj controlado, sobre una sesión inventada para no tocar nada
+real: crea, saltea las vueltas de 4/8/12 s, escribe a los 16 acreditando 16.000 ms, y ante un
+hueco de 10 minutos acredita **solo la ventana de 45 s** y no los 10 minutos.
+
+**Tests**: 11 casos nuevos en `tests/unit/liveRoom.test.js`, incluido el de la regresión (40
+minutos dan 40, se pollee a 4 s o a 8 s) y la guarda de que `PING_WINDOW_MS < ONLINE_WINDOW_MS/2`.
+Sin el arreglo fallan 9. Total: 1.079 unitarios, 405 de smoke y roles sin hallazgos.
+
+#### El presupuesto de la sala, cerrado
+
+| | A la mañana | Ahora |
+|---|---|---|
+| CPU de `cargarSala` | ~2,6 núcleos | **~0** |
+| Ops de Mongo por poll | 10 | **6** |
+| Bajada del chat | ~1,16 MB/s | **~0,16 MB/s** |
+| Requests | 232/s | **~120/s** |
+| Escrituras | 465/s | **~124/s** |
+
 ### 2026-09-08 (4) — RN-4: el ritmo se afloja cuando la sala está en silencio
 
 Cuarta y última entrega del día. Le saca a la sala la mitad de los requests.

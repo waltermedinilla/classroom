@@ -12,9 +12,9 @@ const assert = require('node:assert');
 
 const {
   isOnline, presenceSummary, huellaDePresencia, shouldAutoClose, horaDeCierre, gestorEnLinea,
-  sanitizeText, minutosPresente,
+  sanitizeText, minutosPresente, decidirPing,
   hora, fechaDia, fechaLarga, fechaCorta, fechaHora, TZ,
-  ONLINE_WINDOW_MS, STAFF_ONLINE_WINDOW_MS, AUTO_CLOSE_MS, MSG_MAX, POLL_MS,
+  ONLINE_WINDOW_MS, STAFF_ONLINE_WINDOW_MS, AUTO_CLOSE_MS, MSG_MAX, POLL_MS, PING_WINDOW_MS,
   pesoLegible, etiquetaExt, textoAdjunto, csvTranscripcion,
   EXT_ARCHIVOS, MAX_ARCHIVO_BYTES,
 } = require('../../services/liveRoom');
@@ -550,4 +550,122 @@ test('RN-2: el servidor manda los contadores siempre, y las listas solo si cambi
   // recién abierta reciba la fila entera.
   assert.match(rooms, /const estado = await estadoDeSala\(req, session\);/,
     'el render inicial no manda huella');
+});
+
+// ── RN-3: cuándo se escribe la presencia, y cuánto tiempo acredita ──────────
+//
+// Se escribía en CADA poll —dos writes, la presencia y el lastActivityAt de la sesión—, o sea
+// quince veces por minuto y por persona. A 930 personas son ~465 escrituras por segundo para
+// sostener un dato cuya única exigencia es la ventana de 45 s.
+//
+// ⚠️ Y acá vive además el arreglo de una REGRESIÓN: el tiempo de permanencia se calculaba como
+// `pings × POLL_MS`, una cuenta que suponía que un ping vale siempre 4 segundos. La cadencia
+// adaptativa de RN-4 la rompió el mismo día en que se desplegó.
+
+test('decidirPing: quien recién entra se escribe, y todavía no estuvo nada', () => {
+  const d = decidirPing(null, AHORA);
+  assert.equal(d.escribir, true, 'hay que crear el documento');
+  assert.equal(d.acreditar, 0, 'acaba de llegar: no acumuló permanencia');
+});
+
+test('decidirPing: con el ping fresco NO se escribe', () => {
+  for (const ms of [0, 4000, 8000, PING_WINDOW_MS - 1]) {
+    const d = decidirPing({ lastPingAt: haceMs(ms) }, AHORA);
+    assert.equal(d.escribir, false, `con un ping de hace ${ms} ms no hay nada que actualizar`);
+    assert.equal(d.acreditar, 0);
+  }
+});
+
+test('decidirPing: el borde de la ventana es inclusivo', () => {
+  assert.equal(decidirPing({ lastPingAt: haceMs(PING_WINDOW_MS - 1) }, AHORA).escribir, false);
+  assert.equal(decidirPing({ lastPingAt: haceMs(PING_WINDOW_MS) }, AHORA).escribir, true);
+});
+
+test('decidirPing: acredita el tiempo REAL transcurrido, no una unidad fija', () => {
+  assert.equal(decidirPing({ lastPingAt: haceMs(15000) }, AHORA).acreditar, 15000);
+  assert.equal(decidirPing({ lastPingAt: haceMs(30000) }, AHORA).acreditar, 30000);
+});
+
+test('⭐ decidirPing: un hueco más largo que la ventana de conectado NO se acredita entero', () => {
+  // Es LA regla que sostiene el número de asistencia, y está escrita en models/RoomPresence.js:
+  // un alumno que entra al principio, se va y vuelve al final tiene que dar dos minutos, no la
+  // clase entera. Un hueco mayor a ONLINE_WINDOW_MS es, por definición, tiempo en el que la
+  // persona NO estaba conectada.
+  const d = decidirPing({ lastPingAt: haceMs(10 * 60 * 1000) }, AHORA);
+  assert.equal(d.escribir, true);
+  assert.equal(d.acreditar, ONLINE_WINDOW_MS, 'se acredita el tope, no los 10 minutos');
+});
+
+test('decidirPing: un reloj corregido hacia atrás no acredita negativo', () => {
+  const d = decidirPing({ lastPingAt: new Date(AHORA.getTime() + 60000) }, AHORA);
+  assert.ok(d.acreditar >= 0, `acreditó ${d.acreditar}`);
+});
+
+test('⚠️ la ventana de escritura tiene que ser MENOR que la de conectado, con holgura', () => {
+  // Si se acercaran, alguien podría caerse de la lista de conectados por no haber alcanzado a
+  // escribir todavía. Va contra las constantes, no contra los números.
+  assert.ok(PING_WINDOW_MS < ONLINE_WINDOW_MS / 2,
+    `PING_WINDOW_MS (${PING_WINDOW_MS}) tiene que dejar al menos 2 escrituras dentro de ${ONLINE_WINDOW_MS}`);
+});
+
+// ── minutosPresente y la regresión de RN-4 ──────────────────────────────────
+
+test('minutosPresente: usa msPresente cuando está', () => {
+  assert.equal(minutosPresente({ msPresente: 40 * 60000, pings: 7 }), 40,
+    'el tiempo acumulado manda sobre el conteo de pings');
+});
+
+test('minutosPresente: los documentos VIEJOS siguen con la cuenta de antes', () => {
+  // Sin msPresente (documentos anteriores al 2026-09-08) vale pings × POLL_MS. No se migran:
+  // migrarlos sería inventar un dato que nunca se midió.
+  assert.equal(minutosPresente({ pings: 600 }), 40);
+  assert.equal(minutosPresente({}), 1, 'nunca menos de 1 minuto');
+});
+
+test('minutosPresente: un documento NUEVO recién creado dice 1 minuto, no cae al respaldo', () => {
+  // msPresente en 0 es un valor legítimo (acaba de entrar), distinto de "no existe el campo".
+  assert.equal(minutosPresente({ msPresente: 0, pings: 1 }), 1);
+});
+
+test('⭐ LA REGRESIÓN: 40 minutos de clase dan 40, pollee a 4 s o a 8 s', () => {
+  // Con la cuenta vieja (`pings × POLL_MS`) una clase silenciosa —donde RN-4 afloja a 8 s—
+  // reportaba LA MITAD del tiempo real, en el CSV de asistencia que usa la escuela.
+  const CLASE_MIN = 40;
+
+  const simular = (cadenciaMs) => {
+    let previo = null, msPresente = 0, escrituras = 0, polls = 0;
+    for (let t = 0; t <= CLASE_MIN * 60000; t += cadenciaMs) {
+      polls++;
+      const ahora = new Date(AHORA.getTime() + t);
+      const d = decidirPing(previo, ahora);
+      if (d.escribir) { msPresente += d.acreditar; escrituras++; previo = { lastPingAt: ahora }; }
+    }
+    return { polls, escrituras, minutos: minutosPresente({ msPresente }) };
+  };
+
+  const rapido = simular(4000);
+  const lento  = simular(8000);
+
+  assert.ok(Math.abs(rapido.minutos - CLASE_MIN) <= 1,
+    `a 4 s reportó ${rapido.minutos} de ${CLASE_MIN}`);
+  assert.ok(Math.abs(lento.minutos - CLASE_MIN) <= 1,
+    `a 8 s reportó ${lento.minutos} de ${CLASE_MIN} — ES LA REGRESIÓN QUE ESTE ARREGLO CIERRA`);
+
+  // Y la cuenta vieja, para que quede constancia de por qué se cambió:
+  assert.equal(Math.round(rapido.polls * POLL_MS / 60000), 40, 'la cuenta vieja acertaba a 4 s');
+  assert.equal(Math.round(lento.polls  * POLL_MS / 60000), 20, 'y erraba por la mitad a 8 s');
+
+  // ⭐ EL INVARIANTE DE RN-3, que es más fuerte que "escribe menos": las escrituras dependen
+  // del TIEMPO, no del ritmo del poll. La misma clase escribe lo mismo se pollee a 4 s o a 8 s.
+  //
+  // De ahí sale que el ahorro NO sea un número fijo: a 4 s recorta ~75% y a 8 s ~50%, porque la
+  // ventana es de tiempo absoluto. Confundir eso lleva a prometer un ahorro que no aparece.
+  assert.equal(rapido.escrituras, lento.escrituras,
+    `las escrituras no pueden depender de la cadencia: ${rapido.escrituras} a 4 s vs ${lento.escrituras} a 8 s`);
+
+  const esperadas = Math.round(CLASE_MIN * 60000 / (PING_WINDOW_MS + 1000));
+  assert.ok(Math.abs(rapido.escrituras - esperadas) <= 3,
+    `~una escritura por ventana: ${rapido.escrituras}, esperadas ~${esperadas}`);
+  assert.ok(rapido.escrituras < rapido.polls / 3,
+    `y a 4 s eso es recortar de verdad: ${rapido.escrituras} de ${rapido.polls} polls`);
 });

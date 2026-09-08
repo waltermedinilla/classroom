@@ -1,6 +1,6 @@
 # La sala en vivo a escala: 30 salas de 30
 
-Estado: **RN-1, RN-2 y RN-4 IMPLEMENTADAS** (2026-09-08) · RN-3 sigue sin aprobar ·
+Estado: **LAS CUATRO IMPLEMENTADAS** (2026-09-08) ·
 Módulo: `rooms` · Rol: todos los de la sala
 
 ## Problema
@@ -49,11 +49,17 @@ es la **proporción entre ellos**, que no cambia al mudarse.
 | Tiempo de `cargarSala`, en caliente | **11,4 ms** (mediana de 30; min 9,8 / máx 18,4) |
 | El mismo curso sin populate, `lean()` | **2,6 ms** |
 | Bloque de presencia que viaja en CADA poll | **4.981 bytes** |
-| Ops de Mongo por poll (total) | **8** — 7 lecturas + **1 escritura** |
+| Ops de Mongo por poll (total) | **10** — 8 lecturas + **2 escrituras** |
 
-Las 8 son: `courses.findOne`, `users.find` (los 36 alumnos), `divisions.find`, `users.find`
-(docente), `roomsessions.findOne`, `roompresences.updateOne` ← **escritura**,
-`roommessages.find`, `roompresences.find`.
+Las 10 son: `courses.findOne`, `users.find` (los 36 alumnos), `divisions.find`, `users.find`
+(docente), `roomsessions.findOne`, `roompresences.findOne`, `roompresences.updateOne` ←
+**escritura**, `roomsessions.updateOne` ← **escritura**, `roommessages.find`,
+`roompresences.find`.
+
+⚠️ **Corregido el 2026-09-08 al implementar RN-3**: esta tabla decía 8 ops y 1 escritura.
+`touchPresence` hace **tres** operaciones, no una — lee, escribe la presencia y escribe el
+`lastActivityAt` de la sesión. El orden de magnitud no cambia; el número de escrituras, sí:
+estaba subestimado a la mitad.
 
 ### Proyección al objetivo
 
@@ -63,7 +69,7 @@ prueba de carga es el criterio de aceptación 1, y va antes de dar esto por buen
 | | Hoy, a 930 personas |
 |---|---|
 | Requests | **232/s** (930 ÷ 4 s) |
-| Ops de Mongo | **~1.860/s**, de las cuales **232 escrituras/s** |
+| Ops de Mongo | **~2.320/s**, de las cuales **465 escrituras/s** |
 | CPU solo de `cargarSala` | 232 × 11,4 ms = **~2,6 núcleos saturados** |
 | Bajada solo del chat | 232 × 5 KB = **~1,16 MB/s ≈ 9,3 Mbit/s** |
 
@@ -270,23 +276,71 @@ mostró, y el servidor no se lo mandaría nunca más.
 
 ---
 
-## RN-3 · La presencia se escribe con ventana, no en cada poll
+## RN-3 · La presencia se escribe con ventana, no en cada poll — ✅ IMPLEMENTADA el 2026-09-08
 
-**232 escrituras/s → ~62/s.**
+⚠️ **Corrección de dos números que esta spec traía mal.** `touchPresence` no hacía *una*
+escritura por poll sino **dos** —la presencia y el `lastActivityAt` de la sesión— más una
+lectura. Así que el poll no eran 8 ops sino **10**, y las escrituras a 930 personas no eran
+232/s sino **465/s**. El orden de magnitud no cambia; el número sí, y estaba subestimado.
 
-`touchPresence` hace un `updateOne` por persona **por poll**: cada 4 segundos. Lo único que ese
-dato tiene que sostener es la ventana de "conectado ahora", que son **45 s para alumnos** y
-**3 minutos para el personal** (`ONLINE_WINDOW_MS` y `STAFF_ONLINE_WINDOW_MS`). Se está
-escribiendo 11 veces más seguido de lo que hace falta.
+**465 escrituras/s → ~124/s.**
 
-La escritura pasa a hacerse solo si el `lastPingAt` que hay tiene más de **15 s**. Son 3 pings
-de margen dentro de la ventana de 45 s — el mismo criterio de "~3 ciclos" con el que esa
-constante ya está justificada.
+Lo único que ese dato tiene que sostener es la ventana de "conectado ahora": **45 s para
+alumnos**, 3 minutos para el personal. Se escribía 11 veces más seguido de lo necesario.
 
-⚠️ **`lastActivityAt` de la sesión va junto y no se puede separar sin pensarlo**: es lo que
-alimenta el autocierre por inactividad (`AUTO_CLOSE_MS`, 30 min). Refrescarlo cada 15 s en vez
-de cada 4 s no lo afecta —30 minutos son 120 ventanas de 15 s—, pero tiene que quedar escrito
-que se movieron los dos.
+La escritura se hace solo si el `lastPingAt` guardado tiene más de **15 s** (`PING_WINDOW_MS`).
+
+### ⭐ El invariante, que es más fuerte que "escribe menos"
+
+**Las escrituras dependen del TIEMPO, no del ritmo del poll.** Medido sobre una clase de 40
+minutos:
+
+| Cadencia | Polls | Escrituras | Ahorro |
+|---|---|---|---|
+| 4 s | 601 | **151** | 75% |
+| 8 s | 301 | **151** | 50% |
+
+De ahí sale que **el ahorro no sea un número fijo**: con RN-4 aflojando a 8 s, RN-3 recorta la
+mitad y no tres cuartos. Prometer 75% a secas sería prometer algo que no aparece.
+
+### ⚠️⚠️ Lo que esta regla destapó: RN-4 estaba corrompiendo la asistencia
+
+Al implementarla apareció que `pings` **no era un contador decorativo**: de ahí salían los
+"minutos estimados" del **CSV de asistencia** y de la pantalla de historial de clase, como
+`pings × POLL_MS`.
+
+Esa cuenta suponía que **un ping vale siempre 4 segundos**, y RN-4 la rompió el mismo día en que
+se desplegó. Medido:
+
+```
+Un alumno que estuvo los 40 minutos enteros:
+  polleando cada 4 s (antes de RN-4):  600 pings → reporta 40 min
+  polleando cada 8 s (con RN-4):       300 pings → reporta 20 min
+```
+
+**El CSV que la escuela usa decía 20 de 40, sin ruido de ningún tipo.** RN-3 habría empeorado
+eso hasta 1/4.
+
+**El arreglo**: se acumula tiempo REAL en `msPresente`, no unidades de ping. Cada escritura
+acredita lo transcurrido desde la anterior, **topeado con `ONLINE_WINDOW_MS`** — y ese tope *es*
+la regla, no una precaución: un hueco mayor a 45 s es, por definición, tiempo en el que la
+persona no estaba, y acreditarlo entero contaría su ausencia como presencia. Es exactamente lo
+que `models/RoomPresence.js` defiende con el alumno que entra al principio, se va y vuelve al
+final.
+
+Los documentos anteriores no tienen `msPresente` y siguen con la cuenta vieja: **no se migran**,
+porque migrarlos sería inventar un dato que nunca se midió.
+
+### La decisión va en una función pura
+
+`decidirPing(previo, ahora)` devuelve `{ escribir, acreditar }` y vive fuera de `touchPresence`,
+que toca Mongo. **Es LA regla que se rompió**: la cuenta anterior parecía inofensiva y se cayó
+sola en cuanto la cadencia dejó de ser fija. Una regla así tiene que poder correrse con un reloj
+inyectado y sin base.
+
+⚠️ **`lastActivityAt` de la sesión va en la misma escritura**: alimenta el autocierre por
+inactividad (30 min). Refrescarlo cada 15 s en vez de cada 4 no lo afecta —30 minutos son 120
+ventanas— pero queda escrito que se movieron los dos juntos.
 
 ---
 

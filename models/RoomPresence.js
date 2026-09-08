@@ -27,10 +27,28 @@ const roomPresenceSchema = new mongoose.Schema({
   // Último ping recibido. "Conectado ahora" = este valor dentro de la ventana de 45 s.
   lastPingAt:  { type: Date, default: Date.now },
 
-  // Cantidad de pings recibidos. El tiempo de permanencia se estima como pings × POLL_MS y
-  // NO como lastPingAt − firstSeenAt: un alumno que entra al principio, se va, y vuelve al
-  // final daría "toda la clase" con la resta, cuando estuvo dos minutos.
+  // Cantidad de escrituras de presencia. ⚠️ NO es "cuántas veces polleó": desde RN-3
+  // (2026-09-08) solo se escribe si pasaron 15 s del ping anterior. Quedó como respaldo del
+  // cálculo viejo para los documentos anteriores a `msPresente`; para todo lo nuevo, el dato
+  // de permanencia es el de abajo.
   pings: { type: Number, default: 1 },
+
+  // Tiempo de permanencia acumulado, en milisegundos. Es el dato del que salen los "minutos
+  // estimados" del CSV de asistencia y de la pantalla de historial de clase.
+  //
+  // ⭐ SE ACUMULA POR TRAMOS Y NO SE CALCULA COMO `lastPingAt − firstSeenAt`: un alumno que
+  // entra al principio, se va, y vuelve al final daría "toda la clase" con la resta, cuando
+  // estuvo dos minutos. Cada escritura acredita el tiempo real transcurrido desde la anterior,
+  // topeado con la ventana de "conectado" — un hueco más grande que eso es una ausencia, y no
+  // se acredita (ver touchPresence en services/liveRoom.js).
+  //
+  // ⚠️ REEMPLAZA A `pings × POLL_MS`, que se rompió el 2026-09-08 con la cadencia adaptativa de
+  // RN-4: esa cuenta suponía que un ping vale siempre 4 segundos, y desde entonces puede valer
+  // 4 u 8. Una clase silenciosa de 40 minutos reportaba 20, en un documento que la escuela usa.
+  //
+  // Los documentos anteriores a este campo no lo tienen y siguen con la cuenta vieja: no hace
+  // falta migrarlos, y migrarlos sería inventar un dato que no se midió.
+  msPresente: { type: Number, default: 0 },
 
   // ── Transmisión en vivo ────────────────────────────────────────────────────
   //

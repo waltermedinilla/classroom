@@ -51,6 +51,21 @@ const ONLINE_WINDOW_MS = 45 * 1000;
 // apagada cae igual, solo que un rato después.
 const STAFF_ONLINE_WINDOW_MS = 3 * 60 * 1000;
 
+// Cada cuánto se ESCRIBE la presencia. RN-3 de specs/sala-en-vivo-escala.spec.md.
+//
+// No es cada cuánto se pollea: es cada cuánto ese poll deja rastro en la base. Hasta el
+// 2026-09-08 se escribía en CADA vuelta —dos writes, la presencia y el `lastActivityAt` de la
+// sesión— o sea quince veces por minuto y por persona. A 930 personas son ~465 escrituras por
+// segundo, y una escritura no es una lectura: toca el journal y el oplog.
+//
+// Lo único que ese dato tiene que sostener es la ventana de "conectado ahora", que son 45 s
+// para alumnos. 15 s deja 3 escrituras de margen dentro de esa ventana — el mismo criterio de
+// "~3 ciclos" con el que ONLINE_WINDOW_MS ya está justificada acá arriba.
+//
+// ⚠️ TIENE QUE SER MENOR QUE ONLINE_WINDOW_MS, y con holgura. Si se acercara, alguien podría
+// caerse de la lista de conectados por no haber alcanzado a escribir todavía.
+const PING_WINDOW_MS = 15 * 1000;
+
 // Autocierre por inactividad. Cubre el caso real de la docente que se olvida la sala abierta
 // al terminar la clase.
 //
@@ -402,10 +417,55 @@ function sanitizeText(raw) {
     .slice(0, MSG_MAX);
 }
 
-// Minutos estimados de permanencia. pings × POLL_MS, no lastPingAt − firstSeenAt (ver el
-// comentario de models/RoomPresence.js).
+// Minutos de permanencia. Sale de `msPresente`, que es tiempo REAL acumulado (ver touchPresence).
+//
+// ⚠️ ANTES ERA `pings × POLL_MS`, y eso se rompió el 2026-09-08 con RN-4. Esa cuenta suponía
+// que un ping equivale siempre a 4 segundos, y desde que la cadencia es adaptativa un ping
+// puede valer 4 u 8 — así que una clase silenciosa de 40 minutos reportaba 20. Iba derecho al
+// CSV de asistencia y a la pantalla de historial de clase, sin ruido de ningún tipo.
+//
+// Lo que NO cambió es la regla de fondo, que sigue siendo la de models/RoomPresence.js: se
+// acumula tiempo de PRESENCIA, no `lastPingAt − firstSeenAt`. Un alumno que entra al principio,
+// se va y vuelve al final tiene que dar dos minutos y no la clase entera. Por eso touchPresence
+// acredita cada tramo por separado y topea los huecos.
+//
+// El `pings × POLL_MS` queda como respaldo para los documentos anteriores al cambio, que no
+// tienen `msPresente`. Un documento nuevo recién creado SÍ lo tiene, en 0.
+// Las dos decisiones de cada ping, juntas y puras: ¿hay que escribir, y cuánto tiempo de
+// permanencia acredita esta escritura? RN-3 de specs/sala-en-vivo-escala.spec.md.
+//
+// Está separada de touchPresence —que toca Mongo— porque es LA regla que se rompió: la cuenta
+// anterior (`pings × POLL_MS`) parecía inofensiva y se cayó sola en cuanto la cadencia dejó de
+// ser fija. Una regla así tiene que poder correrse con un reloj inyectado y sin base.
+//
+// `previo` es el documento de presencia que ya existe, o null si la persona recién entra.
+function decidirPing(previo, ahora = new Date()) {
+  if (!previo) {
+    // Recién entra: se escribe (hay que crear el documento) y todavía no estuvo nada.
+    return { escribir: true, acreditar: 0 };
+  }
+
+  const desde = ahora - new Date(previo.lastPingAt);
+
+  // El ping guardado sigue fresco: la persona ya figura conectada y va a seguir figurando.
+  // No hay nada que actualizar, y se ahorran las dos escrituras.
+  if (desde < PING_WINDOW_MS) return { escribir: false, acreditar: 0 };
+
+  // Se acredita el tiempo REAL transcurrido desde el ping anterior, no un ping contado como
+  // unidad fija.
+  //
+  // ⚠️ TOPEADO CON LA VENTANA DE CONECTADO, y el tope ES la regla, no una precaución. Un hueco
+  // más grande que 45 s significa que la persona NO estaba —es la definición misma de
+  // "conectado"—, así que acreditarlo entero contaría su ausencia como presencia: justo lo que
+  // models/RoomPresence.js explica con el alumno que entra al principio, se va, y vuelve al
+  // final. El `max(…, 0)` cubre un reloj que corrige hacia atrás.
+  return { escribir: true, acreditar: Math.min(Math.max(desde, 0), ONLINE_WINDOW_MS) };
+}
+
 function minutosPresente(presence) {
-  const ms = (presence?.pings || 0) * POLL_MS;
+  const ms = presence && presence.msPresente != null
+    ? presence.msPresente
+    : (presence?.pings || 0) * POLL_MS;
   return Math.max(1, Math.round(ms / 60000));
 }
 
@@ -755,19 +815,27 @@ async function systemMessage(session, text, { activity = null } = {}) {
 // pings: es de donde sale el tiempo estimado de permanencia.
 // Devuelve { creada } para que la ruta sepa si tiene que anunciar el ingreso — sin eso, cada
 // F5 del preceptor metería otro "ingresó a la sala" en el chat.
-async function touchPresence(session, user) {
-  const antes = await RoomPresence.findOne({ session: session._id, user: user._id }).select('_id');
+async function touchPresence(session, user, { ahora = new Date() } = {}) {
+  // Se trae `lastPingAt` además del `_id`: es lo que decide si hay que escribir y cuánto
+  // tiempo acreditar. Es una lectura por el índice único {session, user}, o sea barata — la
+  // que cuesta es la escritura, y es la que RN-3 saltea.
+  const previo = await RoomPresence.findOne({ session: session._id, user: user._id })
+    .select('_id lastPingAt').lean();
+
+  const { escribir, acreditar } = decidirPing(previo, ahora);
+  if (!escribir) return { creada: false, escrito: false };
+
   await RoomPresence.updateOne(
     { session: session._id, user: user._id },
     {
-      $setOnInsert: { course: session.course, firstSeenAt: new Date() },
-      $set:         { lastPingAt: new Date(), userName: user.name, userRole: user.role },
-      $inc:         { pings: 1 },
+      $setOnInsert: { course: session.course, firstSeenAt: ahora },
+      $set:         { lastPingAt: ahora, userName: user.name, userRole: user.role },
+      $inc:         { pings: 1, msPresente: acreditar },
     },
     { upsert: true }
   );
-  await RoomSession.updateOne({ _id: session._id }, { $set: { lastActivityAt: new Date() } });
-  return { creada: !antes };
+  await RoomSession.updateOne({ _id: session._id }, { $set: { lastActivityAt: ahora } });
+  return { creada: !previo, escrito: true };
 }
 
 // Tarjetas de "clases en curso" para los paneles de supervisión.
@@ -963,7 +1031,7 @@ function csvTranscripcion(messages) {
 module.exports = {
   // constantes
   POLL_MS, DIRECTIVO_POLL_MS, ONLINE_WINDOW_MS, STAFF_ONLINE_WINDOW_MS, AUTO_CLOSE_MS, PURGE_AFTER_MS,
-  MSG_MAX, MSG_PER_MIN, EMOJIS, STAFF_ROLES, ROLE_LABELS, TZ,
+  MSG_MAX, MSG_PER_MIN, PING_WINDOW_MS, EMOJIS, STAFF_ROLES, ROLE_LABELS, TZ,
   EXT_ARCHIVOS, MAX_ARCHIVO_BYTES, UPLOADS_PER_10MIN, UPLOADS_ALUMNO_PER_10MIN, SALAS_BASE,
   EXTRACTO_MAX,
   // hora (zona fija de la escuela)
@@ -972,7 +1040,7 @@ module.exports = {
   anio,
   // puras
   isOnline, presenceSummary, huellaDePresencia, shouldAutoClose, horaDeCierre, gestorEnLinea, sanitizeText,
-  minutosPresente, initial, pesoLegible, etiquetaExt, textoAdjunto,
+  minutosPresente, decidirPing, initial, pesoLegible, etiquetaExt, textoAdjunto,
   // permisos dentro de la sala (puros: reciben un contexto plano, no `req`)
   puedeEscribir, puedeCompartirImagen, puedeBorrarMensaje, citaDeMensaje,
   // con base
