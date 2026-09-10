@@ -291,6 +291,69 @@ lo que creó**, nunca por curso ni por escuela.
 
 ---
 
+## ⭐⭐⭐ El panel se contradijo a sí mismo (2026-09-11, v1.0.97)
+
+Lo que mostró producción, tal cual, en una sola tarjeta:
+
+> **El proceso está saturado: el event loop se atrasa 338.17 ms**
+> De los 59.99 ms del poll, **0.02** son esperando turno y no trabajando. El cuello es CPU, no
+> la base: acá no sirve tocar queries ni índices.
+
+⚠️ **Las dos frases se contradicen.** Si solo 0,02 ms son espera, los otros **59,97 son
+trabajo** — y el trabajo del poll son consultas a la base. El panel mandaba a buscar CPU justo
+cuando sus propios números decían "la base".
+
+### La causa: una rama que no miraba su propia prueba
+
+```js
+if (r.loopP99Ms != null && r.loopP99Ms > 50) {        // ← entra solo por el pico
+  titulo:  `El proceso está saturado: ...`,
+  detalle: `... ${d.resto} son esperando turno ...`   // ← imprime resto sin mirarlo
+```
+
+La rama de abajo (`d.resto > mongo`) sí hacía la comparación correcta, pero nunca se alcanzaba.
+
+### ⭐ Y la razón de fondo: dos números que se agregan distinto
+
+| Número | Qué es realmente |
+|---|---|
+| `loopP99Ms` = 338,17 | El p99 **del peor minuto** del rango. Se agrega con `$max`, y dentro del minuto ya es un p99. Un reinicio o una recolección de basura lo fija para las 24 h enteras |
+| `resto` = 0,02 | Un promedio de verdad: `msTotal / polls`, sobre todos los polls del rango |
+
+**Un pico de un minuto se estaba reportando como un estado permanente.** Es la misma clase de
+error que el `atrasoMax` del 08/09 —el máximo leído como si fuera la norma— en otro número.
+
+**La regla ahora**: saturación es pico alto **y** polls pagando cola. Con una sola de las dos, es
+un pico, y se dice que es un pico.
+
+### ⭐ El pico se informa incluso sin tráfico
+
+Antes, el corte `if (!r.polls) return` lo tapaba. Pero `loopP99Ms` **no es un promedio sobre los
+polls**: lo muestrea el worker del scheduler una vez por minuto, haya o no gente. Así que un día
+sin nadie —un feriado, un domingo— es justo el que contesta **si el proceso se traba solo**, y es
+la única medición que se puede hacer sin aula. Ahora se informa, aclarando que nadie lo pagó.
+
+### El otro arreglo: un mínimo de 200 polls para promediar
+
+El panel afirmaba con un puñado de muestras. El caso que lo destapó: un `pm2 reload` deja el
+cache del curso **vacío en los dos workers**, así que los primeros polls son todos fallos; con la
+escuela vacía esos polls fríos se quedan con el promedio del rango entero.
+
+200 es bajo a propósito: **una** persona en **una** sala aporta ~900 polls por hora, así que el
+piso no puede tapar datos reales — solo el arranque y las visitas de treinta segundos. Por debajo
+de eso el panel dice que no alcanza, en vez de concluir.
+
+### Un tercer lugar decía lo mismo mal
+
+La tarjeta del event loop remataba con `⚠️ el proceso tiene cola` **con la misma condición
+suelta**, y rotulaba los dos números como "de media" cuando son del peor minuto. Ahora dice
+`event loop, peor minuto: …  ⚠️ hubo un pico`, y no afirma nada sobre cola: eso lo decide el
+diagnóstico, que es el único que mira si los polls la están pagando.
+
+**Tests**: 8 casos nuevos, 6 de ellos verificados fallando contra el código viejo.
+
+---
+
 ## ⭐⭐ Lo que corrigieron DOS DÍAS de datos reales (2026-09-10)
 
 Reclamo del usuario: *"⚠️ Sube: cada 10 salas más agregan 125 ms al poll. Hay algo superlineal
@@ -334,7 +397,7 @@ Ahora el poll se cronometra por fases y la tarjeta las muestra:
 
 ```
 sesión 12 · presencia 9 · estado 31 · armar 2 · espera 24  (ms)
-event loop: 1,2 ms de media, 8 ms el peor 1%  (holgado)
+event loop, peor minuto: 1,2 ms de media, 8 ms su peor 1%  (holgado)
 ```
 
 **La suma de las fases NO da el total, y esa diferencia es el dato**: es el tiempo que el
@@ -346,9 +409,11 @@ turno. El diagnóstico usa las dos cosas y dejó de adivinar:
 
 | Lo que se ve | Qué dice ahora |
 |---|---|
-| event loop p99 > 50 ms | **Alerta**: el cuello es CPU. No sirve tocar queries ni índices |
+| loop p99 alto **y** espera > trabajo | **Alerta**: el proceso está saturado. El cuello es CPU: no sirve tocar queries ni índices |
+| loop p99 alto, espera ≈ 0 | Aviso: **hubo un pico** en un minuto suelto. No es el estado del rango — ver la corrección del 11/09 |
 | espera > trabajo, loop bien | Aviso: el proceso tiene cola, vigilar si sube el uso |
 | trabajo real | Nombra **la fase más cara**: "31 ms se van en armar el estado" |
+| menos de 200 polls | **No promedia**: la muestra no alcanza. El pico del loop sí se informa |
 
 ---
 

@@ -923,12 +923,19 @@
           ' · armar ' + dg.cuerpo + ' · espera ' + dg.resto + '  (ms)'
         : 'dentro del servidor';
 
-      // El retraso del event loop es el juez: en el piso, el proceso no está saturado y el
-      // tiempo del poll es la base. Si sube, el poll espera su turno.
+      // El retraso del event loop: cuánto tarda el proceso en atender un timer que ya debía
+      // haber disparado.
+      //
+      // ⚠️ LOS DOS NÚMEROS SON DEL PEOR MINUTO DEL RANGO, no del rango: `loopMs` y `loopP99Ms`
+      // se agregan con `$max`. Decir "de media" a secas los hacía leer como el estado normal, y
+      // un solo reinicio fijaba el número para las 24 h enteras.
+      //
+      // Tampoco afirma acá que haya cola: si la hay o es solo un pico lo dice el diagnóstico de
+      // arriba, que es el único que mira si los polls la están pagando.
       $s('m-sala-loop').textContent = r.loopP99Ms == null
         ? ''
-        : 'event loop: ' + r.loopMs + ' ms de media, ' + r.loopP99Ms + ' ms el peor 1%' +
-          (r.loopP99Ms > 50 ? '  ⚠️ el proceso tiene cola' : '  (holgado)');
+        : 'event loop, peor minuto: ' + r.loopMs + ' ms de media, ' + r.loopP99Ms + ' ms su peor 1%' +
+          (r.loopP99Ms > 50 ? '  ⚠️ hubo un pico' : '  (holgado)');
       $s('m-sala-bytes').textContent    = SalaChart.bytesCortos(r.bytesPorPoll);
       $s('m-sala-costos-fecha').textContent = (r.costos && r.costos.medidoEl) || '—';
 

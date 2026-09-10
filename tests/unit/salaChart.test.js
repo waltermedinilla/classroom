@@ -176,6 +176,98 @@ test('el "todo bien" no aparece cuando hay algo que decir', () => {
   assert.equal(h[0].nivel, 'ok');
 });
 
+// ── ⭐ Un PICO no es un ESTADO, y una muestra chica no es un dato (2026-09-11) ─
+//
+// El panel afirmó esto en producción:
+//
+//   "El proceso está saturado: el event loop se atrasa 338.17 ms
+//    De los 59.99 ms del poll, 0.02 son esperando turno y no trabajando.
+//    El cuello es CPU, no la base: acá no sirve tocar queries ni índices."
+//
+// ⚠️ Los dos números se contradicen: si solo 0,02 ms son espera, los otros 59,97 son TRABAJO, y
+// el trabajo del poll son consultas a la base. La rama entraba solo por el pico del event loop e
+// imprimía `resto` sin mirarlo nunca.
+
+// Los números exactos que salieron en producción.
+const elCasoReal = (o) => sano(Object.assign({
+  msPorPoll: 59.99, loopMs: 30, loopP99Ms: 338.17,
+  desglose: { sesion: 14.2, presencia: 15.3, estado: 28.4, cuerpo: 2.03, resto: 0.02 },
+}, o));
+
+test('⭐ un PICO del event loop sin cola NO se declara saturación', () => {
+  const h = chart.diagnostico(elCasoReal());
+  assert.ok(!h.some(x => /saturado/i.test(x.titulo)),
+    `no hay cola que lo sostenga, hubo: ${titulos(elCasoReal())}`);
+
+  const x = h.find(y => /pico/i.test(y.titulo));
+  assert.ok(x, 'pero el pico tiene que verse: 338 ms pasaron de verdad');
+  assert.equal(x.nivel, 'aviso', 'un minuto malo es aviso, no alerta');
+  assert.match(x.detalle, /peor minuto/i, 'y tiene que decir que es UN minuto, no el estado');
+});
+
+test('⭐ y no puede desaconsejar mirar la base cuando el tiempo ES la base', () => {
+  // Es la parte cara del error: "no sirve tocar queries ni índices" mandaba a buscar CPU justo
+  // cuando 59,97 de los 59,99 ms eran consultas.
+  const h = chart.diagnostico(elCasoReal());
+  assert.ok(!h.some(x => /no sirve tocar queries/i.test(x.detalle || '')));
+
+  const x = h.find(y => /se van en/i.test(y.titulo));
+  assert.ok(x, `al contrario: tiene que nombrar la fase más cara, hubo: ${titulos(elCasoReal())}`);
+  assert.match(x.titulo, /armar el estado/i);
+});
+
+test('la saturación de verdad —pico Y cola— sigue siendo alerta, y muestra el contraste', () => {
+  const h = chart.diagnostico(elCasoReal({
+    desglose: { sesion: 2, presencia: 1, estado: 2, cuerpo: 0, resto: 54.99 },
+  }));
+  assert.equal(h[0].nivel, 'alerta');
+  assert.match(h[0].titulo, /saturado/i);
+  assert.match(h[0].detalle, /54\.99 son esperando/, 'la espera que la sostiene');
+  assert.match(h[0].detalle, /5 ms de trabajo real/, 'contra el trabajo, que es lo que la prueba');
+});
+
+test('⭐⭐ un pico con la escuela VACÍA se informa igual: es la medición del feriado', () => {
+  // `loopP99Ms` no es un promedio sobre los polls —es el peor minuto del rango—, así que un día
+  // sin nadie es justo el que dice si el proceso se traba SOLO. El corte por "no hay polls" lo
+  // tapaba, y es la única medición que se puede hacer un feriado.
+  const vacio = { polls: 0, loopMs: 28, loopP99Ms: 338.17 };
+  const h = chart.diagnostico(vacio);
+
+  const x = h.find(y => /pico/i.test(y.titulo));
+  assert.ok(x, `no puede quedar tapado por "no hay nadie", hubo: ${titulos(vacio)}`);
+  assert.match(x.detalle, /no hubo polls/i, 'y tiene que decir que nadie lo pagó');
+  assert.ok(h.some(y => /nadie/i.test(y.titulo)), 'sin tapar que no hubo tráfico');
+});
+
+test('un día vacío y tranquilo sigue siendo un solo "no hay nadie"', () => {
+  const h = chart.diagnostico({ polls: 0, loopMs: 0.4, loopP99Ms: 3 });
+  assert.equal(h.length, 1);
+  assert.equal(h[0].nivel, 'ok');
+});
+
+test('⭐ con pocos polls el panel se calla en vez de promediar', () => {
+  // Un `pm2 reload` deja el cache del curso vacío, así que los primeros polls son todos fallos:
+  // con la escuela vacía un puñado de polls fríos se queda con el promedio del rango entero.
+  const h = chart.diagnostico(lento({ polls: 40 }));
+  assert.ok(h.some(y => /poco para promediar/i.test(y.titulo)),
+    `esperaba el corte por muestra chica, hubo: ${titulos(lento({ polls: 40 }))}`);
+  assert.ok(!h.some(y => /se van en|esperando|saturado/i.test(y.titulo)),
+    'y ningún hallazgo que dependa de un promedio');
+});
+
+test('⭐ pero la muestra chica NO tapa el pico del event loop', () => {
+  const h = chart.diagnostico(lento({ polls: 40, loopP99Ms: 338.17 }));
+  assert.ok(h.some(y => /pico/i.test(y.titulo)), 'el pico no es un promedio: vale igual');
+  assert.ok(h.some(y => /poco para promediar/i.test(y.titulo)));
+});
+
+test('200 polls ya alcanzan: el piso no puede tapar datos reales', () => {
+  // Es bajo a propósito: UNA persona en UNA sala aporta ~900 polls por hora.
+  const h = chart.diagnostico(lento({ polls: 200 }));
+  assert.ok(!h.some(y => /poco para promediar/i.test(y.titulo)));
+  assert.ok(h.some(y => /se van en/i.test(y.titulo)), 'y el diagnóstico normal vuelve');
+});
+
 // ── Los gráficos ────────────────────────────────────────────────────────────
 
 test('puntosDe: el eje Y arranca en CERO', () => {

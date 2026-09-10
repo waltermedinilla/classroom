@@ -121,6 +121,23 @@ function curvaPorSalas(porSalas, ancho, alto) {
 
 /* ─── ⭐ El diagnóstico ──────────────────────────────────────────────────────── */
 
+// Por encima de esto, el proceso tardó en atender un timer que ya debía haber disparado.
+const LOOP_P99_ALERTA = 50;
+
+// ⭐ Mínimo de polls para que un PROMEDIO signifique algo (2026-09-11).
+//
+// Sin esto el panel afirmaba con un puñado de muestras. El caso que lo destapó: un `pm2 reload`
+// deja el cache del curso vacío en los dos workers, así que los primeros polls son todos
+// fallos; con la escuela vacía esos polls fríos se quedan con el promedio del rango entero, y el
+// panel lo leía como el estado normal.
+//
+// 200 es bajo a propósito: UNA persona en UNA sala aporta ~900 polls por hora, así que esto no
+// tapa datos reales — solo el arranque y las visitas de treinta segundos.
+const MUESTRA_MINIMA = 200;
+
+const ORDEN = { alerta: 0, aviso: 1, ok: 2 };
+const ordenar = (h) => h.slice().sort((a, b) => ORDEN[a.nivel] - ORDEN[b.nivel]);
+
 // Las palancas, con el umbral por debajo del cual dejan de estar haciendo su trabajo.
 //
 // Los umbrales son bajos a propósito: no están para pedir perfección sino para detectar que
@@ -135,6 +152,46 @@ const PALANCAS = [
 ];
 
 /**
+ * El retraso del event loop, que distingue un PICO de un ESTADO.
+ *
+ * ⚠️ `loopP99Ms` NO es un promedio sobre los polls: es el peor minuto del rango —se agrega con
+ * `$max`, y dentro del minuto ya es un p99—. Un solo reinicio o una recolección de basura lo
+ * fijan para las 24 h enteras.
+ *
+ * ⭐ CORREGIDO EL 2026-09-11. Antes esta rama entraba SOLO por `loopP99Ms > 50` y después
+ * imprimía `resto` como si fuera su prueba, sin mirarlo nunca. Con 338 ms de pico y 0,02 ms de
+ * espera el panel decía *"de los 59,99 ms del poll, 0,02 son esperando turno y no trabajando"* y
+ * concluía *"el cuello es CPU, no la base"* — lo contrario de lo que decían sus propios números,
+ * porque 59,97 de esos ms eran trabajo, y el trabajo del poll es la base.
+ *
+ * Saturación es pico alto **y** polls pagando cola. Con una sola de las dos, es un pico.
+ *
+ * Se devuelve incluso sin polls: un día sin nadie es justo el que dice si el proceso se traba
+ * solo, y ahí no hay promedios que mirar.
+ */
+function hallazgoDelLoop(r, d, mongo, colaDomina) {
+  if (r.loopP99Ms == null || r.loopP99Ms <= LOOP_P99_ALERTA) return null;
+
+  if (colaDomina) {
+    return {
+      nivel: 'alerta',
+      titulo: `El proceso está saturado: el event loop se atrasa ${r.loopP99Ms} ms`,
+      detalle: `De los ${r.msPorPoll} ms del poll, ${d.resto} son esperando turno y no trabajando, contra ${mongo} ms de trabajo real. El cuello es CPU, no la base: acá no sirve tocar queries ni índices.`,
+    };
+  }
+
+  const cola = d
+    ? `los polls no están pagando cola (${d.resto} ms de espera contra ${mongo} ms de trabajo real)`
+    : 'no hubo polls, así que no se puede saber si alguien lo pagó';
+
+  return {
+    nivel: 'aviso',
+    titulo: `Pico de ${r.loopP99Ms} ms en el event loop, en un solo minuto`,
+    detalle: `Es el peor minuto del rango, no su estado: ${cola}. Un reinicio, una recolección de basura o un trabajo pesado de un minuto alcanzan para esto. Si se repite rango tras rango, ahí sí es saturación.`,
+  };
+}
+
+/**
  * Traduce el resumen a una lista de hallazgos ordenados por gravedad.
  *
  * Cada hallazgo lleva `nivel` ('ok' | 'aviso' | 'alerta'), un texto corto y qué mirar. Es el
@@ -144,10 +201,31 @@ function diagnostico(resumen) {
   const r = resumen || {};
   const hallazgos = [];
 
+  // El desglose del poll, y la pregunta que decide si su tiempo es cola o es trabajo.
+  const d          = r.desglose;
+  const mongo      = d ? +(d.sesion + d.presencia + d.estado).toFixed(2) : 0;
+  const colaDomina = !!d && d.resto > mongo;
+
+  // Va antes de cualquier corte por tráfico: es lo único que se puede afirmar un día sin nadie.
+  const loop = hallazgoDelLoop(r, d, mongo, colaDomina);
+  if (loop) hallazgos.push(loop);
+
   // Sin tráfico no hay nada que diagnosticar, y decirlo es mejor que pintar todo en verde.
   if (!r.polls) {
-    return [{ nivel: 'ok', titulo: 'No hay nadie en ninguna sala',
-              detalle: 'No es un problema: es que no hubo polls en este rango.' }];
+    hallazgos.push({ nivel: 'ok', titulo: 'No hay nadie en ninguna sala',
+                     detalle: 'No es un problema: es que no hubo polls en este rango.' });
+    return ordenar(hallazgos);
+  }
+
+  // ⭐ Muestra chica: los promedios del rango todavía no significan nada, así que el panel se
+  // calla en vez de afirmar. El pico del event loop de arriba sí vale — no es un promedio.
+  if (r.polls < MUESTRA_MINIMA) {
+    hallazgos.push({
+      nivel: 'aviso',
+      titulo: `Solo ${r.polls} polls en el rango: muy poco para promediar`,
+      detalle: `Debajo de ${MUESTRA_MINIMA} polls, un par de polls lentos —los del arranque, con el cache del curso todavía vacío— se quedan con el promedio del rango entero. Los números están, pero no se puede concluir de ellos: mirá un rango más largo.`,
+    });
+    return ordenar(hallazgos);
   }
 
   // ── El síntoma que importa: ¿llegan los mensajes? ──
@@ -232,10 +310,8 @@ function diagnostico(resumen) {
   // del event loop se distingue "la base tarda" de "el proceso está saturado" — que llevan a
   // arreglos opuestos: índices contra CPU.
   const cachePct = (palancas.cache || {}).pct;
-  const d = r.desglose;
 
   if (r.msPorPoll > 20 && d) {
-    const mongo = d.sesion + d.presencia + d.estado;
     const fases = [
       { n: 'resolver la sesión de la sala', ms: d.sesion },
       { n: 'la presencia',                  ms: d.presencia },
@@ -243,19 +319,8 @@ function diagnostico(resumen) {
       { n: 'serializar la respuesta',       ms: d.cuerpo },
     ].sort((a, b) => b.ms - a.ms);
 
-    if (r.loopP99Ms != null && r.loopP99Ms > 50) {
-      hallazgos.push({
-        nivel: 'alerta',
-        titulo: `El proceso está saturado: el event loop se atrasa ${r.loopP99Ms} ms`,
-        detalle: `De los ${r.msPorPoll} ms del poll, ${d.resto} son esperando turno y no trabajando. El cuello es CPU, no la base: acá no sirve tocar queries ni índices.`,
-      });
-    } else if (d.resto > mongo) {
-      hallazgos.push({
-        nivel: 'aviso',
-        titulo: `El poll pasa más tiempo esperando (${d.resto} ms) que trabajando (${mongo} ms)`,
-        detalle: 'El proceso tiene cola. Todavía no llega a saturarse —el event loop está bien— pero es la dirección a vigilar si sube el uso.',
-      });
-    } else {
+    if (!colaDomina) {
+      // El tiempo es trabajo: se nombra la fase, que es lo accionable.
       hallazgos.push({
         nivel: 'aviso',
         titulo: `El poll tarda ${r.msPorPoll} ms, y ${fases[0].ms} se van en ${fases[0].n}`,
@@ -263,7 +328,15 @@ function diagnostico(resumen) {
           ? 'Las palancas funcionan, así que el tiempo es trabajo real de la base en esa fase. Ahí es donde conviene mirar índices o sacar una query.'
           : 'Y encima el cache no está ayudando: arreglá eso primero, que puede explicarlo solo.',
       });
+    } else if (!loop) {
+      // La cola domina pero el event loop todavía no acusa: es la dirección a vigilar.
+      hallazgos.push({
+        nivel: 'aviso',
+        titulo: `El poll pasa más tiempo esperando (${d.resto} ms) que trabajando (${mongo} ms)`,
+        detalle: 'El proceso tiene cola. Todavía no llega a saturarse —el event loop está bien— pero es la dirección a vigilar si sube el uso.',
+      });
     }
+    // Cola dominando Y loop acusando ya lo dijo la alerta de saturación, arriba de todo.
   }
 
   if (!hallazgos.some(h => h.nivel !== 'ok')) {
@@ -271,8 +344,7 @@ function diagnostico(resumen) {
                         detalle: 'Las palancas funcionan, los mensajes llegan y el atraso vuelve a cero.' });
   }
 
-  const orden = { alerta: 0, aviso: 1, ok: 2 };
-  return hallazgos.sort((a, b) => orden[a.nivel] - orden[b.nivel]);
+  return ordenar(hallazgos);
 }
 
 /* ─── Formato ───────────────────────────────────────────────────────────────── */

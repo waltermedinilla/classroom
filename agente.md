@@ -527,6 +527,68 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-11 — El panel se contradijo a sí mismo: un pico no es un estado
+
+El usuario trajo esto de producción, de una sola tarjeta:
+
+> **El proceso está saturado: el event loop se atrasa 338.17 ms**
+> De los 59.99 ms del poll, **0.02** son esperando turno y no trabajando. El cuello es CPU, no
+> la base: acá no sirve tocar queries ni índices.
+
+⚠️ **Las dos frases se contradicen.** Si solo 0,02 ms son espera, los otros **59,97 son
+trabajo** — y el trabajo del poll son consultas a la base. El panel mandaba a buscar CPU justo
+cuando sus propios números decían "la base".
+
+#### 1. Una rama que no miraba su propia prueba
+
+```js
+if (r.loopP99Ms != null && r.loopP99Ms > 50) {        // ← entra solo por el pico
+  titulo:  `El proceso está saturado: ...`,
+  detalle: `... ${d.resto} son esperando turno ...`   // ← imprime resto sin mirarlo
+```
+
+La rama de abajo (`d.resto > mongo`) sí comparaba bien, pero nunca se alcanzaba.
+
+#### 2. ⭐ El fondo: dos números que se agregan distinto
+
+| Número | Qué es realmente |
+|---|---|
+| `loopP99Ms` = 338,17 | El p99 **del peor minuto** del rango: se agrega con `$max`, y dentro del minuto ya es un p99. Un reinicio o una recolección de basura lo fija para las 24 h enteras |
+| `resto` = 0,02 | Un promedio de verdad: `msTotal / polls` sobre todos los polls |
+
+**Un pico de un minuto se reportaba como un estado permanente.** Es la misma clase de error que
+el `atrasoMax` del 08/09 —el máximo leído como si fuera la norma— en otro número.
+
+**Regla nueva**: saturación es pico alto **y** polls pagando cola. Con una sola de las dos es un
+pico, y se dice que es un pico.
+
+#### 3. ⭐⭐ El pico ahora se informa incluso sin tráfico
+
+El corte `if (!r.polls) return` lo tapaba. Pero `loopP99Ms` **no es un promedio sobre los polls**:
+lo muestrea el worker del scheduler una vez por minuto, haya o no gente. Así que **un día sin
+nadie es el que contesta si el proceso se traba solo**, y es la única medición posible sin aula —
+justo lo que hacía falta, porque el 11/09 es feriado y el próximo día de clase es el lunes 14.
+
+#### 4. Un mínimo de 200 polls para promediar
+
+El panel afirmaba con un puñado de muestras. Un `pm2 reload` deja el cache del curso **vacío en
+los dos workers**, así que los primeros polls son todos fallos; con la escuela vacía esos polls
+fríos se quedan con el promedio del rango entero.
+
+200 es bajo a propósito: **una** persona en **una** sala aporta ~900 polls por hora, así que el
+piso no tapa datos reales — solo el arranque y las visitas de treinta segundos.
+
+#### 5. Y un tercer lugar decía lo mismo mal
+
+La tarjeta del event loop remataba con `⚠️ el proceso tiene cola` **con la misma condición
+suelta**, y rotulaba los dos números como "de media" cuando son del peor minuto. Ahora dice
+`event loop, peor minuto: … ⚠️ hubo un pico`, y no afirma nada sobre cola: eso lo decide el
+diagnóstico, que es el único que mira si los polls la están pagando.
+
+**Tests**: 8 casos nuevos, **6 verificados fallando** contra el código viejo. Solo toca el
+navegador (`public/js/sala-chart.js` y el texto de la tarjeta): no cambia nada del servidor, de
+la telemetría ni de la base.
+
 ### 2026-09-10 — El panel deja de opinar de más y empieza a desglosar
 
 Pregunta del usuario mirando producción: *"⚠️ Sube: cada 10 salas más agregan 125 ms al poll.
