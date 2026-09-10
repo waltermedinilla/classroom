@@ -42,10 +42,35 @@ const salaSampleSchema = new mongoose.Schema({
 
   personasEnSalas: { type: Number, default: null },
 
+  // ── Retraso del event loop (lo escribe UN worker, igual que el resto del contexto) ──
+  //
+  // Es el juez que separa las dos hipótesis: mide cuánto tarda el proceso en atender un timer
+  // que debía dispararse YA. Si está en el piso, el proceso no está saturado y el tiempo del
+  // poll es Mongo. Si sube, el poll espera su turno y el problema es CPU.
+  //
+  // ⚠️ Es POR WORKER. El que muestrea es uno solo, así que dice cómo está ESE proceso, no la
+  // máquina. Alcanza igual: los dos workers hacen el mismo trabajo y PM2 reparte parejo.
+  loopMs:    { type: Number, default: null },   // media del minuto
+  loopP99Ms: { type: Number, default: null },   // el peor 1%
+
   // ── Costo del poll ─────────────────────────────────────────────────────────
   polls:      { type: Number, default: 0 },
   msTotal:    { type: Number, default: 0 },   // suma; el promedio se saca al leer
   bytesTotal: { type: Number, default: 0 },
+
+  // ── El desglose del poll (2026-09-10) ──────────────────────────────────────
+  //
+  // El panel decía "78 ms por poll" y no había forma de saber a dónde se iban. Sin esto había
+  // que ADIVINAR entre "es Mongo" y "es el event loop", y llevan a arreglos OPUESTOS: uno se
+  // ataca con índices o menos queries, el otro con CPU o con menos trabajo por request.
+  //
+  // ⭐ LA SUMA DE LOS CUATRO NO DA EL TOTAL, Y ESA DIFERENCIA ES EL DATO. Lo que falta es el
+  // tiempo que el handler pasó ESPERANDO para volver de un await con el proceso ocupado. Resto
+  // alto con Mongo bajo = contención, no base lenta.
+  msSesionTotal:    { type: Number, default: 0 },   // sesionAbierta + aplicarModo
+  msPresenciaTotal: { type: Number, default: 0 },   // touchPresence
+  msEstadoTotal:    { type: Number, default: 0 },   // estadoDeSala (mensajes + presencia)
+  msCuerpoTotal:    { type: Number, default: 0 },   // JSON.stringify de la respuesta
 
   // ── Las cuatro palancas: cuántas veces evitó trabajo cada una ──────────────
   //

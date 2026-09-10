@@ -527,6 +527,77 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-10 — El panel deja de opinar de más y empieza a desglosar
+
+Pregunta del usuario mirando producción: *"⚠️ Sube: cada 10 salas más agregan 125 ms al poll.
+Hay algo superlineal y la spec necesita otra vuelta — ¿a qué se refiere?"*.
+
+Con dos días de datos, la revisión encontró **dos problemas de redacción del panel y un hueco
+de fondo**. Lo primero que descarté fue contaminación: de 51 puntos en 7 días, solo 1 era
+anterior al arreglo del `ms`. **La correlación es real.**
+
+#### 1. El veredicto atribuía una causa que no puede saber
+
+Decía *"hay algo superlineal"*, que suena a que la cantidad de salas **causa** el aumento. No se
+puede sostener: "más salas" y "más polls por minuto" suben juntos —son **colineales**— y cuando
+hay más salas la escuela está más activa, o sea que el servidor está más ocupado con todo lo
+demás. El `ms` es tiempo de reloj y se come esa contención venga de donde venga.
+
+El texto ahora describe la correlación y **nombra el confundido**, sin atribuir causa.
+
+#### 2. Opinaba sobre nubes sin patrón
+
+El rango de 7 días daba veredicto sobre esto:
+
+```
+ 7 salas → 934 ms      8 → 469      9 → 314      10 → 182
+```
+
+…que va para abajo. Se agregó **R²**: si la recta no describe los puntos, dice *"no se puede
+concluir de este rango"*.
+
+⚠️ **Y ahí apareció una trampa que costó un test**: una curva de verdad plana tiene **R² casi
+cero por construcción** —no hay varianza que explicar—, así que el filtro marcaba como
+"dispersa" la mejor noticia posible. El orden correcto es mirar primero **cuánto se mueven** los
+puntos: si apenas se mueven es plano, y el R² no viene al caso.
+
+#### 3. ⭐ El hueco de fondo: a dónde se van los milisegundos
+
+El panel decía "78 ms por poll" y no había forma de saberlo. Había que **adivinar** entre "es
+Mongo" y "es el proceso saturado", y llevan a arreglos **opuestos**: índices contra CPU.
+
+Ahora el poll se cronometra por fases y la tarjeta las muestra:
+
+```
+sesión 12 · presencia 9 · estado 31 · armar 2 · espera 24  (ms)
+event loop: 1,2 ms de media, 8 ms el peor 1%  (holgado)
+```
+
+**La suma de las fases NO da el total, y esa diferencia es el dato**: es el tiempo que el
+handler pasó esperando para volver de un `await`. Resto alto con base baja = contención.
+
+Y el **retraso del event loop** (`monitorEventLoopDelay`, nativo de Node) es el juez: mide
+cuánto tarda el proceso en atender un timer que ya debía haber disparado.
+
+El diagnóstico usa las dos cosas y dejó de adivinar:
+
+| Lo que se ve | Qué dice ahora |
+|---|---|
+| event loop p99 > 50 ms | **Alerta**: el cuello es CPU. No sirve tocar queries ni índices |
+| espera > trabajo, loop bien | Aviso: el proceso tiene cola, vigilar si sube el uso |
+| trabajo real | Nombra **la fase más cara**: "31 ms se van en armar el estado" |
+
+Antes decía *"probablemente una query nueva"*, que era una corazonada.
+
+**Costo**: tres relojes más por poll (nanosegundos) y un histograma nativo que se lee una vez
+por minuto en un solo worker.
+
+**Tests**: 11 casos nuevos y 3 reescritos, incluido el de la curva plana con R² bajo.
+1.199 unitarios propios, 405 de smoke y roles sin hallazgos.
+
+⚠️ Los 7 unitarios que fallan son de `repoEnvio.test.js` y `repoRestore.test.js`, dos archivos
+sin commitear del trabajo en curso de backup incremental. No se tocaron.
+
 ### 2026-09-08 (8) — "Salas abiertas" contaba salas muertas
 
 Pregunta del usuario mirando el panel: *"¿por qué hay un tope de 6 salas que sale en el monitor,

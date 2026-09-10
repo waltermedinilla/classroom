@@ -291,6 +291,67 @@ lo que creó**, nunca por curso ni por escuela.
 
 ---
 
+## ⭐⭐ Lo que corrigieron DOS DÍAS de datos reales (2026-09-10)
+
+Reclamo del usuario: *"⚠️ Sube: cada 10 salas más agregan 125 ms al poll. Hay algo superlineal
+y la spec necesita otra vuelta — ¿a qué se refiere?"*.
+
+Dos problemas distintos, y el primero es de redacción mía.
+
+### 1. El veredicto atribuía una causa que no puede saber
+
+Decía *"hay algo superlineal"*, que suena a que **la cantidad de salas causa** el aumento. **No
+se puede sostener**: "más salas" y "más polls por minuto" suben juntos —son colineales— y
+cuando hay más salas la escuela está más activa, o sea que el servidor está más ocupado con
+TODO lo demás. El `ms` es tiempo de reloj y se come esa contención venga de donde venga.
+
+El texto ahora **describe la correlación y nombra el confundido**, sin atribuir causa.
+
+### 2. Opinaba sobre nubes sin patrón
+
+El rango de 7 días daba veredicto sobre esto:
+
+```
+ 7 salas → 934 ms      8 → 469      9 → 314      10 → 182
+```
+
+…que va para abajo. Se agregó **R²**: si la recta no describe los puntos, el veredicto es
+*"no se puede concluir de este rango"*.
+
+⚠️ **Y ahí apareció una trampa que costó un test**: una curva **de verdad plana tiene R² casi
+cero por construcción** —no hay varianza que explicar—, así que el filtro de R² marcaba como
+"dispersa" la mejor noticia posible. El orden correcto es mirar primero **cuánto se mueven** los
+puntos (`dispersion`): si apenas se mueven, es plano y el R² no viene al caso; si se mueven
+mucho, ahí sí importa si una recta lo explica.
+
+### 3. ⭐ Y lo que faltaba de fondo: el desglose del poll
+
+El panel decía "78 ms por poll" y **no había forma de saber a dónde se iban**. Había que
+adivinar entre "es Mongo" y "es el proceso saturado", que llevan a arreglos **opuestos**:
+índices contra CPU.
+
+Ahora el poll se cronometra por fases y la tarjeta las muestra:
+
+```
+sesión 12 · presencia 9 · estado 31 · armar 2 · espera 24  (ms)
+event loop: 1,2 ms de media, 8 ms el peor 1%  (holgado)
+```
+
+**La suma de las fases NO da el total, y esa diferencia es el dato**: es el tiempo que el
+handler pasó esperando para volver de un `await`. Resto alto con base baja = contención.
+
+Y el **retraso del event loop** es el juez: mide cuánto tarda el proceso en atender un timer que
+ya debía haber disparado. En el piso, el tiempo del poll es la base; si sube, el poll espera su
+turno. El diagnóstico usa las dos cosas y dejó de adivinar:
+
+| Lo que se ve | Qué dice ahora |
+|---|---|
+| event loop p99 > 50 ms | **Alerta**: el cuello es CPU. No sirve tocar queries ni índices |
+| espera > trabajo, loop bien | Aviso: el proceso tiene cola, vigilar si sube el uso |
+| trabajo real | Nombra **la fase más cara**: "31 ms se van en armar el estado" |
+
+---
+
 ## ⭐⭐ Lo que corrigieron los primeros datos reales (2026-09-08, v1.0.91)
 
 18 minutos de producción bastaron para encontrar **tres defectos del propio panel**. Ninguno se

@@ -109,23 +109,56 @@ test('una palanca sin ocasiones (pct null) NO se acusa', () => {
   })), ['ok']);
 });
 
-test('⭐ el ms por poll alto CON el cache sano apunta a una query nueva', () => {
-  // Es la lectura cruzada que un número suelto no da: si las palancas andan, el tiempo viene
-  // de otro lado.
-  const h = chart.diagnostico(sano({ msPorPoll: 45 }));
-  assert.ok(h.some(x => /query nueva/i.test(x.detalle)),
-    `esperaba el hallazgo de la query nueva, hubo: ${titulos(sano({ msPorPoll: 45 }))}`);
+// ── El desglose del poll: el panel deja de adivinar (2026-09-10) ────────────
+//
+// Antes decía "probablemente una query nueva", que era una corazonada. Con el desglose se
+// puede señalar la fase, y con el retraso del event loop se distingue "la base tarda" de "el
+// proceso está saturado" — que llevan a arreglos OPUESTOS: índices contra CPU.
+
+const lento = (o) => sano(Object.assign({
+  msPorPoll: 78,
+  desglose: { sesion: 12, presencia: 9, estado: 31, cuerpo: 2, resto: 24 },
+  loopMs: 1.2, loopP99Ms: 8,
+}, o));
+
+test('⭐ con el event loop atrasado, el hallazgo es CPU y no la base', () => {
+  const h = chart.diagnostico(lento({ loopP99Ms: 180, desglose: { sesion: 4, presencia: 3, estado: 8, cuerpo: 1, resto: 62 } }));
+  assert.equal(h[0].nivel, 'alerta');
+  assert.match(h[0].titulo, /proceso está saturado/i);
+  assert.match(h[0].detalle, /no la base|CPU/i);
+  assert.ok(!/índices/.test(h[0].detalle) || /no sirve/.test(h[0].detalle),
+    'no puede recomendar índices cuando el cuello es CPU');
 });
 
-test('el ms por poll alto CON el cache caído no acusa a una query nueva', () => {
-  // Ahí el tiempo SÍ se explica por la palanca, y decir las dos cosas confundiría.
-  const r = sano({ msPorPoll: 45, palancas: { ...sano().palancas, cache: { pct: 5 } } });
-  assert.ok(!chart.diagnostico(r).some(x => /query nueva/i.test(x.detalle)));
+test('esperar más de lo que trabaja es un aviso, aunque el loop esté bien', () => {
+  const h = chart.diagnostico(lento({ desglose: { sesion: 3, presencia: 2, estado: 5, cuerpo: 1, resto: 67 } }));
+  const x = h.find(y => /esperando/i.test(y.titulo));
+  assert.ok(x, `esperaba el aviso de espera, hubo: ${titulos(lento({}))}`);
+  assert.equal(x.nivel, 'aviso');
+});
+
+test('⭐ si el tiempo es trabajo real, el panel NOMBRA la fase más cara', () => {
+  // Es lo accionable: "31 ms se van en armar el estado" dice dónde mirar. "Probablemente una
+  // query nueva" no decía nada.
+  const h = chart.diagnostico(lento());
+  const x = h.find(y => /se van en/i.test(y.titulo));
+  assert.ok(x, `esperaba que nombrara la fase, hubo: ${titulos(lento())}`);
+  assert.match(x.titulo, /armar el estado/i, 'la fase más cara de este caso');
+  assert.match(x.detalle, /índices|query/i, 'y ahí sí corresponde hablar de la base');
+});
+
+test('con el cache caído, primero se arregla eso', () => {
+  const h = chart.diagnostico(lento({ palancas: { ...sano().palancas, cache: { pct: 5 } } }));
+  assert.ok(h.some(x => /cache no está ayudando/i.test(x.detalle) || /RN-1/.test(x.titulo)));
+});
+
+test('sin desglose no se diagnostica el tiempo: no se adivina', () => {
+  const h = chart.diagnostico(sano({ msPorPoll: 78, desglose: null }));
+  assert.ok(!h.some(x => /se van en|esperando|saturado/i.test(x.titulo)));
 });
 
 test('los hallazgos vienen ordenados por gravedad', () => {
-  const h = chart.diagnostico(sano({
-    msPorPoll: 45,                                                                    // aviso
+  const h = chart.diagnostico(lento({
     atraso: { max: 30, pctPollsAtrasados: 90, muyAtrasados: 500, pctMuyAtrasados: 9 }, // alerta
   }));
   assert.equal(h[0].nivel, 'alerta', 'lo grave va primero');
@@ -218,4 +251,56 @@ test('una o dos colgadas no molestan: es el ruido normal de una jornada', () => 
 
 test('sin el dato de colgadas no se inventa un aviso', () => {
   assert.ok(!chart.diagnostico(sano({ salasColgadas: null })).some(y => /quedaron abiertas/i.test(y.titulo)));
+});
+
+// ── El veredicto de la curva: cuándo callarse (2026-09-10) ──────────────────
+
+test('⭐⭐ una nube SIN patrón no da veredicto: dice que no se puede concluir', () => {
+  // Medido en producción el 2026-09-10: el rango de 7 días decía "sube" sobre esto, que va
+  // para abajo. Una pendiente sobre puntos dispersos es un número, no una conclusión.
+  const c = chart.curvaPorSalas([
+    { salas: 3,  msPorPoll: 113, minutos: 731 },
+    { salas: 7,  msPorPoll: 934, minutos: 237 },
+    { salas: 8,  msPorPoll: 469, minutos: 354 },
+    { salas: 10, msPorPoll: 182, minutos: 55 },
+    { salas: 12, msPorPoll: 177, minutos: 2 },
+  ]);
+  assert.equal(c.veredicto, 'disperso', `r2 fue ${c.r2}`);
+  assert.ok(c.r2 < c.R2_MINIMO);
+});
+
+test('⭐ una curva PLANA sigue diciendo "plano", aunque su R² sea bajo', () => {
+  // EL ERROR QUE ESTE TEST ATAJÓ: una curva de verdad plana tiene R² casi cero por
+  // construcción —no hay varianza que explicar— así que el filtro de R² la marcaba como
+  // "dispersa", que es justo lo contrario de lo que significa.
+  const c = chart.curvaPorSalas([
+    { salas: 5,  msPorPoll: 3.3, minutos: 4 },
+    { salas: 15, msPorPoll: 3.4, minutos: 6 },
+    { salas: 28, msPorPoll: 3.3, minutos: 3 },
+  ]);
+  assert.equal(c.veredicto, 'plano');
+  assert.ok(c.dispersion < c.DISPERSION_PLANA, `dispersión ${c.dispersion}`);
+});
+
+test('una subida LIMPIA sí da veredicto, con el ajuste alto', () => {
+  // Los datos reales de la última hora del 10/09.
+  const c = chart.curvaPorSalas([
+    { salas: 3, msPorPoll: 39.67, minutos: 66 },
+    { salas: 4, msPorPoll: 46.71, minutos: 14 },
+    { salas: 5, msPorPoll: 56.32, minutos: 24 },
+    { salas: 6, msPorPoll: 78.34, minutos: 14 },
+  ]);
+  assert.equal(c.veredicto, 'sube');
+  assert.ok(c.r2 > 0.9, `el ajuste tiene que ser alto: ${c.r2}`);
+  assert.ok(c.porDiezSalas > 100);
+});
+
+test('el R² se calcula y viene entre 0 y 1', () => {
+  const c = chart.curvaPorSalas([
+    { salas: 3, msPorPoll: 10, minutos: 1 },
+    { salas: 6, msPorPoll: 20, minutos: 1 },
+    { salas: 9, msPorPoll: 30, minutos: 1 },
+  ]);
+  assert.ok(c.r2 >= 0 && c.r2 <= 1);
+  assert.ok(c.r2 > 0.99, 'tres puntos perfectamente alineados: ajuste casi perfecto');
 });

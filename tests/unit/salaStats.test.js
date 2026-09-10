@@ -331,3 +331,51 @@ test('registrarContexto acepta las dos cuentas por separado', () => {
   assert.equal(b.personasEnSalas, 36);
   stats._reset();
 });
+
+// ── 7. El desglose del poll (2026-09-10) ───────────────────────────────────
+
+test('⭐ registrarPoll acumula las fases, y el resto sale de la resta', () => {
+  stats._reset();
+  stats.registrarPoll({ ms: 78, msSesion: 12, msPresencia: 9, msEstado: 31, msCuerpo: 2, bytes: 600 });
+  const b = [...stats._buffer().values()][0];
+  assert.equal(b.msSesionTotal, 12);
+  assert.equal(b.msPresenciaTotal, 9);
+  assert.equal(b.msEstadoTotal, 31);
+  assert.equal(b.msCuerpoTotal, 2);
+
+  const r = stats.resumir([{ minuto: new Date(), pid: 1, ...b }]);
+  assert.equal(r.msPorPoll, 78);
+  assert.deepEqual(r.desglose, { sesion: 12, presencia: 9, estado: 31, cuerpo: 2, resto: 24 },
+    'el resto es el tiempo esperando: 78 − 12 − 9 − 31 − 2');
+});
+
+test('el resto nunca es negativo aunque los relojes no cierren', () => {
+  // Los hrtime de las fases pueden sumar un pelo más que el total por redondeo. Un "resto"
+  // negativo en la pantalla se leería como un error del panel.
+  stats._reset();
+  stats.registrarPoll({ ms: 10, msSesion: 5, msPresencia: 5, msEstado: 5, msCuerpo: 5 });
+  const b = [...stats._buffer().values()][0];
+  const r = stats.resumir([{ minuto: new Date(), pid: 1, ...b }]);
+  assert.equal(r.desglose.resto, 0);
+  stats._reset();
+});
+
+test('sin polls no hay desglose, y eso es null y no ceros', () => {
+  // Ceros dirían "cada fase tarda cero", que es distinto de "no hubo polls que medir".
+  assert.equal(stats.resumir([]).desglose, null);
+});
+
+test('el retraso del event loop viaja en el contexto y se agrega con máximo', () => {
+  // Lo escribe UN worker; el otro trae null. Y es el juez que separa "la base tarda" de "el
+  // proceso está saturado".
+  stats._reset();
+  stats.registrarContexto({ loopMs: 1.2, loopP99Ms: 8 });
+  assert.equal([...stats._buffer().values()][0].loopP99Ms, 8);
+  stats._reset();
+
+  const serie = stats.agregarSerie([
+    muestra({ pid: 1, polls: 10, loopMs: 1.2, loopP99Ms: 8 }),
+    muestra({ pid: 2, polls: 10, loopMs: null, loopP99Ms: null }),
+  ], 1);
+  assert.equal(serie[0].loopP99Ms, 8, 'NO 16');
+});

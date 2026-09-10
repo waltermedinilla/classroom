@@ -433,7 +433,8 @@
         <span class="material-symbols-outlined metric-icon" style="color:#ea8600">timer</span>
         <div class="metric-label">Tiempo por poll</div>
         <div class="metric-value" style="font-size:26px" id="m-sala-ms">—</div>
-        <div class="metric-sub">dentro del servidor</div>
+        <div class="metric-sub" id="m-sala-desglose">—</div>
+        <div class="metric-sub" id="m-sala-loop" style="color:var(--text-hint)">—</div>
       </div>
       <div class="metric-card">
         <span class="material-symbols-outlined metric-icon" style="color:#9334e6">download</span>
@@ -910,6 +911,24 @@
             : 'ninguna colgada');
       $s('m-sala-polls').textContent    = SalaChart.corto(r.polls);
       $s('m-sala-ms').textContent       = (r.msPorPoll || 0) + ' ms';
+
+      // ⭐ El desglose: a dónde se van esos milisegundos. Sin esto había que adivinar entre
+      // "es Mongo" y "es el proceso saturado", que llevan a arreglos opuestos.
+      //
+      // "resto" es lo que no cubre ninguna fase: el tiempo que el handler pasó ESPERANDO para
+      // volver de un await. Resto alto con base baja = contención.
+      const dg = r.desglose;
+      $s('m-sala-desglose').textContent = dg
+        ? 'sesión ' + dg.sesion + ' · presencia ' + dg.presencia + ' · estado ' + dg.estado +
+          ' · armar ' + dg.cuerpo + ' · espera ' + dg.resto + '  (ms)'
+        : 'dentro del servidor';
+
+      // El retraso del event loop es el juez: en el piso, el proceso no está saturado y el
+      // tiempo del poll es la base. Si sube, el poll espera su turno.
+      $s('m-sala-loop').textContent = r.loopP99Ms == null
+        ? ''
+        : 'event loop: ' + r.loopMs + ' ms de media, ' + r.loopP99Ms + ' ms el peor 1%' +
+          (r.loopP99Ms > 50 ? '  ⚠️ el proceso tiene cola' : '  (holgado)');
       $s('m-sala-bytes').textContent    = SalaChart.bytesCortos(r.bytesPorPoll);
       $s('m-sala-costos-fecha').textContent = (r.costos && r.costos.medidoEl) || '—';
 
@@ -961,15 +980,27 @@
         ? c.minX + ' salas' + ' … ' + c.maxX + ' salas'
         : '';
 
+      // El texto del veredicto.
+      //
+      // ⚠️ NINGUNO ATRIBUYE CAUSA, y eso es a propósito (corregido el 2026-09-10). Decía "hay
+      // algo superlineal", que suena a que la cantidad de salas CAUSA el aumento. No se puede
+      // sostener: "más salas" y "más polls por minuto" suben juntos —son colineales— y cuando
+      // hay más salas la escuela está más activa, o sea que el servidor está más ocupado con
+      // TODO lo demás. El `ms` es tiempo de reloj y se come esa contención venga de donde venga.
+      //
+      // El gráfico muestra una correlación. Quién la causa lo dice el desglose del poll, no esto.
+      const ms10 = (c.porDiezSalas || 0).toFixed(1);
+      const conf = c.r2 == null ? '' : ' (ajuste ' + Math.round(c.r2 * 100) + '%)';
       const VEREDICTO = {
         'sin-datos': ['—', 'Todavía no hay minutos suficientes con salas abiertas para trazar la curva.'],
-        'plano':     ['#34a853', 'Plano: el costo por poll no crece con la cantidad de salas. La sala escala.'],
-        'sube-poco': ['#ea8600', 'Sube despacio: cada 10 salas más agregan ' + ((c.porDiezSalas || 0).toFixed(1)) + ' ms al poll. Mirarlo, sin urgencia.'],
-        'sube':      ['#ea4335', '⚠️ Sube: cada 10 salas más agregan ' + ((c.porDiezSalas || 0).toFixed(1)) + ' ms al poll. Hay algo superlineal y la spec necesita otra vuelta.'],
+        'disperso':  ['#ea8600', 'Los puntos no siguen una recta' + conf + ': con más salas el costo sube y baja sin patrón. No se puede concluir nada de este rango — probá una ventana más corta.'],
+        'plano':     ['#34a853', 'Plano' + conf + ': el costo por poll se mantiene aunque suban las salas. La sala escala.'],
+        'sube-poco': ['#ea8600', 'Sube despacio' + conf + ': con 10 salas más, cada poll cuesta ' + ms10 + ' ms más. Sin urgencia.'],
+        'sube':      ['#ea4335', 'Con 10 salas más, cada poll cuesta ' + ms10 + ' ms más' + conf + '. ⚠️ OJO: más salas también es más gente y más carga general — este gráfico no distingue cuál de las tres manda. Para saberlo, mirá el desglose del poll acá abajo.'],
       };
-      const v = VEREDICTO[c.veredicto] || VEREDICTO['sin-datos'];
-      $s('m-sala-veredicto').textContent = v[1];
-      $s('m-sala-veredicto').style.color = v[0] === '—' ? 'var(--text-secondary)' : v[0];
+      const ver = VEREDICTO[c.veredicto] || VEREDICTO['sin-datos'];
+      $s('m-sala-veredicto').textContent = ver[1];
+      $s('m-sala-veredicto').style.color = ver[0] === '—' ? 'var(--text-secondary)' : ver[0];
     }
 
     async function fetchSala() {

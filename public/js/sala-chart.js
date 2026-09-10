@@ -64,6 +64,22 @@ function curvaPorSalas(porSalas, ancho, alto) {
     den += (xs[i] - mediaX) ** 2;
   }
   const pendiente = den === 0 ? 0 : num / den;   // ms de poll por cada sala más
+  const ordenada  = mediaY - pendiente * mediaX;
+
+  // ⭐ QUÉ TAN BIEN LA RECTA DESCRIBE LOS PUNTOS (R²). Agregado el 2026-09-10.
+  //
+  // Sin esto el gráfico daba un veredicto SIEMPRE, aunque los puntos no siguieran ninguna
+  // recta. Medido en producción ese día, el rango de 7 días decía "sube" sobre esto:
+  //
+  //     7 salas → 934 ms      10 salas → 182 ms
+  //
+  // …que va para abajo. Una pendiente sobre puntos dispersos es un número, no una conclusión.
+  let ssRes = 0, ssTot = 0;
+  for (let i = 0; i < n; i++) {
+    ssRes += (ys[i] - (pendiente * xs[i] + ordenada)) ** 2;
+    ssTot += (ys[i] - mediaY) ** 2;
+  }
+  const r2 = ssTot === 0 ? 1 : Math.max(0, 1 - ssRes / ssTot);
 
   const puntos = lista.map(p => ({
     x: maxX === minX ? ancho / 2 : ((p.salas - minX) * ancho) / (maxX - minX),
@@ -71,12 +87,36 @@ function curvaPorSalas(porSalas, ancho, alto) {
     salas: p.salas, msPorPoll: p.msPorPoll, minutos: p.minutos,
   }));
 
-  // El umbral: que 10 salas más agreguen menos de 1 ms al poll es "plano" para cualquier uso
-  // práctico. Por encima de eso conviene mirarlo antes de que el aula lo note.
   const porDiezSalas = pendiente * 10;
-  const veredicto = porDiezSalas < 1 ? 'plano' : (porDiezSalas < 3 ? 'sube-poco' : 'sube');
 
-  return { puntos, pendiente, porDiezSalas, veredicto, minX, maxX, topeY };
+  // ⚠️ EL R² SOLO DECIDE CUANDO HAY ALGO QUE EXPLICAR, y esto costó un test.
+  //
+  // La tentación es "si el ajuste es malo, no opines". Pero **una curva de verdad plana tiene
+  // R² casi cero por construcción**: no hay varianza que explicar, así que ninguna recta la
+  // "explica". Con el R² como primer filtro, el mejor resultado posible —el costo por poll no
+  // se mueve— se reportaba como "los puntos no siguen una recta". Justo al revés.
+  //
+  // El orden correcto es mirar primero cuánto se MUEVEN los puntos:
+  //   · si apenas se mueven, ya está: es plano, y el R² no viene al caso;
+  //   · si se mueven mucho, ahí sí importa si una recta lo explica o es una nube.
+  const DISPERSION_PLANA = 0.25;   // el rango vale menos de un cuarto del promedio
+  const R2_MINIMO        = 0.5;
+
+  const dispersion = mediaY === 0 ? 0 : (Math.max(...ys) - Math.min(...ys)) / mediaY;
+
+  let veredicto;
+  if (dispersion < DISPERSION_PLANA) {
+    veredicto = 'plano';
+  } else if (r2 < R2_MINIMO) {
+    veredicto = 'disperso';
+  } else {
+    // El umbral: que 10 salas más agreguen menos de 1 ms al poll es "plano" para cualquier uso
+    // práctico. Por encima de eso conviene mirarlo antes de que el aula lo note.
+    veredicto = porDiezSalas < 1 ? 'plano' : (porDiezSalas < 3 ? 'sube-poco' : 'sube');
+  }
+
+  return { puntos, pendiente, porDiezSalas, r2, dispersion, veredicto,
+           minX, maxX, topeY, R2_MINIMO, DISPERSION_PLANA };
 }
 
 /* ─── ⭐ El diagnóstico ──────────────────────────────────────────────────────── */
@@ -187,13 +227,43 @@ function diagnostico(resumen) {
   //
   // Un ms por poll alto CON el cache sano no se explica por las palancas: significa que
   // apareció trabajo nuevo en el poll. Es la lectura que un número suelto no da.
+  // ⭐ Y ACÁ EL PANEL DEJA DE ADIVINAR (2026-09-10). Antes decía "probablemente una query
+  // nueva", que era una corazonada. Con el desglose se puede señalar la fase, y con el retraso
+  // del event loop se distingue "la base tarda" de "el proceso está saturado" — que llevan a
+  // arreglos opuestos: índices contra CPU.
   const cachePct = (palancas.cache || {}).pct;
-  if (r.msPorPoll > 20 && cachePct != null && cachePct >= 60) {
-    hallazgos.push({
-      nivel: 'aviso',
-      titulo: `El poll tarda ${r.msPorPoll} ms con el cache sano`,
-      detalle: 'Las palancas están funcionando, así que el tiempo viene de otro lado: probablemente una query nueva en el camino del poll.',
-    });
+  const d = r.desglose;
+
+  if (r.msPorPoll > 20 && d) {
+    const mongo = d.sesion + d.presencia + d.estado;
+    const fases = [
+      { n: 'resolver la sesión de la sala', ms: d.sesion },
+      { n: 'la presencia',                  ms: d.presencia },
+      { n: 'armar el estado (mensajes y presencia)', ms: d.estado },
+      { n: 'serializar la respuesta',       ms: d.cuerpo },
+    ].sort((a, b) => b.ms - a.ms);
+
+    if (r.loopP99Ms != null && r.loopP99Ms > 50) {
+      hallazgos.push({
+        nivel: 'alerta',
+        titulo: `El proceso está saturado: el event loop se atrasa ${r.loopP99Ms} ms`,
+        detalle: `De los ${r.msPorPoll} ms del poll, ${d.resto} son esperando turno y no trabajando. El cuello es CPU, no la base: acá no sirve tocar queries ni índices.`,
+      });
+    } else if (d.resto > mongo) {
+      hallazgos.push({
+        nivel: 'aviso',
+        titulo: `El poll pasa más tiempo esperando (${d.resto} ms) que trabajando (${mongo} ms)`,
+        detalle: 'El proceso tiene cola. Todavía no llega a saturarse —el event loop está bien— pero es la dirección a vigilar si sube el uso.',
+      });
+    } else {
+      hallazgos.push({
+        nivel: 'aviso',
+        titulo: `El poll tarda ${r.msPorPoll} ms, y ${fases[0].ms} se van en ${fases[0].n}`,
+        detalle: cachePct != null && cachePct >= 60
+          ? 'Las palancas funcionan, así que el tiempo es trabajo real de la base en esa fase. Ahí es donde conviene mirar índices o sacar una query.'
+          : 'Y encima el cache no está ayudando: arreglá eso primero, que puede explicarlo solo.',
+      });
+    }
   }
 
   if (!hallazgos.some(h => h.nivel !== 'ok')) {

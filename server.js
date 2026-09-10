@@ -915,6 +915,22 @@ connectDB().then(() => {
     const RoomPresence = require('./models/RoomPresence');
     const { ONLINE_WINDOW_MS } = require('./services/liveRoom');
 
+    // ── Retraso del event loop ────────────────────────────────────────────────
+    //
+    // ⭐ ES EL JUEZ QUE SEPARA LAS DOS HIPÓTESIS del tiempo por poll (2026-09-10). El panel
+    // decía "78 ms por poll" y la pregunta era si eso es Mongo o es el proceso saturado — y
+    // llevan a arreglos OPUESTOS: índices contra CPU.
+    //
+    // Esto mide cuánto tarda el proceso en atender un timer que ya debía haber disparado. En
+    // el piso (0-2 ms) significa que no está saturado y el tiempo del poll es la base. Si
+    // sube, el poll está esperando su turno.
+    //
+    // Lo provee Node: es un histograma nativo, sin costo apreciable. `resolution: 20` es cada
+    // cuánto se toma la muestra; más fino no aporta nada a esta escala.
+    const { monitorEventLoopDelay } = require('perf_hooks');
+    const loop = monitorEventLoopDelay({ resolution: 20 });
+    loop.enable();
+
     const muestreoSala = setInterval(async () => {
       try {
         const desde = new Date(Date.now() - ONLINE_WINDOW_MS);
@@ -932,10 +948,18 @@ connectDB().then(() => {
           RoomSession.countDocuments({ closedAt: null }),
           RoomPresence.countDocuments({ lastPingAt: { $gte: desde } }),
         ]);
+        // El histograma viene en NANOsegundos y se resetea después de leerlo: cada muestra
+        // describe SU minuto, no todo lo que pasó desde que arrancó el worker.
+        const loopMs    = +(loop.mean / 1e6).toFixed(2);
+        const loopP99Ms = +(loop.percentile(99) / 1e6).toFixed(2);
+        loop.reset();
+
         salaStats.registrarContexto({
           salasAbiertas: sesionesConGente.length,
           sesionesSinCerrar,
           personasEnSalas,
+          loopMs,
+          loopP99Ms,
         });
       } catch { /* telemetría: si Mongo no contesta, este minuto queda sin contexto y listo */ }
     }, 60 * 1000);

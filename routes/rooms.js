@@ -509,11 +509,23 @@ async function anunciarIngreso(req, session) {
 // GET /courses/:id/sala/poll?since=N — el latido de la sala.
 // Es la ruta más caliente de la feature: corre cada 4 s por cada persona conectada.
 router.get('/:id/sala/poll', async (req, res, next) => {
+  // ── Reloj de fases (specs/monitor-sala-escala.spec.md) ────────────────────
+  //
+  // El panel decía "78 ms por poll" y no había forma de saber a dónde se iban. Sin el desglose
+  // había que ADIVINAR entre "es Mongo" y "es el event loop", y llevan a arreglos opuestos: uno
+  // se ataca con índices o menos queries, el otro con CPU o con menos trabajo por request.
+  //
+  // Son tres relojes más por poll: nanosegundos. Lo que NO cubren —la espera para volver de
+  // cada await cuando el proceso está ocupado— queda en el "resto", y ese es el dato
+  // interesante: resto alto con Mongo bajo significa contención, no base lenta.
   const t0 = process.hrtime.bigint();
+  const ms = (desde) => Number(process.hrtime.bigint() - desde) / 1e6;
   try {
+    const tSesion = process.hrtime.bigint();
     const session = await sesionAbierta(req.course._id);
     const since   = Math.max(0, parseInt(req.query.since, 10) || 0);
     await aplicarModo(req, session);
+    const msSesion = ms(tSesion);
 
     // La presencia se registra en el poll, no en el render: así el que deja la pestaña
     // abierta sigue contando como presente y el que la cierra desaparece solo.
@@ -521,19 +533,25 @@ router.get('/:id/sala/poll', async (req, res, next) => {
     //
     // `escrito` dice si esta vuelta llegó a tocar la base o si RN-3 la frenó por tener el ping
     // todavía fresco. Es lo único que se agrega acá, y es para la telemetría de más abajo.
+    const tPresencia = process.hrtime.bigint();
     let presenciaEscrita = false;
     if (session && req.modo !== 'observacion') {
       const r = await live.touchPresence(session, usuario(req));
       presenciaEscrita = !!r.escrito;
     }
+    const msPresencia = ms(tPresencia);
 
     // `pv` es la huella de la presencia que el navegador ya tiene pintada (RN-2). El render
     // inicial no la manda, y por eso siempre recibe el bloque entero.
+    const tEstado = process.hrtime.bigint();
     const estado = await estadoDeSala(req, session, since, req.query.pv || null);
+    const msEstado = ms(tEstado);
 
     // Se serializa acá y no en res.json() para saber el peso exacto de la respuesta sin
     // serializarla dos veces. Es el MISMO JSON.stringify que iba a hacer res.json().
-    const cuerpo = JSON.stringify(estado);
+    const tCuerpo  = process.hrtime.bigint();
+    const cuerpo   = JSON.stringify(estado);
+    const msCuerpo = ms(tCuerpo);
 
     // ── Telemetría de la sala (specs/monitor-sala-escala.spec.md) ────────────
     //
@@ -547,7 +565,11 @@ router.get('/:id/sala/poll', async (req, res, next) => {
     // 137 ms de promedio cuando el handler real cuesta ~4. La tarjeta dice "dentro del
     // servidor", así que tiene que medir eso.
     salaStats.registrarPoll({
-      ms: Number(process.hrtime.bigint() - t0) / 1e6,
+      ms: ms(t0),
+
+      // El desglose. La suma de las cuatro NO da el total: la diferencia es el "resto", y es
+      // lo que delata contención del event loop — tiempo esperando, no trabajando.
+      msSesion, msPresencia, msEstado, msCuerpo,
 
       // El peso de la respuesta, sin comprimir.
       //

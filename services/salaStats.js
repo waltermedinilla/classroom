@@ -96,6 +96,7 @@ function percentilEntrega(m, p = 0.95) {
 // las que hay. Lo escribe un solo worker, así que el otro trae null y el máximo lo ignora.
 const SUMABLES = [
   'polls', 'msTotal', 'bytesTotal',
+  'msSesionTotal', 'msPresenciaTotal', 'msEstadoTotal', 'msCuerpoTotal',
   'cacheAciertos', 'cacheFallos',
   'presenciaOmitida', 'presenciaEnviada',
   'presenciaNoEscrita', 'presenciaEscrita',
@@ -104,7 +105,7 @@ const SUMABLES = [
   'pollsAtrasados', 'pollsMuyAtrasados',
 ];
 const MAXIMOS  = ['entregaMsMax', 'atrasoMax'];
-const CONTEXTO = ['salasAbiertas', 'sesionesSinCerrar', 'personasEnSalas'];
+const CONTEXTO = ['salasAbiertas', 'sesionesSinCerrar', 'personasEnSalas', 'loopMs', 'loopP99Ms'];
 
 function puntoVacio(t) {
   const p = { t };
@@ -185,6 +186,19 @@ function resumir(muestras) {
     polls: t.polls,
     msPorPoll:    t.polls ? +(t.msTotal / t.polls).toFixed(2) : 0,
     bytesPorPoll: t.polls ? Math.round(t.bytesTotal / t.polls) : 0,
+
+    // ⭐ El desglose, en ms por poll. "resto" es lo que no cubre ninguna fase: el tiempo que
+    // el handler pasó esperando para volver de un await. Es el que delata la contención.
+    desglose: t.polls ? {
+      sesion:    +(t.msSesionTotal    / t.polls).toFixed(2),
+      presencia: +(t.msPresenciaTotal / t.polls).toFixed(2),
+      estado:    +(t.msEstadoTotal    / t.polls).toFixed(2),
+      cuerpo:    +(t.msCuerpoTotal    / t.polls).toFixed(2),
+      resto: +Math.max(0, (t.msTotal - t.msSesionTotal - t.msPresenciaTotal
+                           - t.msEstadoTotal - t.msCuerpoTotal) / t.polls).toFixed(2),
+    } : null,
+    loopMs:    t.loopMs,
+    loopP99Ms: t.loopP99Ms,
     salasAbiertas:     t.salasAbiertas,
     personasEnSalas:   t.personasEnSalas,
     // El crudo, y la diferencia contra el de arriba: salas que quedaron sin cerrar y a las
@@ -282,6 +296,11 @@ function registrarPoll(datos) {
     b.msTotal    += datos.ms    || 0;
     b.bytesTotal += datos.bytes || 0;
 
+    b.msSesionTotal    += datos.msSesion    || 0;
+    b.msPresenciaTotal += datos.msPresencia || 0;
+    b.msEstadoTotal    += datos.msEstado    || 0;
+    b.msCuerpoTotal    += datos.msCuerpo    || 0;
+
     if (datos.cacheAcierto) b.cacheAciertos++;      else b.cacheFallos++;
     if (datos.presenciaEnviada) b.presenciaEnviada++; else b.presenciaOmitida++;
     if (datos.presenciaEscrita) b.presenciaEscrita++; else b.presenciaNoEscrita++;
@@ -314,12 +333,14 @@ function registrarPoll(datos) {
 
 // El contexto: cuántas salas y cuánta gente hay. Lo llama UN SOLO worker desde server.js —
 // es un estado global de la escuela, no un contador de tráfico.
-function registrarContexto({ salasAbiertas, sesionesSinCerrar, personasEnSalas }) {
+function registrarContexto({ salasAbiertas, sesionesSinCerrar, personasEnSalas, loopMs, loopP99Ms }) {
   try {
     const b = baldeDe(new Date());
     if (salasAbiertas     != null) b.salasAbiertas     = salasAbiertas;
     if (sesionesSinCerrar != null) b.sesionesSinCerrar = sesionesSinCerrar;
     if (personasEnSalas   != null) b.personasEnSalas   = personasEnSalas;
+    if (loopMs            != null) b.loopMs            = loopMs;
+    if (loopP99Ms         != null) b.loopP99Ms         = loopP99Ms;
   } catch { /* idem */ }
 }
 
