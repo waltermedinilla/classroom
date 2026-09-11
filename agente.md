@@ -527,6 +527,77 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-11 — El botón verde ahora aparece solo, y en la sala en vivo
+
+Reclamo de un alumno del **09/09 a las 8:25**:
+
+> *"Quería saber por qué se demora tanto el sistema en habilitar el botón verde para darnos el
+> presente. Hace más de media hora empezamos con la virtualidad de geografía. Me di presente por
+> escrito pero todavía no aparece la opción del botón verde."*
+
+Tenía razón, y por **dos** motivos a la vez. Ninguno era una demora: el botón no iba a aparecer
+nunca.
+
+1. **El cartel vivía SOLO en el inicio** (`views/dashboard.ejs` era el único `include`). Durante
+   una clase virtual el alumno está en la **sala en vivo**, que es otra pantalla. Se nota en su
+   propio mensaje: *"me di presente por escrito"* — escribió en el chat de la sala.
+2. **Era HTML del servidor y se pintaba una sola vez, al cargar la página.** Con la pestaña ya
+   abierta, que preceptoría abriera la toma no producía ningún efecto.
+
+⭐ Y el detalle que lo confirma: `GET /asistencia/abierta` **ya existía**, con el comentario *"lo
+que consume el cartel del inicio"*, y **no lo llamaba nadie**. Estaba construido para esto y sin
+conectar.
+
+**Descartado primero**: nada del camino del botón había cambiado desde el 30/08, así que la
+tanda RN-1..RN-4 de la sala no tenía nada que ver. Y `puedeAutoMarcarse()` no tiene ninguna
+demora puesta: ni minutos mínimos de presencia ni ventana de gracia.
+
+#### Lo que se hizo
+
+- **`public/js/asistenciaBanda.js` (nuevo)**: el marcado de la banda y la regla de repintado, en
+  JS pelado. Lo requiere `routes/courses.js` para la primera pintada del inicio y lo carga el
+  navegador para los refrescos — **un solo renderizador**. Es el mismo patrón que ya usan
+  `pendienteActividad.js` y `visibilidadActividad.js`.
+- **El cartel se refresca solo**, cada minuto y **solo con la pestaña a la vista**, preguntando
+  en el acto al volver a ella.
+- **El cartel va también en la sala en vivo**, pegado debajo del aviso que dice que el registro
+  de conexión no reemplaza la asistencia oficial. La sala **no** paga una consulta más en su
+  render: el componente se pide los datos solo.
+- **Se repinta solo cuando cambia el CONJUNTO de tomas**, nunca por `yaDi`: si no, el sondeo del
+  minuto siguiente le borraría al alumno el mensaje que acaba de ver.
+
+#### ⚠️ Esto REVIERTE una decisión escrita
+
+`RN-20` de la spec decía, con todas las letras, *"Nada de esto aparece en la sala en vivo"*, y su
+motivo era evitar que el alumno creyera que **estar** en la sala ya es dar la asistencia. La
+reversión no reintroduce esa confusión —un botón explícito dice lo contrario: hay un acto aparte
+y hay que hacerlo— pero **la sala ahora sí avisa que se abrió una toma**, cosa que RN-20
+prohibía. Queda registrado en la spec con los dos lados, y para sacarlo alcanza con borrar una
+línea de `live-room.ejs`.
+
+#### El smoke encontró un defecto mío, y el grave no era el que falló
+
+Al mover el marcado a JS dejé `'Dar presente'` escrito a mano en la recuperación de error del
+click del partial, así que el inicio de **cualquier** alumno contenía ese texto aunque no hubiera
+ninguna asistencia abierta. `attendance-autoasistencia-toggle` comprueba justamente lo contrario
+y se puso en rojo (y arrastró a otros 5 al dejar la autoasistencia apagada).
+
+⭐ **Lo grave era lo otro**: `student-attendance-banner` afirma que con la toma abierta el texto
+**sí** está en el inicio — y con el literal suelto habría pasado siempre, sin probar nada. Un
+test que no puede fallar es peor que no tenerlo. Los textos pasaron a `ETIQUETAS`, dentro del
+módulo, y hay un test que vigila que no vuelvan al partial.
+
+**Verificado en el navegador, de punta a punta**: con la sala cargada y la asistencia cerrada,
+se abrió la autoasistencia y **la banda apareció sin recargar**; el presente quedó en la base
+(`status: presente`, `selfMarkedAt`); y un sondeo posterior **no** pisó el mensaje de
+confirmación. Los datos de prueba se crearon por la vía real del service y se borraron filtrando
+por el `_id` de la toma creada, nunca por la división.
+
+**Tests**: 15 unitarios nuevos. 1.229 unitarios (los 7 que fallan son de los `repo*.test.js` del
+trabajo en curso de backup incremental, sin commitear y sin tocar), 405 de smoke y roles sin
+hallazgos.
+
+
 ### 2026-09-11 — El panel se contradijo a sí mismo: un pico no es un estado
 
 El usuario trajo esto de producción, de una sola tarjeta:

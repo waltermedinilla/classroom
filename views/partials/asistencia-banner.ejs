@@ -1,10 +1,5 @@
 <%#
-  Cartel del inicio del alumno: "Dar presente".
-  Ver specs/asistencia-preceptoria.spec.md.
-
-  Espera en locals: tomasAsistencia = [{ id, curso, abiertaDesde, cierraA, yaDi, estado }].
-  Llega vacío para todos los roles que no son alumno, y para el alumno sin ninguna toma
-  abierta hoy — en los dos casos este partial no pinta nada.
+  Cartel "Dar presente" del alumno. Ver specs/asistencia-preceptoria.spec.md.
 
   Es un ARRAY y no una toma suelta a propósito: un alumno puede cursar en más de una división
   (repitentes con materias de dos años). En la práctica trae una sola.
@@ -13,8 +8,29 @@
   pantalla del ALUMNO y "dar el presente" es lo que hace él. "Tomar asistencia" es lo que hace
   preceptoría, y con las dos palabras tan parecidas el alumno dudaba de qué estaba apretando.
   La mano levantada (front_hand) va por lo mismo: se entiende sin leer.
+
+  ⭐ SE REFRESCA SOLO, Y VIVE EN DOS PANTALLAS (2026-09-11)
+
+  Antes era render del servidor y nada más: el botón aparecía únicamente al CARGAR la página, y
+  solo en el Inicio. El 09/09 a las 8:25 un alumno reclamó que *"hace más de media hora empezamos
+  con la virtualidad de geografía… todavía no aparece la opción del botón verde"* — y tenía razón
+  por dos motivos a la vez: estaba en la SALA EN VIVO, donde el cartel no existía, y con la
+  pestaña del Inicio ya abierta tampoco se iba a pintar nunca. `GET /asistencia/abierta` existía
+  justo para esto y no lo llamaba nadie.
+
+  Ahora:
+   · el marcado sale de `public/js/asistenciaBanda.js`, UNO solo para la primera pintada y para
+     el refresco (dos marcados para lo mismo divergen);
+   · `locals.tomasAsistencia` es solo la PRIMERA pintada. El Inicio la trae servida, así no
+     parpadea; donde no viene —la sala en vivo— el componente se la pide al cargar, y así la
+     sala no paga una query más en su render, que es la pantalla caliente;
+   · se repregunta cada minuto, y SOLO con la pestaña a la vista.
+
+  Se pinta solo para ALUMNOS: para cualquier otro rol el endpoint devuelve [] y el sondeo sería
+  tráfico al vacío. ⚠️ La condición es `user.role`, NO el `esAlumno` de la sala: ese es
+  "no gestiona el curso" y da true también para preceptoría y dirección.
 %>
-<% if (Array.isArray(locals.tomasAsistencia) && tomasAsistencia.length) { %>
+<% if (locals.user && user.role === 'student') { %>
 <style>
   .as-band { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
              background:#e6f4ea; border:1px solid #ceead6; border-radius:12px;
@@ -24,7 +40,7 @@
   .as-band-txt { flex:1 1 220px; font-size:14px; color:#0d652d; }
   .as-band-txt small { display:block; color:#5f6368; font-size:12px; margin-top:2px; }
   /* inline-flex + justify-content:center: la mano y el texto quedan centrados como una
-     sola pieza, y siguen centrados cuando el texto cambia ("Enviando…", "Presente dado"). */
+     sola pieza, y siguen centrados cuando el texto cambia al enviarse y al quedar dado. */
   .as-band-btn { display:inline-flex; align-items:center; justify-content:center; gap:8px;
                  font-size:14px; font-weight:500; padding:10px 20px; border-radius:8px;
                  border:none; background:#137333; color:#fff; cursor:pointer;
@@ -45,70 +61,119 @@
   }
 </style>
 
-<% tomasAsistencia.forEach(t => { %>
-  <div class="as-band <%= t.yaDi ? 'dada' : '' %>" data-toma="<%= t.id %>">
-    <span class="material-symbols-outlined"><%= t.yaDi ? 'task_alt' : 'fact_check' %></span>
-    <div class="as-band-txt">
-      <% if (t.yaDi) { %>
-        Ya diste el presente de hoy en <strong><%= t.curso %></strong>.
-        <small>Si te la tomaron distinto, hablalo con preceptoría.</small>
-      <% } else { %>
-        Preceptoría abrió la asistencia de <strong><%= t.curso %></strong>.
-        <small>
-          Abierta desde las <%= t.abiertaDesde %><% if (t.cierraA) { %> · cierra <%= t.cierraA %><% } %>
-        </small>
-      <% } %>
-    </div>
-    <button class="as-band-btn" <%= t.yaDi ? 'disabled' : '' %>>
-      <span class="material-symbols-outlined" aria-hidden="true"><%= t.yaDi ? 'task_alt' : 'front_hand' %></span>
-      <span class="as-band-btn-txt"><%= t.yaDi ? 'Presente dado' : 'Dar presente' %></span>
-    </button>
-  </div>
-<% }) %>
+<%# El host existe SIEMPRE (aunque no haya ninguna toma abierta): es lo que le da al sondeo un
+    lugar donde pintar cuando preceptoría abre la asistencia con la página ya cargada. Ése era
+    exactamente el agujero.
 
+    Las bandas de adentro las arma `routes/courses.js` con el MISMO módulo que refresca el
+    navegador, así que el inicio sigue sirviendo HTML hecho. `data-tomas` ausente = "nadie me
+    sirvió nada, pedilo vos", que es el caso de la sala en vivo. %>
+<div id="asBanda"<% if (Array.isArray(locals.tomasAsistencia)) { %> data-tomas="<%= JSON.stringify(tomasAsistencia) %>"<% } %>><%- locals.tomasAsistenciaHTML || '' %></div>
+
+<script src="/js/asistenciaBanda.js"></script>
 <script>
 (function () {
-  // El botón tiene DOS hijos (la mano y el texto). Tocar btn.textContent lo dejaría sin
-  // ícono en el primer click, así que se cambian por separado.
-  function pintarBoton(btn, icono, texto) {
-    btn.querySelector('.material-symbols-outlined').textContent = icono;
-    btn.querySelector('.as-band-btn-txt').textContent = texto;
+  const host = document.getElementById('asBanda');
+  if (!host || !window.AsistenciaBanda) return;
+
+  const AB      = window.AsistenciaBanda;
+  const CADA_MS = 60000;   // un minuto: el reclamo era de media hora, no de segundos
+
+  let firmaPintada = null;
+  let timer        = null;
+  let enVuelo      = false;
+
+  function aplicar(tomas) {
+    const r = AB.pintado(firmaPintada, tomas);
+    if (!r.repintar) return;          // el conjunto no cambió: no se toca el DOM
+    firmaPintada = r.firma;
+    host.innerHTML = r.html;
   }
 
-  document.querySelectorAll('.as-band').forEach(band => {
-    const btn = band.querySelector('.as-band-btn');
-    if (btn.disabled) return;
+  async function consultar() {
+    try {
+      const r = await fetch('/asistencia/abierta', { headers: { Accept: 'application/json' } });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (Array.isArray(d.tomas)) aplicar(d.tomas);
+    } catch { /* sin red: se reintenta en el próximo turno, no se borra lo que hay */ }
+  }
 
-    btn.addEventListener('click', async () => {
-      btn.disabled = true;
-      pintarBoton(btn, 'hourglass_top', 'Enviando…');
-      try {
-        const r = await fetch('/asistencia/' + band.dataset.toma + '/presente', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          // Sin cuerpo a propósito: el servidor no lee nada de acá. El alumno se marca a sí
-          // mismo y siempre como presente — mandar un studentId o un estado no haría nada.
-          body: '{}',
-        });
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(data.error || 'No se pudo dar el presente');
+  // Ciclo encadenado (setTimeout y no setInterval) por lo mismo que el poll de la sala: con
+  // setInterval, un pedido que tarda más que el intervalo deja dos en vuelo.
+  function programar() {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(ciclo, CADA_MS);
+  }
 
-        band.classList.add('dada');
-        band.querySelector('.material-symbols-outlined').textContent = 'task_alt';
-        pintarBoton(btn, 'task_alt', 'Presente dado');
-        band.querySelector('.as-band-txt').innerHTML = data.respetada === false
-          // El preceptor ya había decidido otra cosa: se le dice, en vez de mostrarle un
-          // "listo" que no se corresponde con lo que va a figurar en la planilla.
-          ? 'Preceptoría ya te había tomado la asistencia. Quedó registrado que diste el presente.' +
-            '<small>Si no coincide con lo que pasó, hablalo con preceptoría.</small>'
-          : 'Listo, quedó tu presente de hoy.<small>Lo puede corregir preceptoría.</small>';
-      } catch (e) {
-        btn.disabled = false;
-        pintarBoton(btn, 'front_hand', 'Dar presente');
-        band.querySelector('.as-band-txt').insertAdjacentHTML('beforeend',
-          '<small style="color:#d93025">' + e.message + '</small>');
-      }
-    });
+  async function ciclo() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (enVuelo) return;              // lo reprograma el que está en vuelo
+    // Con la pestaña tapada no se pregunta: la mayoría de las pestañas del aula están de fondo,
+    // y este sondeo se suma al de la sala, que ya va cada 4-8 s.
+    if (document.visibilityState === 'visible') {
+      enVuelo = true;
+      try { await consultar(); } finally { enVuelo = false; }
+    }
+    programar();
+  }
+
+  // Delegado en el host y no por botón: las bandas se repintan, y los handlers atados a cada
+  // botón se irían con el innerHTML.
+  host.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('.as-band-btn');
+    if (!btn || btn.disabled) return;
+    const band = btn.closest('.as-band');
+    if (!band) return;
+
+    // El botón tiene DOS hijos (la mano y el texto). Tocar btn.textContent lo dejaría sin
+    // ícono en el primer click, así que se cambian por separado.
+    const pintarBoton = (icono, texto) => {
+      btn.querySelector('.material-symbols-outlined').textContent = icono;
+      btn.querySelector('.as-band-btn-txt').textContent = texto;
+    };
+
+    btn.disabled = true;
+    pintarBoton(AB.ETIQUETAS.enviando.icono, AB.ETIQUETAS.enviando.texto);
+    try {
+      const r = await fetch('/asistencia/' + band.dataset.toma + '/presente', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        // Sin cuerpo a propósito: el servidor no lee nada de acá. El alumno se marca a sí
+        // mismo y siempre como presente — mandar un studentId o un estado no haría nada.
+        body: '{}',
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'No se pudo dar el presente');
+
+      band.classList.add('dada');
+      band.querySelector('.material-symbols-outlined').textContent = 'task_alt';
+      pintarBoton(AB.ETIQUETAS.dada.icono, AB.ETIQUETAS.dada.texto);
+      band.querySelector('.as-band-txt').innerHTML = data.respetada === false
+        // El preceptor ya había decidido otra cosa: se le dice, en vez de mostrarle un
+        // "listo" que no se corresponde con lo que va a figurar en la planilla.
+        ? 'Preceptoría ya te había tomado la asistencia. Quedó registrado que diste el presente.' +
+          '<small>Si no coincide con lo que pasó, hablalo con preceptoría.</small>'
+        : 'Listo, quedó tu presente de hoy.<small>Lo puede corregir preceptoría.</small>';
+    } catch (e) {
+      btn.disabled = false;
+      pintarBoton(AB.ETIQUETAS.dar.icono, AB.ETIQUETAS.dar.texto);
+      band.querySelector('.as-band-txt').insertAdjacentHTML('beforeend',
+        '<small style="color:#d93025">' + e.message + '</small>');
+    }
+  });
+
+  // Primera pintada: si el servidor ya la sirvió (el Inicio), NO se repinta — solo se adopta su
+  // firma, para que el primer sondeo no reemplace por lo mismo. Donde no vino nada —la sala en
+  // vivo— se pide en el acto.
+  let servidas = null;
+  try { servidas = JSON.parse(host.dataset.tomas || 'null'); } catch { /* atributo raro */ }
+  if (Array.isArray(servidas)) { firmaPintada = AB.firmaDe(servidas); programar(); } else { ciclo(); }
+
+  // Al volver a la pestaña se pregunta en el acto: es el caso del alumno que estuvo en otra
+  // solapa durante la clase y vuelve a mirar si ya puede dar el presente.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') ciclo();
   });
 })();
 </script>

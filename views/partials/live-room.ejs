@@ -288,6 +288,18 @@
     <small>El registro de conexión no reemplaza la asistencia oficial.</small>
   </div>
 
+  <%# ⭐ EL BOTÓN "DAR PRESENTE", ACÁ TAMBIÉN (2026-09-11). Va pegado al aviso de arriba, que es
+      el que dice que estar conectado NO es la asistencia oficial: el paso siguiente es poder
+      darla, y hasta hoy había que salir al Inicio a buscarla.
+
+      El 09/09 un alumno esperó media hora un botón que no estaba donde él miraba. Durante una
+      clase virtual el alumno está en esta pantalla.
+
+      El partial se pide los datos solo (acá no le llega `tomasAsistencia`), así que el render de
+      la sala NO paga una consulta más. Y se pinta solo para `user.role === 'student'`: ojo que
+      el `esAlumno` de esta sala es "no gestiona el curso" y da true para preceptoría. %>
+  <%- include('asistencia-banner') %>
+
   <% if (modo === 'observacion') { %>
     <div class="lr-card lr-obs">
       <div class="lr-barra">

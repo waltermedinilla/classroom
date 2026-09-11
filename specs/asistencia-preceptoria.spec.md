@@ -250,7 +250,8 @@ divisiones— antes de caer en el router correcto, y paga la query dos veces.
 | `views/preceptor/asistencia.ejs` | Una tarjeta por curso del alcance con el estado de HOY: sin tomar / abierta (N de M) / cerrada. Botones "Pasar lista" y "Abrir ventana" |
 | `views/preceptor/asistencia-toma.ejs` | La grilla: nómina, cuatro botones por alumno, resumen arriba, sugerencias de la sala, cerrar |
 | `views/preceptor/asistencia-historial.ejs` | Días anteriores del curso + resumen del mes + los dos botones de exportación |
-| `views/partials/asistencia-banner.ejs` | El cartel del alumno con el botón "Dar presente" (mano levantada). Se incluye en `views/dashboard.ejs` |
+| `views/partials/asistencia-banner.ejs` | El cartel del alumno con el botón "Dar presente" (mano levantada). Se incluye en `views/dashboard.ejs` **y en `views/partials/live-room.ejs`** (2026-09-11) |
+| `public/js/asistenciaBanda.js` | El marcado de la banda y la regla de repintado. Lo requiere `routes/courses.js` para la primera pintada y lo carga el navegador para los refrescos: **un solo renderizador** |
 
 Ninguna vista formatea horas por su cuenta: reciben `fmt` (`services/liveRoom.js:91`), igual
 que las de la sala.
@@ -447,7 +448,17 @@ materias de dos años). En la práctica trae una sola.
   todas ahogaría `/admin/audit` y no agregaría nada, porque la marca ya guarda quién y cuándo.
 
 - **RN-14 — Sin notificaciones.** Ni al abrir la toma, ni al alumno que no la dio, ni a la
-  familia. El alumno ve el cartel cuando entra a la plataforma y nada más.
+  familia. El alumno ve el cartel y nada más.
+
+  ⚠️ **CORREGIDO EL 2026-09-11: "cuando entra a la plataforma" era demasiado literal.** El
+  cartel se pintaba SOLO al cargar la página, y solo en el inicio. El 09/09 a las 8:25 un
+  alumno reclamó: *"hace más de media hora empezamos con la virtualidad de geografía… todavía
+  no aparece la opción del botón verde"*. Tenía razón dos veces: estaba en la **sala en vivo**,
+  donde el cartel no existía, y con la pestaña del inicio ya abierta tampoco iba a aparecer
+  nunca. `GET /asistencia/abierta` existía justo para esto y **no lo llamaba nadie**.
+
+  Sigue sin haber notificaciones —no se le avisa a nadie—, pero el cartel **se refresca solo
+  cada minuto** y vive también en la sala en vivo. Ver RN-20.
 
 - **RN-15 — `school` denormalizada en las dos colecciones.** Mismo motivo que en `RoomSession`
   (`models/RoomSession.js:19`): todo `$match` del proyecto arranca por la escuela del usuario,
@@ -477,9 +488,48 @@ materias de dos años). En la práctica trae una sola.
   criterio que ya rige en todo el panel de preceptoría, donde un directivo puede dar de alta un
   alumno. El docente **no** entra: 403.
 
-- **RN-20 — Nada de esto aparece en la sala en vivo.** El chat de la clase no muestra la
+- **RN-20 — ⚠️ REVERTIDA el 2026-09-11 a pedido del usuario. El cartel SÍ aparece en la sala
+  en vivo.**
+
+  **Decía**: *"Nada de esto aparece en la sala en vivo. El chat de la clase no muestra la
   asistencia ni avisa que se abrió una toma. Son dos cosas distintas y mezclarlas haría que un
-  alumno crea que entrar a la sala ya es dar la asistencia — que, por RN-09, no lo es.
+  alumno crea que entrar a la sala ya es dar la asistencia — que, por RN-09, no lo es."*
+
+  **Lo que la tumbó**: el reclamo del 09/09 a las 8:25. Durante una clase virtual el alumno
+  está en la sala, no en el inicio, y ahí no había ni cartel ni forma de enterarse. Esperó
+  media hora un botón que estaba en otra pantalla y terminó dando el presente **por chat**, que
+  es justo lo que ninguna regla contempla y no queda en la planilla.
+
+  **Por qué la reversión no reintroduce la confusión que RN-20 quería evitar** —y esto es lo que
+  hay que sostener si alguien la discute—: el riesgo era que el alumno creyera que *estar* en la
+  sala ya es dar la asistencia. Un botón explícito dice exactamente lo contrario: hay un acto
+  aparte, y hay que hacerlo. Por eso el cartel va **pegado debajo del aviso de `lr-aviso`**, que
+  es el que dice *"el registro de conexión no reemplaza la asistencia oficial"*: primero la
+  advertencia, después el modo de cumplirla. RN-09 no se toca — estar conectado sigue sin
+  marcar nada.
+
+  ⚠️ **Lo que sí cambió y conviene tener presente**: la sala ahora **avisa** que se abrió una
+  toma, cosa que RN-20 prohibía expresamente. Si alguna vez se decide que ese aviso molesta en
+  medio de una clase, lo que hay que sacar es el `include('asistencia-banner')` de
+  `views/partials/live-room.ejs` — una línea, sin tocar nada más.
+
+- **RN-21 — El cartel se refresca solo, cada minuto y solo con la pestaña a la vista.**
+  `GET /asistencia/abierta` ya existía para esto y no lo llamaba nadie: el cartel era HTML del
+  servidor y se pintaba una sola vez, al cargar. Con la página ya abierta, abrir la toma no
+  producía ningún efecto hasta que el alumno recargara.
+
+  · **Un minuto**, no segundos: el reclamo era de media hora.
+  · **Solo con la pestaña visible** (`visibilityState`), y se pregunta en el acto al volver a
+    ella. La mayoría de las pestañas del aula están de fondo, y este sondeo se suma al de la
+    sala, que ya va cada 4-8 s.
+  · **La sala NO recibe las tomas en su render**: se las pide al cargar. Así el render de la
+    sala —pantalla caliente— no paga una consulta más. El inicio sí las trae servidas, para que
+    no parpadee.
+  · **Se repinta solo cuando cambia el CONJUNTO de tomas** (apareció o se cerró una), nunca por
+    un cambio de `yaDi`: si no, el sondeo siguiente le borraría al alumno el mensaje que acaba
+    de ver, incluido el *"Preceptoría ya te había tomado la asistencia"* de RN-11.
+  · **Un solo renderizador** (`public/js/asistenciaBanda.js`), que llaman el servidor y el
+    navegador. Dos marcados para la misma banda divergen a la primera corrección.
 
 ## Casos de uso
 

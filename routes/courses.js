@@ -20,6 +20,9 @@ const { INTERESTS, MAX_INTERESTS } = require('../config/interests');
 const live = require('../services/liveRoom');
 // Asistencia de preceptoría: de acá sale el cartel "Dar presente" del inicio del alumno.
 const asistencia = require('../services/attendance');
+// El renderizador del cartel "Dar presente". Es el MISMO archivo que el navegador carga
+// como <script> para refrescarlo: un solo marcado para las dos pintadas.
+const banda      = require('../public/js/asistenciaBanda');
 // Subida de imágenes: multer en memoria + redimensionado/compresión a WebP antes de
 // escribir en disco (ver middleware/image-upload.js y config/imagePresets.js).
 const {
@@ -108,6 +111,10 @@ router.get('/', requireAuth, async (req, res) => {
       )];
       tomasAsistencia = await asistencia.tomasAbiertasDelAlumno(res.locals.user, divisionIds);
     }
+    // El marcado de las bandas sale del MISMO módulo que usa el navegador para refrescarlas
+    // (2026-09-11). Se arma acá y no en el partial para que el inicio siga sirviendo HTML hecho
+    // —sin parpadeo ni espera de red— sin que existan dos marcados para la misma banda.
+    const tomasAsistenciaHTML = banda.bandasHTML(tomasAsistencia);
 
     // Aviso para completar el perfil personal (bio / intereses / proyecto).
     // Solo alumnos y docentes: admin, superadmin y directivo aterrizan en sus propios
@@ -147,7 +154,8 @@ router.get('/', requireAuth, async (req, res) => {
       joined.length >= MAX_MATERIAS_ALUMNO;
 
     res.render('dashboard', { courses, pendingSummary, profilePrompt, autoMatricula,
-      joinByCode: JOIN_BY_CODE_ACTIVO, cupoMateriasLleno, tomasAsistencia });
+      joinByCode: JOIN_BY_CODE_ACTIVO, cupoMateriasLleno, tomasAsistencia,
+      tomasAsistenciaHTML });
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).send('Error del servidor');
