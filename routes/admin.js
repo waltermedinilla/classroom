@@ -16,6 +16,7 @@ const Activity     = require('../models/Activity');
 const Submission   = require('../models/Submission');
 const ActivityView = require('../models/ActivityView');
 const Announcement = require('../models/Announcement');
+const SoeCase      = require('../models/SoeCase');
 const { requireAuth }  = require('../middleware/auth');
 const { requireAdmin } = require('../middleware/admin');
 // Permisos por solapa que el superadmin configura en /superadmin/roles. Solo puede quitar
@@ -647,6 +648,20 @@ router.post('/users/:id/delete', async (req, res) => {
     if (ownedCourses > 0) {
       return res.status(409).json({
         error: `No se puede eliminar: es docente titular de ${ownedCourses} materia(s). Reasigná esas materias a otro docente y volvé a intentarlo.`,
+      });
+    }
+
+    // Un alumno con legajo del gabinete tampoco: `SoeCase` NO se borra con el usuario (es un
+    // registro que tiene que sobrevivir, igual que el rastro de un adjunto dado de baja), así
+    // que la ficha quedaría apuntando a una cuenta inexistente. Las vistas del SOE ya toleran
+    // el hueco desde el 2026-09-12 —antes se caía el panel entero con un 500—, pero un legajo
+    // sin dueño no se puede abrir ni cerrar: hay que cerrarlo ANTES de borrar la cuenta.
+    // Es lo más irreemplazable del sistema: son observaciones sobre un menor.
+    const legajos = await SoeCase.countDocuments({ student: req.params.id });
+    if (legajos > 0) {
+      return res.status(409).json({
+        error: 'No se puede eliminar: tiene un legajo del SOE. Cerralo desde /soe y volvé a intentarlo, '
+             + 'o deshabilitá la cuenta en vez de borrarla (la deja sin acceso y conserva el legajo).',
       });
     }
 

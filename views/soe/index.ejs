@@ -103,7 +103,7 @@
               <tbody>
                 <% pendientes.forEach(p => { %>
                   <tr>
-                    <td><a href="/soe/legajo/<%= p.legajo.student._id %>"><%= p.legajo.student.name %></a></td>
+                    <td><%- include('../partials/soe-alumno-link', { student: p.legajo.student }) %></td>
                     <td><%= p.referral.destino %></td>
                     <td>
                       <span class="chip <%= acceso.ESTADOS_DERIVACION_ALERTA.includes(p.referral.estado) ? 'chip-alerta' : 'chip-aviso' %>">
@@ -135,7 +135,7 @@
               <tbody>
                 <% repasos.forEach(r => { %>
                   <tr>
-                    <td><a href="/soe/legajo/<%= r.student._id %>"><%= r.student.name %></a></td>
+                    <td><%- include('../partials/soe-alumno-link', { student: r.student }) %></td>
                     <td><%= r.division ? r.division.name : '—' %></td>
                     <td>
                       <span class="chip chip-neutro">
@@ -179,7 +179,7 @@
                       <span style="font-size:11.5px;color:var(--text-secondary)"><%= c.citacion.hora %></span>
                     <% } %>
                   </td>
-                  <td><a href="/soe/legajo/<%= c.student._id %>#citaciones"><%= c.student.name %></a></td>
+                  <td><%- include('../partials/soe-alumno-link', { student: c.student, hash: 'citaciones' }) %></td>
                   <td><%= c.division ? c.division.name : '—' %></td>
                   <td><%= agenda.CITADO_LABELS[c.citacion.a] || '—' %></td>
                   <td>
@@ -224,7 +224,7 @@
               <% legajos.forEach(l => { %>
                 <tr>
                   <td>
-                    <a href="/soe/legajo/<%= l.student._id %>"><%= l.student.name %></a>
+                    <%- include('../partials/soe-alumno-link', { student: l.student }) %>
                     <%# El booleano ya viene resuelto por el sanitizado: en nivel resumen el
                         array de derivaciones no llega hasta acá, y este chip es justamente
                         todo lo que ese nivel puede saber de ellas. %>

@@ -57,7 +57,7 @@
             <tbody>
               <% filas.forEach(f => { %>
                 <tr style="<%= f.atencion ? 'background:#fce8e618' : '' %>">
-                  <td><a href="/soe/legajo/<%= f.legajo.student._id %>#derivaciones"><%= f.legajo.student.name %></a></td>
+                  <td><%- include('../partials/soe-alumno-link', { student: f.legajo.student, hash: 'derivaciones' }) %></td>
                   <td><%= f.legajo.division ? f.legajo.division.name : '—' %></td>
                   <td><%= f.referral.destino %></td>
                   <td style="font-size:12.5px;color:var(--text-secondary)"><%= acceso.TIPO_DERIVACION_LABELS[f.referral.tipo] %></td>

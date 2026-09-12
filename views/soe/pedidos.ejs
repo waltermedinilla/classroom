@@ -180,7 +180,7 @@
                 <tr>
                   <td>
                     <% if (p.student) { %>
-                      <a href="/soe/legajo/<%= p.student._id %>#linea"><%= p.student.name %></a>
+                      <%- include('../partials/soe-alumno-link', { student: p.student, hash: 'linea' }) %>
                     <% } else { %>—<% } %>
                   </td>
                   <td><%= p.division ? p.division.name : '—' %></td>

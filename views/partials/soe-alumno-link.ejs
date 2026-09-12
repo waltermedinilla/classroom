@@ -1,0 +1,18 @@
+<%# El nombre del alumno de un legajo, con enlace a su ficha. Cuatro pantallas del SOE lo
+    pintan y las cuatro lo hacían a mano.
+
+    `student` viene de un populate y PUEDE SER NULL: la cuenta del alumno se eliminó y el
+    legajo le sobrevivió. Eso es a propósito —`SoeCase` no se borra con el usuario, igual que
+    un adjunto dado de baja deja su registro (models/SoeCase.js): un legajo del que se puede
+    sacar algo sin dejar rastro no es un registro completo—, así que la vista tiene que saber
+    pintar el hueco.
+
+    ⚠️ Sin esta guarda `student._id` tiraba TypeError y la ruta lo convertía en 500: se caía el
+    PANEL ENTERO, no la fila del legajo huérfano. Verificado el 2026-09-12 renderizando
+    views/soe/index.ejs con `student: null`.
+
+    Se muestra en vez de esconderse, y sin enlace porque no hay ficha a la que ir: el gabinete
+    tiene que ver que ese legajo quedó sin dueño para poder cerrarlo o reasignarlo.
+
+    `hash` es opcional — la pestaña del legajo a la que apunta el enlace. %>
+<% if (student) { %><a href="/soe/legajo/<%= student._id %><%= locals.hash ? '#' + locals.hash : '' %>"><%= student.name %></a><% } else { %><span style="color:var(--text-secondary)">Alumno dado de baja</span><% } %>

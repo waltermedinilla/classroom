@@ -59,6 +59,14 @@ const Announcement = require('../models/Announcement');
 const Subject      = require('../models/Subject');
 const ActivityView = require('../models/ActivityView');
 const Suggestion   = require('../models/Suggestion');
+// Las cuatro colecciones que una fusión de alumnos NO mueve. Se importan para poder CONTARLAS
+// y decirlo en el resultado: medido el 2026-09-12 sobre una copia de producción, una fusión
+// típica deja atrás las asistencias, la fila de la bandeja y decenas de mensajes de sala, y
+// hasta ahora el cartel de éxito no lo mencionaba. Ver specs/fusion-de-cuentas.spec.md.
+const AttendanceMark    = require('../models/AttendanceMark');
+const MessageRecipient  = require('../models/MessageRecipient');
+const RoomMessage       = require('../models/RoomMessage');
+const SoeCase           = require('../models/SoeCase');
 // Módulo de Recursos y reservas. Se importan solo para el diagnóstico de abajo; la lógica del
 // cupo vive entera en services/recursos/cupo.js, que es el único que lo escribe.
 const Recurso      = require('../models/Recurso');
@@ -916,8 +924,15 @@ async function fusionarAlumnos({ clave, keepId, sobrante = 'deshabilitar', email
 
   // 7. Recién ahora la cuenta sobrante. Si le quedaron entregas (las que chocaron, o las de
   //    otro curso) no se borra aunque lo pidan: borrarla dejaría `Submission.student` colgado.
+  //
+  //    Y tampoco si tiene legajo del SOE, por dos motivos distintos: `SoeCase.student` es
+  //    `required` y no se borra en cascada, así que el legajo quedaría sin dueño —imposible de
+  //    abrir o cerrar—, y ese legajo es lo más irreemplazable del sistema. Hay que cerrarlo
+  //    desde /soe antes. Mismo criterio que POST /admin/users/:id/delete.
   const conEntregas = await Submission.countDocuments({ student: { $in: perdedorIds } });
-  const accion = (sobrante === 'eliminar' && conEntregas > 0) ? 'deshabilitar' : sobrante;
+  const conLegajo   = await SoeCase.countDocuments({ student: { $in: perdedorIds } });
+  const noSeBorra   = conEntregas > 0 || conLegajo > 0;
+  const accion = (sobrante === 'eliminar' && noSeBorra) ? 'deshabilitar' : sobrante;
   if (accion === 'eliminar') {
     // Los acuses de lectura que quedaron (los que chocaron) se van con la cuenta: son un
     // contador de "quién abrió la tarea", no un dato del alumno que valga conservar suelto.
@@ -960,10 +975,40 @@ async function fusionarAlumnos({ clave, keepId, sobrante = 'deshabilitar', email
     sacar:        'La otra cuenta quedó fuera del curso, pero sigue activa: si no la usa nadie, conviene deshabilitarla desde el panel de administración.',
     deshabilitar: 'La otra cuenta quedó deshabilitada' +
       (sobrante === 'eliminar'
-        ? ' (no se pudo eliminar: le quedan entregas propias, borrarla las dejaría sin dueño).'
+        ? ' (no se pudo eliminar: ' + (conLegajo
+            ? 'tiene un legajo del SOE, que quedaría sin dueño. Cerralo desde /soe primero'
+            : 'le quedan entregas propias, borrarla las dejaría sin dueño') + ').'
         : '.'),
     eliminar:     'La otra cuenta se eliminó.',
   }[accion];
+
+  // Lo que la fusión NO mueve y queda en la cuenta sobrante. Se cuenta DESPUÉS de todo, así
+  // que es el estado final y no una estimación.
+  //
+  // ⭐ Por qué se informa en vez de moverse: cada una necesita su propia regla de choque y no
+  // la de las entregas. En asistencia, las dos cuentas tienen marca en la MISMA toma (la
+  // melliza junta un `ausente` con source 'cierre', que no decidió nadie), así que fusionar no
+  // es mover sino elegir una y borrar la otra — al revés de una entrega, donde no se destruye
+  // nada. Y la bandeja choca contra su índice único { message, user } en 51 de 52 grupos
+  // medidos, porque los envíos van por rol y las dos mellizas recibieron el mismo mensaje.
+  // Mientras esa decisión no esté tomada, el cartel al menos deja de ocultar el hueco.
+  const [quedaAsistencias, quedaBandeja, quedaSala] = await Promise.all([
+    AttendanceMark.countDocuments({ student: { $in: perdedorIds } }),
+    MessageRecipient.countDocuments({ user: { $in: perdedorIds } }),
+    RoomMessage.countDocuments({ author: { $in: perdedorIds } }),
+  ]);
+  const atras = [
+    quedaAsistencias ? `${quedaAsistencias} marca(s) de asistencia` : null,
+    quedaBandeja     ? `${quedaBandeja} mensaje(s) en su bandeja`   : null,
+    quedaSala        ? `${quedaSala} mensaje(s) de sala`            : null,
+  ].filter(Boolean);
+  // Con 'eliminar' la cuenta ya no existe, así que esos documentos no "siguen en la otra
+  // cuenta": quedaron sin dueño. Los de asistencia y sala se siguen leyendo igual porque
+  // guardan el nombre como snapshot; la fila de la bandeja aparece como "Usuario eliminado".
+  const textoAtras = !atras.length ? ''
+    : accion === 'eliminar'
+      ? `Quedó sin dueño, porque la fusión todavía no lo mueve: ${atras.join(', ')}. `
+      : `Sigue en la otra cuenta, porque la fusión todavía no lo mueve: ${atras.join(', ')}. `;
 
   return {
     resumen,
@@ -972,12 +1017,17 @@ async function fusionarAlumnos({ clave, keepId, sobrante = 'deshabilitar', email
     conservada: { id: keepId, nombre: conservada.u.name, email: correoFinal },
     sobrantes: perdedores.map(c => ({ id: idDe(c), nombre: c.u.name, email: c.u.email })),
     correo,
+    // Lo que NO se movió va al evento de auditoría además del cartel: dentro de seis meses,
+    // "a este chico le falta media asistencia" se contesta mirando acá.
     auditoria: {
       curso:       grupo.curso,
       entregas:    resumen.entregas,
       notas:       resumen.notas,
       materias:    resumen.materias,
       conflictos:  resumen.conflictos,
+      sin_mover_asistencias: quedaAsistencias,
+      sin_mover_bandeja:     quedaBandeja,
+      sin_mover_sala:        quedaSala,
     },
     mensaje:
       `Listo: ${conservada.u.name} (${correoFinal}) se queda con el curso ${grupo.curso}. ` +
@@ -986,6 +1036,7 @@ async function fusionarAlumnos({ clave, keepId, sobrante = 'deshabilitar', email
         ? `${resumen.conflictos} entrega(s) o nota(s) se quedaron en la otra cuenta porque la ` +
           'conservada ya tenía la suya en esa misma actividad: revisalas antes de dar de baja la cuenta. '
         : '') +
+      textoAtras +
       textoCorreo(correo) +
       destino,
   };

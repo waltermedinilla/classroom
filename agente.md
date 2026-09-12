@@ -565,6 +565,42 @@ Material Symbols) salieron cuatro, todos por el mismo camino:
 Ningún cambio de lógica en las pantallas: solo la lista que se le pide a Google. Cambia la URL
 de la fuente, así que cada dispositivo la baja una vez de nuevo (~233 KB).
 
+### 2026-09-12 — Un legajo sin alumno ya no tira abajo el panel del SOE (Fase 0 de la fusión de cuentas)
+
+Salió de revisar la herramienta que fusiona cuentas con el mismo DNI. La pregunta era si
+fusiona notas y entregas; la respuesta trajo dos cosas que no se veían.
+
+**El agujero.** Cuatro pantallas del SOE pintaban `l.student._id` a pelo. `SoeCase` **no** se
+borra junto con el alumno —es deliberado: un legajo del que se puede sacar algo sin dejar rastro
+no es un registro—, así que `populate('student')` devuelve `null` y eso tiraba un TypeError que
+la ruta convertía en 500: se caía **el panel entero del gabinete**, no la fila del legajo
+huérfano. Verificado end-to-end contra una copia de producción, entrando con el rol `soe` real:
+**500 con la línea vieja, 200 con el arreglo**.
+
+- `views/partials/soe-alumno-link.ejs` (nuevo) reemplaza los 6 lugares que lo hacían a mano
+  (`index.ejs` ×4, `derivaciones.ejs`, `pedidos.ejs`). Muestra el hueco —"Alumno dado de
+  baja"— en vez de esconderlo, y sin enlace: no hay ficha a la que ir, y el gabinete tiene que
+  poder ver que ese legajo quedó sin dueño.
+- `POST /admin/users/:id/delete` contesta **409** si el alumno tiene legajo. Era la puerta por
+  la que hoy sí se llegaba al 500: los 3 legajos de producción son de alumnos comunes, y esa
+  ruta solo frenaba a los docentes titulares de materias.
+- `fusionarAlumnos()`: `eliminar` baja a `deshabilitar` si la cuenta sobrante tiene legajo
+  (`SoeCase.student` es `required` y lo dejaría sin dueño), y el resultado **nombra lo que no
+  se movió**: asistencias, bandeja y mensajes de sala, también en la auditoría
+  (`sin_mover_asistencias`, `sin_mover_bandeja`, `sin_mover_sala`). Antes el cartel decía
+  "se queda con todo" y no era cierto.
+- `tests/unit/soeAlumnoLink.test.js` (16 tests). El segundo bloque fija **la regla, no la
+  lista**: recorre las vistas del SOE y falla si aparece un `student._id` sin guarda, con la
+  única excepción del partial y con el motivo escrito. Verificado que falla sin el arreglo.
+
+**Lo que se midió, y que cambia el plan** (`specs/fusion-de-cuentas.spec.md`, fases 1 a 4 sin
+aprobar): hay **59** grupos de DNI repetido y la pantalla muestra **3**, porque el diagnóstico
+exige que las dos cuentas estén en materias de la misma división y en 41 de los 52 pares de
+alumnos la sobrante tiene **cero materias**. Los casos fáciles son justo los invisibles. Y el
+choque que haría explotar una fusión que moviera todo no son las notas sino **la bandeja**:
+`{message,user}` choca en **51 de 52** grupos, porque los envíos van por rol y las dos mellizas
+recibieron el mismo mensaje.
+
 ### 2026-09-11 — El botón verde ahora aparece solo, y en la sala en vivo
 
 Reclamo de un alumno del **09/09 a las 8:25**:
