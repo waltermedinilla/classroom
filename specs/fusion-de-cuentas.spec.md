@@ -1,8 +1,11 @@
 # Fusión de cuentas duplicadas (mismo DNI, misma escuela)
 
-> **Estado: FASE 0 IMPLEMENTADA Y VERIFICADA el 2026-09-12. Las 4 decisiones que faltaban
-> están tomadas (RN-12, RN-13, RN-14 y RN-05, todas del 2026-09-12). FASES 1 a 4 listas para
-> implementar, esperando el visto bueno del usuario para arrancar por la 1.**
+> **Estado: FASES 0 y 1a IMPLEMENTADAS Y VERIFICADAS el 2026-09-12** contra una copia de
+> producción. Las 4 decisiones están tomadas (RN-05, RN-12, RN-13 y RN-14, todas del
+> 2026-09-12). **Pendientes: Fase 1b (el aviso), 2, 3 y 4.**
+>
+> Resultado de la 1a: la pantalla pasó de ver **3 grupos de 59** a ver los **41** que están sin
+> resolver, y el botón masivo de resolver **1** a resolver **26**, sin borrar una sola cuenta.
 >
 > Flujo SDD: arquitecto → **spec aprobada** → tester → implementador → revisor.
 >
@@ -211,10 +214,49 @@ Es un arreglo, no un cambio de alcance, y por eso no esperó la aprobación.
   vistas del SOE y falla si aparece un `student._id` sin guarda—, así que cubre las pantallas
   que todavía no existen. Verificado que falla sin el arreglo.
 
-### Fase 1 — que la pantalla los muestre (RN-01, RN-02, RN-03)
+### ✅ Fase 1a — que la pantalla los muestre (IMPLEMENTADA Y VERIFICADA el 2026-09-12)
 
-Sin mover ni un dato más: cambiar el agrupamiento y la acción masiva. Pasa de 3 grupos visibles
-a 52, y de 1 resoluble a 27.
+Sin mover ni un dato más: cambió el agrupamiento y la acción masiva.
+
+| | antes | ahora |
+|---|---|---|
+| Grupos que ve la pantalla | **3** | **41** (52 menos los 11 ya resueltos) |
+| Los que resuelve el botón | **1** | **26** |
+| Tiempo del diagnóstico | — | 174 ms |
+
+De los 41: **26** los resuelve el botón, **11** esperan el aviso de RN-13 y **4** son disputados.
+Verificado contra una copia de producción: apretar el botón deshabilitó 26 cuentas, los usuarios
+totales quedaron en 1448 (**no se borró ninguna**, RN-12), y una segunda corrida no tiene nada
+que hacer (idempotente).
+
+- `services/fusionCuentas.js` (nuevo): la decisión, sin base de datos, con 22 tests en
+  `tests/unit/fusionCuentas.test.js` escritos ANTES del módulo y derivados de estos CA.
+- `calcularDniDuplicados()` agrupa por escuela+DNI, incluye a los alumnos **no matriculados**
+  (los 41 invisibles), y el alcance de la transferencia pasó a ser la unión de las materias de
+  todas las cuentas del grupo — antes un duplicado que cursaba en dos divisiones dejaba sin
+  mover las entregas de la otra.
+- Los grupos **ya resueltos** (sobrante deshabilitada y sin materias) salen del conteo, igual
+  que en el arreglo de docentes. Eran 11 de 52.
+- El botón masivo **deshabilita** en vez de "sacar del curso", que contra los datos reales no
+  habría hecho nada: esas cuentas no están en ningún curso.
+- Dos bugs que aparecieron al verificar y no se ven leyendo el código: `opcionesSobrante`
+  ofrecía "solo se saca de los cursos" como opción por omisión para cuentas que no cursan nada
+  (miraba todas las cuentas en vez de las sobrantes), y `.dupe-account:has(input:checked)`
+  tenía el fondo en hex sin declarar el color del texto, así que en modo oscuro el nombre de
+  la cuenta elegida era casi invisible.
+
+**CA-01 ✅** · **CA-02 ✅** · **CA-03 ✅** · **CA-04 ✅** (los 26; los 11 con conexión esperan
+1b) · **CA-05 ✅** · **CA-05b ✅**
+
+### Fase 1b — el aviso (RN-13). PENDIENTE
+
+Es lo único que falta para que los 11 restantes entren en la acción masiva. El interruptor ya
+existe: `AVISO_DE_FUSION_LISTO` en `services/dbFixes.js`, hoy en `false`, y el test de
+`fusionCuentas` cubre los dos estados.
+
+**CA-04b** y **CA-04c**, más el campo `mergedInto` en `User` y el mensaje del login.
+
+### Fase 1 — criterios (referencia)
 
 **CA-01** El diagnóstico agrupa por escuela + DNI normalizado y devuelve los 52 grupos de
 alumnos con datos de producción.

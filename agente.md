@@ -565,6 +565,47 @@ Material Symbols) salieron cuatro, todos por el mismo camino:
 Ningún cambio de lógica en las pantallas: solo la lista que se le pide a Google. Cambia la URL
 de la fuente, así que cada dispositivo la baja una vez de nuevo (~233 KB).
 
+### 2026-09-12 — La pantalla de DNI duplicados pasó de ver 3 casos a ver 41 (Fase 1a)
+
+El arreglo `dni-duplicado-en-curso` agrupaba por **división** y exigía que las dos cuentas
+estuvieran en materias de la MISMA. Medido sobre una copia de producción: **mostraba 3 grupos
+de 59**, porque en 41 de los 52 pares de alumnos la cuenta sobrante **no tiene ninguna
+materia** —viene del padrón y nunca se matriculó—. Los casos fáciles eran justo los invisibles.
+
+| | antes | ahora |
+|---|---|---|
+| Grupos que ve la pantalla | 3 | **41** (52 menos 11 ya resueltos) |
+| Los que resuelve el botón | 1 | **26** |
+| Diagnóstico | — | 174 ms |
+
+- **`services/fusionCuentas.js` (nuevo)**: la decisión —cuál se conserva, si la resuelve un
+  botón y **por qué no**— sin base de datos, con 22 tests escritos ANTES del módulo. Antes
+  estaba enterrada entre dos barridos de Mongo y solo se podía probar con un smoke test.
+- **El agrupamiento es escuela + DNI**, igual que en los docentes. Y el alcance de la
+  transferencia pasó a ser la unión de las materias de todas las cuentas: antes, un duplicado
+  que cursaba en dos divisiones dejaba sin mover las entregas de la otra.
+- **El botón masivo DESHABILITA** en vez de "sacar del curso" — que contra los datos reales no
+  habría hecho nada, porque esas cuentas no están en ningún curso. Decisión del usuario: ninguna
+  resolución automática elimina una cuenta. Verificado: 1448 usuarios antes y después.
+  Deshabilitar además saca a la melliza de la nómina de asistencia (`rosterDeDivision()` filtra
+  las inactivas), así que **deja de juntar un `ausente` por día lectivo**.
+- **Los grupos ya resueltos salen del conteo** (sobrante deshabilitada y sin materias): eran 11
+  de 52 y el contador del panel los mostraba como pendientes.
+- **La ficha ahora dice lo que NO se transfiere**, rotulado: asistencias, bandeja y mensajes de
+  sala. Mostrar el número sin decirlo sería peor que no mostrarlo.
+- **Los que el botón no puede resolver dicen por qué**: las dos con trabajo propio (4), alguien
+  usó la cuenta que sobraría (11), o la sobrante está cursando.
+
+Dos bugs que aparecieron al verificar en el navegador y no se ven leyendo el código:
+`opcionesSobrante` ofrecía "solo se saca de los cursos" como opción por omisión para cuentas
+que no cursan nada (miraba todas las cuentas en vez de las sobrantes), y
+`.dupe-account:has(input:checked)` tenía **el fondo en hex sin declarar el color del texto**:
+en modo oscuro el nombre de la cuenta elegida quedaba casi invisible. Es otra vez la regla de
+`.warning-banner` y de los fondos de la sala.
+
+Falta la **Fase 1b**: el aviso al chico cuya cuenta se deshabilita (son 11 que sí se
+conectaron). El interruptor está puesto en `AVISO_DE_FUSION_LISTO`, en `false`.
+
 ### 2026-09-12 — Un legajo sin alumno ya no tira abajo el panel del SOE (Fase 0 de la fusión de cuentas)
 
 Salió de revisar la herramienta que fusiona cuentas con el mismo DNI. La pregunta era si

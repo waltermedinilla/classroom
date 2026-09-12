@@ -67,6 +67,16 @@ const AttendanceMark    = require('../models/AttendanceMark');
 const MessageRecipient  = require('../models/MessageRecipient');
 const RoomMessage       = require('../models/RoomMessage');
 const SoeCase           = require('../models/SoeCase');
+// La DECISIÓN de una fusión (cuál se conserva, si la resuelve un botón y por qué no) vive
+// afuera y sin base de datos, para poder probarla con objetos: services/fusionCuentas.js +
+// tests/unit/fusionCuentas.test.js. Acá queda solo el trabajo con Mongo.
+const fusion = require('./fusionCuentas');
+
+// ¿Existe ya el aviso de RN-13? Mientras sea false, la acción masiva NO toca las cuentas que
+// alguien usó (las 14 con `lastSeen` de las 41 sobrantes): apagarlas sin avisar deja a esa
+// persona afuera de la cuenta por la que venía entrando, y el aviso es lo que lo evita.
+// Se prende junto con la Fase 1b, no antes — y el test de fusionCuentas cubre los dos estados.
+const AVISO_DE_FUSION_LISTO = false;
 // Módulo de Recursos y reservas. Se importan solo para el diagnóstico de abajo; la lógica del
 // cupo vive entera en services/recursos/cupo.js, que es el único que lo escribe.
 const Recurso      = require('../models/Recurso');
@@ -184,176 +194,216 @@ async function calcularMatriculaParcial() {
 // cargando (rechaza los que no tienen entre 7 y 9 dígitos) y no saca los ceros a la
 // izquierda. Acá hay que comparar lo que YA está guardado, incluida la data vieja fuera de
 // rango — descartarla haría que un duplicado real pase desapercibido.
-function normalizarDni(dni) {
-  if (dni == null) return '';
-  return String(dni).replace(/\D/g, '').replace(/^0+/, '');
-}
+// Desde la Fase 1 la implementación vive en services/fusionCuentas.js, que es donde está
+// testeada. Se reexporta con este nombre porque lo usan los dos arreglos de DNI duplicado.
+const normalizarDni = fusion.normalizarDni;
 
-// Dos cuentas de alumno distintas con el mismo DNI dentro del mismo curso: siempre es la
-// misma persona cargada dos veces (alta manual + importación, o registro público sobre una
-// cuenta que ya existía). El docente la ve duplicada en la lista y en el gradebook, y las
-// entregas quedan repartidas entre las dos.
+// Dos cuentas de alumno distintas con el mismo DNI dentro de la misma ESCUELA: siempre es la
+// misma persona cargada dos veces (alta manual + importación del padrón, o registro público
+// sobre una cuenta que ya existía). El docente la ve duplicada en la lista y en el gradebook,
+// y las entregas quedan repartidas entre las dos.
 //
-// "Curso" acá es la División (1°1°, 2°3°…), no la materia: el duplicado se busca entre
-// TODOS los alumnos de todas las materias de la división, porque una misma persona puede
-// estar con una cuenta en Matemática y con la otra en Historia del mismo curso.
+// ⭐ HASTA EL 2026-09-12 ESTO AGRUPABA POR DIVISIÓN, y exigía que las dos cuentas estuvieran
+// en materias de la MISMA. Medido sobre una copia de producción, así mostraba **3 grupos de
+// 59**: en 41 de los 52 pares de alumnos la cuenta sobrante no tiene NINGUNA materia —viene
+// del padrón y nunca se matriculó—, con lo cual los casos fáciles eran justo los invisibles.
+// Ahora la clave es escuela + DNI, igual que en los docentes, y la división pasa a ser
+// información de la ficha en vez de un filtro. Ver specs/fusion-de-cuentas.spec.md (RN-01).
+//
+// El ALCANCE de la transferencia cambió por el mismo motivo: era "las materias de esa
+// división" y ahora es la unión de las materias de todas las cuentas del grupo. Antes, un
+// duplicado que cursaba en dos divisiones dejaba sin mover las entregas de la otra.
+//
+// La DECISIÓN (cuál se conserva, si la puede resolver el botón) no vive acá sino en
+// services/fusionCuentas.js, que no toca la base y tiene sus propios tests.
 //
 // Lo comparten diagnosticar(), aplicar() y fusionarAlumnos(), como en calcularMatriculaParcial().
-// Devuelve { grupos: [{ clave, divisionId, schoolId, curso, dni, materias, cuentas,
-//                       sugerida, conservar, sacar, ambigua }] }.
+// Devuelve { grupos: [{ clave, schoolId, dni, materias, cursos, cuentas, sugerida, conservar,
+//                       sacar, ambigua, masiva }] }.
 async function calcularDniDuplicados() {
-  const cursos = await Course.find().select('_id name division school students').lean();
+  // TODOS los alumnos de la escuela con DNI, no solo los matriculados: las 41 cuentas que
+  // este arreglo no veía no están en ningún curso, y ése era exactamente el problema.
+  const alumnos = await User.find({ role: 'student', school: { $ne: null } })
+    .select('_id name email dni school active lastSeen createdAt').lean();
 
-  // Solo alumnos: un docente que quedó dentro de students[] por un error viejo no es un
-  // duplicado de alumno, y sacarlo del curso no es lo que este arreglo tiene que hacer.
-  const idsEnCursos = [...new Set(cursos.flatMap(c => (c.students || []).map(String)))];
-  const alumnos = await User.find({ _id: { $in: idsEnCursos }, role: 'student' })
-    .select('_id name email dni active lastSeen createdAt').lean();
-  const porId = new Map(alumnos.map(a => [a._id.toString(), a]));
-
-  const porDivision = new Map();
-  for (const c of cursos) {
-    const k = c.division?.toString();
-    if (!k) continue; // materia sin división: no pertenece a ningún curso
-    if (!porDivision.has(k)) porDivision.set(k, []);
-    porDivision.get(k).push(c);
+  const porClave = new Map();
+  for (const u of alumnos) {
+    const dni = normalizarDni(u.dni);
+    if (!dni) continue; // sin DNI no hay con qué comparar (ver 'usuarios-sin-dni')
+    const clave = fusion.claveDeGrupo({ schoolId: u.school.toString(), dni });
+    if (!porClave.has(clave)) porClave.set(clave, []);
+    porClave.get(clave).push(u);
   }
 
-  const crudos = [];
-  for (const [divisionId, materias] of porDivision) {
-    const porDni = new Map(); // dni normalizado → Map(studentId → user)
-    for (const mat of materias) {
-      for (const s of new Set((mat.students || []).map(String))) {
-        const u = porId.get(s);
-        if (!u) continue;
-        const dni = normalizarDni(u.dni);
-        if (!dni) continue; // sin DNI no hay con qué comparar (ver 'usuarios-sin-dni')
-        if (!porDni.has(dni)) porDni.set(dni, new Map());
-        porDni.get(dni).set(s, u);
+  const candidatos = [...porClave.entries()].filter(([, us]) => us.length > 1);
+  if (!candidatos.length) return { grupos: [] };
+
+  const idsCandidatos = candidatos.flatMap(([, us]) => us.map(u => u._id));
+  const esCandidato = new Set(idsCandidatos.map(String));
+
+  // Las materias donde figura alguna de las cuentas en juego. Es el alcance de la
+  // transferencia y de donde salen los contadores acotados de más abajo.
+  const cursos = await Course.find({ students: { $in: idsCandidatos } })
+    .select('_id name division school students').lean();
+
+  const materiasDe   = new Map(); // userId → [Course]
+  const divisionesDe = new Map(); // userId → Set(divisionId)
+  for (const c of cursos) {
+    for (const s of new Set((c.students || []).map(String))) {
+      if (!esCandidato.has(s)) continue;
+      if (!materiasDe.has(s)) materiasDe.set(s, []);
+      materiasDe.get(s).push(c);
+      if (c.division) {
+        if (!divisionesDe.has(s)) divisionesDe.set(s, new Set());
+        divisionesDe.get(s).add(c.division.toString());
       }
     }
-    for (const [dni, cuentas] of porDni) {
-      if (cuentas.size < 2) continue;
-      crudos.push({
-        clave: `${divisionId}|${dni}`,
-        divisionId,
-        // La escuela del curso: la necesita el evento de auditoría de la fusión, porque el
-        // superadmin no tiene escuela propia y sin esto el admin no ve el evento.
-        schoolId: materias.find(m => m.school)?.school?.toString() || null,
-        dni,
-        materias,
-        cuentas: [...cuentas.values()],
-      });
-    }
   }
 
-  if (!crudos.length) return { grupos: [] };
+  const cursoIds = cursos.map(c => c._id);
 
-  // Qué cuenta tiene trabajo hecho en el curso: es lo único que decide cuál se conserva.
-  // Se mide sobre las dos fuentes donde vive, porque una nota puede existir sin entrega
-  // (el docente califica en papel y la carga) y una entrega sin nota (todavía sin corregir).
-  const materiaIds = [...new Set(crudos.flatMap(g => g.materias.map(m => m._id.toString())))]
-    .map(id => new mongoose.Types.ObjectId(id));
-  const alumnoIds = [...new Set(crudos.flatMap(g => g.cuentas.map(u => u._id.toString())))];
-  const esCandidato = new Set(alumnoIds);
-
-  const actividades = await Activity.find({ course: { $in: materiaIds } })
-    .select('_id course grades.student').lean();
-  const cursoDeActividad = new Map(actividades.map(a => [a._id.toString(), a.course.toString()]));
-
-  // Notas y entregas por separado y no en un solo contador: la tarjeta interactiva muestra
-  // los dos números, y "2 entregas y 0 notas" contra "0 y 2" no significan lo mismo a la
-  // hora de elegir con qué cuenta se queda el alumno.
-  const notas    = new Map(); // `${studentId}|${courseId}` → cuántas
-  const entregas = new Map();
-  const sumar = (mapa, studentId, courseId) => {
-    const k = studentId + '|' + courseId;
-    mapa.set(k, (mapa.get(k) || 0) + 1);
+  // ── Contadores ────────────────────────────────────────────────────────────
+  // Un barrido por colección para TODAS las cuentas, nunca uno por cuenta: son pocas cuentas
+  // pero miles de documentos.
+  //
+  // ⚠️ Y cada uno entra por un índice que existe, porque esto corre en CADA carga de
+  // /superadmin/otros (diagnosticarTodos llama a todos los arreglos):
+  //   · Submission      → { student, createdAt }
+  //   · AttendanceMark  → { student, date }
+  //   · MessageRecipient→ { user, ... }
+  //   · ActivityView    → NO tiene índice por `student` solo; se acota por `activity`, que es
+  //     el prefijo del único { activity, student }.
+  //   · RoomMessage     → NO tiene índice por `author`, y son 103.159 documentos. Se acota por
+  //     `course`, que sí lo tiene ({ course, createdAt }). Contar por autor a secas escanearía
+  //     la colección entera cada vez que alguien abre el panel.
+  const contarPorUsuario = async (Model, campo, extra = {}) => {
+    const filas = await Model.aggregate([
+      { $match: { [campo]: { $in: idsCandidatos }, ...extra } },
+      { $group: { _id: `$${campo}`, n: { $sum: 1 } } },
+    ]);
+    return new Map(filas.map(f => [f._id.toString(), f.n]));
   };
 
+  const actividades = cursoIds.length
+    ? await Activity.find({ course: { $in: cursoIds } }).select('_id course grades.student').lean()
+    : [];
+  const actIds = actividades.map(a => a._id);
+
+  const [entregas, asistencias, bandeja, aperturas, sala, comentarios, legajos] = await Promise.all([
+    contarPorUsuario(Submission, 'student'),
+    contarPorUsuario(AttendanceMark, 'student'),
+    contarPorUsuario(MessageRecipient, 'user'),
+    actIds.length ? contarPorUsuario(ActivityView, 'student', { activity: { $in: actIds } }) : new Map(),
+    cursoIds.length ? contarPorUsuario(RoomMessage, 'author', { course: { $in: cursoIds } }) : new Map(),
+    Announcement.aggregate([
+      { $match: { 'comments.author': { $in: idsCandidatos } } },
+      { $unwind: '$comments' },
+      { $match: { 'comments.author': { $in: idsCandidatos } } },
+      { $group: { _id: '$comments.author', n: { $sum: 1 } } },
+    ]).then(f => new Map(f.map(x => [x._id.toString(), x.n]))),
+    // El legajo del SOE va en la ficha porque cambia la decisión: la cuenta que tiene el
+    // legajo es la que el gabinete viene siguiendo, y no se puede eliminar (RN-07). Son 3
+    // documentos en toda la base, así que contarlos no cuesta nada.
+    contarPorUsuario(SoeCase, 'student'),
+  ]);
+
+  // Las notas salen de `grades[]`, que no tiene índice propio: se recorren las actividades ya
+  // traídas, como hacía la versión anterior.
+  const notas = new Map();
   for (const a of actividades) {
     for (const g of (a.grades || [])) {
       const s = g.student?.toString();
-      if (s && esCandidato.has(s)) sumar(notas, s, a.course.toString());
+      if (s && esCandidato.has(s)) notas.set(s, (notas.get(s) || 0) + 1);
     }
-  }
-
-  const entregasDocs = await Submission.find({
-    activity: { $in: actividades.map(a => a._id) },
-    student:  { $in: alumnoIds.map(id => new mongoose.Types.ObjectId(id)) },
-  }).select('activity student').lean();
-  for (const e of entregasDocs) {
-    const courseId = cursoDeActividad.get(e.activity.toString());
-    if (courseId) sumar(entregas, e.student.toString(), courseId);
   }
 
   const divisiones = await Division.find().select('_id name').lean();
   const nombreDivision = new Map(divisiones.map(d => [d._id.toString(), d.name]));
+  const escuelas = await School.find().select('_id name').lean();
+  const nombreEscuela = new Map(escuelas.map(e => [e._id.toString(), e.name]));
 
-  // En qué OTROS cursos figura cada cuenta candidata. Importa al resolver el duplicado a
-  // mano: deshabilitar o eliminar una cuenta que además cursa en otra división le saca el
-  // acceso allá, y eso no se ve mirando solo este curso.
-  const divisionesPorCandidato = new Map();
-  for (const c of cursos) {
-    const d = c.division?.toString();
-    if (!d) continue;
-    for (const s of (c.students || [])) {
-      const k = s.toString();
-      if (!esCandidato.has(k)) continue;
-      if (!divisionesPorCandidato.has(k)) divisionesPorCandidato.set(k, new Set());
-      divisionesPorCandidato.get(k).add(d);
-    }
-  }
+  const g0 = (mapa, id) => mapa.get(id) || 0;
 
-  const grupos = crudos.map(g => {
-    const cuentas = g.cuentas.map(u => {
+  const grupos = candidatos.map(([clave, us]) => {
+    const [schoolId, dni] = clave.split('|');
+
+    const cuentas = us.map(u => {
       const id = u._id.toString();
-      const contar = mapa => g.materias.reduce(
-        (acc, m) => acc + (mapa.get(id + '|' + m._id.toString()) || 0), 0);
-      const entregasN = contar(entregas);
-      const notasN    = contar(notas);
+      const misCursos = materiasDe.get(id) || [];
+      const misDivs = [...(divisionesDe.get(id) || [])];
       return {
         u,
-        entregas: entregasN,
-        notas: notasN,
-        trabajos: entregasN + notasN,
-        materiasEn: g.materias.filter(m => (m.students || []).some(s => s.toString() === id)).length,
-        otrosCursos: [...(divisionesPorCandidato.get(id) || [])]
-          .filter(d => d !== g.divisionId)
-          .map(d => nombreDivision.get(d) || 'otro curso')
+        id,
+        // La forma que espera services/fusionCuentas.js.
+        activa: u.active !== false,
+        lastSeen: u.lastSeen || null,
+        createdAt: u.createdAt || null,
+        materias: misCursos.length,
+        divisiones: misDivs,
+        trabajo: {
+          entregas:    g0(entregas, id),
+          notas:       g0(notas, id),
+          aperturas:   g0(aperturas, id),
+          asistencias: g0(asistencias, id),
+          sala:        g0(sala, id),
+          comentarios: g0(comentarios, id),
+        },
+        // Solo para la ficha: no entran en la decisión automática, pero sí en la humana.
+        bandeja: g0(bandeja, id),
+        legajo: g0(legajos, id),
+        cursos: misDivs.map(d => nombreDivision.get(d) || 'otro curso')
           .sort((a, b) => a.localeCompare(b, 'es', { numeric: true })),
       };
     });
 
-    // Orden y sugerencia: primero la que tiene el trabajo hecho (es la real). Si empatan
-    // —o si ninguna tiene nada— la que más "vive": habilitada, en más materias, con
-    // conexión más reciente y más antigua.
-    const porPeso = [...cuentas].sort((a, b) =>
-      b.trabajos - a.trabajos ||
-      (b.u.active !== false) - (a.u.active !== false) ||
-      b.materiasEn - a.materiasEn ||
-      (b.u.lastSeen ? new Date(b.u.lastSeen) : 0) - (a.u.lastSeen ? new Date(a.u.lastSeen) : 0) ||
-      new Date(a.u.createdAt || 0) - new Date(b.u.createdAt || 0)
-    );
+    const decision = fusion.clasificarGrupo(cuentas, { avisoDisponible: AVISO_DE_FUSION_LISTO });
+    const porId = new Map(cuentas.map(c => [c.id, c]));
+    const ordenadas = decision.orden.map(id => porId.get(id));
 
-    // DOS cuentas con entregas o notas propias = las dos tienen datos en juego. El botón
-    // masivo saltea estos casos (no hay regla automática); la tarjeta los deja resolver a
-    // mano, que es donde una persona decide qué cuenta se queda y con qué correo.
-    const ambigua = porPeso.filter(c => c.trabajos > 0).length > 1;
-    const conservar = ambigua ? null : porPeso[0];
+    // El alcance de la transferencia: la unión de las materias de todas las cuentas del grupo.
+    const materias = [...new Map(
+      cuentas.flatMap(c => materiasDe.get(c.id) || []).map(m => [m._id.toString(), m])
+    ).values()];
+
+    // Los cursos que toca el grupo, para el título de la tarjeta. Puede ser ninguno: las 41
+    // cuentas del caso limpio no están en ningún curso, y el título igual tiene que decir algo.
+    const cursosDelGrupo = [...new Set(cuentas.flatMap(c => c.cursos))]
+      .sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
 
     return {
-      ...g,
-      cuentas: porPeso,
-      curso: nombreDivision.get(g.divisionId) || 'curso',
-      sugerida: porPeso[0],
-      conservar,
-      sacar: ambigua ? [] : porPeso.filter(c => c !== conservar),
-      ambigua,
+      clave,
+      schoolId,
+      escuela: nombreEscuela.get(schoolId) || 'escuela',
+      dni,
+      materias,
+      cursos: cursosDelGrupo,
+      cuentas: ordenadas,
+      sugerida: porId.get(decision.sugeridaId),
+      ambigua: decision.ambigua,
+      masiva: decision.masiva,
+      // `conservar` y `sacar` los sigue leyendo el botón masivo; ahora salen de la decisión
+      // pura y valen null cuando ese grupo no es resoluble solo.
+      conservar: decision.masiva.elegible ? porId.get(decision.masiva.keepId) : null,
+      sacar: decision.masiva.elegible
+        ? decision.masiva.deshabilitar.map(id => porId.get(id))
+        : [],
     };
   });
 
-  return { grupos };
+  grupos.sort((a, b) =>
+    // Primero lo que hay que mirar a mano: es lo que de verdad requiere a una persona.
+    (Number(b.ambigua) - Number(a.ambigua)) ||
+    a.escuela.localeCompare(b.escuela, 'es') ||
+    a.dni.localeCompare(b.dni));
+
+  // Los grupos YA RESUELTOS no se devuelven: la sobrante está deshabilitada y sin materias,
+  // o sea que la decisión ya la tomó alguien. Mismo criterio que calcularDocentesDuplicados,
+  // y por el mismo motivo: si no, el grupo queda reportado para siempre después de resolverlo
+  // y el contador del panel miente (medido: 52 grupos, 11 de ellos ya hechos).
+  //
+  // Consecuencia buscada: fusionar() tampoco los encuentra, y contesta "ese grupo ya no
+  // figura como duplicado". Es la respuesta correcta.
+  return { grupos: grupos.filter(g => g.masiva.motivo !== fusion.MOTIVOS.YA_RESUELTO) };
 }
 
 // Forma presentable de un grupo de alumnos duplicados para la tarjeta interactiva.
@@ -364,65 +414,103 @@ async function calcularDniDuplicados() {
 // Se manda solo lo que la tarjeta pinta — nunca el documento de usuario entero, que viaja
 // como JSON al navegador en GET /:id/diagnostico.
 function presentarGruposAlumnos(grupos) {
+  // El motivo por el que un grupo NO lo resuelve el botón, en las palabras de quien tiene que
+  // decidir. "No se puede" sin el motivo obliga a la persona a adivinar qué mirar, que es
+  // justamente lo que esta pantalla tiene que evitar.
+  const PORQUE = {
+    [fusion.MOTIVOS.DISPUTADA]:
+      'Las dos cuentas tienen trabajo propio: esta la resolvés vos, mirando qué hay en cada una.',
+    [fusion.MOTIVOS.SOBRANTE_CURSA]:
+      'La cuenta que sobraría está cursando materias: deshabilitarla le sacaría ese acceso, así que va a mano.',
+    [fusion.MOTIVOS.NECESITA_AVISO]:
+      'Alguien usó la cuenta que sobraría (tiene conexiones registradas). No se apaga sin avisarle por la otra cuenta.',
+    [fusion.MOTIVOS.SIN_DATOS]:
+      'Ninguna de las dos tiene datos propios: no hay con qué deducir cuál es la real.',
+    [fusion.MOTIVOS.YA_RESUELTO]:
+      'Ya está resuelto: la cuenta sobrante está deshabilitada y sin materias.',
+  };
+
   return grupos.map(g => {
-    const sugeridaId = g.sugerida.u._id.toString();
+    const sugeridaId = g.sugerida.id;
+    // Puede no haber ningún curso: son las 41 cuentas del caso limpio, que no están
+    // matriculadas en nada. El título tiene que decir algo igual.
+    const donde = g.cursos.length ? g.cursos.join(', ') : 'sin curso';
+
     return {
       clave: g.clave,
       dni: g.dni,
-      divisionId: g.divisionId,
-      curso: g.curso,
+      curso: donde,
+      cursos: g.cursos,
       ambigua: g.ambigua,
+      // Lo que la tarjeta necesita para no ofrecer un botón que no va a hacer nada.
+      resolubleSola: g.masiva.elegible,
+      motivo: g.masiva.motivo,
       icono: 'group',
-      titulo: `DNI ${g.dni} · ${g.curso}`,
-      ayuda: 'Elegí la cuenta que se queda: la otra le pasa sus entregas, sus notas y las materias ' +
-             'de este curso donde figuraba.',
-      aviso: g.ambigua
-        ? 'Las dos cuentas tienen entregas o notas propias en este curso. Se transfiere igual todo ' +
-          'lo de la otra, salvo lo que choque: si las dos entregaron o tienen nota en la MISMA ' +
-          'actividad, lo de la otra se queda donde está y no se pisa nada. El detalle sale acá abajo ' +
-          'al fusionar.'
-        : null,
+      titulo: `DNI ${g.dni} · ${donde}`,
+      ayuda: 'Elegí la cuenta que se queda: la otra le pasa sus entregas, sus notas, sus acuses '
+           + 'de lectura y las materias donde figuraba.',
+      aviso: g.masiva.elegible ? null : PORQUE[g.masiva.motivo] || null,
       sugeridaId,
       cuentas: g.cuentas.map(c => {
-        const id = c.u._id.toString();
+        const t = c.trabajo;
         return {
-          id,
+          id: c.id,
           nombre: c.u.name,
           email: c.u.email,
-          entregas: c.entregas,
-          notas: c.notas,
-          materiasEn: c.materiasEn,
-          activa: c.u.active !== false,
-          otrosCursos: c.otrosCursos,
+          entregas: t.entregas,
+          notas: t.notas,
+          materiasEn: c.materias,
+          activa: c.activa,
+          otrosCursos: c.cursos,
+          // ⭐ CA-02 y CA-03: los números que hacen falta para elegir, incluidos los de las
+          // colecciones que la fusión TODAVÍA no mueve. Mostrarlos sin decir eso sería peor
+          // que no mostrarlos: parecería que se transfieren.
           detalle: [
-            `${c.entregas} entrega(s)`,
-            `${c.notas} nota(s)`,
-            `en ${c.materiasEn} de ${g.materias.length} materia(s) del curso`,
+            `${t.entregas} entrega(s)`,
+            `${t.notas} nota(s)`,
+            `${t.aperturas} apertura(s)`,
+            c.materias ? `en ${c.materias} materia(s)` : 'sin materias',
             c.u.lastSeen
               ? 'último acceso ' + live.fechaCorta(c.u.lastSeen)
               : 'nunca se conectó',
-            c.otrosCursos.length ? 'también cursa en ' + c.otrosCursos.join(', ') : null,
+            c.cursos.length ? 'cursa en ' + c.cursos.join(', ') : null,
+          ].filter(Boolean).join(' · '),
+          noSeTransfiere: [
+            t.asistencias ? `${t.asistencias} asistencia(s)`      : null,
+            c.bandeja     ? `${c.bandeja} mensaje(s) en bandeja`  : null,
+            t.sala        ? `${t.sala} mensaje(s) de sala`        : null,
           ].filter(Boolean).join(' · '),
           chips: [
-            id === sugeridaId          ? { tipo: 'sugerida', texto: 'sugerida' }             : null,
-            c.u.active === false       ? { tipo: 'inactiva', texto: 'deshabilitada' }        : null,
-            c.trabajos                 ? { tipo: 'datos',    texto: 'con entregas o notas' } : null,
-            c.otrosCursos.length       ? { tipo: 'inactiva', texto: 'en otro curso' }        : null,
+            c.id === sugeridaId  ? { tipo: 'sugerida', texto: 'sugerida' }             : null,
+            !c.activa            ? { tipo: 'inactiva', texto: 'deshabilitada' }        : null,
+            fusion.tieneTrabajoPropio(c) ? { tipo: 'datos', texto: 'con datos propios' } : null,
+            // La diferencia que más importa al elegir: una cuenta sin materias no es la que
+            // usa el chico, y una que sí las tiene no se puede apagar sin consecuencias.
+            !c.materias          ? { tipo: 'inactiva', texto: 'sin materias' }         : null,
+            c.u.lastSeen && !c.materias ? { tipo: 'inactiva', texto: 'pero se conectó' } : null,
+            // El legajo del SOE cambia la decisión: es la cuenta que el gabinete sigue, y no
+            // se puede eliminar (RN-07). Va como chip y no en el detalle para que no se pase
+            // de largo leyendo una fila de números.
+            c.legajo ? { tipo: 'datos', texto: 'con legajo del SOE' } : null,
           ].filter(Boolean),
         };
       }),
-      // 'sacar' primero cuando las dos cuentas cursan en otro lado: ahí deshabilitar es lo
-      // que rompe algo. En el caso normal el default es deshabilitar, que es lo que evita
-      // que el alumno vuelva a entrar por la cuenta vacía y siga generando el duplicado.
-      opcionesSobrante: (g.cuentas.some(c => c.otrosCursos.length)
+      // 'sacar' solo aparece si la cuenta que va a sobrar ESTÁ en algún curso, y entonces va
+      // primera: ahí deshabilitar es lo que rompe algo.
+      //
+      // ⚠️ La condición mira las cuentas SOBRANTES, no todas. Mirar todas era un error que se
+      // vio en la primera corrida contra datos reales: en el caso limpio la cuenta que se
+      // conserva tiene 14 materias, así que "solo se saca de los cursos" salía primera y
+      // preseleccionada... para una cuenta que no está en ningún curso. O sea que la opción
+      // por omisión no hacía nada.
+      opcionesSobrante: (g.cuentas.some(c => c.id !== sugeridaId && c.materias)
         ? [
-            { value: 'sacar',        label: 'solo se saca de este curso (la cuenta queda activa)' },
+            { value: 'sacar',        label: 'solo se saca de los cursos (la cuenta queda activa)' },
             { value: 'deshabilitar', label: 'se deshabilita (se puede revertir)' },
             { value: 'eliminar',     label: 'se elimina' },
           ]
         : [
             { value: 'deshabilitar', label: 'se deshabilita (se puede revertir)' },
-            { value: 'sacar',        label: 'solo se saca de este curso (la cuenta queda activa)' },
             { value: 'eliminar',     label: 'se elimina' },
           ]),
     };
@@ -1020,7 +1108,9 @@ async function fusionarAlumnos({ clave, keepId, sobrante = 'deshabilitar', email
     // Lo que NO se movió va al evento de auditoría además del cartel: dentro de seis meses,
     // "a este chico le falta media asistencia" se contesta mirando acá.
     auditoria: {
-      curso:       grupo.curso,
+      // Desde la Fase 1 un grupo puede abarcar varias divisiones, o ninguna: el duplicado se
+      // busca por escuela + DNI y no por curso.
+      curso:       grupo.cursos.length ? grupo.cursos.join(', ') : 'sin curso',
       entregas:    resumen.entregas,
       notas:       resumen.notas,
       materias:    resumen.materias,
@@ -1030,7 +1120,8 @@ async function fusionarAlumnos({ clave, keepId, sobrante = 'deshabilitar', email
       sin_mover_sala:        quedaSala,
     },
     mensaje:
-      `Listo: ${conservada.u.name} (${correoFinal}) se queda con el curso ${grupo.curso}. ` +
+      `Listo: ${conservada.u.name} (${correoFinal}) se queda con ` +
+      (grupo.cursos.length ? `el curso ${grupo.cursos.join(', ')}` : 'la cuenta') + '. ' +
       (movido.length ? `Se transfirió: ${movido.join(', ')}. ` : 'No había nada que transferir. ') +
       (resumen.conflictos
         ? `${resumen.conflictos} entrega(s) o nota(s) se quedaron en la otra cuenta porque la ` +
@@ -1407,11 +1498,11 @@ const FIXES = [
     descripcion:
       'Es la misma persona cargada dos veces (alta manual + importación, o registro público ' +
       'sobre una cuenta que ya existía): el docente la ve repetida en la lista y en el ' +
-      'gradebook. Caso por caso podés elegir con qué cuenta se queda el alumno y con qué ' +
-      'correo, igual que con los docentes: la otra le pasa sus entregas, sus notas y sus ' +
-      'materias del curso, y queda deshabilitada, eliminada o solo fuera del curso. El botón ' +
-      'de abajo resuelve de una vez los casos obvios —la cuenta duplicada está vacía— sacándola ' +
-      'del curso sin tocar correos ni borrar nada.',
+      'gradebook, y la mayoría de las veces el chico entra por la cuenta vacía y no ve nada. ' +
+      'Caso por caso podés elegir con qué cuenta se queda y con qué correo: la otra le pasa sus ' +
+      'entregas, sus notas, sus acuses de lectura y sus materias. El botón de abajo resuelve de ' +
+      'una vez los casos obvios —la cuenta duplicada está vacía, sin materias y nadie la usó— ' +
+      'deshabilitándola, sin tocar correos y sin borrar ninguna cuenta.',
     icono: 'group_remove',
     severidad: 'alta',
     // Las dos vías conviven a propósito: la masiva para los duplicados vacíos, que son la
@@ -1424,47 +1515,66 @@ const FIXES = [
     async diagnosticar() {
       const { grupos } = await calcularDniDuplicados();
 
-      const ambiguos = grupos.filter(g => g.ambigua).length;
-      const cuentasASacar = grupos.reduce((acc, g) => acc + g.sacar.length, 0);
+      const resolubles = grupos.filter(g => g.masiva.elegible);
+      const cuentasADeshabilitar = resolubles.reduce((acc, g) => acc + g.masiva.deshabilitar.length, 0);
+      // Por qué quedan afuera los que quedan afuera. Es el número que evita la pregunta
+      // "¿y los otros 25?" cada vez que alguien aprieta el botón.
+      const porMotivo = {};
+      for (const g of grupos) {
+        if (g.masiva.elegible) continue;
+        porMotivo[g.masiva.motivo] = (porMotivo[g.masiva.motivo] || 0) + 1;
+      }
 
       const filas = grupos.map(g => {
         const etiqueta = c => `${c.u.name} (${c.u.email})`;
+        const donde = g.cursos.length ? g.cursos.join(', ') : 'sin curso';
+        const trabajoDe = c => c.trabajo.entregas + c.trabajo.notas;
         return {
-          principal: `${g.curso} · DNI ${g.dni}`,
-          secundario: g.ambigua
-            ? g.cuentas.map(c => `${etiqueta(c)} — ${c.trabajos} entrega(s)/nota(s)`).join('  ·  ')
-            : `Se conserva ${etiqueta(g.conservar)}` +
-              `${g.conservar.trabajos ? ` — ${g.conservar.trabajos} entrega(s)/nota(s)` : ' — sin trabajo cargado'}` +
-              `  ·  Se saca del curso ${g.sacar.map(etiqueta).join(', ')}`,
-          extra: g.ambigua ? 'revisar a mano' : `−${g.sacar.length} cuenta(s)`,
+          principal: `DNI ${g.dni} · ${donde}`,
+          secundario: g.masiva.elegible
+            ? `Se conserva ${etiqueta(g.conservar)}` +
+              `${trabajoDe(g.conservar) ? ` — ${trabajoDe(g.conservar)} entrega(s)/nota(s)` : ' — sin trabajo cargado'}` +
+              `  ·  Se deshabilita ${g.sacar.map(etiqueta).join(', ')}`
+            : g.cuentas.map(c => `${etiqueta(c)} — ${trabajoDe(c)} entrega(s)/nota(s), ` +
+                `${c.materias} materia(s)`).join('  ·  '),
+          extra: g.masiva.elegible ? `−${g.masiva.deshabilitar.length} cuenta(s)` : g.masiva.motivo,
           fecha: null,
-          _orden: g.ambigua ? 1 : 0,
+          _orden: g.masiva.elegible ? 0 : 1,
         };
       }).sort((a, b) => b._orden - a._orden || a.principal.localeCompare(b.principal, 'es'));
 
       return {
         total: grupos.length,
-        // Los ambiguos primero: son los que el botón masivo NO puede resolver, así que son
-        // los que de verdad hay que mirar uno por uno. Se pintan hasta MUESTRA_MAX bloques
-        // para no hacer una página de miles de formularios; al resolver los de arriba y
-        // recargar, aparecen los siguientes.
+        // Los que NO puede resolver el botón, primero: son los que de verdad necesitan que
+        // alguien mire. Se pintan hasta MUESTRA_MAX bloques para no hacer una página de miles
+        // de formularios; al resolver los de arriba y recargar, aparecen los siguientes.
         grupos: presentarGruposAlumnos(
-          [...grupos].sort((a, b) => (b.ambigua === a.ambigua ? 0 : b.ambigua ? 1 : -1)
-            || a.curso.localeCompare(b.curso, 'es', { numeric: true })
-            || a.dni.localeCompare(b.dni))
+          [...grupos].sort((a, b) =>
+            (Number(a.masiva.elegible) - Number(b.masiva.elegible)) ||
+            a.dni.localeCompare(b.dni))
         ).slice(0, MUESTRA_MAX),
         muestra: filas.slice(0, MUESTRA_MAX),
         nota: grupos.length
           ? 'Abajo está cada caso por separado: elegí la cuenta que se queda, con qué correo y qué ' +
             'pasa con la otra. ' +
-            (cuentasASacar
-              ? `Si preferís resolver de una vez los ${cuentasASacar} caso(s) obvios, "Aplicar arreglo" ` +
-                'saca del curso la cuenta vacía y conserva la que tiene las entregas y las notas: no ' +
-                'borra ninguna cuenta, no toca ningún correo y no toca nada fuera de ese curso. '
+            (cuentasADeshabilitar
+              ? `Si preferís resolver de una vez los ${resolubles.length} caso(s) obvios, "Aplicar arreglo" ` +
+                `deshabilita ${cuentasADeshabilitar} cuenta(s) duplicada(s) que no tienen materias, ni ` +
+                'entregas, ni notas, y que nadie usó nunca. Conserva la que tiene el trabajo hecho, no ' +
+                'toca ningún correo y NO borra ninguna cuenta: deshabilitar se revierte. '
               : '') +
-            (ambiguos
-              ? `${ambiguos} caso(s) quedan afuera del botón masivo porque las dos cuentas tienen ` +
-                'entregas o notas propias: esos van sí o sí uno por uno, y van primeros en la lista. '
+            (porMotivo[fusion.MOTIVOS.DISPUTADA]
+              ? `${porMotivo[fusion.MOTIVOS.DISPUTADA]} caso(s) quedan afuera del botón porque las dos ` +
+                'cuentas tienen trabajo propio: esos van sí o sí uno por uno, y van primeros en la lista. '
+              : '') +
+            (porMotivo[fusion.MOTIVOS.NECESITA_AVISO]
+              ? `${porMotivo[fusion.MOTIVOS.NECESITA_AVISO]} caso(s) quedan afuera porque alguien usó la ` +
+                'cuenta que sobraría: apagarla sin avisarle la dejaría afuera de la plataforma sin ' +
+                'entender por qué. Se resuelven a mano hasta que exista el aviso automático. '
+              : '') +
+            (porMotivo[fusion.MOTIVOS.SOBRANTE_CURSA]
+              ? `${porMotivo[fusion.MOTIVOS.SOBRANTE_CURSA]} caso(s) quedan afuera porque la cuenta ` +
+                'sobrante está cursando materias. '
               : '') +
             (grupos.length > MUESTRA_MAX
               ? `Se muestran los primeros ${MUESTRA_MAX} de ${grupos.length}: al resolverlos y recargar aparecen los siguientes.`
@@ -1473,53 +1583,45 @@ const FIXES = [
       };
     },
 
+    // El botón masivo DESHABILITA las cuentas duplicadas vacías. RN-12 de
+    // specs/fusion-de-cuentas.spec.md, decidido por el usuario el 2026-09-12: ninguna
+    // resolución automática elimina una cuenta.
+    //
+    // ⭐ Hasta la Fase 1 este botón las "sacaba del curso", y contra los datos reales eso no
+    // habría hecho nada: las 41 cuentas sobrantes no están en ningún curso. Deshabilitar sí
+    // resuelve el problema de verdad, porque `rosterDeDivision()` excluye las cuentas
+    // inactivas — la melliza sale de la nómina de asistencia y deja de juntar un `ausente`
+    // por día lectivo.
     async aplicar() {
       const { grupos } = await calcularDniDuplicados();
-      const resolubles = grupos.filter(g => !g.ambigua);
+      const resolubles = grupos.filter(g => g.masiva.elegible);
       if (!resolubles.length) {
         return {
           afectados: 0,
           mensaje: grupos.length
-            ? 'No se aplicó nada: los duplicados que quedan tienen entregas o notas en las dos ' +
-              'cuentas y hay que resolverlos a mano.'
-            : 'No había DNI duplicados en ningún curso.',
+            ? `Hay ${grupos.length} duplicado(s), pero ninguno se puede resolver solo: cada tarjeta ` +
+              'de abajo dice por qué (las dos cuentas con trabajo propio, la sobrante cursando, o ' +
+              'alguien que usó la cuenta y hay que avisarle).'
+            : 'No había DNI duplicados en ninguna escuela.',
         };
       }
 
-      const ops = [];
-      let cuentas = 0;
-      for (const g of resolubles) {
-        for (const c of g.sacar) {
-          const sid = c.u._id.toString();
-          cuentas++;
-          for (const mat of g.materias) {
-            // Solo las materias donde esta cuenta figura: no tiene sentido mandar un update
-            // por cada materia del curso cuando la duplicada estaba en una sola.
-            if (!(mat.students || []).some(s => s.toString() === sid)) continue;
-            ops.push({
-              updateOne: {
-                filter: { _id: mat._id },
-                update: {
-                  // $pull saca TODAS las apariciones, así que también limpia el caso del
-                  // mismo alumno cargado dos veces en el array de una misma materia.
-                  $pull:  { students: new mongoose.Types.ObjectId(sid) },
-                  // Sin esto quedaría una fecha de inscripción huérfana en el Map, que
-                  // volvería a aplicarse si alguna vez se rematricula a esa cuenta.
-                  $unset: { [`enrollmentDates.${sid}`]: '' },
-                },
-              },
-            });
-          }
-        }
-      }
+      // Las cuentas elegibles no están en ningún curso (si estuvieran, el motivo sería
+      // SOBRANTE_CURSA y el grupo no sería elegible), así que no hay matrícula que limpiar:
+      // esto es un solo update.
+      const ids = resolubles.flatMap(g => g.masiva.deshabilitar)
+        .map(id => new mongoose.Types.ObjectId(id));
+      const r = await User.updateMany({ _id: { $in: ids } }, { $set: { active: false } });
 
-      await Course.bulkWrite(ops, { ordered: false });
-      const cursos = new Set(resolubles.map(g => g.divisionId)).size;
+      const conAviso = resolubles.reduce((acc, g) => acc + g.masiva.avisar.length, 0);
       return {
-        afectados: cuentas,
-        mensaje: `${cuentas} cuenta(s) duplicada(s) sacadas de ${ops.length} materia(s) en ` +
-                 `${cursos} curso(s). Las cuentas siguen existiendo y no se borró ninguna ` +
-                 'entrega ni nota: si además hay que darlas de baja, se hace desde el panel de administración.',
+        afectados: r.modifiedCount,
+        schoolId: resolubles[0].schoolId,
+        meta: { grupos: resolubles.length, con_aviso_pendiente: conAviso },
+        mensaje: `${r.modifiedCount} cuenta(s) duplicada(s) deshabilitada(s) en ` +
+                 `${resolubles.length} caso(s). No se borró ninguna cuenta ni ningún dato, y se ` +
+                 'puede revertir volviendo a habilitarlas desde el panel de administración. ' +
+                 'La cuenta que se conserva quedó intacta, con su correo y su trabajo.',
       };
     },
 

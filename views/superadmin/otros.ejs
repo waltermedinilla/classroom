@@ -72,7 +72,16 @@
       padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
       margin-bottom: 8px; background: var(--bg);
     }
-    .dupe-account:has(input:checked) { border-color: #1a73e8; background: #e8f0fe; }
+    /* ⚠️ El fondo está en hex, así que los colores del texto TAMBIÉN tienen que estar en hex:
+       en modo oscuro heredaban el texto claro del tema y el nombre de la cuenta elegida
+       quedaba casi invisible sobre este celeste. Es la misma regla que ya arregló
+       .warning-banner y los fondos de la sala. Medido: #1f1f1f sobre #e8f0fe da 15:1,
+       #3c4043 da 9,8:1 y #5f6368 da 5,6:1 — los tres pasan AA. */
+    .dupe-account:has(input:checked) {
+      border-color: #1a73e8; background: #e8f0fe; color: #1f1f1f;
+    }
+    .dupe-account:has(input:checked) .dupe-mail  { color: #3c4043; }
+    .dupe-account:has(input:checked) .dupe-stats { color: #5f6368; }
     .dupe-account input { margin-top: 3px; flex-shrink: 0; }
     .dupe-name { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .dupe-mail { font-size: 12px; color: var(--text-secondary); word-break: break-all; }
@@ -87,6 +96,13 @@
     .dupe-aviso {
       font-size: 12px; line-height: 1.5; background: #fef7e0; color: #b06000;
       border-radius: 8px; padding: 9px 12px; margin-bottom: 10px;
+    }
+    /* Lo que la fusión NO mueve todavía. Misma pareja de colores que .dupe-aviso y que el
+       chip 'datos': fondo en hex, así que el color del texto también va en hex — si no, en
+       modo oscuro heredaría el texto claro y quedaría ilegible sobre el fondo claro. */
+    .dupe-nomueve {
+      font-size: 11.5px; margin-top: 4px; display: inline-block;
+      background: #fef7e0; color: #b06000; border-radius: 6px; padding: 2px 7px;
     }
     .dupe-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
     .dupe-actions select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-primary); font-size: 12.5px; }
@@ -358,6 +374,13 @@
                         </div>
                         <div class="dupe-mail"><%= c.email %></div>
                         <div class="dupe-stats"><%= c.detalle %></div>
+                        <%# Lo que la fusión NO mueve todavía (asistencias, bandeja, mensajes de
+                            sala). Va rotulado a propósito: mostrar el número sin decir que se
+                            queda donde está sería peor que no mostrarlo, porque se leería como
+                            "esto también se transfiere". Ver specs/fusion-de-cuentas.spec.md. %>
+                        <% if (c.noSeTransfiere) { %>
+                          <div class="dupe-nomueve">no se transfiere: <%= c.noSeTransfiere %></div>
+                        <% } %>
                       </div>
                     </label>
                   <% }) %>
