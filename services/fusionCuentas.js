@@ -146,7 +146,12 @@ function clasificarGrupo(cuentas, { avisoDisponible = false } = {}) {
 
     // 5. Alguien usó la cuenta que se va a apagar: no se apaga sin avisarle (RN-13). Mientras
     //    el aviso no exista, el botón no la toca.
-    const usadas = sobrantes.filter(c => c.lastSeen);
+    //
+    //    ⚠️ Solo cuentan las que se VAN A APAGAR, es decir las activas. Hallado por la revisión de
+    //    la Fase 1b (2026-09-17) en un grupo de tres: con `c.lastSeen` a secas, una sobrante usada
+    //    que ya estaba apagada de antes entraba en `avisar`, y el botón mandaba un mensaje que
+    //    decía "quedó deshabilitada" nombrando una cuenta que no tocó.
+    const usadas = sobrantes.filter(c => c.lastSeen && c.activa !== false);
     if (usadas.length && !avisoDisponible) return no(MOTIVOS.NECESITA_AVISO);
 
     return {

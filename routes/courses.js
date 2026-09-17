@@ -768,7 +768,8 @@ router.post('/:id/students/:studentId/toggle-active', requireAuth, async (req, r
     }
     const student = await User.findById(req.params.studentId).select('active email role');
     if (!student) return res.status(404).json({ error: 'Usuario no encontrado' });
-    student.active = !(student.active !== false);
+    // setActive y no una asignación: rehabilitar borra la marca de fusión (RN-18).
+    student.setActive(student.active === false);
     await student.save();
     invalidateUser(student._id);
     res.json({ active: student.active });

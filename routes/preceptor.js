@@ -596,7 +596,8 @@ router.post('/students/:id/toggle-active', async (req, res) => {
       return res.status(403).json({ error: 'Acceso denegado' });
     }
 
-    student.active = student.active === false;
+    // setActive y no una asignación: rehabilitar borra la marca de fusión (RN-18).
+    student.setActive(student.active === false);
     await student.save({ validateModifiedOnly: true });
     invalidateUser(student._id);
 

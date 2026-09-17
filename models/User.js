@@ -46,6 +46,19 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: true,      // false = cuenta deshabilitada (no puede iniciar sesión)
   },
+  // A qué cuenta se unificó ésta, cuando la deshabilitó una FUSIÓN de cuentas con el mismo DNI
+  // (specs/fusion-de-cuentas.spec.md, RN-15). Es lo que le permite al login contestar "entrá con
+  // l••••@gmail.com" en vez de "Contactá al administrador". Se escribe en el mismo update que
+  // pone active:false, y se borra al rehabilitar la cuenta: usar setActive() (RN-18).
+  mergedInto: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+  },
+  mergedAt: {
+    type: Date,
+    default: null,
+  },
   avatar: {
     type: String,
     default: null,      // URL pública del avatar; null = usar inicial del nombre
@@ -214,6 +227,22 @@ userSchema.methods.setEmail = function (nuevo) {
   this.email            = normalizado;
   this.emailVerifiedAt  = null;
   this.emailVerifiedVia = null;
+  return this;
+};
+
+// Prender o apagar una cuenta. Rehabilitarla BORRA su marca de fusión (RN-18 de
+// specs/fusion-de-cuentas.spec.md): si no, una fusión deshecha a mano dejaría la marca pegada, y
+// el día que alguien deshabilite esa cuenta por otro motivo el login diría "se unificó con otra".
+// Apagarla no la toca: una cuenta unificada que se vuelve a apagar sigue unificada.
+//
+// Método y no asignación suelta por el mismo motivo que setEmail: hay tres rutas que prenden y
+// apagan, y tests/unit/cuentaActivaRegla.test.js falla ante cualquier `.active =` en routes/.
+userSchema.methods.setActive = function (activa) {
+  this.active = !!activa;
+  if (this.active) {
+    this.mergedInto = null;
+    this.mergedAt   = null;
+  }
   return this;
 };
 

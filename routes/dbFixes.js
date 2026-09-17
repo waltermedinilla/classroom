@@ -98,7 +98,9 @@ router.post('/:id/fusionar', async (req, res) => {
   }
 
   try {
-    const r = await fix.fusionar({ clave, keepId, sobrante, emailId });
+    // actorId: si la fusión apaga una cuenta que alguien usó, el aviso sale a nombre de quien la
+    // hizo (specs/fusion-de-cuentas.spec.md, RN-16).
+    const r = await fix.fusionar({ clave, keepId, sobrante, emailId, actorId: req.userId });
 
     // Las cuentas tocadas viven cacheadas 45s por worker (middleware/cache.js): sin limpiar,
     // la que quedó deshabilitada podría seguir entrando hasta que expire el TTL.
@@ -150,7 +152,9 @@ router.post('/:id/aplicar', async (req, res) => {
     // El conteo previo va al log de auditoría: es lo que permite después saber sobre
     // cuántos registros se corrió, aunque el diagnóstico ya dé cero.
     const antes = await fix.diagnosticar();
-    const resultado = await fix.aplicar(req.body || {});
+    // El segundo argumento es quién aplica: lo usa la fusión de DNI duplicados para mandar el
+    // aviso a su nombre. Los demás arreglos lo ignoran.
+    const resultado = await fix.aplicar(req.body || {}, { actorId: req.userId });
 
     // Varios arreglos tocan documentos de User (escuela, alcance de preceptor) que viven
     // cacheados 45s por worker. Sin limpiar, el efecto no se ve hasta que expire el TTL.

@@ -3978,6 +3978,39 @@ const specs = [
       await client.post('admin', `/admin/users/${state.scopedStudentId}/toggle-active`, { expectStatus: 200 });
     },
   },
+  {
+    // RN-18 de specs/fusion-de-cuentas.spec.md por la ruta del DOCENTE (la de admin se prueba en
+    // fusion-aviso-rehabilitar-borra-marca). Esta ruta carga al alumno con
+    // `.select('active email role')`, sin los campos de la marca: justo el caso donde un olvido
+    // no se vería leyendo el código.
+    id: 'docente-rehabilita-borra-marca',
+    title: 'El docente rehabilita a un alumno de su materia y se borra la marca de fusión',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state, assert }) {
+      const ruta = `/courses/${state.courseId}/students/${state.scopedStudentId}/toggle-active`;
+      const apagar = await client.post('scopedTeacher', ruta, { expectStatus: 200 });
+      assert(apagar.json.active === false, 'precondición: el docente lo deshabilitó');
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      const alumno = { _id: new ObjectId(state.scopedStudentId) };
+      try {
+        await mongo.connect();
+        const users = mongo.db().collection('users');
+        // Como si una fusión lo hubiera unificado con otra cuenta.
+        await users.updateOne(alumno, { $set: { mergedInto: new ObjectId(state.scopedTeacherId), mergedAt: new Date() } });
+
+        const prender = await client.post('scopedTeacher', ruta, { expectStatus: 200 });
+        assert(prender.json.active === true, 'el docente lo rehabilitó');
+        const doc = await users.findOne(alumno);
+        assert(!doc.mergedInto && !doc.mergedAt, `rehabilitar debería borrar la marca — quedó ${doc.mergedInto}`);
+      } finally {
+        // Nunca dejar al alumno del suite marcado, pase lo que pase arriba.
+        await mongo.db().collection('users').updateOne(alumno, { $set: { active: true, mergedInto: null, mergedAt: null } }).catch(() => {});
+        await mongo.close();
+      }
+    },
+  },
 
   // ── Panel Directivo (A1 + A2) ─────────────────────────────────────────────
   {
@@ -6353,6 +6386,37 @@ const specs = [
     },
   },
   {
+    // RN-18 de specs/fusion-de-cuentas.spec.md por la ruta del PRECEPTOR, que conserva la facultad
+    // de deshabilitar y rehabilitar (confirmado por el usuario el 2026-09-17).
+    id: 'preceptor-rehabilita-borra-marca',
+    title: 'El preceptor rehabilita a su alumno y se borra la marca de fusión',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state, assert }) {
+      const ruta = `/preceptor/students/${state.preceptorStudentId}/toggle-active`;
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      const alumno = { _id: new ObjectId(state.preceptorStudentId) };
+      try {
+        await mongo.connect();
+        const users = mongo.db().collection('users');
+        // Viene deshabilitado del spec anterior; se lo marca como si una fusión lo hubiera apagado.
+        await users.updateOne(alumno, { $set: { mergedInto: new ObjectId(state.scopedStudentId), mergedAt: new Date() } });
+
+        const prender = await client.post('preceptor', ruta, { expectStatus: 200 });
+        assert(prender.json.active === true, 'el preceptor lo rehabilitó');
+        const doc = await users.findOne(alumno);
+        assert(!doc.mergedInto && !doc.mergedAt, `rehabilitar debería borrar la marca — quedó ${doc.mergedInto}`);
+
+        // Se lo deja como lo dejó el spec anterior: deshabilitado, y ahora sin marca.
+        const apagar = await client.post('preceptor', ruta, { expectStatus: 200 });
+        assert(apagar.json.active === false, 'vuelve a quedar deshabilitado');
+      } finally {
+        await mongo.db().collection('users').updateOne(alumno, { $set: { mergedInto: null, mergedAt: null } }).catch(() => {});
+        await mongo.close();
+      }
+    },
+  },
+  {
     id: 'preceptor-unenrolls-student',
     title: 'El preceptor saca del curso a un alumno sin entregas y la cuenta sobrevive',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
@@ -6752,6 +6816,194 @@ const specs = [
     async run({ client, state }) {
       if (state.dupAlumnoNuevaId) await client.post('admin', `/admin/users/${state.dupAlumnoNuevaId}/delete`, { expectStatus: 200 });
       if (state.dupAlumnoViejaId) await client.post('admin', `/admin/users/${state.dupAlumnoViejaId}/delete`, { expectStatus: 200 });
+    },
+  },
+  {
+    // ── El aviso de la fusión (Fase 1b de specs/fusion-de-cuentas.spec.md) ──────
+    // El caso real: el chico entró alguna vez a la cuenta del padrón, que no tiene nada. Cuando
+    // la fusión la apaga, va a volver a probar con ESE correo, y hasta ahora el login le
+    // contestaba "Contactá al administrador" y nada más. Acá se prueba lo que le dice ahora,
+    // por HTTP y de punta a punta (CA-04c). Lo que se escribe en la base lo prueba
+    // tests/unit/avisoFusionBase.test.js, contra una base aparte.
+    id: 'fusion-aviso-setup',
+    title: 'Se arman dos cuentas de alumno con el mismo DNI, y alguien usó la vacía',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state }) {
+      const dni = dniSmoke(95);
+      state.avisoDni        = dni;
+      state.avisoCorreoReal  = `aviso.real.${RUN_ID}@example.com`;
+      state.avisoCorreoVacia = `aviso.padron.${RUN_ID}@example.com`;
+
+      const real = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke Aviso Real ${RUN_ID}`, email: state.avisoCorreoReal,
+                password: 'ClaveReal1234', role: 'student', dni },
+        expectStatus: 201,
+      });
+      state.avisoRealId = real.json.user._id;
+
+      const vacia = await client.post('admin', '/admin/users/create', {
+        body: { name: `SMOKE AVISO PADRON ${RUN_ID}`, email: state.avisoCorreoVacia,
+                password: 'ClavePadron1234', role: 'student', dni: dniSmoke(96) },
+        expectStatus: 201,
+      });
+      state.avisoVaciaId = vacia.json.user._id;
+
+      // El DNI repetido y la conexión van directo a Mongo: por la ruta de alta el DNI no entra,
+      // y `lastSeen` lo escribe el middleware en segundo plano, sin garantía de cuándo.
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        await mongo.db().collection('users').updateOne(
+          { _id: new ObjectId(state.avisoVaciaId) },
+          { $set: { dni: `${dni.slice(0, 2)}.${dni.slice(2, 5)}.${dni.slice(5)}`, lastSeen: new Date() } },
+        );
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'fusion-aviso-fusiona',
+    title: 'Se fusiona el par apagando la cuenta vacía: la conservada recibe el aviso en su bandeja',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state, assert }) {
+      const diag = await client.get('superadmin', '/superadmin/otros/dni-duplicado-en-curso/diagnostico', { expectStatus: 200 });
+      const grupo = (diag.json.grupos || []).find(g => g.dni === state.avisoDni.replace(/^0+/, ''));
+      assert(grupo, `debería detectar el grupo del DNI ${state.avisoDni}`);
+
+      await client.post('superadmin', '/superadmin/otros/dni-duplicado-en-curso/fusionar', {
+        body: { clave: grupo.clave, keepId: state.avisoRealId, sobrante: 'deshabilitar' },
+        expectStatus: 200,
+      });
+
+      // CA-04b.2/3 por la bandeja real del chico, no por la colección.
+      await client.post('avisoReal', '/login', {
+        body: { email: state.avisoCorreoReal, password: 'ClaveReal1234' }, expectStatus: 200,
+      });
+      const bandeja = await client.get('avisoReal', '/messages/mine', { expectStatus: 200 });
+      const aviso = (bandeja.json.messages || []).find(m => m.subject === 'Tus dos cuentas quedaron unificadas');
+      assert(aviso, 'la cuenta conservada debería tener el aviso en su bandeja');
+      assert(aviso.body.includes(state.avisoCorreoReal) && aviso.body.includes(state.avisoCorreoVacia),
+        `el aviso debería nombrar los dos correos — dice: ${aviso.body}`);
+      assert(aviso.sinLeer, 'el aviso llega sin leer, que es lo que prende el sobre');
+      assert(aviso.puedeResponder, 'aprobado: el chico puede responder "esa no era mía"');
+
+      // CA-04b.6: el evento de auditoría de la fusión dice que el aviso salió. logAudit escribe en
+      // segundo plano, así que se espera un poco antes de darlo por ausente.
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        let evento = null;
+        for (let i = 0; i < 20 && !evento; i++) {
+          evento = await mongo.db().collection('auditlogs').findOne(
+            { action: 'user.merge', 'targets.id': new ObjectId(state.avisoRealId) });
+          if (!evento) await new Promise(r => setTimeout(r, 100));
+        }
+        assert(evento, 'la fusión debería quedar en la auditoría');
+        assert(evento.meta && evento.meta.aviso === 'enviado',
+          `la auditoría debería decir aviso: enviado — dice: ${JSON.stringify(evento.meta)}`);
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'fusion-aviso-login-muro',
+    title: 'El login de la cuenta apagada dice que se unificó y con qué correo entrar, enmascarado',
+    requiresEnv: ['SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert }) {
+      // CA-04c.1: contraseña correcta de la apagada.
+      const muro = await client.post('avisoVacia', '/login', {
+        body: { email: state.avisoCorreoVacia, password: 'ClavePadron1234' }, expectStatus: 403,
+      });
+      const enmascarado = `a••••@example.com`; // aviso.real.<RUN_ID>@example.com
+      assert(/se unificó/.test(muro.json.error), `debería decir que se unificó — dice: ${muro.json.error}`);
+      assert(muro.json.error.includes(enmascarado), `debería traer ${enmascarado} — dice: ${muro.json.error}`);
+      assert(!muro.json.error.includes(state.avisoCorreoReal), 'NUNCA el correo completo de la otra cuenta');
+
+      // CA-04c.2: contraseña incorrecta. El muro solo lo ve quien acertó la contraseña.
+      const mala = await client.post('avisoVacia', '/login', {
+        body: { email: state.avisoCorreoVacia, password: 'NoEsLaClave1234' }, expectStatus: 400,
+      });
+      assert(!/unific/i.test(mala.json.error), `con contraseña incorrecta no se revela nada — dice: ${mala.json.error}`);
+      assert(!mala.json.error.includes('example.com'), 'ni un pedazo de correo');
+    },
+  },
+  {
+    id: 'fusion-aviso-conservada-apagada',
+    title: 'Si la cuenta conservada también está deshabilitada, el login da el texto de siempre',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // CA-04c.3: el muro nunca manda a alguien a una cuenta que tampoco lo deja entrar.
+      const apagar = await client.post('admin', `/admin/users/${state.avisoRealId}/toggle-active`, { expectStatus: 200 });
+      assert(apagar.json.active === false, 'precondición: la conservada quedó deshabilitada');
+      try {
+        const r = await client.post('avisoVacia', '/login', {
+          body: { email: state.avisoCorreoVacia, password: 'ClavePadron1234' }, expectStatus: 403,
+        });
+        assert(r.json.error === 'Tu cuenta está deshabilitada. Contactá al administrador.',
+          `debería ser el texto genérico — dice: ${r.json.error}`);
+      } finally {
+        await client.post('admin', `/admin/users/${state.avisoRealId}/toggle-active`, { expectStatus: 200 });
+      }
+    },
+  },
+  {
+    id: 'fusion-aviso-rehabilitar-borra-marca',
+    title: 'Rehabilitar la cuenta unificada borra la marca: si se la vuelve a apagar, el login no dice "se unificó"',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state, assert }) {
+      // CA-04c.4.
+      const prender = await client.post('admin', `/admin/users/${state.avisoVaciaId}/toggle-active`, { expectStatus: 200 });
+      assert(prender.json.active === true, 'precondición: la cuenta se rehabilitó');
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const doc = await mongo.db().collection('users').findOne({ _id: new ObjectId(state.avisoVaciaId) });
+        assert(!doc.mergedInto && !doc.mergedAt, `rehabilitar debería borrar la marca — quedó ${doc.mergedInto}`);
+      } finally {
+        await mongo.close();
+      }
+
+      await client.post('admin', `/admin/users/${state.avisoVaciaId}/toggle-active`, { expectStatus: 200 });
+      const r = await client.post('avisoVacia', '/login', {
+        body: { email: state.avisoCorreoVacia, password: 'ClavePadron1234' }, expectStatus: 403,
+      });
+      assert(r.json.error === 'Tu cuenta está deshabilitada. Contactá al administrador.',
+        `apagada a mano, ya no es "se unificó" — dice: ${r.json.error}`);
+    },
+  },
+  {
+    id: 'fusion-aviso-cleanup',
+    title: 'Limpieza: se borran las dos cuentas del aviso y el mensaje que recibió la conservada',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, env, state }) {
+      // Solo lo que creó esta corrida: el mensaje se busca por su destinatario, que es una
+      // cuenta de prueba de este RUN_ID, nunca por el remitente (que es el superadmin real).
+      if (state.avisoRealId) {
+        const { MongoClient, ObjectId } = require('mongodb');
+        const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+        try {
+          await mongo.connect();
+          const db = mongo.db();
+          const real = new ObjectId(state.avisoRealId);
+          const mensajes = await db.collection('messages')
+            .find({ 'audience.userIds': [real] }).project({ _id: 1 }).toArray();
+          const ids = mensajes.map(m => m._id);
+          if (ids.length) {
+            await db.collection('messagerecipients').deleteMany({ message: { $in: ids } });
+            await db.collection('messages').deleteMany({ _id: { $in: ids } });
+          }
+        } finally {
+          await mongo.close();
+        }
+        await client.post('admin', `/admin/users/${state.avisoRealId}/delete`, { expectStatus: 200 });
+      }
+      if (state.avisoVaciaId) await client.post('admin', `/admin/users/${state.avisoVaciaId}/delete`, { expectStatus: 200 });
     },
   },
   // ── Alta masiva de materias en varios cursos (/superadmin/otros) ──────────

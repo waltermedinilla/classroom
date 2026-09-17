@@ -4,6 +4,7 @@ const User   = require('../models/User');
 const School = require('../models/School');
 // DNI obligatorio en toda alta desde 2026-07-30 (ver services/dni.js).
 const { normalizeDni } = require('../services/dni');
+const { textoLoginDeshabilitada } = require('../services/avisoFusion');
 // Automatrícula del alumno — TEMPORAL, ver la cabecera de services/selfEnroll.js.
 const {
   AUTOMATRICULA_ACTIVA, cursosDisponibles, cursoElegible, automatricular,
@@ -188,9 +189,18 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Correo electrónico o contraseña inválidos' });
     }
 
-    // Cuenta deshabilitada: no puede iniciar sesión aunque las credenciales sean correctas
+    // Cuenta deshabilitada: no puede iniciar sesión aunque las credenciales sean correctas.
+    //
+    // Si la deshabilitó una fusión de cuentas con el mismo DNI, se le dice con qué correo entrar
+    // (enmascarado): es adonde va a ir el chico cuya cuenta del padrón se apagó, y "Contactá al
+    // administrador" lo dejaba creyendo que perdió el acceso. Va DESPUÉS de comparar la
+    // contraseña a propósito: con una incorrecta sigue el 400 genérico y no se revela nada.
+    // Spec: specs/fusion-de-cuentas.spec.md, RN-17.
     if (user.active === false) {
-      return res.status(403).json({ error: 'Tu cuenta está deshabilitada. Contactá al administrador.' });
+      const conservada = user.mergedInto
+        ? await User.findById(user.mergedInto).select('email active').lean()
+        : null;
+      return res.status(403).json({ error: textoLoginDeshabilitada(conservada) });
     }
 
     const token = createToken(user._id);

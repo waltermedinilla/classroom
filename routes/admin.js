@@ -572,7 +572,8 @@ router.post('/users/:id/toggle-active', async (req, res) => {
     if (req.params.id === req.userId) {
       return res.status(400).json({ error: 'No podés deshabilitarte a vos mismo' });
     }
-    target.active = !target.active;
+    // setActive y no una asignación: rehabilitar borra la marca de fusión (RN-18).
+    target.setActive(target.active === false);
     await target.save({ validateModifiedOnly: true });
     invalidateUser(req.params.id);
 

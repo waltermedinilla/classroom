@@ -144,6 +144,33 @@ describe('clasificarGrupo — las 14 que alguien usó (RN-13, CA-04b)', () => {
     const r = clasificarGrupo([cuenta('padron'), llena], { avisoDisponible: true });
     assert.deepStrictEqual(r.masiva.avisar, []);
   });
+
+  // Hallado por la revisión de la Fase 1b (2026-09-17), en un grupo de TRES cuentas: la real, una
+  // que alguien usó pero que ya estaba apagada de antes, y una del padrón que nadie usó. El botón
+  // apaga solo la del padrón, pero el aviso salía por la otra: un mensaje que decía "quedó
+  // deshabilitada" nombrando una cuenta que este botón no tocó, y ningún aviso sobre la que sí.
+  // El aviso es por la cuenta que se VA A APAGAR, no por cualquier sobrante que se haya usado.
+  const yaApagadaUsada = cuenta('apagada-antes', { activa: false, lastSeen: new Date('2026-07-01') });
+
+  test('grupo de 3: una sobrante usada que YA estaba apagada no genera aviso', () => {
+    const r = clasificarGrupo([yaApagadaUsada, cuenta('padron'), llena], { avisoDisponible: true });
+    assert.strictEqual(r.masiva.elegible, true, `motivo: ${r.masiva.motivo}`);
+    assert.deepStrictEqual(r.masiva.deshabilitar, ['padron']);
+    assert.deepStrictEqual(r.masiva.avisar, [],
+      'el aviso nombraría una cuenta que este botón no apaga');
+  });
+
+  test('grupo de 3: si la que se apaga es la usada, el aviso es por ESA', () => {
+    const r = clasificarGrupo([yaApagadaUsada, usada, llena], { avisoDisponible: true });
+    assert.deepStrictEqual(r.masiva.deshabilitar, ['padron']);
+    assert.deepStrictEqual(r.masiva.avisar, [{ paraId: 'real', porqueSeDeshabilito: 'padron' }]);
+  });
+
+  test('sin aviso disponible, una sobrante usada pero YA apagada no frena el botón', () => {
+    // Lo que se apaga ahora nadie lo usó: no hay a quién dejar afuera sin avisar.
+    const r = clasificarGrupo([yaApagadaUsada, cuenta('padron'), llena]);
+    assert.strictEqual(r.masiva.elegible, true, `motivo: ${r.masiva.motivo}`);
+  });
 });
 
 describe('clasificarGrupo — los grupos que mira una persona (RN-14, CA-05b)', () => {

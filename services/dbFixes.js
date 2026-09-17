@@ -71,12 +71,69 @@ const SoeCase           = require('../models/SoeCase');
 // afuera y sin base de datos, para poder probarla con objetos: services/fusionCuentas.js +
 // tests/unit/fusionCuentas.test.js. Acá queda solo el trabajo con Mongo.
 const fusion = require('./fusionCuentas');
+// Lo que se le DICE a la persona cuya cuenta apaga una fusión (Fase 1b). Acá solo se escribe.
+const avisoFusion      = require('./avisoFusion');
+const Message          = require('../models/Message');
 
-// ¿Existe ya el aviso de RN-13? Mientras sea false, la acción masiva NO toca las cuentas que
-// alguien usó (las 14 con `lastSeen` de las 41 sobrantes): apagarlas sin avisar deja a esa
-// persona afuera de la cuenta por la que venía entrando, y el aviso es lo que lo evita.
-// Se prende junto con la Fase 1b, no antes — y el test de fusionCuentas cubre los dos estados.
-const AVISO_DE_FUSION_LISTO = false;
+// ¿Existe el aviso de RN-13? Mientras fue false (hasta la Fase 1b, 2026-09-16), la acción masiva
+// no tocaba las cuentas que alguien usó: apagarlas sin avisar dejaba a esa persona afuera de la
+// cuenta por la que venía entrando. Ahora existe y va por dos lados —un mensaje a la cuenta que
+// se conserva y el muro del login de la que se apaga—, así que esos grupos entran en el botón.
+// El test de fusionCuentas sigue cubriendo los dos estados.
+const AVISO_DE_FUSION_LISTO = true;
+
+// Lo que escribe una fusión en la cuenta que apaga: deshabilitada Y marcada con a qué cuenta se
+// unificó, en el MISMO update (RN-15). Separado en dos escrituras podría quedar una cuenta
+// apagada sin marca, y esa persona volvería a ver "Contactá al administrador".
+const apagarPorFusion = (keepId) => ({
+  $set: { active: false, mergedInto: new mongoose.Types.ObjectId(String(keepId)), mergedAt: new Date() },
+});
+
+// El aviso a la cuenta que se conserva (RN-16): un envío de la mensajería del superadmin, con un
+// solo destinatario. Devuelve true si salió.
+//
+// ⚠️ Se llama DESPUÉS de apagar y marcar, nunca antes. Si esto falla la cuenta queda apagada
+// igual y el muro del login le dice al chico con qué correo entrar; al revés, un fallo dejaría
+// un mensaje contando algo que no pasó. Por eso NO tira: devuelve false y quien llama lo informa.
+async function avisarFusion({ actorId, conservada, correosApagadas, cuentasEnElGrupo }) {
+  let envio = null;
+  try {
+    const { subject, body } = avisoFusion.mensajeDeFusion({
+      correoConservada: conservada.email,
+      correoApagada:    correosApagadas,
+      cuentasEnElGrupo,
+    });
+    envio = await Message.create({
+      subject, body,
+      sender: actorId,
+      allowReplies: true,   // aprobado: es la vía para decir "esa cuenta no era mía"
+      audience: { userIds: [conservada.id] },
+      recipientCount: 1,
+    });
+    await MessageRecipient.create({
+      message: envio._id,
+      user: conservada.id,
+      roleAtSend: conservada.role || null,
+      schoolAtSend: conservada.schoolId || null,
+    });
+    return true;
+  } catch (err) {
+    // Un envío sin destinatario ensucia el panel de mensajes: se va con su fila, como en
+    // routes/messages.js.
+    if (envio) await Message.deleteOne({ _id: envio._id }).catch(() => {});
+    console.error('[fusion] no se pudo mandar el aviso a', String(conservada.id), '—', err.message);
+    return false;
+  }
+}
+
+// RN-13: una cuenta que alguien usó no se apaga en silencio, y Message.sender es obligatorio.
+// Sin saber quién ejecuta, se frena ANTES de mover nada.
+function exigirActorParaAvisar(actorId) {
+  if (actorId) return;
+  const err = new Error('No se puede apagar una cuenta que alguien usó sin avisarle, y para mandar el aviso hace falta saber quién hace la fusión.');
+  err.status = 400;
+  throw err;
+}
 // Módulo de Recursos y reservas. Se importan solo para el diagnóstico de abajo; la lógica del
 // cupo vive entera en services/recursos/cupo.js, que es el único que lo escribe.
 const Recurso      = require('../models/Recurso');
@@ -413,6 +470,12 @@ async function calcularDniDuplicados() {
 // son los mismos para un docente (materias a cargo) que para un alumno (entregas y notas).
 // Se manda solo lo que la tarjeta pinta — nunca el documento de usuario entero, que viaja
 // como JSON al navegador en GET /:id/diagnostico.
+// Lo que la tarjeta de una fusión caso por caso anticipa cuando alguna cuenta del grupo tiene uso
+// registrado (RN-09: nada se hace sin que la pantalla lo haya dicho). Sin esto, apretar
+// "Fusionar" mandaba un mensaje a nombre del superadmin que la tarjeta nunca había mencionado.
+const AYUDA_AVISO = 'Si apagás una cuenta que alguien usó, la que se queda recibe un mensaje tuyo con ' +
+                    'el correo con el que tiene que entrar, y el login de la apagada se lo dice.';
+
 function presentarGruposAlumnos(grupos) {
   // El motivo por el que un grupo NO lo resuelve el botón, en las palabras de quien tiene que
   // decidir. "No se puede" sin el motivo obliga a la persona a adivinar qué mirar, que es
@@ -448,7 +511,8 @@ function presentarGruposAlumnos(grupos) {
       icono: 'group',
       titulo: `DNI ${g.dni} · ${donde}`,
       ayuda: 'Elegí la cuenta que se queda: la otra le pasa sus entregas, sus notas, sus acuses '
-           + 'de lectura y las materias donde figuraba.',
+           + 'de lectura y las materias donde figuraba.'
+           + (g.cuentas.some(c => c.u.lastSeen) ? ' ' + AYUDA_AVISO : ''),
       aviso: g.masiva.elegible ? null : PORQUE[g.masiva.motivo] || null,
       sugeridaId,
       cuentas: g.cuentas.map(c => {
@@ -636,7 +700,8 @@ function presentarGruposDocentes(grupos) {
     ...g,
     icono: 'badge',
     titulo: `DNI ${g.dni} · ${g.escuela}`,
-    ayuda: 'Elegí la cuenta que se queda: la otra le transfiere todo lo que tiene a cargo.',
+    ayuda: 'Elegí la cuenta que se queda: la otra le transfiere todo lo que tiene a cargo.'
+         + (g.cuentas.some(c => c.ultimoAcceso) ? ' ' + AYUDA_AVISO : ''),
     aviso: null,
     cuentas: g.cuentas.map(c => ({
       ...c,
@@ -698,7 +763,7 @@ async function pasarCorreo({ keepId, correoConservada, donanteId, correoDonante,
 // algo falla en el medio, lo peor que queda es una transferencia parcial con las dos cuentas
 // todavía vivas — nunca una cuenta borrada con materias apuntando a ella (que es exactamente
 // el bug de las referencias colgadas que rompía /admin/courses).
-async function fusionarDocentes({ clave, keepId, sobrante = 'deshabilitar', emailId = null }) {
+async function fusionarDocentes({ clave, keepId, sobrante = 'deshabilitar', emailId = null, actorId = null }) {
   const { grupos } = await calcularDocentesDuplicados();
   const grupo = grupos.find(g => g.clave === clave);
   if (!grupo) {
@@ -721,6 +786,13 @@ async function fusionarDocentes({ clave, keepId, sobrante = 'deshabilitar', emai
   const keep     = new mongoose.Types.ObjectId(keepId);
   const perdedor = grupo.cuentas.filter(c => c.id !== keepId);
   const perdedorIds = perdedor.map(c => new mongoose.Types.ObjectId(c.id));
+
+  // Las sobrantes que alguien usó y que ESTA fusión apaga reciben aviso (RN-16). Una que ya
+  // estaba apagada de antes se marca igual (queda unida a la conservada), pero no genera un
+  // mensaje que diga "quedó deshabilitada" por algo que esta acción no hizo. Se chequea acá,
+  // antes de transferir nada, que haya a nombre de quién mandarlo.
+  const usadas = perdedor.filter(c => c.ultimoAcceso && c.activa);
+  if (usadas.length) exigirActorParaAvisar(actorId);
 
   const resumen = { titular: 0, suplente: 0, actividades: 0, novedades: 0, comentarios: 0, matriculas: 0 };
 
@@ -774,7 +846,8 @@ async function fusionarDocentes({ clave, keepId, sobrante = 'deshabilitar', emai
   if (accion === 'eliminar') {
     await User.deleteMany({ _id: { $in: perdedorIds } });
   } else {
-    await User.updateMany({ _id: { $in: perdedorIds } }, { $set: { active: false } });
+    // Apagada Y marcada en el mismo update (RN-15): el login le dice con qué correo entrar.
+    await User.updateMany({ _id: { $in: perdedorIds } }, apagarPorFusion(keepId));
   }
 
   // 6. El correo, siempre al final (ver pasarCorreo: el índice único obliga a liberarlo antes).
@@ -800,6 +873,16 @@ async function fusionarDocentes({ clave, keepId, sobrante = 'deshabilitar', emai
     intercambiadoCon: correoCambiado && accion !== 'eliminar' ? cuentaConservada.email : null,
   };
 
+  // 7. El aviso, después del correo: tiene que nombrar los correos como QUEDARON (RN-16).
+  const avisado = (accion === 'deshabilitar' && usadas.length)
+    ? await avisarFusion({
+        actorId,
+        conservada: { id: keep, email: correoFinal, role: 'teacher', schoolId: grupo.schoolId },
+        correosApagadas: usadas.map(c => correoQueQuedo(c.id, c.email, correo, correoDe)),
+        cuentasEnElGrupo: grupo.cuentas.length,
+      })
+    : null;
+
   const movido = [
     resumen.titular     ? `${resumen.titular} materia(s) como titular` : null,
     resumen.suplente    ? `${resumen.suplente} como suplente`          : null,
@@ -821,6 +904,7 @@ async function fusionarDocentes({ clave, keepId, sobrante = 'deshabilitar', emai
       materias_suplente: resumen.suplente,
       actividades:       resumen.actividades,
       novedades:         resumen.novedades,
+      ...(avisado === null ? {} : { aviso: avisado ? 'enviado' : 'fallido' }),
     },
     mensaje:
       `Listo: ${cuentaConservada.nombre} (${correoFinal}) se queda con todo. ` +
@@ -831,7 +915,8 @@ async function fusionarDocentes({ clave, keepId, sobrante = 'deshabilitar', emai
         : 'La cuenta sobrante quedó deshabilitada' +
           (sobrante === 'eliminar'
             ? ' (no se pudo eliminar: tiene entregas propias, borrarla dejaría esas entregas sin dueño).'
-            : '.')),
+            : '.')) +
+      (avisado === null ? '' : ' ' + textoAviso(avisado)),
   };
 }
 
@@ -842,6 +927,23 @@ function textoCorreo(correo) {
   if (!correo.cambiado) return '';
   return `El correo pasó de ${correo.anterior} a ${correo.final}` +
     (correo.intercambiadoCon ? ` (la otra cuenta se quedó con ${correo.intercambiadoCon}). ` : '. ');
+}
+
+// El correo con el que quedó una cuenta sobrante después de la fusión. Si fue la que le prestó
+// el correo a la conservada, ahora tiene el que la conservada soltó; si no, el suyo. Es el que
+// el aviso tiene que nombrar: el chico lo va a reconocer como "la otra", y es el que la cuenta
+// apagada tiene hoy.
+function correoQueQuedo(id, correoOriginal, correo, correoDe) {
+  return (correo.intercambiadoCon && String(id) === String(correoDe)) ? correo.intercambiadoCon : correoOriginal;
+}
+
+// El renglón del aviso en el cartel de una fusión. `avisado` es null cuando no hacía falta
+// (nadie había usado la cuenta apagada).
+function textoAviso(avisado) {
+  if (avisado === null) return '';
+  return avisado
+    ? 'Alguien había usado la cuenta que se apagó: la que queda recibió un mensaje con el correo con el que tiene que entrar, y el login de la apagada se lo dice.'
+    : 'Alguien había usado la cuenta que se apagó, y NO se pudo mandarle el mensaje a la que queda. El login de la apagada igual le dice con qué correo entrar.';
 }
 
 // Fusiona dos (o más) cuentas de ALUMNO que son la misma persona dentro de un curso.
@@ -856,7 +958,7 @@ function textoCorreo(correo) {
 // El orden es el mismo que en fusionarDocentes y por la misma razón: primero se transfiere,
 // después se toca la cuenta sobrante, y el correo al final. Si algo falla en el medio lo
 // peor que queda es una transferencia parcial con las dos cuentas todavía vivas.
-async function fusionarAlumnos({ clave, keepId, sobrante = 'deshabilitar', emailId = null }) {
+async function fusionarAlumnos({ clave, keepId, sobrante = 'deshabilitar', emailId = null, actorId = null }) {
   const { grupos } = await calcularDniDuplicados();
   const grupo = grupos.find(g => g.clave === clave);
   if (!grupo) {
@@ -881,6 +983,14 @@ async function fusionarAlumnos({ clave, keepId, sobrante = 'deshabilitar', email
   const perdedorIds = perdedores.map(c => c.u._id);
   const perdedorSet = new Set(perdedores.map(idDe));
   const materiaIds  = grupo.materias.map(m => m._id);
+
+  // Las sobrantes que alguien usó y que ESTA fusión apaga reciben aviso (RN-16). Una que ya
+  // estaba apagada de antes se marca igual, pero no genera mensaje. `sacar` no apaga, así que
+  // no hay nada que avisar; con 'eliminar' puede terminar apagando (si tiene entregas o legajo),
+  // y eso se sabe recién al final, así que también exige saber quién hace la fusión. Se chequea
+  // acá, antes de transferir nada.
+  const usadas = perdedores.filter(c => c.u.lastSeen && c.u.active !== false);
+  if (usadas.length && sobrante !== 'sacar') exigirActorParaAvisar(actorId);
 
   const resumen = {
     materias: 0, entregas: 0, notas: 0, aperturas: 0,
@@ -1027,7 +1137,8 @@ async function fusionarAlumnos({ clave, keepId, sobrante = 'deshabilitar', email
     await ActivityView.deleteMany({ student: { $in: perdedorIds } });
     await User.deleteMany({ _id: { $in: perdedorIds } });
   } else if (accion === 'deshabilitar') {
-    await User.updateMany({ _id: { $in: perdedorIds } }, { $set: { active: false } });
+    // Apagada Y marcada en el mismo update (RN-15): el login le dice con qué correo entrar.
+    await User.updateMany({ _id: { $in: perdedorIds } }, apagarPorFusion(keepId));
   }
 
   // 8. El correo, al final (ver pasarCorreo).
@@ -1049,6 +1160,16 @@ async function fusionarAlumnos({ clave, keepId, sobrante = 'deshabilitar', email
     anterior: conservada.u.email,
     intercambiadoCon: correoCambiado && accion !== 'eliminar' ? conservada.u.email : null,
   };
+
+  // 9. El aviso, después del correo: tiene que nombrar los correos como QUEDARON (RN-16).
+  const avisado = (accion === 'deshabilitar' && usadas.length)
+    ? await avisarFusion({
+        actorId,
+        conservada: { id: keep, email: correoFinal, role: 'student', schoolId: grupo.schoolId },
+        correosApagadas: usadas.map(c => correoQueQuedo(idDe(c), c.u.email, correo, correoDe)),
+        cuentasEnElGrupo: grupo.cuentas.length,
+      })
+    : null;
 
   const movido = [
     resumen.entregas    ? `${resumen.entregas} entrega(s)`               : null,
@@ -1118,6 +1239,7 @@ async function fusionarAlumnos({ clave, keepId, sobrante = 'deshabilitar', email
       sin_mover_asistencias: quedaAsistencias,
       sin_mover_bandeja:     quedaBandeja,
       sin_mover_sala:        quedaSala,
+      ...(avisado === null ? {} : { aviso: avisado ? 'enviado' : 'fallido' }),
     },
     mensaje:
       `Listo: ${conservada.u.name} (${correoFinal}) se queda con ` +
@@ -1129,7 +1251,8 @@ async function fusionarAlumnos({ clave, keepId, sobrante = 'deshabilitar', email
         : '') +
       textoAtras +
       textoCorreo(correo) +
-      destino,
+      destino +
+      (avisado === null ? '' : ' ' + textoAviso(avisado)),
   };
 }
 
@@ -1501,8 +1624,9 @@ const FIXES = [
       'gradebook, y la mayoría de las veces el chico entra por la cuenta vacía y no ve nada. ' +
       'Caso por caso podés elegir con qué cuenta se queda y con qué correo: la otra le pasa sus ' +
       'entregas, sus notas, sus acuses de lectura y sus materias. El botón de abajo resuelve de ' +
-      'una vez los casos obvios —la cuenta duplicada está vacía, sin materias y nadie la usó— ' +
-      'deshabilitándola, sin tocar correos y sin borrar ninguna cuenta.',
+      'una vez los casos obvios —la cuenta duplicada está vacía y sin materias— ' +
+      'deshabilitándola, sin tocar correos y sin borrar ninguna cuenta. Si alguien había entrado ' +
+      'a esa cuenta, se le avisa con qué correo tiene que entrar.',
     icono: 'group_remove',
     severidad: 'alta',
     // Las dos vías conviven a propósito: la masiva para los duplicados vacíos, que son la
@@ -1517,6 +1641,9 @@ const FIXES = [
 
       const resolubles = grupos.filter(g => g.masiva.elegible);
       const cuentasADeshabilitar = resolubles.reduce((acc, g) => acc + g.masiva.deshabilitar.length, 0);
+      // Los casos donde apretar el botón además manda un aviso (Fase 1b). Se dice ANTES de
+      // apretar: nada se hace sin que la pantalla lo haya dicho (RN-09).
+      const conAviso = resolubles.filter(g => g.masiva.avisar.length).length;
       // Por qué quedan afuera los que quedan afuera. Es el número que evita la pregunta
       // "¿y los otros 25?" cada vez que alguien aprieta el botón.
       const porMotivo = {};
@@ -1560,8 +1687,13 @@ const FIXES = [
             (cuentasADeshabilitar
               ? `Si preferís resolver de una vez los ${resolubles.length} caso(s) obvios, "Aplicar arreglo" ` +
                 `deshabilita ${cuentasADeshabilitar} cuenta(s) duplicada(s) que no tienen materias, ni ` +
-                'entregas, ni notas, y que nadie usó nunca. Conserva la que tiene el trabajo hecho, no ' +
-                'toca ningún correo y NO borra ninguna cuenta: deshabilitar se revierte. '
+                'entregas, ni notas. Conserva la que tiene el trabajo hecho, no toca ningún correo y ' +
+                'NO borra ninguna cuenta: deshabilitar se revierte. ' +
+                (conAviso
+                  ? `En ${conAviso} de esos casos alguien había entrado a la cuenta que se apaga: la que ` +
+                    'se conserva recibe un mensaje tuyo con el correo con el que tiene que entrar, y el ' +
+                    'login de la apagada se lo dice. '
+                  : '')
               : '') +
             (porMotivo[fusion.MOTIVOS.DISPUTADA]
               ? `${porMotivo[fusion.MOTIVOS.DISPUTADA]} caso(s) quedan afuera del botón porque las dos ` +
@@ -1592,7 +1724,11 @@ const FIXES = [
     // resuelve el problema de verdad, porque `rosterDeDivision()` excluye las cuentas
     // inactivas — la melliza sale de la nómina de asistencia y deja de juntar un `ausente`
     // por día lectivo.
-    async aplicar() {
+    //
+    // Desde la Fase 1b (2026-09-16) entran también los grupos donde alguien USÓ la cuenta que se
+    // apaga, con aviso: la cuenta queda marcada con a qué cuenta se unificó (el login se lo dice)
+    // y la que se conserva recibe un mensaje de quien apretó el botón (`actorId`).
+    async aplicar(_params = {}, { actorId = null } = {}) {
       const { grupos } = await calcularDniDuplicados();
       const resolubles = grupos.filter(g => g.masiva.elegible);
       if (!resolubles.length) {
@@ -1600,28 +1736,60 @@ const FIXES = [
           afectados: 0,
           mensaje: grupos.length
             ? `Hay ${grupos.length} duplicado(s), pero ninguno se puede resolver solo: cada tarjeta ` +
-              'de abajo dice por qué (las dos cuentas con trabajo propio, la sobrante cursando, o ' +
-              'alguien que usó la cuenta y hay que avisarle).'
+              'de abajo dice por qué (las dos cuentas con trabajo propio, o la sobrante cursando).'
             : 'No había DNI duplicados en ninguna escuela.',
         };
       }
 
-      // Las cuentas elegibles no están en ningún curso (si estuvieran, el motivo sería
-      // SOBRANTE_CURSA y el grupo no sería elegible), así que no hay matrícula que limpiar:
-      // esto es un solo update.
-      const ids = resolubles.flatMap(g => g.masiva.deshabilitar)
-        .map(id => new mongoose.Types.ObjectId(id));
-      const r = await User.updateMany({ _id: { $in: ids } }, { $set: { active: false } });
+      // RN-13: sin saber quién aplica no hay aviso posible, y una cuenta usada no se apaga en
+      // silencio. Se frena antes de tocar ninguna.
+      if (resolubles.some(g => g.masiva.avisar.length)) exigirActorParaAvisar(actorId);
 
-      const conAviso = resolubles.reduce((acc, g) => acc + g.masiva.avisar.length, 0);
+      // Grupo por grupo y no un solo update: cada cuenta apagada lleva la marca de SU conservada.
+      // Las cuentas elegibles no están en ningún curso (si estuvieran, el motivo sería
+      // SOBRANTE_CURSA), así que no hay matrícula que limpiar.
+      let afectados = 0, avisosEnviados = 0, avisosFallidos = 0;
+      for (const g of resolubles) {
+        if (!g.masiva.deshabilitar.length) continue;
+        const r = await User.updateMany(
+          // `active: { $ne: false }`: si otra pestaña la apagó recién, no se la vuelve a marcar
+          // ni se le manda un segundo aviso.
+          { _id: { $in: g.masiva.deshabilitar.map(id => new mongoose.Types.ObjectId(id)) }, active: { $ne: false } },
+          apagarPorFusion(g.masiva.keepId),
+        );
+        afectados += r.modifiedCount;
+        if (!r.modifiedCount || !g.masiva.avisar.length) continue;
+
+        // Después de apagar y marcar, nunca antes (ver avisarFusion). La acción masiva no toca
+        // correos, así que los correos son los de siempre.
+        const porId = new Map(g.cuentas.map(c => [c.id, c]));
+        const conservada = porId.get(g.masiva.keepId);
+        const salio = await avisarFusion({
+          actorId,
+          conservada: { id: conservada.u._id, email: conservada.u.email, role: 'student', schoolId: g.schoolId },
+          correosApagadas: g.masiva.avisar.map(a => porId.get(a.porqueSeDeshabilito).u.email),
+          cuentasEnElGrupo: g.cuentas.length,
+        });
+        if (salio) avisosEnviados++; else avisosFallidos++;
+      }
+
       return {
-        afectados: r.modifiedCount,
+        afectados,
         schoolId: resolubles[0].schoolId,
-        meta: { grupos: resolubles.length, con_aviso_pendiente: conAviso },
-        mensaje: `${r.modifiedCount} cuenta(s) duplicada(s) deshabilitada(s) en ` +
+        meta: { grupos: resolubles.length, avisos_enviados: avisosEnviados, avisos_fallidos: avisosFallidos },
+        mensaje: `${afectados} cuenta(s) duplicada(s) deshabilitada(s) en ` +
                  `${resolubles.length} caso(s). No se borró ninguna cuenta ni ningún dato, y se ` +
                  'puede revertir volviendo a habilitarlas desde el panel de administración. ' +
-                 'La cuenta que se conserva quedó intacta, con su correo y su trabajo.',
+                 'La cuenta que se conserva quedó intacta, con su correo y su trabajo.' +
+                 (avisosEnviados
+                   ? ` Se mandaron ${avisosEnviados} aviso(s) a quienes habían usado la cuenta que se ` +
+                     'apagó: les llega un mensaje en la que se conserva con el correo con el que tienen ' +
+                     'que entrar, y el login de la apagada también se lo dice.'
+                   : '') +
+                 (avisosFallidos
+                   ? ` ${avisosFallidos} aviso(s) no se pudo mandar: esas cuentas quedaron apagadas ` +
+                     'igual, y el login de la apagada les dice con qué correo entrar.'
+                   : ''),
       };
     },
 

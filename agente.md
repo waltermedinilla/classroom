@@ -527,6 +527,76 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-17 — Fusión de cuentas, Fase 1b: el chico cuya cuenta se apaga se entera con qué correo entrar
+
+Cierra RN-13 de `specs/fusion-de-cuentas.spec.md`. Hasta ahora el botón de DNI duplicados no
+tocaba los casos donde alguien había **usado** la cuenta que sobraba (11 en la copia de producción
+del 12/09): apagarla lo dejaba afuera, y el login le contestaba *"Tu cuenta está deshabilitada.
+Contactá al administrador"*. Ahora esos casos entran en el botón, con aviso por dos lados, porque
+la persona puede llegar por dos lados:
+
+| Por dónde llega | Qué ve |
+|---|---|
+| Por la cuenta que se conserva | Un mensaje en la bandeja: *"Tus dos cuentas quedaron unificadas… entrás con {correo}. La otra ({correo}) quedó deshabilitada… Si algo no te cierra, respondé este mensaje."* |
+| Por la cuenta que se apagó (la que venía usando) | El login le dice *"Esta cuenta se unificó con otra que tiene tu mismo DNI. Desde ahora entrá con l••••@gmail.com."* |
+
+- **RN-15, la marca.** `User.mergedInto` y `User.mergedAt`, opcionales. Se escriben **en el mismo
+  update** que pone `active: false`, por los tres caminos: el botón masivo, la fusión caso por caso
+  de alumnos y la de docentes. `sacar` y `eliminar` no marcan.
+- **RN-16, el mensaje.** Lo firma el superadministrador que apretó el botón (queda en su lista de
+  enviados) y se puede responder, decisión del usuario. Se manda **después** de apagar y marcar: si
+  el envío falla, la cuenta queda apagada igual y el muro del login cubre el hueco; el cartel y la
+  auditoría lo dicen. Con intercambio de correos nombra los correos como **quedaron**. Sin saber
+  quién ejecuta, una fusión que apaga una cuenta usada se frena antes de mover nada.
+- **RN-17, el muro.** Va después de comparar la contraseña, así que con una incorrecta sigue el 400
+  genérico. El correo va enmascarado (decisión del usuario) y solo aparece si la cuenta conservada
+  existe y está activa; si no, el texto de siempre.
+- **RN-18, rehabilitar borra la marca.** `user.setActive()` en las tres rutas que prenden y apagan
+  cuentas (admin, preceptor, docente desde el curso), con `tests/unit/cuentaActivaRegla.test.js`
+  que falla ante cualquier `.active =` suelto en `routes/` o `services/`, igual que la regla de oro
+  del correo.
+
+- **La tarjeta lo anticipa** (RN-09): si alguna cuenta del grupo tiene uso, la fusión caso por caso
+  dice antes de apretar que la que se queda va a recibir un mensaje a tu nombre. El botón masivo
+  dice en cuántos casos.
+
+**La revisión dio NO CONFORME, y tenía razón.** En un grupo de **tres** cuentas (la real, una usada
+que ya estaba apagada de antes, una del padrón que nadie usó) el botón apagaba la del padrón y
+mandaba el aviso nombrando como "deshabilitada" a la que ya estaba apagada: `clasificarGrupo`
+contaba como "usada" a cualquier sobrante con `lastSeen`, apagada o no. Ahora solo cuentan las que
+se van a apagar. Hoy no pasaba (el espejo no tiene grupos de 3), pero el botón es masivo. La
+revisión marcó además tres criterios con tests a medias (rehabilitar por preceptor y docente,
+docentes con `eliminar` e intercambio de correo, la auditoría), que se completaron, y seis
+imprecisiones de la spec, corregidas. La **segunda pasada** encontró la misma regla sin aplicar en
+la fusión caso por caso, donde pasaba hasta con 2 cuentas (una sobrante apagada de antes que
+todavía figura en materias): ahí la cuenta se marca, porque la fusión la une, pero no se avisa. Y
+el mensaje dice cuántas cuentas eran ("Tenías 3 cuentas… Se deshabilitó x") en vez de "la otra"
+cuando no las nombra a todas. La **tercera pasada dio CONFORME**.
+
+**De paso quedó confirmado por el usuario (2026-09-17)**: cambiar a un alumno de curso, sacarlo del
+curso y deshabilitarle la cuenta lo pueden hacer preceptor, directivo (por el panel de
+preceptoría), docente (en su materia) y admin. Eliminar la cuenta, solo el admin. No es un bug.
+
+**Tests**: `avisoFusion.test.js` (24, textos, enmascarado y plural, sin base),
+`avisoFusionBase.test.js` (25, contra una base aparte `classroom-test-fusion`, porque el botón
+masivo recorre TODOS los grupos y contra el espejo apagaría cuentas reales),
+`cuentaActivaRegla.test.js` (7), 3 casos de grupo de 3 en `fusionCuentas.test.js`, y en el smoke
+6 specs `fusion-aviso-*` (login por HTTP y auditoría) más `docente-rehabilita-borra-marca` y
+`preceptor-rehabilita-borra-marca`. Antes de implementar fallaban los que prueban algo que el código
+no hacía; el smoke del muro falla con la versión vieja de `routes/auth.js`. No se verificó que los
+dos smoke de rehabilitar fallen sin el arreglo (dependen del estado de specs anteriores y no se
+pueden aislar); la regla estática sí fallaba antes. Unit 1360/1368 (los 8 son del backup
+incremental, ajenos), smoke 413/413, roles sin hallazgos.
+
+**Base de datos**: dos campos opcionales, sin índice ni migración: **no hay nada que correr en
+producción antes del deploy.** Lo que escribe es apretar el botón después.
+
+⚠️ **Al correr el smoke apareció algo ajeno**: la descarga del backup
+(`backup-download-produces-valid-tarball`) tumbó el proceso del smoke por falta de memoria de la PC
+(1,1 GB de memoria virtual libre) y la corrida quedó a medias, con datos de prueba en el espejo
+(incluido un alumno matriculado en las 13 materias de 1° 1°). Se limpió filtrando solo por lo que
+creó esa corrida. Si el smoke se corta, **hay que limpiar**: no alcanza con volver a correrlo.
+
 ### 2026-09-16 — El botón de modo oscuro decía "light_mode": el barrido no veía los iconos elegidos en JavaScript
 
 Tercer reporte del mismo síntoma —un icono que se ve con su nombre en inglés— y tercera causa
