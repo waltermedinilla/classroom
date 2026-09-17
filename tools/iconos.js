@@ -91,6 +91,33 @@ const CAMPO_ICONO = /icon(?:o|Name)?\s*:\s*['"]([a-z][a-z0-9_]{2,})['"]/g;
 // que respete el nombre queda cubierta sola.
 const TABLA_ICONOS = /_ICON(?:S|OS)\s*=\s*\{([\s\S]*?)\n\}/g;
 
+// Iconos que se ELIGEN en JavaScript: el `<span>` nace con un icono y el código lo cambia.
+//
+// ⚠️ ESTE PATRÓN FALTABA Y SE PAGÓ (2026-09-16). Al tocar el botón de modo oscuro aparecía la
+// palabra "light_mode". El `<span>` del botón dice `dark_mode`, así que ese entraba; pero
+// `light_mode` solo existe en `icon.textContent = theme === 'dark' ? 'light_mode' : 'dark_mode'`,
+// y ninguno de los patrones de arriba mira JavaScript fuera de un `<span>`. No era el único:
+// `expand_less` (el menú de solapas en el celular, al abrirlo), `play_circle` (un adjunto de
+// YouTube) y `public_off` (el monitor, con el Funnel caído) llevaban el mismo camino.
+//
+// Un nombre elegido en JS llega a la pantalla por uno de TRES caminos, y los tres se
+// reconocen por un nombre, igual que las tablas `_ICONS`:
+//
+//   1. Asignado a `textContent` o `innerText`:  icon.textContent = x ? 'light_mode' : 'dark_mode'
+//   2. Guardado en algo que se llama icon/icono: const linkIcon = isYt ? 'play_circle' : …
+//   3. Pasado a una función con un parámetro icon/icono:
+//        function fnPintarEstado(texto, detalle, color, icono) { … }
+//        fnPintarEstado('Caído', r.ultimo.texto, '#ea4335', 'public_off');
+//
+// De cada uno se toman TODAS las cadenas entrecomilladas del renglón. Eso trae algún nombre de
+// más (`'dark'` del ternario del botón), que Google ignora: el error barato es incluir.
+//
+// El `(?![=>])` deja afuera las comparaciones (`icon === 'x'`) y las funciones flecha
+// (`(icon) => …`), que no asignan nada.
+const ASIGNACION_ICONO = /(?:\.textContent|\.innerText|\b[\w$]*[Ii]con[\w$]*)\s*=(?![=>])([^;\n]*)/g;
+const FUNCION_CON_ICONO = /(?:function\s+([\w$]+)\s*|\b(?:const|let|var)\s+([\w$]+)\s*=\s*(?:function\s*)?)\(([^()]*)\)/g;
+const PARAMETRO_ICONO = /(?:^|[\s,(])icon(?:o|Name)?\s*(?:[,=)]|$)/;
+
 function archivosDe(dir, exts) {
   const abs = path.join(RAIZ, dir);
   if (!fs.existsSync(abs)) return [];
@@ -113,18 +140,37 @@ function archivosDe(dir, exts) {
 function escanearIconos() {
   const nombres = new Set();
   const agregar = (x) => { if (x && NOMBRE.test(x)) nombres.add(x); };
+  const fuentes = CARPETAS.flatMap(([dir, exts]) =>
+    archivosDe(dir, exts).map(archivo => fs.readFileSync(archivo, 'utf8')));
 
-  for (const [dir, exts] of CARPETAS) {
-    for (const archivo of archivosDe(dir, exts)) {
-      const src = fs.readFileSync(archivo, 'utf8');
+  // Camino 3, primera pasada: qué funciones reciben un icono. Se juntan de TODOS los archivos
+  // antes de buscar las llamadas, porque la función puede estar en public/js y la llamada en
+  // una vista.
+  const funcionesConIcono = new Set();
+  for (const src of fuentes) {
+    for (const m of src.matchAll(FUNCION_CON_ICONO)) {
+      if (PARAMETRO_ICONO.test(m[3])) funcionesConIcono.add(m[1] || m[2]);
+    }
+  }
+  const LLAMADA_CON_ICONO = funcionesConIcono.size
+    ? new RegExp('\\b(?:' + [...funcionesConIcono].map(f => f.replace(/\$/g, '\\$')).join('|') + ')\\s*\\(([^;\\n]*)', 'g')
+    : null;
 
-      for (const m of src.matchAll(CONTEXTO)) {
-        const bloque = m[1];
-        agregar(bloque.trim());                                  // <span …>badge</span>
-        for (const q of bloque.matchAll(ENTRECOMILLADO)) agregar(q[1]); // …? 'a' : 'b'
-      }
-      for (const m of src.matchAll(CAMPO_ICONO)) agregar(m[1]);
-      for (const m of src.matchAll(TABLA_ICONOS)) {
+  for (const src of fuentes) {
+    for (const m of src.matchAll(CONTEXTO)) {
+      const bloque = m[1];
+      agregar(bloque.trim());                                  // <span …>badge</span>
+      for (const q of bloque.matchAll(ENTRECOMILLADO)) agregar(q[1]); // …? 'a' : 'b'
+    }
+    for (const m of src.matchAll(CAMPO_ICONO)) agregar(m[1]);
+    for (const m of src.matchAll(TABLA_ICONOS)) {
+      for (const q of m[1].matchAll(ENTRECOMILLADO)) agregar(q[1]);
+    }
+    for (const m of src.matchAll(ASIGNACION_ICONO)) {                 // caminos 1 y 2
+      for (const q of m[1].matchAll(ENTRECOMILLADO)) agregar(q[1]);
+    }
+    if (LLAMADA_CON_ICONO) {                                           // camino 3
+      for (const m of src.matchAll(LLAMADA_CON_ICONO)) {
         for (const q of m[1].matchAll(ENTRECOMILLADO)) agregar(q[1]);
       }
     }

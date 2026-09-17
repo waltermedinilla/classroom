@@ -96,6 +96,84 @@ test('⭐ ningún icono escrito como texto se pierde por lo que haya arriba en e
     'Se arregla con:  npm run iconos:actualizar\n');
 });
 
+test('⭐ los iconos que se ELIGEN desde JavaScript entran en la lista', () => {
+  // Tercer reporte del mismo síntoma, tercera causa (2026-09-16): al tocar el botón de modo
+  // oscuro aparecía la palabra "light_mode". El `<span>` del botón dice `dark_mode`, así que
+  // ese entraba; `light_mode` solo existe dentro de un ternario de JavaScript que lo escribe
+  // con `textContent`, y el barrido solo miraba lo escrito dentro de un `<span>`. Los otros
+  // tres son la misma familia, cada uno por uno de los tres caminos que tiene un nombre elegido
+  // en JS para llegar a la pantalla. Si alguno deja de usarse, este testigo se actualiza a mano.
+  const enElCodigo = new Set(escanearIconos());
+  const testigos = {
+    light_mode:  'views/partials/footer.ejs — asignado con textContent (botón de modo oscuro)',
+    expand_less: 'public/js/nav-responsive.js — asignado con textContent (menú de solapas en el celular)',
+    play_circle: 'public/js/course.js — guardado en la variable linkIcon (adjunto de YouTube)',
+    public_off:  'views/superadmin/monitor.ejs — pasado al parámetro `icono` de fnPintarEstado',
+  };
+  const faltan = Object.entries(testigos).filter(([icono]) => !enElCodigo.has(icono));
+
+  assert.deepStrictEqual(faltan, [],
+    'El barrido de tools/iconos.js dejó de ver estos iconos elegidos desde JavaScript:\n' +
+    faltan.map(([icono, donde]) => '  · ' + icono + '  (' + donde + ')').join('\n'));
+});
+
+test('⭐ control por diccionario: ningún nombre de icono real del código falta en la lista', () => {
+  // Este control NO mira el contexto —ni el `<span>`, ni el `textContent`, ni el nombre de la
+  // variable—, que es justamente lo que le falló tres veces al barrido. Mira el NOMBRE: toda
+  // cadena entrecomillada que sea un icono real de Material Symbols tiene que estar en la
+  // lista. Así pesca un icono que llegue a la pantalla por un camino que todavía no conocemos.
+  //
+  // El diccionario es tests/fixtures/material-symbols-nombres.txt, bajado el 2026-09-16 de
+  // github.com/google/material-design-icons (variablefont/MaterialSymbolsOutlined…codepoints,
+  // primera columna). Si Google agrega iconos nuevos y se usan, conviene refrescarlo.
+  //
+  // Se limita a nombres CON guion bajo. Las palabras sueltas que también son iconos (`list`,
+  // `label`, `style`, `select`, `tab`…) aparecen en el código por mil motivos y darían cuarenta
+  // falsas alarmas; con guion bajo, el 2026-09-16 hubo cero: las cuatro que saltaron eran
+  // iconos de verdad que se veían en inglés.
+  const path = require('path');
+  const RAIZ = path.join(__dirname, '..', '..');
+  const diccionario = new Set(
+    fs.readFileSync(path.join(RAIZ, 'tests', 'fixtures', 'material-symbols-nombres.txt'), 'utf8')
+      .split(/\r?\n/).map(s => s.trim()).filter(Boolean));
+  assert.ok(diccionario.size > 3000 && diccionario.has('dynamic_feed'),
+    'el diccionario de iconos no cargó bien (' + diccionario.size + ' nombres): se rompió él, no la lista');
+
+  // Nombres con forma de icono real que en el código NO se usan como icono. Si este control
+  // salta por uno así, se agrega acá con el motivo: no se lo mete a la fuerza en la lista.
+  const NO_SON_ICONOS = new Set([]);
+
+  const CARPETAS = [['views', '.ejs'], ['public/js', '.js'], ['config', '.js'],
+                    ['services', '.js'], ['routes', '.js'], ['middleware', '.js']];
+  const enElPartial = new Set(listaDe(urlDelPartial()));
+  const faltan = new Map();
+  for (const [carpeta, ext] of CARPETAS) {
+    (function recorrer(dir) {
+      if (!fs.existsSync(dir)) return;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) { if (!e.name.startsWith('.') && e.name !== 'node_modules') recorrer(p); continue; }
+        if (!e.name.endsWith(ext)) continue;
+        const src = fs.readFileSync(p, 'utf8');
+        for (const m of src.matchAll(/['"`]([a-z][a-z0-9]*_[a-z0-9_]+)['"`]/g)) {
+          const nombre = m[1];
+          if (!diccionario.has(nombre) || enElPartial.has(nombre) || NO_SON_ICONOS.has(nombre)) continue;
+          if (!faltan.has(nombre)) {
+            faltan.set(nombre, path.relative(RAIZ, p) + ':' + src.slice(0, m.index).split('\n').length);
+          }
+        }
+      }
+    })(path.join(RAIZ, carpeta));
+  }
+
+  assert.deepStrictEqual([...faltan], [],
+    'Estos nombres son iconos de Material y están en el código, pero NO en la lista del partial:\n' +
+    [...faltan].map(([icono, donde]) => '  · ' + icono + '  (' + donde + ')').join('\n') +
+    '\n\nSi se usan como icono, se ven con su nombre en inglés. Hay que enseñarle a ' +
+    'tools/iconos.js a verlos y correr  npm run iconos:actualizar.\n' +
+    'Si NO son iconos, van a NO_SON_ICONOS en este test, con el motivo.\n');
+});
+
 test('el partial pide la fuente con display=block, no swap', () => {
   // Con `swap` el navegador dibuja el NOMBRE del icono mientras baja la fuente. Para una
   // fuente de texto es lo correcto; para una de iconos es el bug que originó todo esto.

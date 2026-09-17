@@ -527,6 +527,44 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-16 — El botón de modo oscuro decía "light_mode": el barrido no veía los iconos elegidos en JavaScript
+
+Tercer reporte del mismo síntoma —un icono que se ve con su nombre en inglés— y tercera causa
+(la primera fue `display=swap`, el 2026-08-30; la segunda, el barrido que se comía un icono, el
+2026-08-31). Al tocar el botón de modo oscuro aparecía **"LIGHT_"** en letras. El `<span>` del
+botón nace con `dark_mode`, así que ese entraba en la lista; `light_mode` solo existe en el
+ternario de `_applyTheme` (`views/partials/footer.ejs`), que lo escribe con `textContent`, y
+`tools/iconos.js` solo miraba lo escrito dentro de un `<span>`.
+
+No era el único. Buscando por **diccionario** (toda cadena del código que sea un nombre real de
+Material Symbols) salieron cuatro, todos por el mismo camino:
+
+| icono | dónde | cuándo se veía en inglés |
+|---|---|---|
+| `light_mode` | `views/partials/footer.ejs` | al activar el modo oscuro, **todos los usuarios** |
+| `expand_less` | `public/js/nav-responsive.js` | al abrir el menú de solapas en el celular |
+| `play_circle` | `public/js/course.js` | en un adjunto que es un link de YouTube |
+| `public_off` | `views/superadmin/monitor.ejs` | en el monitor, con el Funnel caído |
+
+- **`tools/iconos.js`**: aprendió los tres caminos por los que un nombre elegido en JS llega a
+  la pantalla, reconocidos por un NOMBRE como las tablas `_ICONS`: asignado a
+  `textContent`/`innerText`; guardado en algo que se llama `icon`/`icono` (`linkIcon`); o
+  pasado a una función con un parámetro `icon`/`icono` (`fnPintarEstado`). La lista pasa de
+  261 a 269: entran los 4 y se cuelan 4 palabras que no son iconos (`dark`, `audio`…), que
+  Google ignora. No se perdió ninguno. El barrido tarda 62 ms.
+- **`tests/unit/iconos.test.js`**, dos casos nuevos que fallaban antes del arreglo: los cuatro
+  testigos, y un **control por diccionario** contra
+  `tests/fixtures/material-symbols-nombres.txt` (4.284 nombres, bajados del repositorio de
+  Google). Es a propósito un método distinto al del barrido: no mira el contexto, que es lo que
+  falló tres veces, sino el nombre. Solo toma nombres con guion bajo; las palabras sueltas que
+  también son iconos (`list`, `label`, `tab`) darían cuarenta falsas alarmas.
+- **Verificado en el navegador** cargando la lista vieja y la nueva lado a lado: con la vieja
+  `light_mode` ocupaba 168 px (la palabra), con la nueva 24 px (el dibujo); lo mismo los otros
+  tres.
+
+Ningún cambio de lógica en las pantallas: solo la lista que se le pide a Google. Cambia la URL
+de la fuente, así que cada dispositivo la baja una vez de nuevo (~233 KB).
+
 ### 2026-09-11 — El botón verde ahora aparece solo, y en la sala en vivo
 
 Reclamo de un alumno del **09/09 a las 8:25**:
