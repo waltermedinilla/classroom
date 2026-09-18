@@ -25,8 +25,7 @@ const RoomPresence = require('../models/RoomPresence');
 
 const { requireAuth }        = require('../middleware/auth');
 const { logAudit }           = require('../middleware/audit');
-const { roomMessageLimiter, roomUploadLimiter, roomStudentImageLimiter,
-        roomReactionLimiter } = require('../middleware/rate-limits');
+const { roomMessageLimiter, roomUploadLimiter, roomStudentImageLimiter } = require('../middleware/rate-limits');
 const { loadPreceptorScope } = require('../middleware/preceptor');
 const { subirImagen, guardarImagenOptimizada, ImagenInvalidaError } = require('../middleware/image-upload');
 const { EXT_IMAGENES } = require('../config/imagePresets');
@@ -293,8 +292,7 @@ async function estadoDeSala(req, session, since = 0, presenciaVista = null) {
     return {
       estado: 'cerrada', sessionId: null, seq: 0, puedoEscribir: false,
       puedoCompartirImagen: false,
-      mensajes: [], reacciones: [],
-      settings: { studentsCanWrite: true, reactionsOn: true, studentsCanShareImages: true },
+      mensajes: [], settings: { studentsCanWrite: true, reactionsOn: true, studentsCanShareImages: true },
       ...presenciaParaCliente({ presentes: 0, total: course.students.length, conectados: [], ausentes: [] }, presenciaVista),
       // Una forma SOLA, también con la sala cerrada: el navegador no tiene que preguntarse si
       // la clave existe. Mismo criterio que el resto de este objeto.
@@ -344,7 +342,7 @@ async function estadoDeSala(req, session, since = 0, presenciaVista = null) {
     });
   }
 
-  const ctx = { ...ctxSala(req), session };
+  const ctx = ctxSala(req);
   return {
     estado:    'abierta',
     sessionId: String(session._id),
@@ -359,46 +357,7 @@ async function estadoDeSala(req, session, since = 0, presenciaVista = null) {
     settings:  session.settings,
     ...presenciaParaCliente(presencia, presenciaVista),
     mensajes:  mensajes.map(m => serializarMensaje(m, { ...ctx, courseId: course._id, salaAbierta: true })),
-    reacciones: await reaccionesRecientes(session, since, ctx),
   };
-}
-
-// Las reacciones que se tocaron hace poco, para las pantallas que ya tienen el mensaje
-// pintado. RN-5 de specs/sala-reacciones.spec.md.
-//
-// El cursor del poll va por `seq` y una reacción no crea ningún mensaje: por ese camino no
-// viaja nunca. Acá se manda el ESTADO COMPLETO de cada mensaje tocado —los contadores, no un
-// delta— y por eso es idempotente: una respuesta repetida, o dos que lleguen fuera de orden,
-// no pueden descuadrar nada. Es justo lo contrario del cursor, que no perdona un salto (ver
-// specs/sala-poll-carrera.spec.md).
-//
-// ⚠️ LAS DOS PUERTAS IMPORTAN, y las dos están ANTES de cualquier query:
-//   · `since === 0` es el arranque: cada mensaje ya viene con sus reacciones adentro, mandarlas
-//     otra vez sería pagar dos veces por lo mismo en la respuesta más pesada de todas.
-//   · `lastReactAt` ya está en el documento de sesión que el poll cargó igual. Con la sala en
-//     silencio —el 95% del tiempo— esta función cuesta una comparación de fechas y CERO
-//     queries. Sin ese campo habría una query más por vuelta y por persona, que es
-//     exactamente el trabajo que la sala se sacó de encima en specs/sala-en-vivo-escala.
-async function reaccionesRecientes(session, since, ctx) {
-  if (!since) return [];
-  const desde = Date.now() - live.VENTANA_REACCIONES_MS;
-  if (!session.lastReactAt || session.lastReactAt.getTime() < desde) return [];
-
-  const tocados = await RoomMessage
-    .find({ session: session._id, reactAt: { $gte: new Date(desde) } })
-    .select('_id reactions deletedAt')
-    .lean();
-
-  return tocados.map(m => ({
-    id: String(m._id),
-    // Un mensaje borrado devuelve la lista vacía y no sus reacciones: el borrado le saca los
-    // emojis de la pantalla a todo el mundo en la misma vuelta, sin esperar un repintado.
-    reacciones: m.deletedAt ? [] : (m.reactions || []).map(r => ({
-      emoji: r.emoji,
-      n:     r.users.length,
-      mia:   r.users.some(u => String(u) === String(ctx.userId)),
-    })),
-  }));
 }
 
 // Datos del adjunto que SÍ salen al cliente. `attachment.path` no está en la lista y no puede
@@ -439,10 +398,9 @@ function serializarCita(m) {
   };
 }
 
-// `ctx` lleva { esGestor, esAlumno, modo, userId, session, courseId, salaAbierta }. Pasó de
-// tres parámetros sueltos a un objeto cuando `puedoBorrar` sumó el cuarto y el quinto: con
+// `ctx` lleva { esGestor, esAlumno, modo, userId, courseId, salaAbierta }. Pasó de tres
+// parámetros sueltos a un objeto cuando `puedoBorrar` sumó el cuarto y el quinto: con
 // posicionales, las cinco llamadas de este archivo se equivocaban de orden tarde o temprano.
-// `session` entró con las reacciones, que dependen de los interruptores de la sesión.
 function serializarMensaje(m, ctx) {
   const { userId, courseId } = ctx;
   const borrado   = !!m.deletedAt;
@@ -459,12 +417,6 @@ function serializarMensaje(m, ctx) {
     // Con la regla repetida en el navegador, alcanzaba con que una de las dos copias quedara
     // vieja para mostrar un botón que responde 403.
     puedoBorrar: live.puedeBorrarMensaje(m, ctx, { salaAbierta: !!ctx.salaAbierta }),
-    // Y si puedo colgarle un emoji. Lo decide el MISMO cálculo que autoriza el POST (RN-1 de
-    // specs/sala-reacciones.spec.md), por lo mismo que `puedoBorrar`: con la regla repetida en
-    // el navegador —"es un mensaje de la docente"— alcanzaba con que una de las dos copias
-    // quedara vieja para ofrecer un botón que contesta 403. Y así la docente apaga las
-    // reacciones y el botón se va de las pantallas en el poll siguiente, sin recargar.
-    puedoReaccionar: live.puedeReaccionar(ctx.session || null, m, ctx),
     // A quién le contesta este mensaje, si le contesta a alguien. Un mensaje ya borrado no
     // manda su cita: el hueco dice "Mensaje eliminado" y colgarle de quién era la respuesta
     // sería devolver por la ventana parte de lo que se acaba de sacar.
@@ -709,7 +661,7 @@ router.post('/:id/sala/mensajes', roomMessageLimiter, async (req, res, next) => 
     const msg = await live.postMessage(session, usuario(req), req.body.text, { reply: cita });
     if (!msg) return fallar(req, res, 400, 'El mensaje está vacío');
 
-    res.json({ ok: true, mensaje: serializarMensaje(msg, { ...ctxSala(req), session, courseId: req.course._id, salaAbierta: true }) });
+    res.json({ ok: true, mensaje: serializarMensaje(msg, { ...ctxSala(req), courseId: req.course._id, salaAbierta: true }) });
   } catch (err) { next(err); }
 });
 
@@ -785,39 +737,7 @@ router.delete('/:id/sala/mensajes/:mid', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Por qué se rechazó una reacción, en castellano.
-//
-// La decisión ya la tomó `live.puedeReaccionar` —una sola— y esto solo la explica: acá NO se
-// vuelve a decidir nada, porque dos copias de la misma regla se separan. Un cartel de "no
-// podés" sin motivo es lo que produce el reclamo de "no me anda la sala" sin ningún dato.
-//
-// No filtra nada: quien recibe esto está adentro de la sala y ya está viendo el mensaje, su
-// autor y el estado de los interruptores.
-function motivoDelRechazo(session, msg, req) {
-  if (session.settings && session.settings.reactionsOn === false) {
-    return 'Las reacciones están desactivadas en esta clase';
-  }
-  if (req.modo === 'observacion') return 'No podés reaccionar en esta sala';
-  if (!msg || msg.deletedAt || msg.kind === 'system') {
-    return 'No se puede reaccionar a este mensaje';
-  }
-  if (req.esAlumno && !live.STAFF_ROLES.includes(msg.authorRole)) {
-    return 'Solo se puede reaccionar a los mensajes del docente';
-  }
-  // El silenciado se entera de que lo está: es el mismo criterio que el cuadro de escribir,
-  // que tampoco le dice "error" sino qué le pasa.
-  if ((session.mutedStudents || []).some(id => String(id) === req.userId)) {
-    return 'Estás silenciado en esta clase';
-  }
-  return 'No podés reaccionar en esta sala';
-}
-
-// POST /courses/:id/sala/mensajes/:mid/reaccion — el emoji sobre un mensaje.
-//
-// Es la vía que le queda a un alumno cuando la docente puso la sala en "solo yo escribo":
-// NO pasa por puedeEscribir, a propósito (ver puedeReaccionar en services/liveRoom.js y
-// specs/sala-reacciones.spec.md). Todo lo demás de la sala sigue exactamente como venía.
-router.post('/:id/sala/mensajes/:mid/reaccion', roomReactionLimiter, async (req, res, next) => {
+router.post('/:id/sala/mensajes/:mid/reaccion', async (req, res, next) => {
   try {
     const emoji = String(req.body.emoji || '');
     if (!live.EMOJIS.includes(emoji)) return fallar(req, res, 400, 'Emoji no válido');
@@ -827,18 +747,12 @@ router.post('/:id/sala/mensajes/:mid/reaccion', roomReactionLimiter, async (req,
 
     const session = await sesionAbierta(req.course._id);
     if (!session) return fallar(req, res, 409, 'La sala está cerrada');
+    if (!session.settings.reactionsOn) return fallar(req, res, 403, 'Las reacciones están desactivadas');
     await aplicarModo(req, session);
+    if (req.modo === 'observacion') return fallar(req, res, 403, 'No podés reaccionar en esta sala');
 
     const msg = await RoomMessage.findOne({ _id: req.params.mid, session: session._id });
     if (!msg) return fallar(req, res, 404, 'Mensaje no encontrado');
-
-    // ⚠️ El orden de los chequeos es QUIÉN → QUÉ, igual que en el DELETE: preguntando primero
-    // por el mensaje, un 404 y un 403 distintos le dirían a cualquiera si un mensaje existe y
-    // si sigue en pie. Acá el `findOne` ya viene acotado por la sesión a la que este usuario
-    // tiene acceso, así que alcanza con que el motivo del rechazo no distinga más.
-    if (!live.puedeReaccionar(session, msg, ctxSala(req))) {
-      return fallar(req, res, 403, motivoDelRechazo(session, msg, req));
-    }
 
     // Toggle: la segunda pulsada del mismo emoji saca la reacción en vez de duplicarla.
     const r = msg.reactions.find(x => x.emoji === emoji);
@@ -849,20 +763,9 @@ router.post('/:id/sala/mensajes/:mid/reaccion', roomReactionLimiter, async (req,
       if (i >= 0) r.users.splice(i, 1); else r.users.push(usuario(req)._id);
       if (r.users.length === 0) msg.reactions = msg.reactions.filter(x => x.emoji !== emoji);
     }
-
-    // Las dos marcas que hacen que esto llegue a las otras 29 pantallas (RN-5). El cursor del
-    // poll va por `seq` y una reacción no crea ningún mensaje: sin estas dos fechas, la
-    // reacción la ve solo quien la puso —su propio POST le devuelve el mensaje— y nadie más
-    // hasta recargar la página. Que es como estuvo la feature desde que existe.
-    const ahora = new Date();
-    msg.reactAt = ahora;
     await msg.save();
-    // El mensaje PRIMERO y la sesión después: si el proceso se cae en el medio, lo que queda
-    // es una sesión que no avisa de un mensaje ya marcado (se ve al recargar), y no una
-    // sesión que anuncia una reacción que no existe.
-    await RoomSession.updateOne({ _id: session._id }, { $set: { lastReactAt: ahora } });
 
-    res.json({ ok: true, mensaje: serializarMensaje(msg, { ...ctxSala(req), session, courseId: req.course._id, salaAbierta: true }) });
+    res.json({ ok: true, mensaje: serializarMensaje(msg, { ...ctxSala(req), courseId: req.course._id, salaAbierta: true }) });
   } catch (err) { next(err); }
 });
 
@@ -1054,7 +957,7 @@ router.post('/:id/sala/adjuntos/imagen', limitarSubidaDeImagen, exigirPermisoDeI
         { sessionId: String(req.sala._id), tipo: 'imagen', archivo: msg.attachment.name,
           deQuien: req.esGestor ? 'docente' : 'alumno' });
 
-      res.status(201).json({ ok: true, mensaje: serializarMensaje(msg, { ...ctxSala(req), session: req.sala, courseId: req.course._id, salaAbierta: true }) });
+      res.status(201).json({ ok: true, mensaje: serializarMensaje(msg, { ...ctxSala(req), courseId: req.course._id, salaAbierta: true }) });
     } catch (err) {
       if (err instanceof ImagenInvalidaError) return fallar(req, res, 400, err.message);
       next(err);
@@ -1097,7 +1000,7 @@ router.post('/:id/sala/adjuntos/archivo', roomUploadLimiter, exigirGestorEnSalaA
         [{ type: 'course', id: req.course._id, name: req.course.name }],
         { sessionId: String(req.sala._id), tipo: 'archivo', archivo: msg.attachment.name });
 
-      res.status(201).json({ ok: true, mensaje: serializarMensaje(msg, { ...ctxSala(req), session: req.sala, courseId: req.course._id, salaAbierta: true }) });
+      res.status(201).json({ ok: true, mensaje: serializarMensaje(msg, { ...ctxSala(req), courseId: req.course._id, salaAbierta: true }) });
     } catch (err) { next(err); }
   });
 

@@ -112,22 +112,6 @@ const roomMessageSchema = new mongoose.Schema({
 
   reactions: { type: [reactionSchema], default: [] },
 
-  // Cuándo se tocó por última vez alguna reacción de ESTE mensaje. Es lo que hace que la
-  // reacción de uno llegue a la pantalla de los otros 29 (RN-5 de specs/sala-reacciones.spec.md).
-  //
-  // El poll avanza con un cursor por `seq`: pregunta "¿qué hay después del mensaje N?". Una
-  // reacción no crea ningún mensaje y no mueve ningún `seq`, así que por ese camino NO VIAJA
-  // NUNCA — el que reaccionaba lo veía (su propio POST le devuelve el mensaje) y nadie más,
-  // hasta recargar la página. Con este campo el poll puede pedir "los mensajes cuyas
-  // reacciones se tocaron en los últimos 16 segundos" y mandar sus contadores al día.
-  //
-  // ⚠️ Es una MARCA DE TIEMPO y no un contador incremental tipo `lastSeq`, a propósito: el
-  // $inc reserva el número antes de que el documento esté guardado (nota 14 de "Issues
-  // Conocidos" de agente.md), y con dos toggles casi juntos el cursor pasaría por encima del
-  // que se guardó más lento — esa reacción no se vería nunca más. Una ventana de tiempo no
-  // tiene hueco posible.
-  reactAt: { type: Date, default: null },
-
   // Soft delete. El texto original NO se borra: es lo que permite reconstruir qué pasó si
   // hubo un problema de convivencia, que es exactamente cuando un mensaje se borra. La vista
   // muestra "Mensaje eliminado" y conserva el `seq` — si el mensaje desapareciera de la
@@ -147,10 +131,5 @@ roomMessageSchema.index({ session: 1, seq: 1 });
 
 // Purga por antigüedad (cleanup-rooms.js): borra los mensajes de las sesiones ya cerradas.
 roomMessageSchema.index({ course: 1, createdAt: 1 });
-
-// Las reacciones tocadas hace poco, para el bloque `reacciones` del poll. Acotado por
-// `session` primero, igual que el índice caliente: la ventana se pregunta SIEMPRE dentro de
-// una sesión, nunca a lo ancho de la colección.
-roomMessageSchema.index({ session: 1, reactAt: 1 });
 
 module.exports = mongoose.model('RoomMessage', roomMessageSchema);

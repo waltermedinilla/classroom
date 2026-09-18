@@ -25,18 +25,6 @@ const POLL_MS = 4000;
 // propósito: mirar qué clases hay en curso es supervisión, no conversación.
 const DIRECTIVO_POLL_MS = 15000;
 
-// Cuánto hacia atrás mira el poll para traer las reacciones que se tocaron (RN-5 de
-// specs/sala-reacciones.spec.md). Una reacción no crea ningún mensaje, así que no la trae el
-// cursor por `seq`: viaja por esta ventana.
-//
-// ⚠️ SE DERIVA DE POLL_MS, no se escribe aparte, por lo mismo que el techo lento de RN-4: dos
-// números sueltos divergen el día que alguien toque la cadencia. Y tiene que quedar CÓMODAMENTE
-// POR ENCIMA del intervalo real entre dos polls, que en reposo es POLL_MS × 2 (8 s): si la
-// ventana fuera más corta que ese intervalo, una reacción caería en el hueco entre dos vueltas
-// y no la vería nadie. Con ×4 quedan dos vueltas lentas de margen, y hay un test guarda que
-// falla si esa relación se rompe.
-const VENTANA_REACCIONES_MS = POLL_MS * 4;
-
 // "Conectado ahora". Son ~3 ciclos de poll: tolera una pestaña trabada o un WiFi que hipa
 // sin sacar al chico de la lista de presentes.
 const ONLINE_WINDOW_MS = 45 * 1000;
@@ -553,43 +541,6 @@ function puedeCompartirImagen(session, ctx = {}) {
   return puedeEscribir(session, ctx);
 }
 
-// ¿Puede REACCIONAR a este mensaje, ahora?
-//
-// Lo que pidió el usuario (2026-09-17): con la sala en modo "solo yo escribo", la clase queda
-// muda y la docente explica sin ninguna señal de vuelta. El emoji es esa señal, y por eso esta
-// regla NO llama a puedeEscribir(): si lo hiciera, el interruptor de la palabra apagaría justo
-// lo que esto viene a resolver. Es la única de las cuatro que se separa de esa cadena, y es a
-// propósito.
-//
-// Para el ALUMNO son cuatro condiciones a la vez (D1, D4 y RN-4 de
-// specs/sala-reacciones.spec.md):
-//   1. el mensaje es del PERSONAL de la sala (authorRole en STAFF_ROLES) — "solo al texto que
-//      sube el docente", textual. Ni el de un compañero ni el propio.
-//   2. no es un aviso del sistema: no es de nadie, igual que en puedeBorrarMensaje.
-//   3. no está borrado: colgarle emojis al hueco sería devolver por la ventana parte de lo
-//      que la moderación acaba de sacar.
-//   4. no está silenciado. Precedente de las fotos (2026-08-19): silenciar a alguien lo
-//      silencia entero, y treinta emojis seguidos son exactamente la conducta por la que se
-//      silencia a alguien.
-//
-// La docente y el personal presentado reaccionan a CUALQUIER mensaje, como venía desde el día
-// uno: este cambio no les saca nada.
-//
-// `!== false` y no `=== true` al leer reactionsOn: una sesión abierta antes del despliegue no
-// tiene el campo y tiene que comportarse como todas (permitido). Es la trampa que ya se cobró
-// una vez con studentsCanShareImages.
-function puedeReaccionar(session, msg, ctx = {}) {
-  if (!session || session.closedAt) return false;
-  if (ctx.modo === 'observacion') return false;
-  if (session.settings && session.settings.reactionsOn === false) return false;
-  if (!msg || msg.deletedAt) return false;
-  if (msg.kind === 'system') return false;
-  if (ctx.esGestor) return true;
-  if (!ctx.esAlumno) return true;
-  if (!STAFF_ROLES.includes(msg.authorRole)) return false;
-  return !(session.mutedStudents || []).some(id => String(id) === String(ctx.userId));
-}
-
 // ¿Puede borrar ESTE mensaje?
 //
 // La docente borra cualquier cosa y en cualquier momento: es moderación, y una clase que ya
@@ -1079,7 +1030,7 @@ function csvTranscripcion(messages) {
 
 module.exports = {
   // constantes
-  POLL_MS, DIRECTIVO_POLL_MS, VENTANA_REACCIONES_MS, ONLINE_WINDOW_MS, STAFF_ONLINE_WINDOW_MS, AUTO_CLOSE_MS, PURGE_AFTER_MS,
+  POLL_MS, DIRECTIVO_POLL_MS, ONLINE_WINDOW_MS, STAFF_ONLINE_WINDOW_MS, AUTO_CLOSE_MS, PURGE_AFTER_MS,
   MSG_MAX, MSG_PER_MIN, PING_WINDOW_MS, EMOJIS, STAFF_ROLES, ROLE_LABELS, TZ,
   EXT_ARCHIVOS, MAX_ARCHIVO_BYTES, UPLOADS_PER_10MIN, UPLOADS_ALUMNO_PER_10MIN, SALAS_BASE,
   EXTRACTO_MAX,
@@ -1091,7 +1042,7 @@ module.exports = {
   isOnline, presenceSummary, huellaDePresencia, shouldAutoClose, horaDeCierre, gestorEnLinea, sanitizeText,
   minutosPresente, decidirPing, initial, pesoLegible, etiquetaExt, textoAdjunto,
   // permisos dentro de la sala (puros: reciben un contexto plano, no `req`)
-  puedeEscribir, puedeCompartirImagen, puedeReaccionar, puedeBorrarMensaje, citaDeMensaje,
+  puedeEscribir, puedeCompartirImagen, puedeBorrarMensaje, citaDeMensaje,
   // con base
   openSession, closeSession, closeStaleSessions, postMessage, postAttachment, systemMessage,
   resolverCita, apagarCitasDe,

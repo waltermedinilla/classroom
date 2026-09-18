@@ -75,23 +75,6 @@
   .lr-react button { font-size:12px; background:var(--surface); border:1px solid var(--border); border-radius:12px;
                      padding:2px 8px; cursor:pointer; }
   .lr-react button.mia { background:#e8f0fe; border-color:#1a73e8; color:#202124; }
-  <%# El "+" que abre el selector, y el selector (specs/sala-reacciones.spec.md). Es lo que
-      faltaba: las pastillas de arriba SUMAN a una reacción que ya existe, y hasta hoy no
-      había forma de crear la primera.
-
-      Sin fondos en hex: heredan var(--surface) y declaran color, así que la regla del
-      contraste (un fondo fijo obliga a su color fijo, en los dos temas) no se les aplica
-      porque no fijan ninguno. El `color` explícito del selector sí hace falta: un <button>
-      sin color declarado toma el `buttontext` del navegador (negro), y los emoji que el
-      sistema dibuja en monocromo quedaban negros sobre la tarjeta oscura — es el mismo
-      arreglo que ya lleva .lr-emojis. %>
-  .lr-react button.lr-react-mas { display:inline-flex; align-items:center; color:var(--text-secondary); }
-  .lr-react-mas .material-symbols-outlined { font-size:16px; line-height:1; }
-  .lr-picker { display:none; gap:2px; flex-wrap:wrap; margin-top:4px; padding:3px 6px;
-               border:1px solid var(--border); border-radius:14px; background:var(--surface); }
-  .lr-picker.abierto { display:inline-flex; }
-  .lr-picker button { font-size:19px; background:none; border:none; cursor:pointer; line-height:1;
-                      padding:3px; color:var(--text); }
   .lr-composer { display:flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:8px; padding:6px 10px; }
   <%# min-width:0 es obligatorio, no cosmético: un <input> trae un ancho intrínseco de ~20
       caracteres y `flex:1` NO lo achica por debajo de eso. Con los dos botones de adjuntar
@@ -255,9 +238,6 @@
      No es un problema de texto sino de que el control no se ve como control. Se bajan al color
      del fondo de la página, que en oscuro es más oscuro que la tarjeta, y ahí sí se leen. */
   [data-theme="dark"] .lr-react button { background:var(--bg); border-color:#3c4043; }
-  <%# El selector, en oscuro: mismo criterio que la pastilla de al lado. Con var(--surface)
-      queda del MISMO color que la tarjeta que lo contiene y solo lo separaría el borde. %>
-  [data-theme="dark"] .lr-picker { background:var(--bg); border-color:#3c4043; }
 
   /* Mismo caso para el cuadro de escribir: el borde de --border sobre --surface casi no se ve,
      y es el control más importante de la pantalla. */
@@ -296,12 +276,6 @@
     #lrEnviar { width:44px; height:44px; display:flex; align-items:center; justify-content:center; }
     .lr-emojis { gap:2px; }
     .lr-emojis button { font-size:22px; padding:8px; }
-
-    /* Mismo criterio que los de arriba: con la palabra apagada, este selector es LO ÚNICO que
-       puede tocar un alumno en toda la sala, y se toca con el pulgar. 22 px de glifo y 8 de
-       aire dan un blanco de ~38 px; las 12 caritas entran en dos filas a 360 px. */
-    .lr-picker button { font-size:22px; padding:8px; }
-    .lr-react button.lr-react-mas { padding:4px 10px; }
   }
 </style>
 
@@ -354,12 +328,6 @@
               clase, que era lo único que se podía hacer antes. El rótulo lo escribe
               pintarEstado() con el estado real de la sesión. %>
           <button class="btn btn-outline"  id="lrFotos"  style="display:none"></button>
-          <%# El interruptor de las reacciones. `settings.reactionsOn` existía en la base y en
-              el POST desde el día uno, sin ningún botón que lo apagara: mientras nadie podía
-              reaccionar daba igual, y desde que hay un selector a la vista de treinta chicos,
-              no. Mismo par que el de las fotos: si los emojis se van de tema se cortan SIN
-              callar a la clase. El rótulo lo escribe pintarEstado() con el estado real. %>
-          <button class="btn btn-outline"  id="lrReacciones" style="display:none"></button>
           <button class="btn btn-outline"  id="lrCerrar" style="display:none">Cerrar sala</button>
           <%# Dejar la consigna sin salir de la clase. Abre el modal de creación que la materia YA
               tiene (#activityModal de views/course.ejs) — no hay un formulario aparte.
@@ -448,19 +416,6 @@
       </div>
     </div>
     <div id="lrMudo" style="display:none;color:var(--text-secondary);font-size:13px;text-align:center;margin-top:10px"></div>
-
-    <%# El selector de reacciones. Es UNO SOLO para toda la sala y se MUEVE al mensaje donde
-        se lo abrió, en vez de pintar uno por burbuja: con 100 mensajes en pantalla, uno por
-        burbuja son 1.200 botones en el DOM de máquinas que no son nuevas, para que se use uno.
-
-        Vive acá afuera del chat y vuelve acá al cerrarse, y eso NO es cosmético: `repintarTodo`
-        vacía el chat con innerHTML = '', así que un selector que quedara adentro se destruiría
-        con la conversación y el botón siguiente abriría la nada. %>
-    <div class="lr-picker" id="lrPicker" role="group" aria-label="Elegí una reacción">
-      <% emojis.forEach(function (e) { %>
-        <button type="button" data-elegir-emoji="<%= e %>" aria-label="Reaccionar con <%= e %>"><%= e %></button>
-      <% }); %>
-    </div>
   </div>
 
   <%# Lightbox de imágenes. Vive fuera del chat (que tiene overflow) para poder ocupar la
@@ -542,11 +497,6 @@
   // mensajes se pintan después de pintarEstado() y necesitan saber si mostrar "responder".
   let puedoEscribir = !!SALA.puedoEscribir;
 
-  // El estado del interruptor de reacciones que refleja lo que HAY PINTADO. `null` = todavía
-  // no se pintó nada. Ver el final de pintarEstado(): sirve para detectar que la docente lo
-  // tocó y repintar los botones una sola vez, en vez de recalcularlos en cada vuelta.
-  let reaccionesVistas = null;
-
   // A qué mensaje le estoy contestando en este momento, o null. Es TODO el estado que tiene
   // la respuesta: se limpia al enviar y al cancelar.
   let respondiendoA = null;
@@ -602,9 +552,7 @@
   // ── Mensajes ───────────────────────────────────────────────────────────────
   function pintarMensajes(msgs, reemplazar) {
     const chat = $('lrChat');
-    // El selector de reacciones vuelve a su casa ANTES de vaciar el chat: mientras está
-    // abierto vive adentro de un mensaje, y ese innerHTML se lo llevaría puesto.
-    if (reemplazar) { cerrarPicker(); chat.innerHTML = ''; vistos.clear(); }
+    if (reemplazar) { chat.innerHTML = ''; vistos.clear(); }
 
     // El cartel de "todavía no hay mensajes" se saca antes de agregar, igual que en
     // cardSubiendo(). Si no, queda de encabezado ARRIBA de la conversación: se vio al abrir
@@ -653,12 +601,7 @@
             '</div>' +
             citaHTML(m) +
             cuerpo(m) +
-            // Las pastillas van en su propio <span>: el poll las repinta solas cuando alguien
-            // reacciona, y el botón "+" —que depende del permiso, no del contador— tiene que
-            // sobrevivir a ese repintado sin que haya que volver a calcularlo.
-            '<div class="lr-react" data-react="' + m.id + '">' +
-              '<span class="lr-pills">' + reacciones(m) + '</span>' + botonReaccion(m) +
-            '</div>' +
+            '<div class="lr-react" data-react="' + m.id + '">' + reacciones(m) + '</div>' +
           '</div>';
       }
       chat.appendChild(div);
@@ -861,45 +804,10 @@
       .join('');
   }
 
-  // El "+" que abre el selector. Quién lo ve lo decide EL SERVIDOR y viene en el mensaje
-  // (`puedoReaccionar`), igual que "borrar": la regla —solo a los mensajes del docente, con las
-  // reacciones prendidas, sin estar silenciado— es una sola y vive en services/liveRoom.js. Con
-  // una copia acá, bastaba que una de las dos quedara vieja para ofrecer un botón que contesta
-  // 403. Y así, cuando la docente apaga las reacciones, el botón se va de las pantallas en el
-  // poll siguiente sin que nadie recargue.
-  function botonReaccion(m) {
-    if (!m.puedoReaccionar) return '';
-    return '<button class="lr-react-mas" data-abrir-react="' + m.id + '"' +
-           ' title="Reaccionar" aria-label="Reaccionar a este mensaje" aria-expanded="false">' +
-           '<span class="material-symbols-outlined">add_reaction</span></button>';
-  }
-
-  // ── Las reacciones que llegan por el poll ──────────────────────────────────
-  //
-  // El cursor del poll va por `seq` y una reacción no crea ningún mensaje: por ese camino la
-  // reacción de un compañero NO LLEGA NUNCA (así estuvo la feature desde que existe). El
-  // servidor manda aparte los mensajes cuyas reacciones se tocaron en los últimos segundos,
-  // con sus contadores COMPLETOS —no un delta—, así que aplicarlo dos veces o fuera de orden
-  // no puede descuadrar nada.
-  //
-  // Solo se tocan los mensajes que están pintados en ESTA pantalla: el que no está, no se
-  // busca. Y solo el <span> de las pastillas, así que el "+" no parpadea.
-  function aplicarReacciones(lista) {
-    if (!lista || !lista.length) return;
-    const chat = $('lrChat');
-    lista.forEach(r => {
-      const pills = chat.querySelector('[data-react="' + r.id + '"] .lr-pills');
-      if (pills) pills.innerHTML = reacciones(r);
-    });
-  }
-
   // ── Estado general ─────────────────────────────────────────────────────────
   function pintarEstado(s) {
     estado = s.estado;
     const abierta = s.estado === 'abierta';
-    // `!== false` y no `=== true`: una sala abierta antes de que el campo existiera no lo
-    // tiene, y esa clase se comporta como todas (permitido).
-    const reaccionesOn = !s.settings || s.settings.reactionsOn !== false;
     $('lrPunto').className = 'lr-punto' + (abierta ? '' : ' off');
     $('lrEstadoTexto').textContent = abierta
       ? 'Sala abierta · ' + s.presencia.presentes + ' de ' + s.presencia.total + ' presentes'
@@ -920,13 +828,6 @@
       fotosBtn.style.display = abierta ? '' : 'none';
       const fotosOn = !s.settings || s.settings.studentsCanShareImages !== false;
       fotosBtn.textContent = fotosOn ? 'Sin fotos de alumnos' : 'Permitir fotos';
-      // El interruptor de las reacciones, mismo criterio que sus dos vecinos: el rótulo dice
-      // lo que va a PASAR si se lo toca, y `!== false` para que una sala abierta antes de que
-      // el campo existiera se comporte como todas (permitido).
-      const reacBtn = $('lrReacciones');
-      reacBtn.style.display = abierta ? '' : 'none';
-      reacBtn.textContent = reaccionesOn ? 'Sin reacciones' : 'Permitir reacciones';
-
       // Solo con la sala ABIERTA: la actividad se crea "desde la clase", y con la sala cerrada
       // no hay clase a la que avisarle. Para el resto de los casos está el botón + de la materia.
       const actBtn = $('lrActividad');
@@ -950,28 +851,14 @@
     const mudo = $('lrMudo');
     if (!puedo && abierta) {
       mudo.style.display = '';
-      // Con la palabra apagada, el cartel dice además lo que SÍ se puede hacer. No es
-      // decoración: el selector de reacciones es lo único que le queda al alumno en esa
-      // pantalla, y un "+" chiquito debajo de un mensaje no se descubre solo.
       mudo.textContent = MODO === 'observacion'
         ? 'Estás en modo observación.'
         : (s.settings && !s.settings.studentsCanWrite
-            ? 'La docente puso la sala en modo "solo docente".' +
-              (reaccionesOn ? ' Podés reaccionar a sus mensajes con un emoji.' : '')
+            ? 'La docente puso la sala en modo "solo docente".'
             : 'No podés escribir en esta sala.');
     } else {
       mudo.style.display = 'none';
     }
-
-    // Si la docente prendió o apagó las reacciones, lo que cambia es el BOTÓN de cada mensaje,
-    // y ese permiso viaja adentro de cada mensaje: los que ya están pintados no se enteran
-    // solos. Un repintado por cada vez que se toca el interruptor —que pasa una vez por clase,
-    // si pasa— es mucho más barato que recalcular el permiso de 100 burbujas en cada vuelta.
-    //
-    // La primera vuelta no repinta (arranca en null): lo que hay en pantalla se acaba de pintar
-    // con ese mismo estado.
-    if (abierta && reaccionesVistas !== null && reaccionesVistas !== reaccionesOn) repintarTodo();
-    reaccionesVistas = reaccionesOn;
   }
 
   // ── Ciclo de poll ──────────────────────────────────────────────────────────
@@ -1060,12 +947,6 @@
       }
       if (d.mensajes.length) pintarMensajes(d.mensajes, d.reinicio);
       else if (d.reinicio)   pintarMensajes([], true);
-
-      // Las reacciones de los demás. Va DESPUÉS de pintar: un mensaje que llegó en esta misma
-      // tanda ya trae las suyas adentro, y si además vino en este bloque, esto lo deja igual
-      // (los contadores son el estado completo, no un delta). Viene vacío mientras nadie
-      // reaccione, que es casi siempre.
-      aplicarReacciones(s.reacciones);
 
       // Va afuera del if a propósito: si algún día el poll trae una tanda vacía, esto tiene que
       // seguir siendo un no-op y no quedar salteado a medias.
@@ -1448,85 +1329,12 @@
       repintarTodo();
       return;
     }
-    // El "+": abre (o cierra) el selector en ESTE mensaje.
-    const abrir = e.target.closest('[data-abrir-react]');
-    if (abrir) {
-      if (pickerPara === abrir.dataset.abrirReact) cerrarPicker();
-      else abrirPicker(abrir);
-      return;
-    }
-
-    // Una carita del selector: esa es la reacción.
-    const elegir = e.target.closest('[data-elegir-emoji]');
-    if (elegir) {
-      const id = pickerPara;
-      cerrarPicker();
-      if (id) await reaccionar(id, elegir.dataset.elegirEmoji);
-      return;
-    }
-
-    // Una pastilla ya existente: suma o saca la propia (toggle del servidor).
     const reac = e.target.closest('[data-reac]');
-    if (reac) await reaccionar(reac.dataset.reac, reac.dataset.emoji);
-  });
-
-  // ── Reaccionar ─────────────────────────────────────────────────────────────
-
-  // El selector es uno solo y se muda al mensaje donde se lo abre (ver el marcado). `casa` es
-  // a dónde vuelve: afuera del chat, que `repintarTodo` vacía con innerHTML.
-  const picker     = $('lrPicker');
-  const pickerCasa = picker.parentNode;
-  let   pickerPara = null;
-
-  function abrirPicker(btn) {
-    cerrarPicker();
-    pickerPara = btn.dataset.abrirReact;
-    btn.setAttribute('aria-expanded', 'true');
-    // Hermano de la fila de pastillas, no hijo: adentro de `.lr-react` le caerían encima las
-    // reglas de las pastillas (`.lr-react button`), que en tema oscuro ganan por especificidad
-    // y le pondrían a cada carita el fondo y el borde de una pastilla.
-    btn.parentNode.parentNode.appendChild(picker);
-    picker.classList.add('abierto');
-  }
-
-  function cerrarPicker() {
-    if (!pickerPara) return;
-    const btn = $('lrChat').querySelector('[data-abrir-react="' + pickerPara + '"]');
-    if (btn) btn.setAttribute('aria-expanded', 'false');
-    picker.classList.remove('abierto');
-    pickerCasa.appendChild(picker);
-    pickerPara = null;
-  }
-
-  // Tocar en cualquier otro lado cierra el selector. El `closest` es la contraparte de que el
-  // click del propio selector burbujea hasta acá: sin él, abrir y elegir se cerrarían solos
-  // antes de que el manejador de arriba llegue a leerlos.
-  document.addEventListener('click', (e) => {
-    if (e.target.closest('#lrPicker') || e.target.closest('[data-abrir-react]')) return;
-    cerrarPicker();
-  });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cerrarPicker(); });
-
-  // Manda la reacción y pinta SOLO ese mensaje.
-  //
-  // ⚠️ Acá había un `repintarTodo()`, que pide los 100 últimos mensajes. Con el botón a la
-  // vista de treinta chicos, cada carita costaría una descarga entera del chat por cada
-  // persona — justo el tráfico que RN-2 de sala-en-vivo-escala bajó de 4.076 a 570 bytes. La
-  // respuesta del POST ya trae el mensaje con sus contadores, así que alcanza con sus
-  // pastillas. Y si este pintado fallara, el poll siguiente lo corrige igual: el servidor
-  // manda el estado completo de lo tocado en los últimos segundos.
-  async function reaccionar(id, emoji) {
-    const r = await post(BASE + '/mensajes/' + id + '/reaccion', { emoji });
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      alert(err.error || 'No se pudo reaccionar.');
-      return;
+    if (reac) {
+      await post(BASE + '/mensajes/' + reac.dataset.reac + '/reaccion', { emoji: reac.dataset.emoji });
+      repintarTodo();
     }
-    const data = await r.json().catch(() => null);
-    if (data && data.mensaje) {
-      aplicarReacciones([{ id: data.mensaje.id, reacciones: data.mensaje.reacciones }]);
-    }
-  }
+  });
 
   if (GESTOR) {
     $('lrAbrir').addEventListener('click',  async () => { await post(BASE + '/abrir'); repintarTodo(); });
@@ -1545,16 +1353,6 @@
     $('lrFotos').addEventListener('click', async () => {
       const permitidas = $('lrFotos').textContent.indexOf('Sin fotos') === 0;
       await post(BASE + '/config', { studentsCanShareImages: !permitidas });
-      pollear();
-    });
-
-    // Y el de las reacciones. Mismo truco del rótulo: "Sin reacciones" significa que ahora
-    // están permitidas. Alcanza con pollear: el repintado lo dispara solo pintarEstado() al
-    // ver que el interruptor cambió — y así el de la docente y el de los alumnos pasan por el
-    // mismo camino, en vez de tener uno especial para el que apretó el botón.
-    $('lrReacciones').addEventListener('click', async () => {
-      const permitidas = $('lrReacciones').textContent.indexOf('Sin reacciones') === 0;
-      await post(BASE + '/config', { reactionsOn: !permitidas });
       pollear();
     });
 

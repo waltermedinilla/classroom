@@ -89,27 +89,6 @@ const roomStudentImageLimiter = rateLimit({
   message:         { error: 'Esperá unos minutos antes de subir más imágenes.' },
 });
 
-// Reacciones de la sala en vivo: 30 por minuto POR USUARIO.
-//
-// Hasta el 2026-09-17 esta ruta no tenía límite y no hacía falta: no existía ningún control
-// para reaccionar, así que nadie la llamaba. Ahora es un botón al alcance de treinta chicos.
-//
-// Es más alto que el del chat (10/min) porque la operación es otra: marcar cinco mensajes
-// seguidos de la docente y cambiar de idea en dos es uso normal, no abuso. Y es más bajo que
-// lo que aguanta la mano: 30 corta el dedo trabado y el script suelto, que es lo único que
-// puede pasar de verdad. Cada toggle escribe el mensaje Y la sesión, así que no es gratis.
-//
-// Por usuario y no por IP, mismo motivo que roomMessageLimiter: la escuela entera sale por una
-// sola IP pública NAT y un límite por IP dejaría a 5°1° sin reaccionar porque 2°3° reaccionó.
-const roomReactionLimiter = rateLimit({
-  windowMs:        60 * 1000,
-  max:             30,
-  standardHeaders: true,
-  legacyHeaders:   false,
-  keyGenerator:    (req) => req.userId || ipKeyGenerator(req.ip),
-  message:         { error: 'Esperá un momento antes de reaccionar de nuevo.' },
-});
-
 // Envío de mensajes del superadmin: 20 por hora POR USUARIO.
 //
 // Un solo envío puede crear cientos de documentos (uno por destinatario), así que el límite
@@ -203,7 +182,7 @@ const verificacionCodigoLimiter = rateLimit({
 });
 
 module.exports = {
-  uploadLimiter, roomMessageLimiter, roomUploadLimiter, roomStudentImageLimiter, roomReactionLimiter,
+  uploadLimiter, roomMessageLimiter, roomUploadLimiter, roomStudentImageLimiter,
   messageSendLimiter, messageReplyLimiter, attendanceCheckinLimiter,
   verificacionEnvioLimiter, verificacionCodigoLimiter,
 };
