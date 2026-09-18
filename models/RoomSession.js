@@ -44,6 +44,16 @@ const roomSessionSchema = new mongoose.Schema({
   // el mismo milisegundo son indistinguibles y el poll se saltea uno.
   lastSeq: { type: Number, default: 0 },
 
+  // Última vez que ALGUIEN reaccionó en esta sesión. `null` = nunca.
+  //
+  // Es la PUERTA del bloque de reacciones del poll (RN-5 de specs/sala-reacciones.spec.md):
+  // el poll ya carga este documento, así que con la sala en silencio —el 95% del tiempo—
+  // comparar esta fecha contra la ventana cuesta cero y ahorra la query que buscaría los
+  // mensajes tocados. Sin este campo habría que preguntarle a RoomMessage en cada vuelta de
+  // cada persona, que es exactamente el trabajo que la sala se pasó cuatro RN sacándose de
+  // encima (specs/sala-en-vivo-escala.spec.md).
+  lastReactAt: { type: Date, default: null },
+
   settings: {
     // false = modo "solo yo escribo". Es por sesión: apagar la palabra un martes no la apaga
     // el jueves.

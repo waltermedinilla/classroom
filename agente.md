@@ -527,6 +527,52 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-17 — Con la sala en "solo docente", el alumno ya no queda mudo del todo: reacciona
+
+Pedido del usuario: *"si el docente deshabilita la sala solo para que él comente algo, quiero
+que los alumnos puedan ser capaces de generar esa reacción, pero sin texto"*. Spec:
+`specs/sala-reacciones.spec.md`.
+
+**Lo que se encontró al abrir el capó: media feature estaba hecha y no se podía usar.** Existían
+`RoomMessage.reactions`, `settings.reactionsOn`, el POST con su toggle y las pastillas bajo la
+burbuja. Faltaban las dos mitades que la hacían funcionar:
+
+1. **No había con qué crear la primera reacción.** Las pastillas son botones que *suman* a una
+   reacción existente; como nada podía crear la primera, nunca existía ninguna. Ahora cada
+   mensaje que se puede reaccionar tiene un `+` que abre el selector con los 12 emoji de
+   `live.EMOJIS`.
+2. **La reacción no le llegaba a nadie más.** El poll avanza con un cursor por `seq` y una
+   reacción no crea ningún mensaje: el que reaccionaba la veía (su propio POST le devuelve el
+   mensaje) y los otros 29 no, hasta recargar. Ahora el mensaje marca `reactAt`, la sesión marca
+   `lastReactAt`, y el poll manda aparte los mensajes tocados en los últimos 16 segundos.
+
+**Quién puede y sobre qué** (`live.puedeReaccionar`, pura, junto a sus tres hermanas): el alumno
+reacciona **solo a los mensajes del personal** —el pedido textual—, incluidos sus adjuntos, nunca
+a los de un compañero, a los propios ni a los avisos del sistema. La docente y preceptoría siguen
+pudiendo reaccionar a cualquier mensaje: para ellas no cambió nada. **Esta regla NO pasa por
+`puedeEscribir`**, y esa es la feature: si pasara, el interruptor de la palabra apagaría justo lo
+que esto viene a resolver. Un alumno silenciado sí pierde las reacciones (precedente del 19/08:
+silenciar a alguien lo silencia entero), y la sala cerrada sigue sin recibir nada.
+
+**La docente estrena el interruptor que le faltaba.** `reactionsOn` estaba en la base y en el
+POST desde el día uno, sin ningún botón: "Sin reacciones", al lado de "Sin fotos de alumnos".
+
+**Lo que se sacó de paso:** cada pulsada llamaba a `repintarTodo()`, o sea a descargar los 100
+últimos mensajes. Con el botón a la vista de treinta chicos eso multiplicaba por 30 el tráfico que
+RN-2 de `sala-en-vivo-escala` había bajado de 4.076 B a 570. Ahora se repintan las pastillas de
+ESE mensaje con lo que devuelve el POST; si ese pintado fallara, el poll siguiente lo corrige.
+
+⚠️ **Por qué una ventana de tiempo y no un contador tipo `lastSeq`**: el `$inc` reserva el número
+antes de que el documento esté guardado (nota 14 de Issues Conocidos), y con dos toggles casi
+juntos el cursor pasaría por encima del que se guardó más lento — esa reacción no se vería nunca
+más. `VENTANA_REACCIONES_MS` se deriva de `POLL_MS` (×4) y tiene test guarda contra la cadencia
+lenta: si la ventana quedara por debajo del intervalo real, una reacción caería en el hueco entre
+dos polls.
+
+Verificado en el navegador, además de los tests: la reacción de otra persona aparece sola en la
+pantalla del alumno sin recargar, con la sala en modo "solo docente"; en oscuro y a 375 px.
+`tests/unit/salaReacciones.test.js` (16 casos), smoke `sala-reacciones`, 415/415.
+
 ### 2026-09-17 — Fusión de cuentas, Fase 1b: el chico cuya cuenta se apaga se entera con qué correo entrar
 
 Cierra RN-13 de `specs/fusion-de-cuentas.spec.md`. Hasta ahora el botón de DNI duplicados no

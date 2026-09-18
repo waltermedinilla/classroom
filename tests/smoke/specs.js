@@ -8132,14 +8132,17 @@ const specs = [
       assert(largo.json.mensaje.texto.length === 500,
         `el texto debería cortarse en 500, quedó en ${largo.json.mensaje.texto.length}`);
 
-      await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeId}/reaccion`, {
+      // Sobre el mensaje de LA DOCENTE: desde el 2026-09-17 el alumno reacciona solo a los del
+      // personal (specs/sala-reacciones.spec.md). Con su propio mensaje esto pasó a dar 403, y
+      // lo que este spec prueba es la validación del emoji, no el permiso.
+      await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeDocenteId}/reaccion`, {
         body: { emoji: '💣' }, expectStatus: 400,
       });
-      await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeId}/reaccion`, {
+      await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeDocenteId}/reaccion`, {
         body: { emoji: '👍' }, expectStatus: 200,
       });
       // Toggle: la segunda pulsada saca la reacción en vez de duplicarla.
-      const off = await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeId}/reaccion`, {
+      const off = await client.post('scopedStudent', `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeDocenteId}/reaccion`, {
         body: { emoji: '👍' }, expectStatus: 200,
       });
       assert((off.json.mensaje.reacciones || []).length === 0,
@@ -8209,6 +8212,95 @@ const specs = [
       await client.post('scopedTeacher', `/courses/${state.courseId}/sala/config`, {
         body: { studentsCanWrite: true }, expectStatus: 200,
       });
+    },
+  },
+  {
+    id: 'sala-reacciones',
+    title: 'Con la sala en "solo docente", el alumno no escribe pero sí reacciona',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // El pedido del usuario, de punta a punta: specs/sala-reacciones.spec.md.
+      const base = `/courses/${state.courseId}/sala`;
+      const json = { Accept: 'application/json' };
+
+      // Solo a los mensajes del personal. Se prueba con el mensaje PROPIO del alumno, que es
+      // la variante que un smoke con un solo alumno puede montar; la regla es la misma para el
+      // de un compañero (tests/unit/salaReacciones.test.js cubre la matriz entera).
+      await client.post('scopedStudent', `${base}/mensajes/${state.salaMensajeAlumnoId}/reaccion`, {
+        body: { emoji: '👍' }, expectStatus: 403,
+      });
+
+      // Y ahora lo que importa: con la palabra apagada.
+      //
+      // Todo lo que sigue va adentro de un try/finally: si un assert falla en el medio, la sala
+      // tiene que quedar igual que como se la encontró. Sin eso, la palabra apagada se lleva
+      // puestos los specs que vienen después (pasó: 'sala-responder' y 'sala-imagen-alumno'
+      // empezaron a dar 403 por culpa de este spec, no por un bug).
+      await client.post('scopedTeacher', `${base}/config`, {
+        body: { studentsCanWrite: false }, expectStatus: 200,
+      });
+      try {
+      await client.post('scopedStudent', `${base}/mensajes`, {
+        body: { text: 'no debería entrar' }, expectStatus: 403,
+      });
+
+      // El cursor de la docente justo ANTES de la reacción: con él se prueba que lo que viaja
+      // no es un mensaje —una reacción no crea ninguno— sino el bloque de reacciones.
+      const antes = await client.get('scopedTeacher', `${base}/poll?since=0`, { expectStatus: 200, headers: json });
+      const alDiaSeq = antes.json.seq;
+      const puesta = await client.post('scopedStudent', `${base}/mensajes/${state.salaMensajeDocenteId}/reaccion`, {
+        body: { emoji: '👍' }, expectStatus: 200,
+      });
+      assert((puesta.json.mensaje.reacciones || []).some(r => r.emoji === '👍' && r.n === 1 && r.mia),
+        'la respuesta del POST tiene que traer el mensaje con su reacción: es lo que pinta la pastilla sin repedir el chat');
+
+      // La otra mitad: que le llegue a los DEMÁS. El cursor del poll va por `seq` y una
+      // reacción no crea ningún mensaje, así que se manda aparte (RN-5). Con el cursor al día
+      // no tiene que venir ni un mensaje y sí el bloque de reacciones.
+      const alDia = await client.get('scopedTeacher', `${base}/poll?since=${alDiaSeq}`, {
+        expectStatus: 200, headers: json,
+      });
+      assert(!alDia.json.mensajes.some(m => m.id === state.salaMensajeDocenteId),
+        'la reacción NO puede viajar como un mensaje: el mensaje reaccionado ya está al otro lado del cursor');
+      const tocado = (alDia.json.reacciones || []).find(r => r.id === state.salaMensajeDocenteId);
+      assert(tocado, 'el poll debería avisar del mensaje cuyas reacciones cambiaron');
+      assert(tocado.reacciones.some(r => r.emoji === '👍' && r.n === 1),
+        'y con el contador al día, o la pastilla no se actualiza en la pantalla de los demás');
+      assert(!tocado.reacciones.some(r => r.mia),
+        '`mia` se calcula para QUIEN pregunta: la docente no puso esa reacción');
+
+      // El permiso del botón lo manda el servidor en cada mensaje.
+      const desde0 = await client.get('scopedStudent', `${base}/poll?since=0`, {
+        expectStatus: 200, headers: json,
+      });
+      const delDocente = desde0.json.mensajes.find(m => m.id === state.salaMensajeDocenteId);
+      const delAlumno  = desde0.json.mensajes.find(m => m.id === state.salaMensajeAlumnoId);
+      assert(delDocente && delDocente.puedoReaccionar === true,
+        'el alumno tiene que ver el botón en el mensaje de la docente, con la palabra apagada');
+      assert(delAlumno && delAlumno.puedoReaccionar === false,
+        'y no tenerlo en el suyo');
+
+      // El interruptor de las reacciones: apagadas, 403 para todos y el botón no se pinta.
+      await client.post('scopedTeacher', `${base}/config`, { body: { reactionsOn: false }, expectStatus: 200 });
+      await client.post('scopedStudent', `${base}/mensajes/${state.salaMensajeDocenteId}/reaccion`, {
+        body: { emoji: '🎉' }, expectStatus: 403,
+      });
+      const apagadas = await client.get('scopedStudent', `${base}/poll?since=0`, { expectStatus: 200, headers: json });
+      assert(apagadas.json.mensajes.every(m => m.puedoReaccionar === false),
+        'con las reacciones apagadas no puede quedar ningún botón ofreciendo un 403');
+
+      // Y se saca la reacción de prueba del mensaje (toggle), con las reacciones ya prendidas
+      // de nuevo.
+      await client.post('scopedTeacher', `${base}/config`, { body: { reactionsOn: true }, expectStatus: 200 });
+      await client.post('scopedStudent', `${base}/mensajes/${state.salaMensajeDocenteId}/reaccion`, {
+        body: { emoji: '👍' }, expectStatus: 200,
+      });
+      } finally {
+        // La sala vuelve como estaba pase lo que pase. Los dos interruptores, porque el spec
+        // toca los dos y un assert puede cortarlo en cualquier punto del medio.
+        await client.post('scopedTeacher', `${base}/config`, { body: { reactionsOn: true } });
+        await client.post('scopedTeacher', `${base}/config`, { body: { studentsCanWrite: true } });
+      }
     },
   },
   {
