@@ -351,6 +351,13 @@
                           sonido: false, sonidoDe: 'docente' },
               presencia: { presentes: 0, total: course.students.length, asistieron: 0,
                            conectados: [], estuvieron: [], ausentes: [] },
+              // La voz y la transmisión viven EN ESTA SOLAPA, que es donde se usa la sala todos
+              // los días (specs/sala-hablar.spec.md). Antes esta clave no se pasaba y el partial
+              // solo aparecía en la sala en ventana aparte (rooms/standalone). Con los dos
+              // módulos apagados sigue en null y la solapa es la de siempre, sin partial ni
+              // script. El estado de verdad lo trae el primer poll.
+              transmision: (locals.hablarEnabled || locals.transmisionEnabled)
+                ? { activa: false, manos: [] } : null,
             },
             modo:     'visible',
             esGestor: course.canManage(user),

@@ -1790,21 +1790,40 @@
   function pintarTransmision(tx) {
     if (!HAY_TX || !tx) return;
 
-    $('txCard').style.display = '';
+    const soloVoz = tx.activa && tx.soloVoz;
+    // Al alumno no se le muestra un recuadro vacío mientras nadie habla ni transmite: aparece
+    // cuando hay algo para escuchar o mirar. El docente lo ve siempre, porque ahí están sus
+    // botones "Hablar" y "Transmitir".
+    $('txCard').style.display = (tx.activa || GESTOR) ? '' : 'none';
+    $('txCard').classList.toggle('tx-solovoz', !!soloVoz);
     $('txPunto').className = 'tx-punto' + (tx.activa ? '' : ' off');
-    $('txEstadoTexto').textContent = tx.activa
-      ? (tx.docente ? tx.docente + ' está transmitiendo' : 'La clase se está transmitiendo')
-        + (tx.espectadores ? ' · ' + tx.espectadores + ' mirando' : '')
-      : 'La clase no se está transmitiendo';
+    $('txEstadoTexto').textContent = !tx.activa
+      ? (tx.puedoAbrirVideo || !GESTOR ? 'La clase no se está transmitiendo' : 'Nadie está hablando en la sala')
+      : soloVoz
+        ? (tx.docente ? tx.docente + ' está hablando' : 'Se está hablando en la sala')
+          + (tx.espectadores ? ' · ' + tx.espectadores + ' escuchando' : '')
+        : (tx.docente ? tx.docente + ' está transmitiendo' : 'La clase se está transmitiendo')
+          + (tx.espectadores ? ' · ' + tx.espectadores + ' mirando' : '');
 
     // Botones del emisor. `puedoEmitir` lo decide el SERVIDOR y ya combina las dos guardas del
     // módulo (la escuela y este docente en particular), así que un docente sin habilitar
     // simplemente no ve el botón — y si lo forzara, la ruta le contesta 403 igual.
     if (GESTOR) {
-      $('txAbrir').style.display  = (tx.puedoEmitir && !tx.activa) ? '' : 'none';
+      // "Hablar" con cualquiera de los dos módulos; "Transmitir" solo con el de video.
+      $('txHablar').style.display = (tx.puedoAbrirVoz && !tx.activa)   ? '' : 'none';
+      $('txAbrir').style.display  = (tx.puedoAbrirVideo && !tx.activa) ? '' : 'none';
       $('txCerrar').style.display = (tx.puedoEmitir && tx.activa)  ? '' : 'none';
+      $('txCerrarTexto').textContent = soloVoz ? 'Dejar de hablar' : 'Terminar';
+      $('txCerrarIcono').textContent = soloVoz ? 'mic_off' : 'cast_pause';
       const ctrl = $('txControles');
       if (ctrl) ctrl.style.display = (tx.activa && tx.puedoEmitir) ? 'flex' : 'none';
+
+      // "Solo yo hablo" / "Todos pueden hablar".
+      $('txModoVozCaja').style.display = (tx.activa && tx.puedoEmitir) ? '' : 'none';
+      $('txVozSolo').classList.toggle('activo', !tx.vozAbierta);
+      $('txVozTodos').classList.toggle('activo', !!tx.vozAbierta);
+      $('txVozSolo').setAttribute('aria-pressed', String(!tx.vozAbierta));
+      $('txVozTodos').setAttribute('aria-pressed', String(!!tx.vozAbierta));
     }
 
     // Botones del que mira. El alumno tiene que TOCAR para empezar a recibir (D12).
@@ -1812,6 +1831,22 @@
     const puedeMirar = tx.activa && tx.puedoVer && !tx.puedoEmitir;
     $('txVer').style.display   = (puedeMirar && !mirando) ? '' : 'none';
     $('txNoVer').style.display = (puedeMirar && mirando)  ? '' : 'none';
+    $('txVerIcono').textContent  = soloVoz ? 'volume_up' : 'play_arrow';
+    $('txVerTexto').textContent  = soloVoz ? 'Escuchar' : 'Ver la clase';
+    $('txNoVerTexto').textContent = soloVoz ? 'Dejar de escuchar' : 'Dejar de ver';
+    const pista = $('txPistaEscuchar');
+    pista.style.display = (puedeMirar && !mirando && soloVoz) ? '' : 'none';
+    pista.textContent = 'Gasta ~11 MB por hora de datos. Si estás en el aula con tu profe, no hace falta.';
+
+    // Pulsar para hablar. `puedoHablar` lo calcula el SERVIDOR con la misma función que firma
+    // el ticket: el botón no puede prometer algo que el proceso de medios va a rechazar.
+    const ptt = $('txPttCaja');
+    if (ptt) ptt.style.display = (tx.activa && tx.puedoHablar) ? '' : 'none';
+    // Si la voz se cerró (o me silenciaron) y el aviso del WebSocket no llegó, el poll suelta
+    // el micrófono igual: la lucecita no puede quedar prendida.
+    if (!tx.puedoHablar && window.Transmision && window.Transmision.tengoMicrofono()) {
+      window.Transmision.soltarMicrofono();
+    }
 
     // Quién tiene la palabra.
     const hab = $('txHablando');
@@ -1860,6 +1895,80 @@
   }
 
   if (HAY_TX) {
+    // Quién está hablando, al instante (llega por el WebSocket, no por el poll).
+    window.Transmision.alCambiarVoces = (nombres) => {
+      const caja = $('txVoces');
+      caja.style.display = nombres.length ? '' : 'none';
+      $('txVocesTexto').textContent = nombres.length ? '🎙 Hablando: ' + nombres.join(', ') : '';
+    };
+
+    // "Hablar": abre SOLO la voz (specs/sala-hablar.spec.md).
+    const hablarTx = $('txHablar');
+    if (hablarTx) hablarTx.addEventListener('click', async () => {
+      hablarTx.disabled = true;
+      try {
+        const r = await post(BASE + '/transmision/abrir', { soloVoz: true });
+        const d = await r.json();
+        if (!r.ok) { alert(d.error || 'No se pudo empezar a hablar'); return; }
+        await window.Transmision.empezarAEmitir({ micro: true, pantalla: false, camara: false });
+        repintarTodo();
+      } catch (e) {
+        alert(e.name === 'NotAllowedError'
+          ? 'No diste permiso para usar el micrófono.'
+          : 'No se pudo empezar a hablar: ' + e.message);
+        await post(BASE + '/transmision/cerrar').catch(() => {});
+        repintarTodo();
+      } finally { hablarTx.disabled = false; }
+    });
+
+    // "Solo yo hablo" / "Todos pueden hablar".
+    for (const [id, abierta] of [['txVozSolo', false], ['txVozTodos', true]]) {
+      const b = $(id);
+      if (!b) continue;
+      b.addEventListener('click', async () => {
+        if (!!(SALA.transmision && SALA.transmision.vozAbierta) === abierta) return;
+        b.disabled = true;
+        try {
+          const r = await post(BASE + '/transmision/voz', { abierta });
+          if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'No se pudo cambiar'); }
+        } finally { b.disabled = false; pollear(); }
+      });
+    }
+
+    // Pulsar para hablar: mantener apretado (dedo o mouse) o la barra espaciadora.
+    const ptt = $('txPtt');
+    if (ptt) {
+      const T = window.Transmision;
+      ptt.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        try { ptt.setPointerCapture(e.pointerId); } catch (_) {}
+        T.apretar();
+      });
+      for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+        ptt.addEventListener(ev, () => T.soltar());
+      }
+      // En el celular, mantener apretado abre el menú contextual y corta la pulsación.
+      ptt.addEventListener('contextmenu', (e) => e.preventDefault());
+
+      // La barra espaciadora, solo si no se está escribiendo en el chat.
+      const escribiendo = () => {
+        const a = document.activeElement;
+        return a && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT' || a.isContentEditable);
+      };
+      document.addEventListener('keydown', (e) => {
+        if (e.code !== 'Space' || e.repeat || escribiendo()) return;
+        if ($('txPttCaja').style.display === 'none') return;
+        e.preventDefault();
+        T.apretar();
+      });
+      document.addEventListener('keyup', (e) => {
+        if (e.code !== 'Space' || escribiendo()) return;
+        if (T.estoyHablando() || $('txPtt').classList.contains('esperando')) { e.preventDefault(); T.soltar(); }
+      });
+      // Si la ventana pierde el foco con la barra apretada, el keyup no llega nunca.
+      window.addEventListener('blur', () => T.soltar());
+    }
+
     const abrirTx = $('txAbrir');
     if (abrirTx) abrirTx.addEventListener('click', async () => {
       abrirTx.disabled = true;

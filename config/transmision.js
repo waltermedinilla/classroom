@@ -55,6 +55,45 @@ const TICKET_TTL_S = 60;
 // en la casa de un chico, que es lo peor que puede pasar en una sala de menores.
 const PALABRA_INACTIVA_MS = 5 * 60 * 1000;
 
+// ── Hablar (specs/sala-hablar.spec.md) ───────────────────────────────────────
+
+// Cuántas voces suenan A LA VEZ en una sala: el docente más dos alumnos (H4, decidido por el
+// usuario el 2026-09-23). Es lo que hace que el costo NO dependa de cuántos aprieten: cada
+// oyente recibe como mucho 3 voces, siempre. Sin tope, con 30 micrófonos abiertos, son
+// 35 Mbit/s por aula y la plataforma entera se cae con 15 aulas.
+const MAX_VOCES = 3;
+
+// Ninguna pulsación del alumno dura más que esto. Es la defensa contra el `touchend` que se
+// pierde en un celular: sin ella, el micrófono de un chico quedaría abierto sin que lo sepa.
+// Se controla en el navegador Y en el proceso de medios. Se puede pisar por entorno solo para
+// los tests, que no pueden esperar un minuto.
+const MAX_PULSACION_MS = Number(process.env.MAX_PULSACION_MS || 60 * 1000);
+
+// Opus afinado para voz (H5). Más de 24 kbps no se oye distinto en el parlante de un celular.
+const VOZ_MAX_BITRATE = 24000;
+
+// 60 ms por paquete y no los 20 de siempre. MEDIDO el 2026-09-23 con getStats() en Chromium, con
+// un tono continuo (el peor caso: no hay silencios para el DTX):
+//
+//   ptime 20 → 51 paquetes/s → 24 kbps de audio + ~27 de cabeceras = ~51 kbps en la red
+//   ptime 60 → 17 paquetes/s → 24 kbps de audio +  ~9 de cabeceras = ~33 kbps en la red
+//
+// Las cabeceras (RTP con sus extensiones, SRTP, UDP, IP) son ~67 bytes POR PAQUETE sin importar
+// cuánto audio lleve: con paquetes de 20 ms pesaban más que la voz. El costo son 40 ms más de
+// retraso, que en una clase no se notan. El que lo aplica es public/js/transmision.js
+// (`opusPtime`); un navegador que lo ignore manda a 20 ms y sigue andando, solo más caro.
+const VOZ_PTIME = 60;
+
+// DOS números a propósito, que no hay que unificar:
+//   · VOZ_KBPS_POR_VOZ: una voz sonando, en el PEOR navegador (el que ignore el ptime de 60 y
+//     mande a 20: ~51 kbps medidos). El gobernador cuenta el peor caso por oyente — MAX_VOCES
+//     voces a la vez —: 0,15 Mbit/s.
+//   · VOZ_KBPS_TIPICO: lo que se le MUESTRA al alumno antes de tocar "Escuchar" — una voz a
+//     ~33 kbps (ptime 60) que habla el 60 % del tiempo, redondeado para arriba. Mostrarle el
+//     peor caso (68 MB/h) lo asustaría con un número que no va a gastar; el típico da 11 MB/h.
+const VOZ_KBPS_POR_VOZ = 50;
+const VOZ_KBPS_TIPICO  = 24;
+
 // ── Red ──────────────────────────────────────────────────────────────────────
 
 // Puerto local del proceso de medios. Solo escucha en 127.0.0.1: quien entra de afuera pasa
@@ -177,14 +216,20 @@ const CODECS = [
 
 const CAPAS_BY_ID = Object.fromEntries(CAPAS.map(c => [c.id, c]));
 
+// La voz (Hablar) NO está en CAPAS a propósito: CAPAS es la escalera de VIDEO que recorre
+// capaPermitida(), y meterla ahí dejaría al gobernador "degradar" una clase con pantalla a solo
+// voz, que es otro módulo. Se la conoce aparte, con su peor caso por oyente.
+const MBPS_VOZ = MAX_VOCES * VOZ_KBPS_POR_VOZ / 1000;
+
 // Cuánto consume un espectador en esta capa. Una capa desconocida devuelve 0 y NO revienta:
 // esto se llama en el camino caliente y un dato viejo no puede tumbar la sala.
-const mbpsDeCapa = (capa) => CAPAS_BY_ID[capa]?.mbps || 0;
+const mbpsDeCapa = (capa) => (capa === 'voz' ? MBPS_VOZ : (CAPAS_BY_ID[capa]?.mbps || 0));
 
 module.exports = {
   detectarIp, ipsCandidatas,
   PRESUPUESTO_MBPS, CAPAS, CAPAS_BY_ID, CAPA_MAXIMA_EMISOR, MAX_CLASES,
   TICKET_TTL_S, PALABRA_INACTIVA_MS,
+  MAX_VOCES, MAX_PULSACION_MS, VOZ_MAX_BITRATE, VOZ_PTIME, VOZ_KBPS_POR_VOZ, VOZ_KBPS_TIPICO,
   MEDIA_PORT, WS_PATH, RTC_MIN_PORT, RTC_MAX_PORT,
   RTC_LISTEN_IP, RTC_ANNOUNCED_IP, MEDIA_WORKERS, CODECS,
   mbpsDeCapa,

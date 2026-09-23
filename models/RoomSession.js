@@ -97,6 +97,20 @@ const roomSessionSchema = new mongoose.Schema({
     pantalla: { type: Boolean, default: false },
     camara:   { type: Boolean, default: false },
 
+    // Hablar (specs/sala-hablar.spec.md). `soloVoz`: se abrió desde el botón "Hablar", sin
+    // pantalla ni cámara. `vozAbierta`: el interruptor "Solo yo hablo" (false) / "Todos pueden
+    // hablar" (true), espejo del de escribir en el chat.
+    //
+    // Quién está hablando AHORA no se guarda acá: vive en el proceso de medios. Una pulsación es
+    // un momento, no un estado que haya que conservar si ese proceso se reinicia. `vozAbierta`
+    // sí, porque es una decisión del docente. Una sesión anterior a esto lee los dos en false:
+    // queda en "Solo yo hablo", cerrada a los alumnos.
+    soloVoz:    { type: Boolean, default: false },
+    vozAbierta: { type: Boolean, default: false },
+    // Desde cuándo está "Todos pueden hablar". Solo para sumar vozAbiertaSegundos al registro
+    // histórico (models/Transmision.js) cuando se cierra.
+    vozAbiertaAt: { type: Date, default: null },
+
     // Techo de calidad VIGENTE. Puede haberlo bajado el gobernador (media/aforo.js) y no el
     // docente, y por eso se guarda junto con el motivo: sin `degradadaPor`, la docente ve que
     // su clase se ve peor y no tiene forma de saber que no es su internet.

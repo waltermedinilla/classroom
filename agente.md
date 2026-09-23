@@ -527,6 +527,40 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-23 — "Hablar" en la sala en vivo: la voz del docente y, si quiere, la de los alumnos
+
+Pedido del usuario: que el docente pueda hablar por audio en la sala en vivo y elija si habla
+solo él o habilita al resto, *"congruente con el VPS, que gaste lo mínimo en recursos y en
+megabytes"*. Spec: `specs/sala-hablar.spec.md`. Módulo nuevo **`hablar`**, de dos ejes igual que
+`transmision`, **desplegado APAGADO**.
+
+**No es infraestructura nueva: es la transmisión (mediasoup, 31/08) abierta solo con micrófono.**
+Cero procesos, dependencias o colecciones nuevas.
+
+- **Botón "🎙 Hablar"** para el docente habilitado, e interruptor **"Solo yo hablo / Todos pueden
+  hablar"** (espejo del de escribir en el chat; arranca en "Solo yo hablo").
+- **El alumno toca "🔊 Escuchar"** (~11 MB por hora) y, con la voz abierta, **mantiene apretado**
+  un botón (o la barra espaciadora) para hablar. Su voz nace pausada con `zeroRtpOnPause`: con
+  el botón suelto no viaja ni un paquete. Tope de **docente + 2 alumnos a la vez** impuesto en el
+  proceso de medios (`lleno`), y ninguna pulsación dura más de 60 s.
+- **Volver a "Solo yo hablo" o silenciar corta en el acto** (`POST /cerrar-voces` del proceso de
+  medios), sin esperar el poll.
+- Opus mono a 24 kbps; **un `<audio>` por voz** (uno solo con varias pistas no las mezcla en
+  todos los navegadores); el bundle de mediasoup (231 KB) se baja recién al primer toque.
+- Los oyentes de una sala de solo voz **no cuentan** como espectadores de video para el
+  gobernador (`sfu.estado()` → `oyentesVoz`).
+- ⭐ **El `deployCmd` ahora recarga también `classroom-media`**: el 23/09 la app estaba en
+  v1.0.107 y el proceso de audio en v1.0.98, con 12 días sin reiniciarse. No es fatal si falla.
+
+**Del VPS, hecho el 23/09:** DonWeb abrió UDP+TCP 40000-40999 en su firewall (medido con
+`tcpdump`), `ufw` con el mismo rango, `RTC_MAX_PORT=40999` y `MEDIA_WORKERS=1` en el `.env`.
+
+**Vuelta atrás:** ver "Plan de vuelta atrás" en la spec — apagar el módulo, `git revert`, o el
+script `/root/volver-a-1.0.107.sh` en el VPS. Sin migración: la v1.0.107 ignora los campos nuevos.
+
+Tests: `tests/unit/hablar.test.js` (46), `tests/unit/hablarMedios.test.js` (16, levanta el SFU)
+y el smoke `sala-hablar`.
+
 ### 2026-09-23 — El alumno que sale de la sala a hacer la actividad ya no figura ausente
 
 Reclamo del usuario: *"los alumnos se van conectando y luego se retiran para hacer las

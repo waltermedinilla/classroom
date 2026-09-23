@@ -150,6 +150,15 @@ const schoolSchema = new Schema({
       // podría meter el id de cualquiera.
       personas: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     },
+
+    // Hablar: la voz sola, sin pantalla ni cámara (specs/sala-hablar.spec.md). Los mismos dos
+    // ejes y los mismos defaults que `transmision`, por los mismos motivos: prender la escuela
+    // no le reparte la voz a nadie hasta que se elige a quién.
+    hablar: {
+      enabled:  { type: Boolean, default: false },
+      alcance:  { type: String, enum: ['todos', 'lista'], default: 'lista' },
+      personas: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    },
   },
 }, { timestamps: true });
 

@@ -256,14 +256,33 @@ const ctxSala = (req) => ({
 //
 // ⭐ Ojo con el sujeto: la pregunta se le hace a QUIEN EMITE. Un alumno nunca necesita estar
 // habilitado para mirar a su profesora — ver el comentario largo de moduloActivoPara().
+//
+// Hay DOS módulos que emiten por el mismo proceso de medios: `transmision` (voz, pantalla y
+// cámara) y `hablar` (solo la voz, specs/sala-hablar.spec.md). Quien tiene el de video tiene
+// también la voz: transmitir incluye el micrófono.
+const puedeVideo = (req) => moduloActivoPara(req.res.locals.school, usuario(req), 'transmision');
+const puedeVoz   = (req) => puedeVideo(req)
+  || moduloActivoPara(req.res.locals.school, usuario(req), 'hablar');
+
 const ctxTx = (req) => ({
   ...ctxSala(req),
   esPersonal: !req.esAlumno && !req.esGestor,
-  habilitado: moduloActivoPara(req.res.locals.school, usuario(req), 'transmision'),
+  habilitado: puedeVoz(req),
 });
 
-// ¿Esta escuela tiene el módulo? Se usa para no pintar ni contestar nada donde no existe.
-const hayTransmision = (req) => moduloActivo(req.res.locals.school, 'transmision');
+// ¿Esta escuela tiene alguno de los dos módulos? Se usa para no pintar ni contestar nada donde
+// no existe. Con los dos apagados, la sala es byte a byte la de siempre.
+const hayTransmision = (req) => moduloActivo(req.res.locals.school, 'transmision')
+  || moduloActivo(req.res.locals.school, 'hablar');
+
+// El estado de la transmisión para el poll, más qué botones puede ver el docente: "Hablar"
+// (cualquiera de los dos módulos) y "Transmitir" (solo el de video).
+function transmisionParaCliente(req, session, extra) {
+  const e = tx.estadoParaCliente(session, ctxTx(req), extra);
+  e.puedoAbrirVoz   = !!req.esGestor && puedeVoz(req);
+  e.puedoAbrirVideo = !!req.esGestor && puedeVideo(req);
+  return e;
+}
 
 // Payload que consume la vista. Es la ÚNICA forma de la sala: la usan el render inicial y el
 // poll, para que no puedan divergir.
@@ -313,7 +332,7 @@ async function estadoDeSala(req, session, since = 0, presenciaVista = null) {
       }, presenciaVista),
       // Una forma SOLA, también con la sala cerrada: el navegador no tiene que preguntarse si
       // la clave existe. Mismo criterio que el resto de este objeto.
-      transmision: hayTransmision(req) ? tx.estadoParaCliente(null, ctxTx(req)) : null,
+      transmision: hayTransmision(req) ? transmisionParaCliente(req, null) : null,
     };
   }
 
@@ -353,7 +372,7 @@ async function estadoDeSala(req, session, since = 0, presenciaVista = null) {
     const espectadores = session.transmision?.activa
       ? await medios.espectadoresDeSala(session._id)
       : 0;
-    transmision = tx.estadoParaCliente(session, ctxTx(req), {
+    transmision = transmisionParaCliente(req, session, {
       espectadores,
       docenteNombre: course.owner?.name || '',
     });
@@ -1207,6 +1226,10 @@ router.post('/:id/sala/silenciar/:uid', async (req, res, next) => {
     const mutear = req.body.muted === true || req.body.muted === 'true';
     if (mutear) {
       await RoomSession.updateOne({ _id: session._id }, { $addToSet: { mutedStudents: alumno._id } });
+      // Silenciado = silenciado entero, también la voz (RN-5 de la transmisión). Se le corta en
+      // el acto: el ticket se verifica al conectar, no en cada paquete. Mejor esfuerzo: con el
+      // proceso de medios caído no hay voz que cortar.
+      if (session.transmision?.activa) await medios.cerrarVoces(session._id, alumno._id);
     } else {
       await RoomSession.updateOne({ _id: session._id }, { $pull: { mutedStudents: alumno._id } });
     }
@@ -1254,14 +1277,19 @@ function exigirModulo(req, res) {
 }
 
 // Guarda de módulo, eje 2 (esta persona). Solo para las rutas que EMITEN.
-function exigirPoderEmitir(req, res) {
+//
+// `video: false` alcanza con el módulo `hablar` (o el de transmisión, que incluye la voz).
+// `video: true` exige el de transmisión: Hablar da la voz y nada más (CA-07b).
+function exigirPoderEmitir(req, res, { video = true } = {}) {
   if (exigirModulo(req, res)) return true;
   if (!req.esGestor) {
     fallar(req, res, 403, 'Solo la o el docente puede hacer esto');
     return true;
   }
-  if (!moduloActivoPara(req.res.locals.school, usuario(req), 'transmision')) {
-    fallar(req, res, 403, 'Tu escuela todavía no te habilitó para transmitir');
+  if (!(video ? puedeVideo(req) : puedeVoz(req))) {
+    fallar(req, res, 403, video
+      ? 'Tu escuela todavía no te habilitó para transmitir'
+      : 'Tu escuela todavía no te habilitó para hablar en la sala');
     return true;
   }
   return false;
@@ -1273,7 +1301,10 @@ function exigirPoderEmitir(req, res) {
 // que puede contestar 503: cuando no entra, no entra, y se dice con todas las letras.
 router.post('/:id/sala/transmision/abrir', async (req, res, next) => {
   try {
-    if (exigirPoderEmitir(req, res)) return;
+    // "Hablar" abre SOLO la voz y alcanza con el módulo `hablar`; la transmisión completa
+    // necesita el de video.
+    const soloVoz = req.body?.soloVoz === true;
+    if (exigirPoderEmitir(req, res, { video: !soloVoz })) return;
 
     const session = await sesionAbierta(req.course._id);
     if (!session) return fallar(req, res, 409, 'Primero abrí la sala');
@@ -1284,8 +1315,8 @@ router.post('/:id/sala/transmision/abrir', async (req, res, next) => {
 
     const r = await tx.abrir(session, req.course, usuario(req), {
       espectadores: global.espectadores,
-      clases:       global.clases,
-      modo:         req.body || {},
+      clases:       global.clasesVideo ?? global.clases,
+      modo:         { ...(req.body || {}), soloVoz },
     });
 
     if (!r.ok) {
@@ -1295,8 +1326,10 @@ router.post('/:id/sala/transmision/abrir', async (req, res, next) => {
       return res.status(503).json({ error: r.error });
     }
 
-    await live.systemMessage(session, `${usuario(req).name} empezó a transmitir la clase.`);
-    logAudit(req, 'tx.start',
+    await live.systemMessage(session, soloVoz
+      ? `${usuario(req).name} está hablando en la sala. Tocá "Escuchar" para oírla.`
+      : `${usuario(req).name} empezó a transmitir la clase.`);
+    logAudit(req, soloVoz ? 'voz.start' : 'tx.start',
       [{ type: 'course', id: req.course._id, name: req.course.name }],
       { sessionId: String(session._id), capa: r.capa });
 
@@ -1307,15 +1340,28 @@ router.post('/:id/sala/transmision/abrir', async (req, res, next) => {
 // POST /courses/:id/sala/transmision/cerrar
 router.post('/:id/sala/transmision/cerrar', async (req, res, next) => {
   try {
-    if (exigirPoderEmitir(req, res)) return;
+    if (exigirPoderEmitir(req, res, { video: false })) return;
 
     const session = await sesionAbierta(req.course._id);
     if (!session || !session.transmision?.activa) return res.json({ ok: true, yaEstaba: true });
 
-    await tx.cerrar(session, { cerradaPor: 'docente' });
+    const soloVoz = session.transmision.soloVoz === true;
+    // Lo que el proceso de medios sabe de esta sala, para el registro (H9). Sin el proceso, se
+    // cierra igual con lo que haya.
+    const datos = await medios.datosDeSala(session._id);
+    await tx.cerrar(session, {
+      cerradaPor: 'docente',
+      metricas: datos ? {
+        picoEspectadores:             datos.pico || 0,
+        alumnosQueHablaron:           datos.alumnosQueHablaron || 0,
+        pulsacionesRechazadasPorTope: datos.rechazadasPorTope || 0,
+      } : {},
+    });
     await medios.cerrarSala(session._id);
-    await live.systemMessage(session, 'Terminó la transmisión de la clase.');
-    logAudit(req, 'tx.stop',
+    await live.systemMessage(session, soloVoz
+      ? 'La docente dejó de hablar en la sala.'
+      : 'Terminó la transmisión de la clase.');
+    logAudit(req, soloVoz ? 'voz.stop' : 'tx.stop',
       [{ type: 'course', id: req.course._id, name: req.course.name }],
       { sessionId: String(session._id) });
 
@@ -1326,7 +1372,10 @@ router.post('/:id/sala/transmision/cerrar', async (req, res, next) => {
 // POST /courses/:id/sala/transmision/modo — prende y apaga micrófono, pantalla y cámara.
 router.post('/:id/sala/transmision/modo', async (req, res, next) => {
   try {
-    if (exigirPoderEmitir(req, res)) return;
+    // Prender pantalla o cámara es video: con solo el módulo `hablar` no se puede (CA-07b).
+    // Apagarlas, o tocar el micrófono, alcanza con la voz.
+    const pideVideo = req.body?.pantalla === true || req.body?.camara === true;
+    if (exigirPoderEmitir(req, res, { video: pideVideo })) return;
 
     const session = await sesionAbierta(req.course._id);
     if (!session || !session.transmision?.activa) {
@@ -1355,7 +1404,10 @@ router.post('/:id/sala/transmision/ticket', async (req, res, next) => {
     if (!session) return fallar(req, res, 409, 'La sala está cerrada');
 
     const ctx = ctxTx(req);
-    const emitir = tx.puedeEmitir(session, ctx);
+    // Qué puede publicar: todo sale de UNA función pura (services/transmision.js), la misma que
+    // pinta los botones. `emitir` puede ser true, 'audio' (Hablar: el alumno con "Todos pueden
+    // hablar") o false.
+    const { emitir, video } = tx.datosDelTicket(session, ctx);
     // Quien no emite tiene que poder al menos mirar. Si no puede ninguna de las dos, no hay
     // ticket: no existe un motivo legítimo para abrir el WebSocket.
     if (!emitir && !tx.puedeVer(session, ctx)) {
@@ -1370,17 +1422,53 @@ router.post('/:id/sala/transmision/ticket', async (req, res, next) => {
       nom: u.name || '',
       rol: u.role || '',
       emitir,
-      // Un alumno con la palabra emite audio; la cámara es un permiso APARTE que da el docente.
-      video: emitir && (ctx.esGestor || session.transmision?.palabraCamara === true),
+      video,
     }, process.env.JWT_SECRET, { expiresIn: TICKET_TTL_S });
 
+    const soloVoz = session.transmision?.soloVoz === true;
+    const capa    = soloVoz ? 'voz' : (session.transmision?.capaMax || '360p');
     res.json({
       ticket,
       ttl:  TICKET_TTL_S,
-      capa: session.transmision?.capaMax || '360p',
-      // Lo que el alumno ve ANTES de decidir mirar (D12).
-      mbPorHora: aforo.estimarMB(session.transmision?.capaMax || '360p', 60),
+      capa,
+      // Lo que el alumno ve ANTES de decidir mirar o escuchar (D12 y H6).
+      mbPorHora: aforo.estimarMB(capa, 60),
     });
+  } catch (err) { next(err); }
+});
+
+// POST /courses/:id/sala/transmision/voz — "Solo yo hablo" / "Todos pueden hablar".
+//
+// Ver H2 y H8 de specs/sala-hablar.spec.md. Es el espejo del interruptor de escribir en el
+// chat, con UNA diferencia: cerrar la voz corta a los alumnos EN EL ACTO, sin esperar el poll,
+// porque el ticket se verificó al conectar y un alumno que ya hablaba seguiría hablando.
+router.post('/:id/sala/transmision/voz', async (req, res, next) => {
+  try {
+    if (exigirPoderEmitir(req, res, { video: false })) return;
+
+    const session = await sesionAbierta(req.course._id);
+    if (!session || !session.transmision?.activa) {
+      return fallar(req, res, 409, 'Primero tocá "Hablar"');
+    }
+
+    const abierta = req.body?.abierta === true;
+    if (abierta === (session.transmision.vozAbierta === true)) {
+      return res.json({ ok: true, vozAbierta: abierta, yaEstaba: true });
+    }
+
+    await tx.cambiarVoz(session, abierta);
+    // Mejor esfuerzo: con el proceso de medios caído el modo ya quedó guardado y los alumnos se
+    // enteran por el poll (RH-9). La sala no se rompe por el audio.
+    if (!abierta) await medios.cerrarVoces(session._id);
+
+    await live.systemMessage(session, abierta
+      ? `${usuario(req).name} habilitó a todos a hablar: mantené apretado el botón del micrófono.`
+      : `${usuario(req).name} volvió a "solo yo hablo".`);
+    logAudit(req, abierta ? 'voz.abrir_alumnos' : 'voz.cerrar_alumnos',
+      [{ type: 'course', id: req.course._id, name: req.course.name }],
+      { sessionId: String(session._id) });
+
+    res.json({ ok: true, vozAbierta: abierta });
   } catch (err) { next(err); }
 });
 

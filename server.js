@@ -300,6 +300,17 @@ app.post('/deploy', express.raw({ type: 'application/json' }), (req, res) => {
     'npm install --omit=dev --no-audit --no-fund || ' +
       '{ echo "ERROR deploy: npm install fallo, NO se recargan los workers para no dejarlos sin dependencias"; exit 1; }',
     '/usr/local/bin/pm2 reload classroom --update-env || { echo "ERROR deploy: pm2 reload fallo"; exit 1; }',
+    // El proceso de medios (transmisión y Hablar) es OTRA app de PM2 y `reload classroom` no
+    // lo toca. Sin esta línea quedaba con el código viejo para siempre: el 2026-09-23 la app
+    // estaba en v1.0.107 y classroom-media en v1.0.98, con 12 días sin reiniciarse (R5 de
+    // specs/sala-hablar.spec.md).
+    //
+    // NO es fatal a propósito: una instalación sin ese proceso (la instancia de prueba, una
+    // escuela sin transmisión) no puede quedarse sin deploy por eso. Y es un proceso de UNA
+    // instancia, así que recargarlo corta unos segundos la voz de las salas que estén hablando:
+    // el navegador se reconecta solo con un ticket nuevo.
+    '/usr/local/bin/pm2 reload classroom-media --update-env || ' +
+      'echo "AVISO deploy: no se pudo recargar classroom-media (la sala anda; la voz y la transmision quedan con el codigo anterior)"',
     'sleep 5', // dale tiempo a los workers a levantar antes de consultarlos
     `DISK=$(node -p "require('${APP_DIR}/package.json').version")`,
 

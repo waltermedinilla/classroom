@@ -1,9 +1,11 @@
 <%#
-  Transmisión en vivo, embebida en views/partials/live-room.ejs.
+  Transmisión en vivo y "Hablar", embebidos en views/partials/live-room.ejs.
 
-  Se incluye SOLO si la escuela tiene el módulo `transmision` (config/modulos.js). Para una
-  escuela sin el módulo, este archivo no se renderiza y el navegador no baja ni el bundle de
-  mediasoup ni transmision.js — 240 KB que no se piden.
+  Se incluye SOLO si la escuela tiene el módulo `transmision` o el módulo `hablar`
+  (config/modulos.js). Para una escuela sin ninguno de los dos, este archivo no se renderiza.
+  Y aun con el módulo prendido, el bundle de mediasoup (231 KB) NO se baja con la página: lo
+  inyecta public/js/transmision.js recién cuando alguien toca un botón (H6 de
+  specs/sala-hablar.spec.md).
 
   Espera en locals: course, sala (con sala.transmision), esGestor, esAlumno.
 %>
@@ -61,7 +63,35 @@
                  display:flex; align-items:center; gap:8px; justify-content:space-between; }
   [data-theme="dark"] .tx-hablando { background:#0f3a1e; border-color:#2d7d46; color:#a8dab5; }
 
-  .tx-consumo { font-size:12px; color:var(--text-secondary); margin-top:8px; }
+.tx-consumo { font-size:12px; color:var(--text-secondary); margin-top:8px; }
+
+  <%# ── Hablar (specs/sala-hablar.spec.md) ── %>
+  <%# Solo voz: no hay cuadro de video que mostrar ni pantalla/cámara que prender. %>
+  .tx-solovoz .tx-cuadro, .tx-solovoz #txBtnPantalla, .tx-solovoz #txBtnCamara { display:none !important; }
+
+  <%# El interruptor "Solo yo hablo / Todos pueden hablar". Mismo criterio que los toggles: el
+      elegido lleva borde e icono, no solo color. %>
+  .tx-modovoz { display:inline-flex; border:1px solid var(--border); border-radius:20px; overflow:hidden; }
+  .tx-modovoz button { border:0; background:var(--surface); color:var(--text); padding:7px 12px;
+                       font-size:13px; cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
+  .tx-modovoz button + button { border-left:1px solid var(--border); }
+  .tx-modovoz button .material-symbols-outlined { font-size:18px; }
+  .tx-modovoz button.activo { background:#e8f0fe; color:#174ea6; font-weight:500; }
+  [data-theme="dark"] .tx-modovoz button.activo { background:#1a3a5c; color:#d2e3fc; }
+
+  <%# El botón de pulsar para hablar. Grande a propósito: se sostiene con el pulgar. Sin
+      selección de texto ni menú de mantener apretado, que en el celular lo interrumpirían. %>
+  .tx-ptt { display:flex; align-items:center; justify-content:center; gap:8px; width:100%;
+            min-height:52px; margin-top:12px; border-radius:26px; border:2px solid #1a73e8;
+            background:var(--surface); color:#174ea6; font-size:15px; font-weight:500;
+            cursor:pointer; user-select:none; -webkit-user-select:none; touch-action:none;
+            -webkit-touch-callout:none; }
+  .tx-ptt .material-symbols-outlined { font-size:24px; }
+  .tx-ptt.esperando { border-style:dashed; }
+  .tx-ptt.hablando { background:#d93025; border-color:#d93025; color:#ffffff; }
+  [data-theme="dark"] .tx-ptt { color:#8ab4f8; border-color:#8ab4f8; }
+  [data-theme="dark"] .tx-ptt.hablando { background:#d93025; border-color:#d93025; color:#ffffff; }
+  .tx-pista { font-size:12px; color:var(--text-secondary); margin-top:6px; }
 
   @media (max-width: 600px) {
     .tx-acciones { width:100%; }
@@ -78,11 +108,16 @@
 
     <div class="tx-acciones">
       <% if (esGestor) { %>
-        <button class="btn btn-primary" id="txAbrir" style="display:none">
+        <%# "Hablar": solo la voz (módulo `hablar`, o el de transmisión que la incluye). %>
+        <button class="btn btn-primary" id="txHablar" style="display:none">
+          <span class="material-symbols-outlined">mic</span> Hablar
+        </button>
+        <button class="btn btn-outline" id="txAbrir" style="display:none">
           <span class="material-symbols-outlined">cast</span> Transmitir
         </button>
         <button class="btn btn-outline" id="txCerrar" style="display:none">
-          <span class="material-symbols-outlined">cast_pause</span> Terminar
+          <span class="material-symbols-outlined" id="txCerrarIcono">cast_pause</span>
+          <span id="txCerrarTexto">Terminar</span>
         </button>
       <% } %>
 
@@ -90,13 +125,33 @@
           presencial los 30 están en la misma aula que el docente, y arrancar solo mandaría el
           video a Contabo y de vuelta 30 veces para ver lo que está proyectado en la pared. %>
       <button class="btn btn-primary" id="txVer" style="display:none">
-        <span class="material-symbols-outlined">play_arrow</span> Ver la clase
+        <span class="material-symbols-outlined" id="txVerIcono">play_arrow</span>
+        <span id="txVerTexto">Ver la clase</span>
       </button>
       <button class="btn btn-outline" id="txNoVer" style="display:none">
-        <span class="material-symbols-outlined">stop</span> Dejar de ver
+        <span class="material-symbols-outlined">stop</span>
+        <span id="txNoVerTexto">Dejar de ver</span>
       </button>
     </div>
   </div>
+
+  <%# Lo que ve el alumno antes de tocar "Escuchar" (H6 y H12 de sala-hablar): cuánto gasta, y
+      que en el aula no hace falta — con el parlante, en la misma aula que su profe, se acopla. %>
+  <div class="tx-pista" id="txPistaEscuchar" style="display:none"></div>
+
+  <%# "Solo yo hablo" / "Todos pueden hablar" (H2). Es el espejo del interruptor de escribir. %>
+  <% if (esGestor) { %>
+    <div id="txModoVozCaja" style="display:none;margin-top:12px">
+      <div class="tx-modovoz" role="group" aria-label="Quién puede hablar">
+        <button type="button" id="txVozSolo" aria-pressed="true">
+          <span class="material-symbols-outlined">record_voice_over</span> Solo yo hablo
+        </button>
+        <button type="button" id="txVozTodos" aria-pressed="false">
+          <span class="material-symbols-outlined">groups</span> Todos pueden hablar
+        </button>
+      </div>
+    </div>
+  <% } %>
 
   <%# Los tres interruptores del emisor. La cámara arranca APAGADA (D6). %>
   <% if (esGestor) { %>
@@ -120,10 +175,18 @@
       <span>Estás escuchando la clase. La cámara y la pantalla están apagadas.</span>
     </div>
   </div>
-  <%# El audio va en su propio elemento y no pegado al <video>: si el docente apaga la cámara,
+  <%# El audio va en sus propios elementos y no pegado al <video>: si el docente apaga la cámara,
       el <video> se queda sin pista de video y algunos navegadores dejan de reproducir también
-      el audio. Separados, la voz sigue aunque no haya imagen. %>
-  <audio id="txAudio" autoplay></audio>
+      el audio. Y va UN <audio> POR VOZ (los crea public/js/transmision.js acá adentro): con el
+      docente y dos alumnos hablando, un solo <audio> con tres pistas no las mezcla en todos
+      los navegadores. %>
+  <div id="txAudios" hidden></div>
+
+  <%# Quién está hablando AHORA (Hablar). Llega por el WebSocket al instante, no por el poll:
+      con 4 a 8 segundos de atraso el nombre no correspondería a la voz. %>
+  <div class="tx-hablando" id="txVoces" style="display:none" aria-live="polite">
+    <span id="txVocesTexto"></span>
+  </div>
 
   <div class="tx-aviso" id="txAviso"></div>
   <div class="tx-consumo" id="txConsumo" style="display:none"></div>
@@ -142,6 +205,18 @@
   <div class="tx-manos" id="txManos" style="display:none"></div>
 
   <% if (esAlumno) { %>
+    <%# Pulsar para hablar (H3): el micrófono SOLO manda mientras el dedo está apoyado. %>
+    <div id="txPttCaja" style="display:none">
+      <button type="button" class="tx-ptt" id="txPtt">
+        <span class="material-symbols-outlined">mic</span>
+        <span id="txPttTexto">Mantené apretado para hablar</span>
+      </button>
+      <div class="tx-pista">
+        En la compu también podés mantener apretada la barra espaciadora. Si estás en el aula con
+        tu profe, hablá en voz alta: te escucha su micrófono.
+      </div>
+    </div>
+
     <div style="margin-top:12px">
       <button class="btn btn-outline" id="txMano" style="display:none">
         <span class="material-symbols-outlined">front_hand</span>
@@ -151,5 +226,4 @@
   <% } %>
 </div>
 
-<script src="/js/mediasoup-client.bundle.js"></script>
 <script src="/js/transmision.js"></script>

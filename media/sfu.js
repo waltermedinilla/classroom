@@ -78,6 +78,19 @@ async function salaDe(sessionId) {
     creadaAt:     Date.now(),
     bytes:        0,
     picoEspectadores: 0,
+
+    // Hablar (specs/sala-hablar.spec.md).
+    // `soloVoz`: el docente la abrió desde "Hablar" (su ticket no trae video). Sus oyentes NO se
+    // cuentan como espectadores de video para el gobernador: 450 chicos escuchando a 40 kbps no
+    // pueden bajarle la calidad a una clase con pantalla como si fueran 450 mirando en 360p.
+    soloVoz:      false,
+    // ws → contexto de la conexión, de los ALUMNOS que tienen una voz (productor de audio). Es
+    // lo que cuenta el tope de voces y lo que cierra /cerrar-voces.
+    vocesAlumnos: new Map(),
+    // Para el registro histórico (H9): cuántos distintos hablaron y cuántas veces el tope dijo
+    // que no. Nunca QUÉ dijeron.
+    alumnosQueHablaron: new Set(),
+    rechazadasPorTope:  0,
   };
   salas.set(id, sala);
   return sala;
@@ -168,19 +181,30 @@ function estado() {
   const porSala = {};
   let espectadores = 0;
 
+  let oyentesVoz = 0;
+  let clasesVideo = 0;
+
   for (const [id, s] of salas) {
     const n = s.espectadores.size;
-    espectadores += n;
+    // Los oyentes de "Hablar" van en su propio contador: el gobernador raciona VIDEO, y la voz
+    // no entra en su escalera (ver MBPS_VOZ en config/transmision.js).
+    if (s.soloVoz) oyentesVoz += n;
+    else { espectadores += n; clasesVideo += 1; }
     porSala[id] = {
       espectadores: n,
       pico:         s.picoEspectadores,
       emisor:       !!s.emisor,
       desdeMs:      Date.now() - s.creadaAt,
+      soloVoz:      s.soloVoz,
+      alumnosQueHablaron: s.alumnosQueHablaron.size,
+      rechazadasPorTope:  s.rechazadasPorTope,
     };
   }
 
   return {
     espectadores,
+    oyentesVoz,
+    clasesVideo,
     clases:  salas.size,
     workers: workers.length,
     salas:   porSala,

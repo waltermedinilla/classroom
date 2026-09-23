@@ -16,7 +16,7 @@ const { WebSocketServer } = require('ws');
 
 const sfu   = require('./sfu');
 const aforo = require('./aforo');
-const { MEDIA_PORT, WS_PATH } = require('../config/transmision');
+const { MEDIA_PORT, WS_PATH, MAX_PULSACION_MS } = require('../config/transmision');
 
 const log = {
   info:  (...a) => console.log(new Date().toISOString(), ...a),
@@ -77,12 +77,34 @@ const api = http.createServer((req, res) => {
     return undefined;
   }
 
+  // Hablar: volver a "Solo yo hablo" corta a los alumnos EN EL ACTO (H8 de
+  // specs/sala-hablar.spec.md). El ticket se verifica al conectar y no en cada paquete, así que
+  // sin esto un alumno que ya estaba hablando seguiría hablando hasta que se le venza.
+  if (req.method === 'POST' && req.url === '/cerrar-voces') {
+    let cuerpo = '';
+    req.on('data', (c) => { cuerpo += c; if (cuerpo.length > 4096) req.destroy(); });
+    req.on('end', () => {
+      let sessionId, uid;
+      try { ({ sessionId, uid } = JSON.parse(cuerpo || '{}')); }
+      catch (e) { return responder(400, { error: 'cuerpo inválido' }); }
+      const sala = sfu.salas.get(String(sessionId));
+      // Con `uid`, solo la de ese alumno: es lo que usa "silenciar" (silenciado = silenciado
+      // entero, también la voz). Sin `uid`, la de todos: "Solo yo hablo".
+      return responder(200, { ok: true, cerradas: sala ? cerrarVoces(sala, uid) : 0 });
+    });
+    return undefined;
+  }
+
   return responder(404, { error: 'no existe' });
 });
 
 // ── WebSocket de señalización ────────────────────────────────────────────────
 
 const wss = new WebSocketServer({ noServer: true });
+
+// ws → contexto de la conexión. Lo necesita /cerrar-voces para saber de quién es cada
+// conexión que escucha (y quitarle el permiso de su ticket aunque todavía no haya producido).
+const conexiones = new Map();
 
 api.on('upgrade', (req, socket, head) => {
   if (!req.url.startsWith(WS_PATH)) return socket.destroy();
@@ -92,6 +114,74 @@ api.on('upgrade', (req, socket, head) => {
 const enviar = (ws, t, datos = {}) => {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ t, ...datos }));
 };
+
+// ── Hablar: las voces de los alumnos ────────────────────────────────────────
+//
+// Ver specs/sala-hablar.spec.md. El alumno con "Todos pueden hablar" trae un ticket con
+// `emitir: 'audio'`: produce SOLO audio, y su productor nace PAUSADO. Suena mientras aprieta el
+// botón (`hablar` / `callar`), con un tope de voces por sala (media/aforo.js → hayLugar) y un
+// máximo por pulsación. Quién habla vive ACÁ y no en Mongo: una pulsación es un momento.
+
+// Todos los que están en la sala: los que escuchan y quien da la clase.
+function todosEn(sala) {
+  const lista = [...sala.espectadores];
+  if (sala.emisor) lista.push(sala.emisor);
+  return lista;
+}
+
+const avisarSala = (sala, t, datos) => { for (const ws of todosEn(sala)) enviar(ws, t, datos); };
+
+const hablandoEn = (sala) => [...sala.vocesAlumnos.values()].filter(c => c.hablando).length;
+
+// Corta la pulsación de un alumno (soltó, se pasó del máximo, o se cerró la voz).
+async function dejarDeHablar(cx, motivo) {
+  if (!cx.hablando) return false;
+  cx.hablando = false;
+  clearTimeout(cx.relojVoz);
+  cx.relojVoz = null;
+  try { if (cx.voz && !cx.voz.closed) await cx.voz.pause(); } catch (e) { /* ya se cerró */ }
+  if (motivo) enviar(cx.ws, 'teCallaron', { motivo });
+  avisarSala(cx.sala, 'hablando', { uid: cx.ticket.uid, nom: cx.ticket.nom || '', on: false });
+  return true;
+}
+
+// Saca la voz de un alumno de la sala: cierra su productor y avisa que se fue.
+function quitarVoz(cx) {
+  const p = cx.voz;
+  cx.voz = null;
+  cx.sala.vocesAlumnos.delete(cx.ws);
+  if (!p) return;
+  cx.sala.productores.delete(p.id);
+  try { p.close(); } catch (e) { /* ya estaba cerrado */ }
+  for (const ws of todosEn(cx.sala)) if (ws !== cx.ws) enviar(ws, 'productorSeFue', { id: p.id });
+}
+
+// "Solo yo hablo": cierra las voces de TODOS los alumnos de la sala. El docente sigue. Esas
+// conexiones pierden el permiso de producir: para volver a hablar necesitan un ticket nuevo,
+// que es donde Express vuelve a decidir (D4).
+function cerrarVoces(sala, uid = null) {
+  const esDeEl = (cx) => !uid || String(cx.ticket?.uid) === String(uid);
+  const motivo = uid ? 'silenciado' : 'voz-cerrada';
+
+  let cerradas = 0;
+  for (const cx of [...sala.vocesAlumnos.values()]) {
+    if (!esDeEl(cx)) continue;
+    if (cx.hablando) dejarDeHablar(cx, motivo);
+    quitarVoz(cx);
+    cx.emiteAudio = false;
+    cerradas += 1;
+  }
+  // A los alumnos afectados, tengan voz o no: el botón de pulsar se les apaga ya, sin esperar
+  // el poll — que además está cortado si el chico está en otra solapa haciendo la actividad.
+  // Las conexiones que nunca produjeron también pierden el permiso de su ticket.
+  for (const ws of sala.espectadores) {
+    const cx = conexiones.get(ws);
+    if (cx && !esDeEl(cx)) continue;
+    if (cx) cx.emiteAudio = false;
+    enviar(ws, 'modoVoz', { abierta: false });
+  }
+  return cerradas;
+}
 
 // Le recalcula la capa a TODAS las salas cuando cambia el aforo.
 //
@@ -127,7 +217,12 @@ async function revisarAforo() {
 wss.on('connection', (ws) => {
   // Lo que sabemos de esta conexión. Se llena en el 'hola' y NO se cree nada de lo que el
   // navegador diga después: el ticket es la única fuente.
-  const cx = { sala: null, ticket: null, transportes: new Set(), esEmisor: false };
+  const cx = {
+    ws, sala: null, ticket: null, transportes: new Set(), esEmisor: false,
+    // Hablar: puede producir SOLO una voz, que nace pausada (ticket con emitir: 'audio').
+    emiteAudio: false, voz: null, hablando: false, relojVoz: null,
+  };
+  conexiones.set(ws, cx);
 
   // ⭐ Los mensajes de UNA conexión se atienden DE A UNO, en orden.
   //
@@ -164,12 +259,30 @@ wss.on('connection', (ws) => {
           return enviar(ws, 'error', { error: 'ticket inválido o vencido', recuperable: true });
         }
 
-        cx.ticket   = dat;
-        cx.esEmisor = dat.emitir === true;
-        cx.sala     = await sfu.salaDe(dat.sid);
+        // Un segundo 'hola' en la MISMA conexión, con un ticket nuevo de la misma sala, renueva
+        // los permisos sin cortar lo que se está escuchando. Es el camino del alumno que ya
+        // escuchaba y a quien el docente le abre la voz: pide otro ticket a Express y lo manda
+        // acá. Un ticket de OTRA sala por la misma conexión no se acepta.
+        if (cx.sala) {
+          if (String(dat.sid) !== cx.sala.id) {
+            return enviar(ws, 'error', { error: 'ese ticket es de otra sala' });
+          }
+          cx.ticket     = dat;
+          cx.emiteAudio = dat.emitir === 'audio';
+          return enviar(ws, 'permisos', { emitir: dat.emitir, video: dat.video === true });
+        }
 
-        if (cx.esEmisor) cx.sala.emisor = ws;
-        else {
+        cx.ticket     = dat;
+        cx.esEmisor   = dat.emitir === true;
+        cx.emiteAudio = dat.emitir === 'audio';
+        cx.sala       = await sfu.salaDe(dat.sid);
+
+        if (cx.esEmisor) {
+          cx.sala.emisor = ws;
+          // El docente que entra por "Hablar" no trae video: la sala es de solo voz y sus
+          // oyentes no cuentan para el gobernador del video (ver sfu.estado()).
+          if (dat.rol !== 'student') cx.sala.soloVoz = dat.video !== true;
+        } else {
           cx.sala.espectadores.add(ws);
           cx.sala.picoEspectadores = Math.max(cx.sala.picoEspectadores, cx.sala.espectadores.size);
         }
@@ -178,7 +291,7 @@ wss.on('connection', (ws) => {
 
         return enviar(ws, 'bienvenido', {
           rtpCapabilities: cx.sala.router.rtpCapabilities,
-          emitir: cx.esEmisor,
+          emitir: dat.emitir === 'audio' ? 'audio' : cx.esEmisor,
           video:  dat.video === true,
           capa:   d.capa || '180p',
           // Los productores que YA están al aire, para que un alumno que llega tarde vea la
@@ -211,9 +324,18 @@ wss.on('connection', (ws) => {
         // ⭐ Acá se apoya toda la seguridad de la feature. El navegador puede pedir lo que
         // quiera; lo que decide es el ticket que firmó Express, y un alumno sin la palabra
         // simplemente no tiene uno con `emitir`.
-        if (!cx.esEmisor) return enviar(ws, 'error', { error: 'no tenés permiso para transmitir' });
-        if (m.kind === 'video' && cx.ticket.video !== true) {
+        if (!cx.esEmisor && !cx.emiteAudio) {
+          return enviar(ws, 'error', { error: 'no tenés permiso para transmitir' });
+        }
+        // La voz del alumno es SOLO voz, diga lo que diga el ticket sobre el video.
+        if (m.kind === 'video' && (cx.emiteAudio || cx.ticket.video !== true)) {
           return enviar(ws, 'error', { error: 'no tenés permiso para transmitir video' });
+        }
+        if (cx.emiteAudio && m.kind !== 'audio') {
+          return enviar(ws, 'error', { error: 'solo se puede transmitir la voz' });
+        }
+        if (cx.emiteAudio && cx.voz) {
+          return enviar(ws, 'error', { error: 'ya tenés el micrófono listo' });
         }
 
         const tr = cx.sala.transportes.get(m.transportId);
@@ -225,19 +347,63 @@ wss.on('connection', (ws) => {
           kind: m.kind,
           rtpParameters: m.rtpParameters,
           appData: { uid: cx.ticket.uid, fuente: m.fuente || '' },
+          // H3: la voz del alumno nace CALLADA y suena solo mientras aprieta el botón.
+          paused: cx.emiteAudio,
         });
         cx.sala.productores.set(p.id, p);
+        if (cx.emiteAudio) {
+          cx.voz = p;
+          cx.sala.vocesAlumnos.set(ws, cx);
+        }
 
         p.on('transportclose', () => {
           cx.sala.productores.delete(p.id);
-          for (const e of cx.sala.espectadores) enviar(e, 'productorSeFue', { id: p.id });
+          if (cx.voz === p) { cx.voz = null; cx.sala.vocesAlumnos.delete(ws); }
+          for (const e of todosEn(cx.sala)) if (e !== ws) enviar(e, 'productorSeFue', { id: p.id });
         });
 
-        // Se le avisa a los que ya estaban mirando.
-        for (const e of cx.sala.espectadores) {
-          enviar(e, 'productorNuevo', { id: p.id, kind: p.kind, fuente: m.fuente || '' });
+        // Se le avisa a todos los demás. También a quien da la clase: con "Todos pueden hablar"
+        // el docente tiene que escuchar a los alumnos.
+        for (const e of todosEn(cx.sala)) {
+          if (e !== ws) enviar(e, 'productorNuevo', { id: p.id, kind: p.kind, fuente: m.fuente || '' });
         }
-        return enviar(ws, 'produciendo', { id: p.id, kind: p.kind });
+        return enviar(ws, 'produciendo', { id: p.id, kind: p.kind, pausado: cx.emiteAudio });
+      }
+
+      // ── hablar / callar: pulsar para hablar (Hablar, H3 y H4) ───────────
+      if (m.t === 'hablar') {
+        if (!cx.emiteAudio || !cx.voz || cx.voz.closed) {
+          return enviar(ws, 'error', { error: 'no tenés el micrófono habilitado en esta sala' });
+        }
+        // Idempotente: el doble toque y el reintento son lo normal en un celular, y apretar
+        // dos veces no puede ocupar dos lugares.
+        if (cx.hablando) return enviar(ws, 'hablarOk', {});
+
+        if (!aforo.hayLugar(hablandoEn(cx.sala), false)) {
+          cx.sala.rechazadasPorTope += 1;
+          return enviar(ws, 'lleno', {
+            mensaje: 'Esperá un momento: ya están hablando dos compañeros.',
+          });
+        }
+
+        // ⚠️ Se marca ANTES del await: los mensajes de conexiones distintas se atienden en
+        // paralelo, y si dos alumnos aprietan a la vez los dos verían "hay lugar" durante el
+        // resume. Marcar primero hace que el segundo ya cuente al primero.
+        cx.hablando = true;
+        try { await cx.voz.resume(); }
+        catch (e) { cx.hablando = false; return enviar(ws, 'error', { error: 'no se pudo abrir el micrófono' }); }
+
+        cx.sala.alumnosQueHablaron.add(String(cx.ticket.uid));
+        // La defensa contra el touchend perdido: ninguna pulsación dura más que esto.
+        cx.relojVoz = setTimeout(() => { dejarDeHablar(cx, 'tiempo').catch(() => {}); }, MAX_PULSACION_MS);
+
+        avisarSala(cx.sala, 'hablando', { uid: cx.ticket.uid, nom: cx.ticket.nom || '', on: true });
+        return enviar(ws, 'hablarOk', {});
+      }
+
+      if (m.t === 'callar') {
+        await dejarDeHablar(cx, null);
+        return enviar(ws, 'callado', {});
       }
 
       // ── consumir ────────────────────────────────────────────────────────
@@ -265,7 +431,14 @@ wss.on('connection', (ws) => {
   }
 
   ws.on('close', async () => {
+    conexiones.delete(ws);
     if (!cx.sala) return;
+
+    // Si estaba hablando, se avisa que dejó de hablar: el indicador no puede quedar prendido
+    // con el nombre de alguien que ya se fue.
+    if (cx.hablando) await dejarDeHablar(cx, null).catch(() => {});
+    clearTimeout(cx.relojVoz);
+    cx.sala.vocesAlumnos.delete(ws);
 
     cx.sala.espectadores.delete(ws);
     if (cx.sala.emisor === ws) cx.sala.emisor = null;

@@ -89,10 +89,31 @@ async function cerrarSala(sessionId) {
   });
 }
 
+// Hablar: corta las voces de los alumnos de una sala EN EL ACTO (H8 de specs/sala-hablar.spec.md).
+// Con `uid`, solo la de ese alumno (silenciar). Mejor esfuerzo, igual que cerrarSala: si el
+// proceso de medios no contesta, devuelve null y la ruta sigue — el modo ya quedó guardado y
+// los alumnos se enteran por el poll. La sala nunca se rompe por el audio.
+async function cerrarVoces(sessionId, uid = null) {
+  const cuerpo = { sessionId: String(sessionId) };
+  if (uid) cuerpo.uid = String(uid);
+  return pedir('/cerrar-voces', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cuerpo),
+  });
+}
+
+// Lo que el proceso de medios sabe de UNA sala (para el registro histórico al cerrar). Sin
+// cache: se llama una vez, al cerrar, y tiene que ser el dato de ese momento.
+async function datosDeSala(sessionId) {
+  const e = await pedir('/estado');
+  return e?.salas?.[String(sessionId)] || null;
+}
+
 // Solo para los tests y para el panel: vacía el cache.
 const olvidar = () => { cache = { at: 0, datos: SIN_MEDIOS }; };
 
 module.exports = {
-  estado, espectadoresTotales, espectadoresDeSala, cerrarSala, olvidar,
+  estado, espectadoresTotales, espectadoresDeSala, cerrarSala, cerrarVoces, datosDeSala, olvidar,
   SIN_MEDIOS, CACHE_MS,
 };

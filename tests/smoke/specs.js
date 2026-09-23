@@ -8919,6 +8919,158 @@ const specs = [
       });
     },
   },
+  // ── Hablar en la sala (specs/sala-hablar.spec.md) ───────────────────────
+  // Corre con la sala abierta de 'sala-abrir-cerrar', el alumno sin silenciar y la sala en
+  // "todos escriben" (lo deja así 'sala-moderacion'). Prende el módulo `hablar` en la escuela
+  // del admin y lo DEVUELVE como estaba al final, pase lo que pase.
+  {
+    id: 'sala-hablar',
+    title: 'Hablar: módulo por docente, "Solo yo hablo" / "Todos pueden hablar" y el ticket de voz',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD',
+                  'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env, assert }) {
+      const jwt = require('jsonwebtoken');
+      const { MongoClient, ObjectId } = require('mongodb');
+      const base  = `/courses/${state.courseId}/sala`;
+      const json  = { expectStatus: 200, headers: { Accept: 'application/json' } };
+      const poll  = async (actor) => (await client.get(actor, `${base}/poll`, json)).json;
+      // Lo que el proceso de medios va a creer: el contenido del ticket, sin verificar la firma
+      // (acá no se prueba la firma, eso es mediaServidor.test.js; se prueba QUÉ se firma).
+      const ticketDe = async (actor, status = 200) => {
+        const r = await client.post(actor, `${base}/transmision/ticket`, { expectStatus: status });
+        return status === 200 ? jwt.decode(r.json.ticket) : r;
+      };
+      const modulo = (hablar) => client.post('superadmin', `/superadmin/schools/${escuelaId}/edit`, {
+        body: { modules: { hablar } }, expectStatus: 200,
+      });
+
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      await mongo.connect();
+      const db = mongo.db();
+      const admin = await db.collection('users').findOne({ email: env.SMOKE_ADMIN_EMAIL.toLowerCase() });
+      assert(admin?.school, 'el admin de prueba debería tener escuela');
+      const escuelaId = String(admin.school);
+      const antes = (await db.collection('schools').findOne({ _id: new ObjectId(escuelaId) }))
+        ?.modules?.hablar;
+      // Para borrar al final SOLO los registros que crea este spec, no los de la materia entera.
+      const inicio = new Date();
+
+      try {
+        // H11 · prender la escuela con la lista vacía NO le da la voz a nadie (CA-08).
+        await modulo({ enabled: true, alcance: 'lista', personas: [] });
+        await client.post('scopedTeacher', `${base}/transmision/abrir`, {
+          body: { soloVoz: true }, expectStatus: 403,
+        });
+
+        // Con el docente en la lista, abre SOLO la voz (CA-07).
+        await modulo({ enabled: true, alcance: 'lista', personas: [state.scopedTeacherId] });
+
+        // La voz vive en la solapa "En vivo" de la materia, que es donde se usa la sala todos
+        // los días. Y el bundle de mediasoup (231 KB) NO viene con la página (CA-23).
+        const materia = await client.get('scopedStudent', `/courses/${state.courseId}`, { expectStatus: 200 });
+        assert((materia.text || '').includes('id="txCard"'),
+          'con el módulo prendido, la solapa En vivo tiene que traer la parte de voz');
+        assert(!(materia.text || '').includes('mediasoup-client.bundle.js'),
+          'el bundle de mediasoup no se baja con la página: se carga al tocar Escuchar');
+        await client.post('scopedTeacher', `${base}/transmision/abrir`, {
+          body: { soloVoz: true }, expectStatus: 200,
+        });
+
+        const inicial = (await poll('scopedStudent')).transmision;
+        assert(inicial, 'con el módulo hablar prendido, el poll tiene que traer la clave transmision');
+        assert(inicial.activa === true, 'la voz tiene que quedar al aire');
+        assert(inicial.soloVoz === true, 'abierta desde "Hablar" tiene que quedar soloVoz');
+        assert(inicial.micro === true && inicial.pantalla === false && inicial.camara === false,
+          `Hablar es solo micrófono — llegó ${JSON.stringify(inicial)}`);
+        assert(inicial.vozAbierta === false, 'arranca en "Solo yo hablo" (H2)');
+        assert(inicial.puedoHablar === false, 'con "Solo yo hablo" el alumno no tiene botón');
+
+        // H11 · el módulo hablar da la voz y nada más: ni pantalla ni cámara (CA-07b).
+        await client.post('scopedTeacher', `${base}/transmision/modo`, {
+          body: { pantalla: true }, expectStatus: 403,
+        });
+
+        // CA-11 · con "Solo yo hablo", el ticket del alumno es de escucha.
+        let t = await ticketDe('scopedStudent');
+        assert(t.emitir === false && t.video === false, `ticket del alumno: ${JSON.stringify(t)}`);
+
+        // El del docente emite, sin video (CA-05b).
+        t = await ticketDe('scopedTeacher');
+        assert(t.emitir === true && t.video === false, `ticket del docente: ${JSON.stringify(t)}`);
+
+        // CA-10 · el alumno no abre la voz, ni la dirección / preceptoría (RH-7).
+        await client.post('scopedStudent', `${base}/transmision/voz`, { body: { abierta: true }, expectStatus: 403 });
+        await client.post('salaPreceptor', `${base}/transmision/voz`, { body: { abierta: true }, expectStatus: 403 });
+
+        // CA-12 · el docente abre la voz. Con el proceso de medios caído en desarrollo,
+        // igual guarda el modo y contesta 200: la sala no se rompe por el audio (RH-9).
+        await client.post('scopedTeacher', `${base}/transmision/voz`, { body: { abierta: true }, expectStatus: 200 });
+        const abierta = (await poll('scopedStudent')).transmision;
+        assert(abierta.vozAbierta === true, 'el poll tiene que reflejar "Todos pueden hablar"');
+        assert(abierta.puedoHablar === true, 'el alumno tiene que ver el botón de pulsar');
+
+        // CA-09 / CA-11 · el alumno NO está en ninguna lista y aun así habla: emitir "audio".
+        t = await ticketDe('scopedStudent');
+        assert(t.emitir === 'audio' && t.video === false, `ticket del alumno con la voz abierta: ${JSON.stringify(t)}`);
+
+        // RH-7 · la preceptoría escucha, nunca habla.
+        t = await ticketDe('salaPreceptor');
+        assert(t.emitir === false, `ticket de preceptoría: ${JSON.stringify(t)}`);
+
+        // CA-11 · silenciado = silenciado entero: vuelve a ticket de escucha.
+        await client.post('scopedTeacher', `${base}/silenciar/${state.scopedStudentId}`, {
+          body: { muted: true }, expectStatus: 200,
+        });
+        t = await ticketDe('scopedStudent');
+        assert(t.emitir === false, 'el silenciado no puede recibir un ticket para hablar');
+        assert((await poll('scopedStudent')).transmision.puedoHablar === false,
+          'y el botón se le apaga');
+        await client.post('scopedTeacher', `${base}/silenciar/${state.scopedStudentId}`, {
+          body: { muted: false }, expectStatus: 200,
+        });
+
+        // Volver a "Solo yo hablo" cierra la voz de los alumnos (H8).
+        await client.post('scopedTeacher', `${base}/transmision/voz`, { body: { abierta: false }, expectStatus: 200 });
+        t = await ticketDe('scopedStudent');
+        assert(t.emitir === false, 'con la voz cerrada, el ticket nuevo vuelve a ser de escucha');
+
+        // CA-13 · cerrar deja el registro con soloVoz.
+        await client.post('scopedTeacher', `${base}/transmision/cerrar`, { expectStatus: 200 });
+        const registro = await db.collection('transmisions')
+          .find({ course: new ObjectId(state.courseId) }).sort({ iniciadaAt: -1 }).limit(1).next();
+        assert(registro, 'tiene que haber un registro Transmision de esta voz');
+        assert(registro.soloVoz === true, 'el registro tiene que decir que fue solo voz (H9)');
+        assert(registro.terminadaAt, 'y tiene que quedar cerrado');
+
+        // CA-31 · con el módulo apagado, la materia es la de siempre: sin la parte de voz.
+        await modulo({ enabled: false, alcance: 'lista', personas: [] });
+        const sinModulo = await client.get('scopedStudent', `/courses/${state.courseId}`, { expectStatus: 200 });
+        assert(!(sinModulo.text || '').includes('id="txCard"'),
+          'con el módulo apagado no tiene que quedar rastro de la voz en la página');
+        assert((await poll('scopedStudent')).transmision === null,
+          'y el poll vuelve a traer transmision: null');
+      } finally {
+        // Se deja la sala y la escuela como estaban, pase lo que pase arriba.
+        await client.post('scopedTeacher', `${base}/transmision/cerrar`, { expectStatus: [200, 403] }).catch(() => {});
+        await client.post('scopedTeacher', `${base}/silenciar/${state.scopedStudentId}`, {
+          body: { muted: false }, expectStatus: [200, 403, 404],
+        }).catch(() => {});
+        await modulo({ enabled: false, alcance: 'lista', personas: [] }).catch(() => {});
+        // cascadeDeleteCourse no borra la colección de la transmisión: se limpia acá lo propio.
+        await db.collection('transmisions').deleteMany({
+          course: new ObjectId(state.courseId), iniciadaAt: { $gte: inicio },
+        });
+        if (antes === undefined) {
+          await db.collection('schools').updateOne({ _id: new ObjectId(escuelaId) },
+            { $unset: { 'modules.hablar': '' } });
+        } else {
+          await db.collection('schools').updateOne({ _id: new ObjectId(escuelaId) },
+            { $set: { 'modules.hablar': antes } });
+        }
+        await mongo.close();
+      }
+    },
+  },
   {
     // specs/sonido-chat-sala.spec.md. El alumno de CA-38 va acá (preceptoría y dirección van
     // en el bucle de 'sala-acceso', que es donde ya vive la matriz de "quién no gestiona").

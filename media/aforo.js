@@ -10,7 +10,7 @@
 // habría rechazado la clase 13 mientras sobraba el 65 % del puerto.
 
 const {
-  PRESUPUESTO_MBPS, CAPAS, MAX_CLASES, mbpsDeCapa,
+  PRESUPUESTO_MBPS, CAPAS, MAX_CLASES, mbpsDeCapa, MAX_VOCES, VOZ_KBPS_TIPICO,
 } = require('../config/transmision');
 
 // Consumo total, en Mbit/s, de N espectadores recibiendo esta capa.
@@ -90,11 +90,28 @@ function mensajeDeCapa(capa, espectadores) {
 // alumno ANTES de que toque "Ver la clase" (D12): un chico con datos del celular tiene derecho
 // a saber si va a gastar 70 MB o 700.
 function estimarMB(capa, minutos) {
-  const mbits = mbpsDeCapa(capa) * 60 * Math.max(0, Number(minutos) || 0);
+  // La voz se estima con el consumo TÍPICO y no con el peor caso que cuenta el gobernador: ver
+  // VOZ_KBPS_TIPICO en config/transmision.js.
+  const mbps  = capa === 'voz' ? VOZ_KBPS_TIPICO / 1000 : mbpsDeCapa(capa);
+  const mbits = mbps * 60 * Math.max(0, Number(minutos) || 0);
   return Math.round(mbits / 8);
 }
 
+// ¿Puede empezar a sonar una voz más en esta sala? (Hablar, H4 de specs/sala-hablar.spec.md.)
+//
+// `alumnosHablando` es cuántos alumnos están sonando AHORA. El docente no cuenta y siempre tiene
+// lugar: su voz no puede quedar afuera por un tope que existe para los alumnos.
+//
+// Vive acá y no en services/transmision.js porque la usa el proceso de medios, que no puede
+// cargar mongoose (D4). Un conteo que llega roto (undefined, negativo) se lee como "nadie
+// hablando"; uno desbocado (Infinity) como lleno — nunca abre 30 micrófonos.
+function hayLugar(alumnosHablando, esDocente) {
+  if (esDocente) return true;
+  const n = Math.max(0, Number(alumnosHablando) || 0);
+  return n < MAX_VOCES - 1;
+}
+
 module.exports = {
-  consumoMbps, ocupacion, capaPermitida, decidir, estimarMB,
+  consumoMbps, ocupacion, capaPermitida, decidir, estimarMB, hayLugar,
   PRESUPUESTO_MBPS, MAX_CLASES,
 };

@@ -17,6 +17,8 @@ const { CAPA_MAXIMA_EMISOR, PALABRA_INACTIVA_MS } = require('../config/transmisi
 const APAGADA = {
   activa: false, iniciadaAt: null,
   micro: false, pantalla: false, camara: false,
+  // Hablar (specs/sala-hablar.spec.md): una sesión anterior queda en "Solo yo hablo".
+  soloVoz: false, vozAbierta: false,
   capaMax: '360p', degradadaPor: '',
   palabra: null, palabraDesde: null, palabraCamara: false,
   manos: [],
@@ -63,6 +65,52 @@ function puedeLevantarMano(session, ctx) {
 
 function estaSilenciado(session, userId) {
   return (session.mutedStudents || []).some(u => String(u) === String(userId));
+}
+
+// ── Hablar (specs/sala-hablar.spec.md) ───────────────────────────────────────
+
+// ¿Esta persona puede HABLAR en esta sala?
+//
+// · El gestor, si está habilitado (`ctx.habilitado` ya viene resuelto contra el módulo que
+//   corresponde, `hablar` o `transmision`).
+// · El alumno, con "Todos pueden hablar" y sin estar silenciado. ⭐ Al alumno NO se le mira el
+//   módulo: se le pregunta a quien abrió la voz (D10). Si se le preguntara al alumno, cada chico
+//   tendría que estar en una lista para poder contestarle a su profesora.
+// · Preceptoría y dirección, nunca (RH-7): escuchan.
+function puedeHablar(session, ctx) {
+  if (!session) return false;
+  const t = tx(session);
+  if (!t.activa) return false;
+  if (ctx.esGestor) return !!ctx.habilitado;
+  if (!ctx.esAlumno) return false;
+  if (t.vozAbierta !== true) return false;
+  return !estaSilenciado(session, ctx.userId);
+}
+
+// Qué se firma en el ticket del proceso de medios (D4). Es la ÚNICA fuente de lo que esa
+// persona puede publicar, así que se calcula en un solo lugar y se testea sin base.
+//
+//   emitir: true    → el docente, o el alumno con la palabra (D7). Nace sonando.
+//   emitir: 'audio' → el alumno con "Todos pueden hablar". Solo voz, nace PAUSADA y suena
+//                     mientras aprieta el botón (H3).
+//   emitir: false   → escucha.
+//
+// El video lo lleva aparte: el docente lo tiene salvo en "Hablar" (soloVoz), y el alumno con
+// la palabra solo si el docente le dio la cámara.
+function datosDelTicket(session, ctx) {
+  const NADA = { emitir: false, video: false };
+  if (!session) return NADA;
+  const t = tx(session);
+
+  if (ctx.esGestor) {
+    if (!puedeEmitir(session, ctx)) return NADA;
+    return { emitir: true, video: t.soloVoz !== true };
+  }
+  if (puedeEmitir(session, ctx)) {
+    return { emitir: true, video: t.palabraCamara === true };
+  }
+  if (puedeHablar(session, ctx)) return { emitir: 'audio', video: false };
+  return NADA;
 }
 
 // ── La cola de manos ─────────────────────────────────────────────────────────
@@ -133,6 +181,12 @@ function estadoParaCliente(session, ctx, extra = {}) {
     // así que el botón no puede quedar prometiendo algo que el servidor va a rechazar.
     puedoVer:    puedeVer(session, ctx),
     puedoEmitir: puedeEmitir(session, ctx),
+
+    // Hablar. Mismo criterio que `puedoEmitir`: calculado con la MISMA función que decide el
+    // ticket, así el botón de pulsar no promete algo que el proceso de medios va a rechazar.
+    soloVoz:     t.soloVoz === true,
+    vozAbierta:  t.vozAbierta === true,
+    puedoHablar: puedeHablar(session, ctx),
     puedoPedirLaPalabra: puedeLevantarMano(session, ctx),
 
     miMano: tieneLaMano(t.manos, ctx.userId),
@@ -163,6 +217,7 @@ function estadoParaCliente(session, ctx, extra = {}) {
 // El gobernador corre ACÁ y no en el navegador: es el único lugar donde se sabe cuánta gente
 // hay mirando en TODA la escuela, y es el que puede decir que no.
 async function abrir(session, course, docente, { espectadores = 0, clases = 0, modo = {} } = {}) {
+  const soloVoz  = modo.soloVoz === true;
   const decision = aforo.decidir(espectadores, { clases });
   if (!decision.capa) {
     return { ok: false, error: decision.mensaje, motivo: decision.motivo };
@@ -179,6 +234,7 @@ async function abrir(session, course, docente, { espectadores = 0, clases = 0, m
     docente:  docente._id,
     docenteNombre: docente.name || '',
     capaMaxAlcanzada: capa,
+    soloVoz,
   });
 
   await RoomSession.updateOne({ _id: session._id }, {
@@ -187,9 +243,14 @@ async function abrir(session, course, docente, { espectadores = 0, clases = 0, m
       'transmision.iniciadaAt':   new Date(),
       // El micrófono y la pantalla arrancan prendidos y la cámara apagada (D6): el modo por
       // defecto de una clase es lo que el docente muestra, no su cara.
-      'transmision.micro':        modo.micro    !== false,
-      'transmision.pantalla':     modo.pantalla !== false,
-      'transmision.camara':       modo.camara   === true,
+      // "Hablar" (soloVoz) abre SOLO el micrófono, y arranca en "Solo yo hablo": abrirles la
+      // voz a los alumnos es un segundo toque, consciente (H2 de specs/sala-hablar.spec.md).
+      'transmision.micro':        soloVoz ? true  : modo.micro    !== false,
+      'transmision.pantalla':     soloVoz ? false : modo.pantalla !== false,
+      'transmision.camara':       soloVoz ? false : modo.camara   === true,
+      'transmision.soloVoz':      soloVoz,
+      'transmision.vozAbierta':   false,
+      'transmision.vozAbiertaAt': null,
       'transmision.capaMax':      capa,
       'transmision.degradadaPor': decision.motivo,
       'transmision.palabra':      null,
@@ -207,12 +268,18 @@ async function abrir(session, course, docente, { espectadores = 0, clases = 0, m
 
 // Apaga la transmisión y cierra su registro histórico.
 async function cerrar(session, { cerradaPor = 'docente', metricas = {} } = {}) {
+  // Si se cierra con "Todos pueden hablar" prendido, ese rato también cuenta.
+  await sumarVozAbierta(session).catch(() => {});
+
   await RoomSession.updateOne({ _id: session._id }, {
     $set: {
       'transmision.activa':        false,
       'transmision.micro':         false,
       'transmision.pantalla':      false,
       'transmision.camara':        false,
+      'transmision.soloVoz':       false,
+      'transmision.vozAbierta':    false,
+      'transmision.vozAbiertaAt':  null,
       'transmision.palabra':       null,
       'transmision.palabraDesde':  null,
       'transmision.palabraCamara': false,
@@ -236,6 +303,9 @@ async function cambiarModo(session, cambios) {
   for (const k of ['micro', 'pantalla', 'camara']) {
     if (k in cambios) set[`transmision.${k}`] = cambios[k] === true;
   }
+  // Prender pantalla o cámara convierte el "Hablar" en una transmisión completa. La ruta ya
+  // verificó que ese docente tenga el módulo de video.
+  if (cambios.pantalla === true || cambios.camara === true) set['transmision.soloVoz'] = false;
   await RoomSession.updateOne({ _id: session._id }, { $set: set });
   return set;
 }
@@ -253,6 +323,33 @@ async function aplicarCapa(sessionId, capa, motivo) {
       { sort: { iniciadaAt: -1 } },
     );
   }
+}
+
+// "Solo yo hablo" (false) / "Todos pueden hablar" (true). Toca `lastActivityAt` por lo mismo
+// que cambiarModo: es actividad de la clase.
+async function cambiarVoz(session, abierta) {
+  const ahora = new Date();
+  await RoomSession.updateOne({ _id: session._id }, {
+    $set: {
+      'transmision.vozAbierta':   abierta === true,
+      'transmision.vozAbiertaAt': abierta === true ? ahora : null,
+      lastActivityAt: ahora,
+    },
+  });
+  if (abierta !== true) await sumarVozAbierta(session, ahora);
+}
+
+// Suma al registro histórico el rato que estuvo "Todos pueden hablar" (H9). Es para dimensionar
+// cuánto se usa la voz de los alumnos, no para saber quién dijo qué.
+async function sumarVozAbierta(session, ahora = new Date()) {
+  const desde = session.transmision?.vozAbiertaAt;
+  if (!desde) return;
+  const segundos = Math.max(0, Math.round((ahora - new Date(desde)) / 1000));
+  await Transmision.findOneAndUpdate(
+    { session: session._id, terminadaAt: null },
+    { $inc: { vozAbiertaSegundos: segundos } },
+    { sort: { iniciadaAt: -1 } },
+  );
 }
 
 async function guardarManos(sessionId, manos) {
@@ -281,10 +378,10 @@ async function quitarLaPalabra(sessionId) {
 
 module.exports = {
   // puras
-  puedeEmitir, puedeVer, puedeLevantarMano, estaSilenciado,
+  puedeEmitir, puedeVer, puedeLevantarMano, estaSilenciado, puedeHablar, datosDelTicket,
   levantarMano, bajarMano, siguienteEnLaCola, tieneLaMano,
   porQueNoLaPalabra, palabraVencida, estadoParaCliente, APAGADA,
   // mongo
-  abrir, cerrar, cambiarModo, aplicarCapa, guardarManos,
+  abrir, cerrar, cambiarModo, cambiarVoz, aplicarCapa, guardarManos,
   darLaPalabra, quitarLaPalabra,
 };

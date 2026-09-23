@@ -64,6 +64,25 @@ const MODULOS = [
     alcance:     'escuela+persona',
   },
   {
+    // La mitad barata de la transmisión: SOLO la voz. Ver specs/sala-hablar.spec.md.
+    //
+    // Es un módulo aparte y no una opción de `transmision` por decisión del usuario
+    // (2026-09-23): Hablar cuesta ~6 veces menos que el video a 180p, y es razonable querer la
+    // voz para todos los docentes y el video para dos o tres. Con un solo módulo eso no se
+    // puede expresar. Comparte TODO lo demás con la transmisión: el proceso de medios, el
+    // ticket, el túnel /rtc y el gobernador.
+    id:          'hablar',
+    label:       'Hablar en la sala',
+    icon:        'mic',
+    localsKey:   'hablarEnabled',
+    descripcion: 'La o el docente habla por voz en la sala en vivo, y puede habilitar a los '
+               + 'alumnos para que hablen pulsando un botón. Se habilita docente por docente.',
+    secciones:   [],
+    // Mismo eje que la transmisión, y con la misma sutileza: se le pregunta a quien ABRE la
+    // voz (el docente), nunca al alumno que escucha o que pulsa para hablar.
+    alcance:     'escuela+persona',
+  },
+  {
     id:          'verificacion',
     label:       'Verificación de contacto',
     icon:        'verified',

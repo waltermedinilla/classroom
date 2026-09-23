@@ -43,6 +43,13 @@ const transmisionSchema = new mongoose.Schema({
   degradaciones:     { type: Number, default: 0 },
   cortesTotales:     { type: Number, default: 0 },
   ticketsRechazados: { type: Number, default: 0 },
+
+  // Hablar (H9 de specs/sala-hablar.spec.md). Cuánto se usó la voz, para dimensionar: NO qué
+  // dijo nadie ni cuándo pulsó cada uno. Es un registro de costo, no de vigilancia.
+  soloVoz:                      { type: Boolean, default: false },
+  vozAbiertaSegundos:           { type: Number,  default: 0 },
+  alumnosQueHablaron:           { type: Number,  default: 0 },
+  pulsacionesRechazadasPorTope: { type: Number,  default: 0 },
 }, { timestamps: true });
 
 // El panel del superadmin: "las transmisiones de mi escuela, de la más reciente a la más vieja".

@@ -83,6 +83,13 @@ const ACTIONS = {
   'tx.degraded':    { label: 'bajó la calidad por ancho de banda',  icon: 'network_check',   color: '#ea8600', category: 'course' },
   'tx.rejected':    { label: 'rechazó una transmisión por aforo',   icon: 'block',           color: '#ea4335', category: 'course' },
 
+  // Hablar (specs/sala-hablar.spec.md). Se audita abrir la voz a los alumnos —le abre el
+  // micrófono a un curso de menores— y NO cada pulsación, que sería una línea por frase.
+  'voz.start':         { label: 'empezó a hablar en la sala',              icon: 'mic',     color: '#137333', category: 'course' },
+  'voz.stop':          { label: 'dejó de hablar en la sala',               icon: 'mic_off', color: '#ea8600', category: 'course' },
+  'voz.abrir_alumnos': { label: 'habilitó a los alumnos a hablar',         icon: 'groups',  color: '#1a73e8', category: 'course' },
+  'voz.cerrar_alumnos':{ label: 'volvió a "solo yo hablo" en la sala',     icon: 'voice_over_off', color: '#ea8600', category: 'course' },
+
   // Asistencia de preceptoría. Categoría 'division' y no 'course' porque la asistencia es
   // del CURSO (3°2°), no de una materia.
   // 'attendance.change' se registra SOLO cuando se pisa una marca que ya tenía estado: el
