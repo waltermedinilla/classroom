@@ -22,6 +22,9 @@ const Course       = require('../models/Course');
 const RoomSession  = require('../models/RoomSession');
 const RoomMessage  = require('../models/RoomMessage');
 const RoomPresence = require('../models/RoomPresence');
+// Solo para la preferencia de sonido de quien gestiona: se lee al ABRIR la sala y se escribe
+// en /config (specs/sonido-chat-sala.spec.md, RN-05 y RN-06). El poll no la toca nunca.
+const User         = require('../models/User');
 
 const { requireAuth }        = require('../middleware/auth');
 const { logAudit }           = require('../middleware/audit');
@@ -30,8 +33,9 @@ const { loadPreceptorScope } = require('../middleware/preceptor');
 const { subirImagen, guardarImagenOptimizada, ImagenInvalidaError } = require('../middleware/image-upload');
 const { EXT_IMAGENES } = require('../config/imagePresets');
 const { logDeRuta, logRechazo } = require('../middleware/route-log');
+const { SONIDO_DE_DEFAULT } = require('../public/js/salaSonido');
 const live = require('../services/liveRoom');
-const { courseCache } = require('../middleware/cache');
+const { courseCache, invalidateUser } = require('../middleware/cache');
 const permisos = require('../services/cursoPermisos');
 const salaStats = require('../services/salaStats');
 
@@ -292,7 +296,11 @@ async function estadoDeSala(req, session, since = 0, presenciaVista = null) {
     return {
       estado: 'cerrada', sessionId: null, seq: 0, puedoEscribir: false,
       puedoCompartirImagen: false,
-      mensajes: [], settings: { studentsCanWrite: true, reactionsOn: true, studentsCanShareImages: true },
+      mensajes: [],
+      settings: {
+        studentsCanWrite: true, reactionsOn: true, studentsCanShareImages: true,
+        sonido: false, sonidoDe: SONIDO_DE_DEFAULT,
+      },
       ...presenciaParaCliente({ presentes: 0, total: course.students.length, conectados: [], ausentes: [] }, presenciaVista),
       // Una forma SOLA, también con la sala cerrada: el navegador no tiene que preguntarse si
       // la clave existe. Mismo criterio que el resto de este objeto.
@@ -616,7 +624,14 @@ router.post('/:id/sala/abrir', async (req, res, next) => {
   try {
     if (!req.esGestor) return fallar(req, res, 403, 'Solo la o el docente puede hacer esto');
 
-    const { session, creada } = await live.openSession(req.course, usuario(req), req.body.title);
+    // La sala nueva hereda el sonido que eligió QUIEN ABRE en su última clase (RN-05 de
+    // specs/sonido-chat-sala.spec.md). Se lee de la base y NO de usuario(req): eso sale del
+    // cache de 45 s, que es por worker, e invalidateUser solo limpia el worker que atendió el
+    // /config. La docente que cambia el sonido, cierra y reabre en menos de 45 s —y le toca el
+    // otro worker— heredaría el valor viejo. Una query por apertura de clase no pesa nada.
+    // Si falla, leerPreferenciaSonido devuelve el sonido apagado y la sala se abre igual.
+    const { session, creada } = await live.openSession(req.course, usuario(req), req.body.title,
+      await live.leerPreferenciaSonido(User, req.userId));
     if (creada) {
       logAudit(req, 'room.open',
         [{ type: 'course', id: req.course._id, name: req.course.name }],
@@ -1069,6 +1084,13 @@ router.post('/:id/sala/config', async (req, res, next) => {
     const session = await sesionAbierta(req.course._id);
     if (!session) return fallar(req, res, 409, 'La sala está cerrada');
 
+    // El sonido se valida ANTES de tocar cualquier interruptor (RN-06 de
+    // specs/sonido-chat-sala.spec.md): con una categoría inválida no se aplica NADA del pedido,
+    // tampoco la palabra o las fotos que viajaban junto. Y va después del 403: un alumno que
+    // manda basura recibe "no podés", no "eso no existe".
+    const sonido = live.configDeSonido(req.body);
+    if (sonido.error) return fallar(req, res, 400, 'Esa opción de sonido no existe.');
+
     // Un formulario manda strings ('true'), un fetch manda booleanos. Los dos entran.
     const bandera = (v) => v === true || v === 'true';
 
@@ -1096,9 +1118,32 @@ router.post('/:id/sala/config', async (req, res, next) => {
         ? 'La docente habilitó las imágenes para el curso.'
         : 'La docente desactivó las imágenes de los alumnos.');
     }
+    // El sonido NO se anuncia en el chat: no desaparece ningún botón de la pantalla del alumno
+    // ni se le prohíbe nada, así que no hay nada que explicarle, y un aviso por cada vez que la
+    // docente prueba el volumen ensucia la transcripción.
+    if (sonido.cambios.sonido !== undefined)   session.settings.sonido   = sonido.cambios.sonido;
+    if (sonido.cambios.sonidoDe !== undefined) session.settings.sonidoDe = sonido.cambios.sonidoDe;
 
     await session.save();
     for (const aviso of avisos) await live.systemMessage(session, aviso);
+
+    // Y queda como preferencia de quien lo eligió, para la próxima clase que abra en cualquiera
+    // de sus cursos (D2). Solo los campos que vinieron: un /config que toca la palabra no le
+    // mueve el sonido a nadie.
+    //
+    // FALLA ABIERTO: la clase ya tiene el sonido cambiado, que es lo que la docente está
+    // mirando. Si esto tira, se loguea y la respuesta sigue siendo 200.
+    const preferencia = {};
+    if (sonido.cambios.sonido !== undefined)   preferencia.salaSonido   = sonido.cambios.sonido;
+    if (sonido.cambios.sonidoDe !== undefined) preferencia.salaSonidoDe = sonido.cambios.sonidoDe;
+    if (Object.keys(preferencia).length) {
+      try {
+        await User.updateOne({ _id: req.userId }, { $set: preferencia });
+        invalidateUser(req.userId);
+      } catch (err) {
+        logDeRuta(err, res, { codigo: 'SOUND_PREF_NOT_SAVED', courseId: String(req.course._id) });
+      }
+    }
 
     res.json({ ok: true, settings: session.settings });
   } catch (err) { next(err); }

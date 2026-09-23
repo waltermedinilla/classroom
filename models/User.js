@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt   = require('bcryptjs');
+const { SONIDO_DE, SONIDO_DE_DEFAULT } = require('../public/js/salaSonido');
 
 // Lista completa de roles válidos en el sistema (en orden de jerarquía descendente)
 // 'jefe' = Jefe de Sección: ve, sin poder tocar nada, las actividades de las materias de
@@ -174,6 +175,14 @@ const userSchema = new mongoose.Schema({
     // según el rol, pero el campo es uno solo.
     default: null,
   },
+  // Sonido del chat de la sala en vivo (specs/sonido-chat-sala.spec.md, D2). Es la última
+  // elección de ESTA persona como gestora de una sala, para todos sus cursos: la sala que abra
+  // arranca con esto. Vive en User y no en localStorage porque `users` está en el backup y la
+  // docente cambia de máquina.
+  //
+  // Nadie la escribe salvo POST /courses/:id/sala/config con un campo de sonido en el cuerpo.
+  salaSonido:   { type: Boolean, default: false },
+  salaSonidoDe: { type: String, enum: SONIDO_DE, default: SONIDO_DE_DEFAULT },
 }, { timestamps: true }); // Agrega createdAt y updatedAt automáticamente
 
 // Índice único compuesto school+dni: evita DNI duplicados dentro de la misma escuela

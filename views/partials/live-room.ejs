@@ -21,6 +21,8 @@
     ser esta etiqueta y la sala perdía la referencia a su propio contenedor — que es lo que
     evita que se cuente presente a quien tiene la materia abierta en otra solapa. %>
 <script src="/js/salaPoll.js"></script>
+<%# El sonido de aviso del chat (specs/sonido-chat-sala.spec.md). Arriba de todo por lo mismo. %>
+<script src="/js/salaSonido.js"></script>
 <style>
   <%# --lr-tenue es el gris de los textos secundarios del chat: la hora, el pie de las cards,
       los avisos del sistema, el "Mensaje eliminado" y los botones "responder" y "borrar".
@@ -48,7 +50,7 @@
   .lr-estado { display:flex; align-items:center; gap:8px; font-size:14px; }
   .lr-punto { width:9px; height:9px; border-radius:50%; background:#34a853; flex:none; }
   .lr-punto.off { background:#9aa0a6; }
-  .lr-acciones { display:flex; gap:8px; flex-wrap:wrap; }
+  .lr-acciones { display:flex; gap:8px; flex-wrap:wrap; position:relative; }
   .lr-circulos { display:flex; flex-wrap:wrap; gap:14px; margin-top:14px; }
   .lr-persona { width:58px; text-align:center; }
   .lr-bola { width:42px; height:42px; margin:0 auto; border-radius:50%; color:#fff; display:flex;
@@ -202,6 +204,52 @@
   .lr-ver-act:hover { background:#1a73e8; color:#fff; }
   .lr-ver-act .material-symbols-outlined { font-size:13px; }
 
+  /* ── El sonido de aviso del chat (specs/sonido-chat-sala.spec.md) ────────────
+     La campana de cada participante y el menú del sonido de la clase, que solo ve quien
+     gestiona. Los dos menús cuelgan de .lr-acciones como un flotante; en el celular se abren
+     en el flujo (ver el bloque móvil).
+
+     El icono de la campana NO lo elige el JavaScript: los tres están escritos en el marcado y el
+     `data-estado` del botón decide cuál se ve. El barrido que arma la lista de iconos no ve los
+     nombres elegidos en JS, y un icono fuera de la lista sale como su nombre en inglés al lado
+     del control, sin error en ningún log (causa 3 del 2026-09-16). */
+  .lr-campana { padding:9px 14px; }
+  .lr-campana-ico, .lr-campana-activar { display:none; }
+  .lr-campana[data-estado="activa"]    [data-ico="activa"],
+  .lr-campana[data-estado="bloqueada"] [data-ico="activa"],
+  .lr-campana[data-estado="pausada"]   [data-ico="pausada"],
+  .lr-campana[data-estado="apagada"]   [data-ico="apagada"],
+  .lr-campana[data-estado="sin-audio"] [data-ico="apagada"] { display:inline-flex; }
+  .lr-campana[data-estado="bloqueada"] .lr-campana-activar { display:inline; }
+  /* "Activar sonido": el navegador no deja sonar hasta que la persona toque algo. Es la
+     pastilla de acción de "Crear actividad", con su par fondo+texto en hex en los dos temas
+     (un fondo fijo obliga a declarar su color de texto). Medidos en esa regla: 6,8:1 y 7,4:1. */
+  .lr-campana[data-estado="bloqueada"] { background:#e8f0fe; color:#174ea6; border:1px solid #1a73e8; font-weight:600; }
+  [data-theme="dark"] .lr-campana[data-estado="bloqueada"] { background:#12233d; color:#9dc2f5; border-color:#3d6ba8; }
+
+  .lr-menu { display:none; position:absolute; top:calc(100% + 6px); right:0; z-index:30; width:300px;
+             padding:6px; box-sizing:border-box; background:var(--surface); color:var(--text);
+             border:1px solid var(--border); border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,.15); }
+  .lr-menu.abierto { display:block; }
+  .lr-menu [role="menu"] { display:flex; flex-direction:column; }
+  <%# 44 px de blanco táctil (pedido del usuario, 2026-09-23): el menú se toca con el pulgar y
+      38 px quedaba por debajo de lo recomendado para dedos. %>
+  .lr-menu button { display:flex; align-items:center; gap:6px; min-height:44px; padding:8px 10px;
+                    text-align:left; font-size:14px; background:none; border:none; border-radius:6px;
+                    cursor:pointer; color:var(--text); }
+  .lr-menu button:hover:not(:disabled) { background:var(--bg); }
+  .lr-menu button:disabled { opacity:.5; cursor:default; }
+  .lr-menu button::before { content:''; flex:none; width:16px; text-align:center; font-weight:700; }
+  .lr-menu button[aria-checked="true"]::before { content:'✓'; }
+  .lr-menu-aviso { margin:4px 10px 6px; font-size:13px; font-weight:600; }
+  .lr-menu-aviso:empty { display:none; }
+  .lr-menu-ayuda { margin:6px 10px 4px; font-size:12px; line-height:1.4; color:var(--lr-tenue); }
+  <%# En oscuro, fondo propio: con var(--surface) quedaría del
+      mismo color que la tarjeta de abajo y solo lo separaría el borde. --lr-tenue llega a AA
+      sobre los dos fondos (ver su comentario arriba de todo). %>
+  [data-theme="dark"] .lr-menu { background:var(--bg); border-color:#3c4043; }
+  [data-theme="dark"] .lr-menu button:hover:not(:disabled) { background:var(--surface); }
+
   /* ─── Tema oscuro ─────────────────────────────────────────────────────────
      Las superficies y los textos de arriba ya siguen al tema por variable. Lo que falta son
      las pastillas de color, que son pares fondo+texto cerrados: se leen solas, pero sobre una
@@ -276,6 +324,10 @@
     #lrEnviar { width:44px; height:44px; display:flex; align-items:center; justify-content:center; }
     .lr-emojis { gap:2px; }
     .lr-emojis button { font-size:22px; padding:8px; }
+
+    /* Los menús del sonido, EN EL FLUJO y a lo ancho, debajo de la fila de botones: un
+       flotante de 300 px anclado a la derecha se sale de la pantalla en 360. */
+    .lr-menu { position:static; order:99; flex-basis:100%; width:auto; box-shadow:none; }
   }
 </style>
 
@@ -328,6 +380,20 @@
               clase, que era lo único que se podía hacer antes. El rótulo lo escribe
               pintarEstado() con el estado real de la sesión. %>
           <button class="btn btn-outline"  id="lrFotos"  style="display:none"></button>
+          <%# El sonido del chat para TODA la clase (specs/sonido-chat-sala.spec.md, RN-29). El
+              rótulo dice el ESTADO ("Sonido: todos") y no lo que va a pasar, al revés que sus
+              vecinos: con tres estados, "lo que va a pasar" no entra en un botón. Lo escribe
+              pintarEstado() con lo que dice el servidor, no con lo que se tocó. %>
+          <button class="btn btn-outline"  id="lrSonidoClase" style="display:none"
+                  aria-haspopup="menu" aria-expanded="false" aria-controls="lrSonidoMenu">Sonido: apagado</button>
+          <div class="lr-menu" id="lrSonidoMenu">
+            <div role="menu" aria-label="Sonido del chat para toda la clase">
+              <button type="button" role="menuitemcheckbox" aria-checked="false" id="lrSonidoOn">Sonido del chat para toda la clase</button>
+              <button type="button" role="menuitemradio" aria-checked="false" data-sonido-de="todos" disabled>Todos los mensajes</button>
+              <button type="button" role="menuitemradio" aria-checked="false" data-sonido-de="docente" disabled>Solo los mensajes del docente</button>
+            </div>
+            <p class="lr-menu-ayuda">Cada persona puede silenciarlo en su dispositivo.</p>
+          </div>
           <button class="btn btn-outline"  id="lrCerrar" style="display:none">Cerrar sala</button>
           <%# Dejar la consigna sin salir de la clase. Abre el modal de creación que la materia YA
               tiene (#activityModal de views/course.ejs) — no hay un formulario aparte.
@@ -344,6 +410,35 @@
             </button>
           <% } %>
         <% } %>
+        <%# La campana: lo que escucho YO, en este navegador y para todas mis salas (RN-30). Es de
+            todos los roles, también de quien gestiona, que tiene además el control de arriba —
+            y los dos dicen cosas distintas: lo que escucha la clase y lo que escucho yo.
+            Cuando corresponde sonar y el navegador todavía no dejó, se convierte en el botón
+            "Activar sonido" (RN-26). El estado lo escribe pintarCampana() en `data-estado`. %>
+        <button type="button" class="btn btn-outline lr-campana" id="lrCampana" data-estado="apagada" style="display:none"
+                aria-haspopup="menu" aria-expanded="false" aria-controls="lrCampanaMenu"
+                aria-label="Sonido del chat" title="Sonido del chat">
+          <span class="lr-campana-ico" data-ico="activa"><span class="material-symbols-outlined">notifications_active</span></span>
+          <span class="lr-campana-ico" data-ico="pausada"><span class="material-symbols-outlined">notifications_paused</span></span>
+          <span class="lr-campana-ico" data-ico="apagada"><span class="material-symbols-outlined">notifications_off</span></span>
+          <span class="lr-campana-activar">Activar sonido</span>
+        </button>
+        <%# La ayuda de la segunda opción depende de quién es (D7): con la pestaña oculta la sala
+            no pollea, así que solo le avisa a quien gestiona, por el latido. Al alumno no se le
+            promete lo que no va a tener. %>
+        <div class="lr-menu" id="lrCampanaMenu">
+          <p class="lr-menu-aviso" id="lrCampanaAviso"></p>
+          <div role="menu" aria-label="Sonido del chat en este dispositivo">
+            <button type="button" role="menuitemradio" aria-checked="false" data-pref="siempre">Siempre</button>
+            <button type="button" role="menuitemradio" aria-checked="false" data-pref="si_no_miro" aria-describedby="lrCampanaAyuda">Solo si no tengo la sala al frente</button>
+            <button type="button" role="menuitemradio" aria-checked="false" data-pref="silencio">Silenciar</button>
+          </div>
+          <% if (esGestor) { %>
+            <p class="lr-menu-ayuda" id="lrCampanaAyuda">También suena si estás en otra solapa de la materia o con la pestaña oculta (puede demorar hasta un minuto).</p>
+          <% } else { %>
+            <p class="lr-menu-ayuda" id="lrCampanaAyuda">Suena si la sala está abierta detrás de otra ventana. Si cambiás de pestaña, la sala se pausa y te ponés al día al volver.</p>
+          <% } %>
+        </div>
         <a class="btn btn-outline" href="/courses/<%= course._id %>/sala/clases">Clases anteriores</a>
       </div>
     </div>
@@ -834,6 +929,16 @@
       if (actBtn) actBtn.style.display = abierta ? '' : 'none';
     }
 
+    // El sonido de aviso: lo que dice el servidor, la campana y, para quien gestiona, el control
+    // de la clase. El AudioContext se crea recién acá y solo si hace falta (RN-26): con el
+    // sonido de la clase apagado, que es como arrancan todas, la página no crea ninguno.
+    politicaSonido = SalaSonido.politica(s.settings);
+    if (haceFaltaSonido()) SalaSonido.prepararAudio(pintarCampana);
+    if (!abierta) cerrarMenusSonido();
+    $('lrCampana').style.display = abierta ? '' : 'none';
+    pintarCampana();
+    if (GESTOR) pintarSonidoClase(abierta);
+
     const puedo = s.puedoEscribir;
     puedoEscribir = !!puedo;
     $('lrComposerBox').style.display = puedo ? '' : 'none';
@@ -860,6 +965,151 @@
       mudo.style.display = 'none';
     }
   }
+
+  // ── Sonido de aviso del chat ───────────────────────────────────────────────
+  //
+  // Ver specs/sonido-chat-sala.spec.md. SI una tanda suena lo decide public/js/salaSonido.js;
+  // acá se le pasa lo que hay en pantalla, se toca el aviso y se pinta la campana.
+  //
+  // Con el sonido de la clase apagado —como arrancan todas— nada de esto crea un AudioContext,
+  // muestra "Activar sonido" ni manda un pedido más (RN-34): el poll y el latido siguen igual.
+
+  // Sin WebAudio no corre nada de sonido; la campana lo dice (RN-27).
+  const SOPORTA_AUDIO = SalaSonido.soportaAudio(window);
+
+  // Hay navegadores que tiran ya al TOCAR localStorage (Safari privado, almacenamiento
+  // bloqueado). Sin él, la elección vive en memoria mientras dure la página (RN-19).
+  let almacen = null;
+  try { almacen = window.localStorage; } catch (e) { almacen = null; }
+  let miPreferencia = SalaSonido.leerPreferencia(almacen);
+
+  // Lo último que dijo el servidor sobre el sonido de la clase. Lo refresca pintarEstado().
+  let politicaSonido = SalaSonido.politica(SALA.settings);
+
+  // La marca y el último aviso de ESTA pantalla. Uno solo para el poll y el latido: comparten el
+  // tiempo mínimo (RN-17), y la marca es lo que evita que el poll vuelva a sonar por un mensaje
+  // que ya sonó en el latido (RN-22). Lo que vino pintado del servidor no es novedad (RN-14).
+  let sonido = SalaSonido.crearEstado(SALA.sessionId, SALA.mensajes || []);
+
+  // ¿Tengo la sala al frente? (RN-20) El tercer término es el de la sala embebida en la
+  // materia: quien está en Novedades de la misma página no la está mirando.
+  function estoyMirando() {
+    return document.visibilityState === 'visible' && document.hasFocus() && aLaVista();
+  }
+
+  function haceFaltaSonido() {
+    return SOPORTA_AUDIO && politicaSonido.activo && miPreferencia !== 'silencio';
+  }
+
+  // Corresponde sonar. Si el navegador todavía no deja, no suena y NO se guarda para después
+  // (RN-26): la campana pasa a "Activar sonido" y el próximo aviso ya va a poder sonar.
+  function avisar() {
+    if (SalaSonido.audioListo()) SalaSonido.reproducir();
+    else pintarCampana();
+  }
+
+  function pintarCampana() {
+    const btn = $('lrCampana');
+    let cual, texto;
+    if (!SOPORTA_AUDIO)                     { cual = 'sin-audio'; texto = 'Tu navegador no puede reproducir sonidos'; }
+    else if (!politicaSonido.activo)        { cual = 'apagada';   texto = 'El sonido está apagado en esta clase'; }
+    else if (miPreferencia === 'silencio')  { cual = 'apagada';   texto = 'Sonido del chat: silenciado en este dispositivo'; }
+    else if (!SalaSonido.audioListo())      { cual = 'bloqueada'; texto = 'Activar sonido'; }
+    else if (miPreferencia === 'si_no_miro'){ cual = 'pausada';   texto = 'Sonido del chat: solo si no tengo la sala al frente'; }
+    else                                    { cual = 'activa';    texto = 'Sonido del chat: siempre'; }
+    btn.dataset.estado = cual;
+    btn.setAttribute('aria-label', texto);
+    btn.title = texto;
+
+    // Arriba del menú, lo que la persona no puede cambiar desde acá. Con el sonido de la clase
+    // apagado las opciones se eligen igual: la preferencia es para todas sus salas.
+    $('lrCampanaAviso').textContent = !SOPORTA_AUDIO ? 'Tu navegador no puede reproducir sonidos'
+      : (!politicaSonido.activo ? 'El sonido está apagado en esta clase' : '');
+    $('lrCampanaMenu').querySelectorAll('[data-pref]').forEach(b =>
+      b.setAttribute('aria-checked', b.dataset.pref === miPreferencia ? 'true' : 'false'));
+  }
+
+  function pintarSonidoClase(abierta) {
+    const btn = $('lrSonidoClase');
+    btn.style.display = abierta ? '' : 'none';
+    btn.textContent = !politicaSonido.activo ? 'Sonido: apagado'
+      : (politicaSonido.de === 'todos' ? 'Sonido: todos' : 'Sonido: solo docente');
+    $('lrSonidoOn').setAttribute('aria-checked', politicaSonido.activo ? 'true' : 'false');
+    // La categoría se ve aunque el sonido esté apagado: queda guardada para cuando se prenda.
+    $('lrSonidoMenu').querySelectorAll('[data-sonido-de]').forEach(b => {
+      b.setAttribute('aria-checked', b.dataset.sonidoDe === politicaSonido.de ? 'true' : 'false');
+      b.disabled = !politicaSonido.activo;
+    });
+  }
+
+  // Los dos menús: uno abierto a la vez; Esc y un toque afuera los cierran.
+  const MENUS_SONIDO = [['lrCampana', 'lrCampanaMenu'], ['lrSonidoClase', 'lrSonidoMenu']];
+
+  function cerrarMenusSonido() {
+    MENUS_SONIDO.forEach(([boton, menu]) => {
+      if (!$(menu)) return;
+      $(menu).classList.remove('abierto');
+      $(boton).setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  function alternarMenuSonido(boton, menu) {
+    const estabaAbierto = $(menu).classList.contains('abierto');
+    cerrarMenusSonido();
+    if (estabaAbierto) return;
+    $(menu).classList.add('abierto');
+    $(boton).setAttribute('aria-expanded', 'true');
+  }
+
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.lr-menu') || e.target.closest('#lrCampana') || e.target.closest('#lrSonidoClase')) return;
+    cerrarMenusSonido();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const abierto = MENUS_SONIDO.find(([, menu]) => $(menu) && $(menu).classList.contains('abierto'));
+    cerrarMenusSonido();
+    if (abierto) $(abierto[0]).focus();
+  });
+
+  $('lrCampana').addEventListener('click', () => {
+    // "Activar sonido": tocarlo ES el gesto que el navegador pedía, y el contexto se reanuda
+    // adentro de este mismo manejador porque Safari no acepta otro momento. Suena una vez para
+    // que la persona escuche cómo va a sonar y confirme que anda. Ese aviso NO pasa por
+    // evaluar y no cuenta para el tiempo mínimo: es la respuesta a un toque, no un mensaje.
+    if ($('lrCampana').dataset.estado === 'bloqueada') {
+      SalaSonido.desbloquear(pintarCampana).then(listo => { if (listo) SalaSonido.reproducir(); pintarCampana(); });
+      return;
+    }
+    alternarMenuSonido('lrCampana', 'lrCampanaMenu');
+  });
+
+  // La elección de cada persona no viaja al servidor: vale para todas sus salas, en este
+  // navegador. Silenciar es lo único que puede hacer contra la política (RN-19).
+  $('lrCampanaMenu').addEventListener('click', (e) => {
+    const op = e.target.closest('[data-pref]');
+    if (!op) return;
+    miPreferencia = SalaSonido.preferencia(op.dataset.pref);
+    SalaSonido.guardarPreferencia(almacen, miPreferencia);
+    // Este toque también es un gesto: si al salir del silencio hace falta el parlante, se
+    // arranca acá adentro y no hace falta un toque más en "Activar sonido".
+    if (haceFaltaSonido()) SalaSonido.desbloquear(pintarCampana).then(pintarCampana);
+    pintarCampana();
+    cerrarMenusSonido();
+  });
+
+  // Mientras haga falta sonido y el navegador no lo deje, CADA gesto de la página intenta
+  // arrancarlo, en captura y adentro del propio manejador (RN-26). Chrome y Firefox recuerdan
+  // que la página ya tuvo un gesto, así que en la materia —donde el clic en "En vivo" ya fue
+  // uno— suele arrancar solo; en la sala suelta de preceptoría y dirección puede no haber
+  // habido ninguno. La campana queda afuera: su propio clic desbloquea y además suena.
+  function alGestoSonido(e) {
+    if (!haceFaltaSonido() || SalaSonido.audioListo()) return;
+    if (e.target && e.target.closest && e.target.closest('#lrCampana')) return;
+    SalaSonido.desbloquear(pintarCampana).then(pintarCampana);
+  }
+  document.addEventListener('pointerdown', alGestoSonido, true);
+  document.addEventListener('keydown', alGestoSonido, true);
 
   // ── Ciclo de poll ──────────────────────────────────────────────────────────
 
@@ -951,6 +1201,21 @@
       // Va afuera del if a propósito: si algún día el poll trae una tanda vacía, esto tiene que
       // seguir siendo un no-op y no quedar salteado a medias.
       ponerLaMateriaAlDia(d.mensajes);
+
+      // El sonido de aviso (specs/sonido-chat-sala.spec.md). Con `d.mensajes`, lo que el cursor
+      // dio por bueno y se acaba de pintar, y nunca con la respuesta cruda: una respuesta vieja
+      // no puede sonar, y un mensaje retenido por un hueco suena cuando se pinta (RN-16).
+      // Con su propio try: un aviso que falla no puede saltearse el ritmo ni el repedido de
+      // abajo, que son los que mantienen viva la sala (RN-28).
+      try {
+        const oido = SalaSonido.evaluar(sonido, {
+          origen: 'poll', sessionId: s.sessionId, mensajes: d.mensajes,
+          politica: politicaSonido, preferencia: miPreferencia,
+          mirando: estoyMirando(), esGestor: GESTOR, ahora: Date.now(),
+        });
+        sonido = oido.estado;
+        if (oido.sonar) avisar();
+      } catch (e) { /* sin aviso esta vuelta; el chat sigue */ }
 
       // ── El ritmo de la vuelta siguiente (RN-4) ───────────────────────────
       //
@@ -1060,7 +1325,8 @@
   // conteo (ver presenceSummary en services/liveRoom.js): su presencia solo dice quién está a
   // cargo, y mirar las actividades de la propia materia sigue siendo estar en clase.
   //
-  // Se manda el MISMO poll y se tira la respuesta: `seq` no se toca, así que los mensajes que
+  // Se manda el MISMO poll y la respuesta no se pinta —solo la mira el sonido de aviso, más
+  // abajo—: `seq` no se toca, así que los mensajes que
   // hayan llegado mientras tanto se piden enteros cuando la sala vuelve a estar a la vista.
   //
   // El latido SÍ corre con la pestaña del navegador oculta, al revés que el poll de arriba: la
@@ -1077,13 +1343,29 @@
     // (visibilitychange lo corta), así que ahí el latido es lo único que queda.
     if (aLaVista() && !document.hidden) return;
     try {
-      // Lee `cursor.seq` y NO llama a cursor.pedir(): el latido tira la respuesta, así que si
+      // Lee `cursor.seq` y NO llama a cursor.pedir(): el latido no pinta la respuesta, así que si
       // numerara un pedido invalidaría el poll de verdad que estuviera en vuelo — la sala se
       // congelaría cada 20 segundos justo para quien la está dando (RN-4).
-      // Manda `pv` igual que el poll de verdad: la respuesta se tira, así que es solo para no
-      // hacerle armar al servidor 5 KB de presencia que nadie va a mirar.
-      await fetch(BASE + '/poll?since=' + cursor.seq + (presenciaVer ? '&pv=' + encodeURIComponent(presenciaVer) : ''),
+      // Manda `pv` igual que el poll de verdad: la respuesta no se pinta, así que es solo para
+      // no hacerle armar al servidor 5 KB de presencia que nadie va a mirar.
+      const r = await fetch(BASE + '/poll?since=' + cursor.seq + (presenciaVer ? '&pv=' + encodeURIComponent(presenciaVer) : ''),
         { headers: { Accept: 'application/json' } });
+      if (!r.ok) return;
+
+      // Lo ÚNICO que se hace con la respuesta es preguntarle al sonido (RN-22 de
+      // specs/sonido-chat-sala.spec.md): trae los mensajes posteriores a `cursor.seq`, y es lo
+      // que le avisa a la docente que un alumno escribió mientras ella está en otra solapa o
+      // con la pestaña oculta — justo cuando no está mirando. Cero pedidos nuevos. No se pinta
+      // nada y no se toca el cursor, por lo de arriba; y una respuesta de otra sesión no cambia
+      // el estado del sonido: eso lo decide el poll.
+      const s = await r.json();
+      const oido = SalaSonido.evaluar(sonido, {
+        origen: 'latido', sessionId: s.sessionId, mensajes: s.mensajes || [],
+        politica: SalaSonido.politica(s.settings), preferencia: miPreferencia,
+        mirando: estoyMirando(), esGestor: true, ahora: Date.now(),
+      });
+      sonido = oido.estado;
+      if (oido.sonar) avisar();
     } catch (e) { /* un latido perdido no rompe nada: el próximo va en 20 s */ }
   }
   if (GESTOR) setInterval(latir, LATIDO_MS);
@@ -1353,6 +1635,24 @@
     $('lrFotos').addEventListener('click', async () => {
       const permitidas = $('lrFotos').textContent.indexOf('Sin fotos') === 0;
       await post(BASE + '/config', { studentsCanShareImages: !permitidas });
+      pollear();
+    });
+
+    // El sonido de la clase (RN-29). Un solo POST con lo que cambió y después pollear(), como
+    // sus vecinos: el rótulo lo repinta pintarEstado() con lo que responde el servidor. Queda
+    // además como la preferencia de la docente para la próxima clase que abra (D2).
+    $('lrSonidoClase').addEventListener('click', () => alternarMenuSonido('lrSonidoClase', 'lrSonidoMenu'));
+    $('lrSonidoMenu').addEventListener('click', async (e) => {
+      const op = e.target.closest('#lrSonidoOn, [data-sonido-de]');
+      if (!op || op.disabled) return;
+      if (op.dataset.sonidoDe === politicaSonido.de) return;
+      const cambio = op.id === 'lrSonidoOn'
+        ? { sonido: !politicaSonido.activo }
+        : { sonidoDe: op.dataset.sonidoDe };
+      // Prenderlo es un gesto: si esta misma persona lo va a escuchar, el parlante se arranca
+      // acá adentro, que es el único momento que Safari acepta.
+      if (cambio.sonido && SOPORTA_AUDIO && miPreferencia !== 'silencio') SalaSonido.desbloquear(pintarCampana);
+      await post(BASE + '/config', cambio);
       pollear();
     });
 

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { SONIDO_DE, SONIDO_DE_DEFAULT } = require('../public/js/salaSonido');
 
 // Una sesión de la "sala en vivo" de una materia: la docente la abre cuando empieza la clase
 // y la cierra al terminar. Todo lo que pasa adentro (mensajes, presencia) cuelga de acá.
@@ -60,6 +61,20 @@ const roomSessionSchema = new mongoose.Schema({
     // jueves. Default true: la sesión de una clase que ya estaba abierta cuando esto se
     // desplegó lee `undefined`, y el default hace que se comporte como el resto.
     studentsCanShareImages: { type: Boolean, default: true },
+
+    // Sonido de aviso del chat (specs/sonido-chat-sala.spec.md). Lo decide quien gestiona la
+    // sala; lo escuchan todos los presentes salvo quien lo silencie en su navegador.
+    //
+    // ⚠️ DEFAULT false, y se lee con `=== true` — AL REVÉS que sus hermanos, que se leen con
+    // `!== false` (ver puedeCompartirImagen en services/liveRoom.js). Allá "la sesión no tiene
+    // el campo" tiene que querer decir PERMITIDO; acá tiene que querer decir APAGADO. Copiar la
+    // lectura del vecino prendería el sonido en todas las salas abiertas el día del deploy. La
+    // única lectura es politica(), en public/js/salaSonido.js.
+    sonido:   { type: Boolean, default: false },
+
+    // Qué mensajes suenan: 'todos' | 'docente' (autor con rol en STAFF_ROLES). Separado del
+    // interruptor para que apagar y volver a prender no le borre la elección a la docente.
+    sonidoDe: { type: String, enum: SONIDO_DE, default: SONIDO_DE_DEFAULT },
   },
 
   // La transmisión en vivo de ESTA clase. Ver specs/transmision-en-vivo.spec.md.

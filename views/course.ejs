@@ -339,12 +339,16 @@
         ruta más visitada de la app y no tiene por qué pagar dos queries más por una solapa
         que la mayoría de las visitas no abre. El partial se llena solo con su primer poll,
         que dispara apenas la solapa se hace visible (ver aLaVista() en el partial). %>
+    <%# 'docente' es SONIDO_DE_DEFAULT de public/js/salaSonido.js, escrito a mano porque dentro de
+        una plantilla EJS `require` no existe. Es inerte: con `sonido: false` la categoría no se
+        lee, y el primer poll trae la de verdad. %>
     <div class="tab-content hidden" id="envivoTab">
       <%- include('partials/live-room', {
             sala: {
               estado: 'cerrada', sessionId: null, seq: 0, puedoEscribir: false,
               puedoCompartirImagen: false, mensajes: [],
-              settings: { studentsCanWrite: true, reactionsOn: true, studentsCanShareImages: true },
+              settings: { studentsCanWrite: true, reactionsOn: true, studentsCanShareImages: true,
+                          sonido: false, sonidoDe: 'docente' },
               presencia: { presentes: 0, total: course.students.length, conectados: [], ausentes: [] },
             },
             modo:     'visible',

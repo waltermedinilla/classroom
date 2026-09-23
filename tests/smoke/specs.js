@@ -8212,6 +8212,176 @@ const specs = [
     },
   },
   {
+    // specs/sonido-chat-sala.spec.md. El alumno de CA-38 va acá (preceptoría y dirección van
+    // en el bucle de 'sala-acceso', que es donde ya vive la matriz de "quién no gestiona").
+    id: 'sala-sonido',
+    title: 'El docente prende el sonido del chat con una categoría; el alumno lo ve en el poll y queda guardado',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env, assert }) {
+      const { SONIDO_DE_DEFAULT } = require('../../public/js/salaSonido');
+      const { MongoClient, ObjectId } = require('mongodb');
+      const base = `/courses/${state.courseId}/sala`;
+      const json = { Accept: 'application/json' };
+
+      // CA-33 (parte abierta): un docente que nunca eligió arranca apagado, con la categoría
+      // por defecto — nadie tocó esto todavía en esta corrida.
+      const antes = await client.get('scopedStudent', `${base}/poll`, { expectStatus: 200, headers: json });
+      assert(antes.json.settings.sonido === false, 'sin elegir nunca, el sonido tiene que arrancar apagado');
+      assert(antes.json.settings.sonidoDe === SONIDO_DE_DEFAULT,
+        `la categoría por defecto tiene que ser "${SONIDO_DE_DEFAULT}", vino "${antes.json.settings.sonidoDe}"`);
+      const seqAntesDeCA34 = antes.json.seq;
+
+      // CA-38 (alumno): no puede tocar la política de sonido, ni el interruptor ni la categoría.
+      await client.post('scopedStudent', `${base}/config`, { body: { sonido: true }, expectStatus: 403 });
+      await client.post('scopedStudent', `${base}/config`, { body: { sonidoDe: 'nadie' }, expectStatus: 403 });
+
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const users      = mongo.db().collection('users');
+        const auditlogs  = mongo.db().collection('auditlogs');
+        const teacherOid = new ObjectId(state.scopedTeacherId);
+
+        // Su propio 403 no puede haberle prendido nada (el default de Mongoose ya deja el
+        // campo en false desde que el usuario se creó, después del deploy de esta feature).
+        const alumnoTrasEl403 = await users.findOne({ _id: new ObjectId(state.scopedStudentId) });
+        assert(alumnoTrasEl403.salaSonido !== true, 'el 403 del alumno no puede haber prendido su preferencia');
+
+        const auditAntes = await auditlogs.countDocuments({ 'actor.userId': teacherOid });
+
+        try {
+          // CA-37: sonidoDe inválido → 400, y NINGÚN campo del mismo pedido se aplica (ni
+          // siquiera studentsCanWrite, que viajaba junto), ni tampoco la preferencia de sonido
+          // del docente en `users`.
+          //
+          // El poll del propio DOCENTE no sirve para verificar studentsCanWrite: puedeEscribir
+          // da siempre true para quien gestiona (services/liveRoom.js:585), pase lo que pase
+          // con el interruptor — así que se lee directo settings.studentsCanWrite, el dato
+          // crudo de la sesión, que es lo mismo que ve el alumno.
+          const docenteAntesInvalida = await users.findOne({ _id: teacherOid });
+          const invalida = await client.post('scopedTeacher', `${base}/config`, {
+            // Con Accept JSON: sin él, fallar() de la sala contesta el mensaje como texto plano.
+            body: { sonidoDe: 'nadie', studentsCanWrite: false }, expectStatus: 400, headers: json,
+          });
+          assert(/opci.n de sonido/i.test(invalida.json?.error || ''),
+            `el 400 debería explicar la regla, dijo "${invalida.json?.error}"`);
+          const trasInvalida = await client.get('scopedTeacher', `${base}/poll`, { expectStatus: 200, headers: json });
+          assert(trasInvalida.json.settings.studentsCanWrite !== false,
+            'con sonidoDe inválido, settings.studentsCanWrite no puede haberse apagado: nada del pedido se aplicó');
+          assert(trasInvalida.json.settings.sonido === false, 'la sesión no puede haber cambiado con un 400');
+          const docenteTrasInvalida = await users.findOne({ _id: teacherOid });
+          assert(docenteTrasInvalida.salaSonido === docenteAntesInvalida.salaSonido
+              && docenteTrasInvalida.salaSonidoDe === docenteAntesInvalida.salaSonidoDe,
+            'un 400 no puede haber tocado la preferencia de sonido del docente en users');
+
+          // CA-34: el docente prende el sonido con la categoría "todos".
+          const puesto = await client.post('scopedTeacher', `${base}/config`, {
+            body: { sonido: true, sonidoDe: 'todos' }, expectStatus: 200,
+          });
+          assert(puesto.json.settings.sonido === true && puesto.json.settings.sonidoDe === 'todos',
+            'la respuesta de /config tiene que traer los valores nuevos en settings');
+
+          // CA-39 (parte 1): PRENDER el sonido no escribe en el chat. Se mide contra
+          // `seqAntesDeCA34` porque entre ese poll y este punto no pasó nada que escriba: los
+          // 403 de CA-38 devuelven antes de tocar nada, y el 400 de CA-37 valida antes de
+          // mutar nada (RN-06.3). Ojo: esta comparación tiene que hacerse ACÁ, antes de CA-36 —
+          // CA-36 manda dos `studentsCanWrite` que SÍ escriben su propio aviso de sistema
+          // (routes/rooms.js ~1219-1223), así que revisar `seqAntesDeCA34` después de CA-36
+          // encontraría esos dos mensajes y el criterio fallaría siempre por una razón ajena al
+          // sonido.
+          const sinMensajesTrasPrender = await client.get('scopedStudent', `${base}/poll?since=${seqAntesDeCA34}`, {
+            expectStatus: 200, headers: json,
+          });
+          assert(sinMensajesTrasPrender.json.mensajes.length === 0,
+            `prender el sonido no puede escribir en el chat, llegaron ${sinMensajesTrasPrender.json.mensajes.length} mensajes`);
+
+          const pollAlumno = await client.get('scopedStudent', `${base}/poll`, { expectStatus: 200, headers: json });
+          assert(pollAlumno.json.settings.sonido === true,
+            'el poll siguiente del alumno tiene que traer el sonido ya prendido');
+          assert(pollAlumno.json.settings.sonidoDe === 'todos', 'y la categoría elegida');
+
+          // CA-35: la preferencia quedó guardada en el docente.
+          const docTrasCA34 = await users.findOne({ _id: teacherOid });
+          assert(docTrasCA34.salaSonido === true && docTrasCA34.salaSonidoDe === 'todos',
+            'la preferencia del docente en users tiene que reflejar lo que acaba de elegir');
+
+          // CA-36: un /config que no toca el sonido no le mueve la preferencia; apagar el
+          // interruptor no le borra la categoría. Los dos toques de studentsCanWrite SÍ
+          // escriben su propio aviso de sistema — es a propósito, no es parte de lo que CA-39
+          // verifica.
+          await client.post('scopedTeacher', `${base}/config`, { body: { studentsCanWrite: false }, expectStatus: 200 });
+          const trasOtroCampo = await users.findOne({ _id: teacherOid });
+          assert(trasOtroCampo.salaSonido === true,
+            'un /config que solo toca otro interruptor no puede tocar la preferencia de sonido');
+          await client.post('scopedTeacher', `${base}/config`, { body: { studentsCanWrite: true }, expectStatus: 200 });
+
+          // Seq fresco, tomado DESPUÉS de los dos avisos de CA-36 y ANTES de apagar el sonido:
+          // así CA-39 (parte 2) prueba exactamente que APAGAR el sonido tampoco escribe nada,
+          // sin que los avisos de CA-36 se cuelen en la cuenta.
+          const pollAntesDeApagar = await client.get('scopedStudent', `${base}/poll`, { expectStatus: 200, headers: json });
+          const seqAntesDeApagar = pollAntesDeApagar.json.seq;
+
+          await client.post('scopedTeacher', `${base}/config`, { body: { sonido: false }, expectStatus: 200 });
+          const trasApagar = await users.findOne({ _id: teacherOid });
+          assert(trasApagar.salaSonido === false, 'apagar tiene que quedar guardado');
+          assert(trasApagar.salaSonidoDe === 'todos', 'apagar NO puede borrar la categoría elegida (RN-02)');
+
+          // CA-39 (parte 2): APAGAR el sonido tampoco escribe en el chat.
+          const sinMensajesTrasApagar = await client.get('scopedStudent', `${base}/poll?since=${seqAntesDeApagar}`, {
+            expectStatus: 200, headers: json,
+          });
+          assert(sinMensajesTrasApagar.json.mensajes.length === 0,
+            `apagar el sonido no puede escribir en el chat, llegaron ${sinMensajesTrasApagar.json.mensajes.length} mensajes`);
+
+          // CA-40: y tampoco audita nada.
+          const auditDespues = await auditlogs.countDocuments({ 'actor.userId': teacherOid });
+          assert(auditDespues === auditAntes,
+            `/config con sonido no puede auditar nada: había ${auditAntes}, ahora ${auditDespues}`);
+        } finally {
+          // La sala vuelve como la encontró este spec: apagada, con la categoría por defecto,
+          // y studentsCanWrite en true por si algún assert cortó a mitad de camino.
+          await client.post('scopedTeacher', `${base}/config`, {
+            body: { sonido: false, sonidoDe: SONIDO_DE_DEFAULT, studentsCanWrite: true },
+          });
+        }
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'sala-sonido-controles',
+    title: 'El control de la clase es solo de quien gestiona; la campana es de todos (CA-52, CA-53)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // CA-52 (RN-29): el control que decide el sonido de TODA la clase solo existe en el DOM
+      // de quien gestiona. No depende de si la sala está abierta en este instante: la solapa
+      // "En vivo" de la materia arranca siempre con un estado 'cerrada' escrito a mano
+      // (views/course.ejs:344-349) y se pone al día recién con el primer poll — lo que este
+      // criterio prueba es el `<% if (esGestor) %>` del partial, no el estado de la sala.
+      const materiaDocente = await client.get('scopedTeacher', `/courses/${state.courseId}`, { expectStatus: 200 });
+      assert(materiaDocente.text.includes('id="lrSonidoClase"'),
+        'la página de la materia del docente tiene que tener el control de sonido de la clase');
+
+      const materiaAlumno = await client.get('scopedStudent', `/courses/${state.courseId}`, { expectStatus: 200 });
+      assert(!materiaAlumno.text.includes('id="lrSonidoClase"'),
+        'el alumno no puede ver el control que decide el sonido de toda la clase');
+
+      const salaPreceptoria = await client.get('salaPreceptor', `/courses/${state.courseId}/sala`, { expectStatus: 200 });
+      assert(!salaPreceptoria.text.includes('id="lrSonidoClase"'),
+        'preceptoría no gestiona la sala: no puede ver el control de la clase');
+
+      // CA-53 (RN-30): la campana de cada participante está para TODOS los roles.
+      assert(materiaDocente.text.includes('id="lrCampana"'), 'al docente le falta su campana');
+      assert(materiaAlumno.text.includes('id="lrCampana"'), 'al alumno le falta su campana');
+      assert(salaPreceptoria.text.includes('id="lrCampana"'), 'a preceptoría le falta su campana');
+
+      const salaDireccion = await client.get('salaDirectivo',
+        `/courses/${state.courseId}/sala?modo=observacion`, { expectStatus: 200 });
+      assert(salaDireccion.text.includes('id="lrCampana"'), 'a dirección (observando) le falta su campana');
+    },
+  },
+  {
     id: 'sala-adjuntos',
     title: 'La docente comparte imagen y archivo; el alumno los ve; borrarlos los saca del disco',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
@@ -8526,8 +8696,8 @@ const specs = [
   {
     id: 'sala-acceso',
     title: 'Quién entra a la sala y quién no (alumno ajeno, dirección, preceptoría)',
-    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
-    async run({ client, state }) {
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env, assert }) {
       // El alumno del curso, sí.
       await client.get('scopedStudent', `/courses/${state.courseId}/sala`, { expectStatus: 200 });
       // El alumno autoregistrado en OTRA división, no — ni con el link.
@@ -8539,13 +8709,42 @@ const specs = [
       // Preceptoría con la división a cargo, sí.
       await client.get('salaPreceptor', `/courses/${state.courseId}/sala`, { expectStatus: 200 });
 
-      // Ni dirección ni preceptoría gestionan la sala: canWatchLive no concede canManage.
-      for (const actor of ['salaDirectivo', 'salaPreceptor']) {
-        await client.post(actor, `/courses/${state.courseId}/sala/abrir`,  { expectStatus: 403 });
-        await client.post(actor, `/courses/${state.courseId}/sala/cerrar`, { expectStatus: 403 });
-        await client.post(actor, `/courses/${state.courseId}/sala/config`, { body: { reactionsOn: false }, expectStatus: 403 });
-        await client.post(actor, `/courses/${state.courseId}/sala/silenciar/${state.scopedStudentId}`, { body: { muted: true }, expectStatus: 403 });
-        await client.delete(actor,  `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeId}`, { expectStatus: 403 });
+      // specs/sonido-chat-sala.spec.md — CA-38: dirección y preceptoría van acá (el alumno de
+      // CA-38 vive en 'sala-sonido', que es donde ya está armado el try/finally de esa sala).
+      const { MongoClient, ObjectId } = require('mongodb');
+      const idPorActor = { salaDirectivo: state.salaDirectivoId, salaPreceptor: state.salaPreceptorId };
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      await mongo.connect();
+      try {
+        const users = mongo.db().collection('users');
+
+        // Ni dirección ni preceptoría gestionan la sala: canWatchLive no concede canManage.
+        for (const actor of ['salaDirectivo', 'salaPreceptor']) {
+          await client.post(actor, `/courses/${state.courseId}/sala/abrir`,  { expectStatus: 403 });
+          await client.post(actor, `/courses/${state.courseId}/sala/cerrar`, { expectStatus: 403 });
+          await client.post(actor, `/courses/${state.courseId}/sala/config`, { body: { reactionsOn: false }, expectStatus: 403 });
+
+          // CA-38: tampoco tocan la política de sonido, ni el interruptor ni la categoría —
+          // los dos dan 403 (RN-06.1: el orden QUIÉN → QUÉ mira primero el rol, así que
+          // `sonidoDe: 'nadie'` no puede colarse como un 400 "opción inválida").
+          const antesDeSonido = await client.get('scopedStudent', `/courses/${state.courseId}/sala/poll`,
+            { expectStatus: 200, headers: { Accept: 'application/json' } });
+          await client.post(actor, `/courses/${state.courseId}/sala/config`, { body: { sonido: true }, expectStatus: 403 });
+          await client.post(actor, `/courses/${state.courseId}/sala/config`, { body: { sonidoDe: 'nadie' }, expectStatus: 403 });
+          const despuesDeSonido = await client.get('scopedStudent', `/courses/${state.courseId}/sala/poll`,
+            { expectStatus: 200, headers: { Accept: 'application/json' } });
+          assert(despuesDeSonido.json.settings.sonido === antesDeSonido.json.settings.sonido
+              && despuesDeSonido.json.settings.sonidoDe === antesDeSonido.json.settings.sonidoDe,
+            `CA-38: los 403 de sonido de ${actor} no pueden haber tocado la sesión`);
+          const actorTrasIntentos = await users.findOne({ _id: new ObjectId(idPorActor[actor]) });
+          assert(actorTrasIntentos.salaSonido !== true,
+            `CA-38: ${actor} no puede haber quedado con salaSonido:true en users tras sus 403`);
+
+          await client.post(actor, `/courses/${state.courseId}/sala/silenciar/${state.scopedStudentId}`, { body: { muted: true }, expectStatus: 403 });
+          await client.delete(actor,  `/courses/${state.courseId}/sala/mensajes/${state.salaMensajeId}`, { expectStatus: 403 });
+        }
+      } finally {
+        await mongo.close();
       }
 
       // Id malformado → 404, no 500.
@@ -8889,6 +9088,120 @@ const specs = [
         `/courses/${state.courseId}/sala/clases/${state.salaSessionId}`, { expectStatus: 200 });
       assert(!detalle.text.includes(titulo),
         'no debería escribirse ningún aviso en una sala que ya está cerrada');
+    },
+  },
+  {
+    // specs/sonido-chat-sala.spec.md. Va DESPUÉS de 'sala-crear-actividad-sin-sala' a
+    // propósito: es el único momento del smoke con la sala cerrada, y varias reglas de esta
+    // feature necesitan justamente eso (RN-07, la herencia al abrir en RN-05).
+    id: 'sala-sonido-herencia',
+    title: 'Con la sala cerrada no se elige; al abrir se hereda la última preferencia, leyendo la base y no el cache',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env, assert }) {
+      const { SONIDO_DE_DEFAULT } = require('../../public/js/salaSonido');
+      const { MongoClient, ObjectId } = require('mongodb');
+      const base = `/courses/${state.courseId}/sala`;
+      const json = { Accept: 'application/json' };
+      const teacherOid = new ObjectId(state.scopedTeacherId);
+
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      let sessionAbierta = false;
+      try {
+        await mongo.connect();
+        const users = mongo.db().collection('users');
+
+        // CA-41 (RN-07): con la sala cerrada no se puede elegir.
+        await client.post('scopedTeacher', `${base}/config`, { body: { sonido: true }, expectStatus: 409 });
+
+        // CA-33 (parte cerrada): el poll también trae sonido apagado con la sala cerrada.
+        const cerrada = await client.get('scopedStudent', `${base}/poll`, { expectStatus: 200, headers: json });
+        assert(cerrada.json.settings.sonido === false, 'con la sala cerrada, el poll tiene que traer sonido: false');
+
+        try {
+          // CA-43 (RN-05): un docente que nunca eligió abre con todo en su default.
+          await users.updateOne({ _id: teacherOid }, { $unset: { salaSonido: '', salaSonidoDe: '' } });
+          const abrir1 = await client.post('scopedTeacher', `${base}/abrir`, { expectStatus: 200 });
+          assert(abrir1.json.creada === true, 'tiene que crear una sesión nueva');
+          sessionAbierta = true;
+          const poll1 = await client.get('scopedStudent', `${base}/poll`, { expectStatus: 200, headers: json });
+          assert(poll1.json.settings.sonido === false, 'sin preferencia guardada, arranca apagado');
+          assert(poll1.json.settings.sonidoDe === SONIDO_DE_DEFAULT,
+            `sin preferencia guardada, la categoría tiene que ser "${SONIDO_DE_DEFAULT}"`);
+
+          // Prende el sonido, cierra, reabre: CA-42 — hereda lo que acaba de elegir.
+          await client.post('scopedTeacher', `${base}/config`, {
+            body: { sonido: true, sonidoDe: 'todos' }, expectStatus: 200,
+          });
+          await client.post('scopedTeacher', `${base}/cerrar`, { expectStatus: 200 });
+          sessionAbierta = false;
+          const abrir2 = await client.post('scopedTeacher', `${base}/abrir`, { expectStatus: 200 });
+          assert(abrir2.json.creada === true);
+          sessionAbierta = true;
+          const poll2 = await client.get('scopedStudent', `${base}/poll`, { expectStatus: 200, headers: json });
+          assert(poll2.json.settings.sonido === true && poll2.json.settings.sonidoDe === 'todos',
+            'CA-42: la sala nueva tiene que arrancar con la última elección del docente');
+
+          // CA-44 (RN-05): openSession es idempotente. Con la sala YA abierta en sonido:false,
+          // cambiar la preferencia en la base directo (sin pasar por /config) no le toca nada
+          // a la sesión que ya está abierta.
+          await client.post('scopedTeacher', `${base}/config`, { body: { sonido: false }, expectStatus: 200 });
+          await users.updateOne({ _id: teacherOid }, { $set: { salaSonido: true } });
+          const abrir3 = await client.post('scopedTeacher', `${base}/abrir`, { expectStatus: 200 });
+          assert(abrir3.json.creada === false, 'con la sala ya abierta, /abrir no puede crear otra sesión');
+          const poll3 = await client.get('scopedStudent', `${base}/poll`, { expectStatus: 200, headers: json });
+          assert(poll3.json.settings.sonido === false,
+            'una sala ya abierta no cambia sola porque la preferencia de la base cambió');
+
+          // CA-45 (RN-05): la herencia lee la BASE y no el cache de 45 s.
+          //
+          // Para que el caso discrimine de verdad, cache y base tienen que decir cosas
+          // DISTINTAS en el momento de abrir: si dijeran lo mismo (como pasaba antes, porque
+          // CA-44 dejó la base en `true` un instante antes de abrir3, y esa apertura ya cacheó
+          // ese `true`), este test pasaría igual aunque /abrir leyera `res.locals.user` en vez
+          // de hacer su propia query — no estaría probando nada.
+          //
+          // 1. El docente queda con salaSonido:false en la base A TRAVÉS de /config: eso
+          //    también invalida su entrada en el cache del worker que atendió el pedido
+          //    (routes/rooms.js: invalidateUser tras el updateOne de la preferencia).
+          await client.post('scopedTeacher', `${base}/config`, {
+            body: { sonido: false, sonidoDe: SONIDO_DE_DEFAULT }, expectStatus: 200,
+          });
+          // 2. Un pedido suyo cualquiera, con el cache YA invalidado: la consulta a la base
+          //    trae false y lo vuelve a cachear con ESE valor (no con el `true` de CA-44).
+          await client.get('scopedTeacher', '/courses', { expectStatus: 200 });
+          const conCacheEnFalse = await users.findOne({ _id: teacherOid });
+          assert(conCacheEnFalse.salaSonido === false,
+            'antes de la prueba, la base (y con ella el cache recién poblado) tienen que decir false');
+
+          // 3. Se cierra la sesión.
+          await client.post('scopedTeacher', `${base}/cerrar`, { expectStatus: 200 });
+          sessionAbierta = false;
+
+          // 4. Se pisa la preferencia DIRECTO en la base (sin pasar por /config, así el cache
+          //    del worker se queda con el `false` viejo y diverge de la base).
+          await users.updateOne({ _id: teacherOid }, { $set: { salaSonido: true } });
+
+          // 5. Dentro de los 45 s del cache: /abrir tiene que leer la BASE (true), no el cache
+          //    (false). Si leyera res.locals.user, la sala nacería con sonido:false y esta
+          //    aserción fallaría.
+          const abrir4 = await client.post('scopedTeacher', `${base}/abrir`, { expectStatus: 200 });
+          assert(abrir4.json.creada === true);
+          sessionAbierta = true;
+          const poll4 = await client.get('scopedStudent', `${base}/poll`, { expectStatus: 200, headers: json });
+          assert(poll4.json.settings.sonido === true,
+            'la apertura tiene que leer la preferencia de la BASE (true), no la del cache de 45 s del worker (false)');
+        } finally {
+          // La sala vuelve CERRADA (una que el smoke deja abierta aparece "en vivo" en los
+          // paneles) y la preferencia del docente en su default apagado.
+          if (sessionAbierta) await client.post('scopedTeacher', `${base}/cerrar`);
+          await users.updateOne(
+            { _id: teacherOid },
+            { $set: { salaSonido: false, salaSonidoDe: SONIDO_DE_DEFAULT } },
+          );
+        }
+      } finally {
+        await mongo.close();
+      }
     },
   },
   {

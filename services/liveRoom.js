@@ -13,6 +13,7 @@ const crypto   = require('crypto');
 const RoomSession  = require('../models/RoomSession');
 const RoomMessage  = require('../models/RoomMessage');
 const RoomPresence = require('../models/RoomPresence');
+const { SONIDO_DE, SONIDO_DE_DEFAULT } = require('../public/js/salaSonido');
 
 // ── Constantes ───────────────────────────────────────────────────────────────
 
@@ -595,13 +596,64 @@ function citaDeMensaje(msg) {
   };
 }
 
+// ── El sonido de aviso del chat ──────────────────────────────────────────────
+//
+// Ver specs/sonido-chat-sala.spec.md. configDeSonido y sonidoInicial son puras: la ruta hace
+// el save, acá solo se decide qué se escribe. La única query es la de leerPreferenciaSonido, y
+// con el modelo que le pasa la ruta.
+
+// Lee el cuerpo de POST /sala/config. No toca la base.
+//
+// Se valida ANTES de mutar nada (RN-06): con `sonidoDe` inválido la ruta responde 400 y
+// NINGÚN campo del mismo pedido se aplica, tampoco la palabra o las fotos que viajaban junto.
+// `sonido` se interpreta igual que los interruptores vecinos (`bandera()` de la ruta): `true`
+// o `'true'` prende, cualquier otra cosa apaga.
+function configDeSonido(body) {
+  const b = body || {};
+  const cambios = {};
+  if (b.sonido !== undefined) cambios.sonido = b.sonido === true || b.sonido === 'true';
+  if (b.sonidoDe !== undefined) {
+    if (!SONIDO_DE.includes(b.sonidoDe)) return { cambios: {}, error: 'INVALID_SOUND_OPTION' };
+    cambios.sonidoDe = b.sonidoDe;
+  }
+  return { cambios, error: null };
+}
+
+// Lo que hereda una sesión NUEVA de la preferencia de quien la abre (RN-05). `pref` es null
+// cuando no se la pudo leer: la sala se abre igual, con el sonido apagado.
+function sonidoInicial(pref) {
+  return {
+    sonido:   !!pref && pref.salaSonido === true,
+    sonidoDe: pref && SONIDO_DE.includes(pref.salaSonidoDe) ? pref.salaSonidoDe : SONIDO_DE_DEFAULT,
+  };
+}
+
+// La lectura de esa preferencia al abrir, ya pasada por sonidoInicial(). El modelo llega por
+// parámetro para que este archivo siga sin depender de User y para poder probar el caso en
+// que la lectura falla (CA-46) sin base.
+//
+// Si la lectura falla, la sala se abre igual y con el sonido apagado: abrir la clase no puede
+// depender de una preferencia de volumen. Por eso se traga CUALQUIER error, también el que
+// el modelo tire antes de devolver la promesa.
+async function leerPreferenciaSonido(UserModel, userId) {
+  let pref = null;
+  try {
+    pref = await UserModel.findById(userId).select('salaSonido salaSonidoDe').lean();
+  } catch (err) { /* queda en null: sonidoInicial() la lee como apagado */ }
+  return sonidoInicial(pref);
+}
+
 // ── Funciones con base de datos ──────────────────────────────────────────────
 
 const oid = (id) => new mongoose.Types.ObjectId(id.toString());
 
 // Abre la sala de una materia. IDEMPOTENTE: si ya hay una sesión abierta devuelve esa misma.
 // Dos docentes de la misma materia tocando "Abrir" a la vez es un caso real, no teórico.
-async function openSession(course, user, title = '') {
+//
+// `settings` va solo al `create`: una sesión que ya estaba abierta NO los cambia aunque quien
+// toca "Abrir" tenga otra preferencia de sonido. Y se recibe ya resuelto —esto no consulta
+// User—: la ruta lo lee de la base y no del cache de sesión (RN-05 de sonido-chat-sala).
+async function openSession(course, user, title = '', settings = undefined) {
   const abierta = await RoomSession.findOne({ course: course._id, closedAt: null });
   if (abierta) return { session: abierta, creada: false };
 
@@ -611,6 +663,7 @@ async function openSession(course, user, title = '') {
     division: course.division?._id || course.division,
     openedBy: user._id,
     title:    String(title || '').trim().slice(0, 80),
+    settings,
   });
 
   await systemMessage(session, `${user.name} abrió la sala.`);
@@ -1043,6 +1096,8 @@ module.exports = {
   minutosPresente, decidirPing, initial, pesoLegible, etiquetaExt, textoAdjunto,
   // permisos dentro de la sala (puros: reciben un contexto plano, no `req`)
   puedeEscribir, puedeCompartirImagen, puedeBorrarMensaje, citaDeMensaje,
+  // sonido de aviso del chat (puras, y la lectura al abrir con el modelo inyectado)
+  configDeSonido, sonidoInicial, leerPreferenciaSonido,
   // con base
   openSession, closeSession, closeStaleSessions, postMessage, postAttachment, systemMessage,
   resolverCita, apagarCitasDe,

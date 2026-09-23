@@ -527,6 +527,38 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-23 — Sonido de aviso en el chat de la sala en vivo
+
+Spec: `specs/sonido-chat-sala.spec.md` (aprobada el 22/09, CONFORME del revisor el 23/09). Se
+subió **sin las reacciones**, que siguen revertidas desde el 18/09: la feature se escribió encima
+de ellas y se portó a mano a `origin/main`.
+
+- **El docente decide.** En la sala abierta, el botón "Sonido: …" prende o apaga el aviso para
+  toda la clase y elige qué suena: *todos los mensajes* o *solo los del docente*. Quien gestiona
+  la sala escucha siempre a los demás, sea cual sea la categoría (D8).
+- **La elección es de la docente, no de la clase.** Se guarda en `User.salaSonido` /
+  `salaSonidoDe` y la próxima sala que abra, en cualquiera de sus cursos, arranca igual. Se lee
+  **de la base** al abrir (`live.leerPreferenciaSonido`), no del cache de 45 s por worker. Si la
+  lectura falla, la sala abre igual y sin sonido.
+- **Cada uno se lo baja.** La campana de cada participante (alumnos, docente, preceptoría,
+  dirección) tiene *Siempre*, *Solo si no tengo la sala al frente* y *Silenciar*. Vive en el
+  localStorage y vale para todas sus salas. Nadie puede prender lo que la docente apagó.
+- **Cuándo suena.** Solo mensajes nuevos de otros: ni los propios, ni el historial al entrar,
+  ni los del sistema ("creó la actividad" tampoco). Una tanda de varios mensajes suena **una sola
+  vez**, igual que volver con mensajes acumulados (D11), y hay **12 s mínimos** entre dos avisos.
+- **El sonido.** No hay archivo: son dos notas senoidales (880 y 1175 Hz, 260 ms, volumen 0,15)
+  generadas con WebAudio en `public/js/salaSonido.js`. Si el navegador todavía no dejó sonar, la
+  campana pasa a "Activar sonido".
+- **Costo.** Cero pedidos y cero consultas nuevas por vuelta del poll: los dos campos viajan en el
+  `settings` que el poll ya mandaba (~35 bytes). Con la pestaña oculta la sala sigue sin consultar.
+- ⚠️ **Toca la BD**: suma `salaSonido` y `salaSonidoDe` a `users`, y `settings.sonido` y
+  `settings.sonidoDe` a `roomsessions`. Sin migración: el campo que falta se lee como APAGADO
+  (`=== true`, al revés que los otros interruptores de la sala, que se leen con `!== false`).
+- Móvil: los menús se abren en el flujo, a lo ancho, debajo de 600 px, con opciones de 44 px.
+  Verificado a 375 y 360 px, en claro y en oscuro.
+- Tests: `tests/unit/salaSonido.test.js` y `salaSonidoServidor.test.js` (59) y tres escenarios de
+  smoke (`sala-sonido`, `sala-sonido-controles`, `sala-sonido-herencia`) más CA-38 en `sala-acceso`.
+
 ### 2026-09-17 — Fusión de cuentas, Fase 1b: el chico cuya cuenta se apaga se entera con qué correo entrar
 
 Cierra RN-13 de `specs/fusion-de-cuentas.spec.md`. Hasta ahora el botón de DNI duplicados no
