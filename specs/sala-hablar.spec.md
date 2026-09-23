@@ -715,8 +715,9 @@ tenga que tirar todo para atrás, a una versión que sí funcione".)*
 - **No hay migración.** Todo lo nuevo en la base son campos con default (`modules.hablar`,
   `transmision.soloVoz/vozAbierta/vozAbiertaAt`, cuatro contadores en `Transmision`). El código
   de la v1.0.107 los ignora al leer. No se borra ni se renombra nada.
-- **El cambio es UN commit de feature** (más el `chore: bump` del hook). `git revert` de ese commit
-  deja el código idéntico al de la v1.0.107.
+- **El cambio son los commits de la rama `feat/hablar`** (`cdbed1c` la feature, `ad8df00` la
+  pregunta del panel, más el de esta nota y el `chore: bump`). Revertirlos deja el código idéntico
+  al de la v1.0.107.
 - Los ajustes del VPS del 23/09 (`ufw` 40000-40999, `RTC_MAX_PORT`, `MEDIA_WORKERS=1`) **no hace
   falta deshacerlos**: la v1.0.107 lee las mismas variables y con el módulo apagado nadie abre
   un puerto.
@@ -738,7 +739,7 @@ las rutas contestan 403. **Es lo primero ante cualquier problema CON la voz.**
 **2 · Revertir el código (si algo falla aun con el módulo apagado).** Desde la carpeta del repo:
 
 ```bash
-git revert --no-edit <sha del commit de Hablar>
+git revert --no-edit f7e27b1..HEAD
 git push origin main
 ```
 
