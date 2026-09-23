@@ -265,3 +265,40 @@ test('una nota de 0 cuenta como nota en el resumen', () => {
   // el autocalificador sí produce ceros legítimos.
   assert.match(resumenGuardado([{ studentId: 'a', points: 0, feedback: '' }]), /1 nota/);
 });
+
+// ── RN-27b (specs/correccion-de-entregas.spec.md) — "Guardar sin devolver" ───────────────────
+//
+// En Modo Planilla el botón principal sigue siendo "Guardar y devolver" (RN-27b: si Guardar
+// dejara borradores, la docente que nunca cambia de modo dejaría de publicar notas sin
+// enterarse). Pero AHORA existe un segundo camino explícito, "Guardar sin devolver", y el
+// cartel de confirmación tiene que decirlo — si no, el docente ve "✓ Notas guardadas" y da por
+// hecho que el alumno ya las puede ver, cuando en realidad quedaron en borrador (RN-21/RN-22).
+//
+// Contrato propuesto por el tester (RN-27b no fija la firma exacta, solo el texto de ejemplo
+// "✓ 4 nota(s) guardada(s) — sin devolver todavía", y aclara que las ETIQUETAS son tachables):
+// `resumenGuardado(entries, opciones)`, con `opciones.devuelve` por defecto `true` (mantiene el
+// comportamiento de siempre para todos los llamadores existentes que no pasan el segundo
+// argumento) y `opciones.devuelve === false` agrega la advertencia.
+
+test('RN-27b — con devuelve:false, el resumen avisa que quedó sin devolver', () => {
+  const soloNota = [{ studentId: 'a', points: 7, feedback: '' }];
+  const texto = resumenGuardado(soloNota, { devuelve: false });
+  assert.match(texto, /nota/i);
+  assert.match(texto, /sin devolver/i,
+    'sin este aviso, el docente en Modo Corrector cree que ya publicó cuando en realidad guardó un borrador');
+});
+
+test('RN-27b — sin el segundo argumento, el comportamiento de siempre no cambia (default devuelve:true)', () => {
+  // Ningún llamador existente (Modo Planilla clásico, "Guardar y devolver") tiene por qué
+  // enterarse de que existe un segundo parámetro. Si este test falla, alguien cambió el
+  // default y le agregó la leyenda "sin devolver todavía" a cada guardado de toda la vida.
+  const soloNota = [{ studentId: 'a', points: 7, feedback: '' }];
+  assert.doesNotMatch(resumenGuardado(soloNota), /sin devolver/i);
+});
+
+test('RN-27b — "sin devolver todavía" también aplica a las devoluciones sin nota', () => {
+  const soloDev = [{ studentId: 'b', feedback: 'Ojo con la ortografía' }];
+  const texto = resumenGuardado(soloDev, { devuelve: false });
+  assert.match(texto, /devoluci/i);
+  assert.match(texto, /sin devolver/i);
+});

@@ -115,12 +115,20 @@ function recolectarDevoluciones(filas, max) {
  * Texto del cartelito de confirmación, según lo que se haya guardado.
  * Evita el "✓ Notas guardadas" cuando en realidad no se guardó nada.
  */
-function resumenGuardado(entries) {
+// `opciones.devuelve` es false cuando se guardó SIN devolver (el botón "Guardar sin
+// devolver" del Modo Planilla y el "Guardar" del Modo Corrector, RN-27b de
+// specs/correccion-de-entregas.spec.md). El default es true y eso mantiene intacto el texto
+// de siempre para todos los llamadores que no pasan el segundo argumento.
+//
+// Sin la advertencia, el docente lee "✓ 4 notas guardadas" y da por hecho que el alumno ya
+// las puede ver, cuando en realidad quedaron en borrador y no las ve nadie.
+function resumenGuardado(entries, opciones) {
   const conNota = entries.filter(e => e.points !== undefined).length;
   const soloDev = entries.length - conNota;
-  if (conNota && soloDev) return `✓ ${conNota} nota(s) y ${soloDev} devolución(es) guardadas`;
-  if (conNota)            return `✓ ${conNota} nota(s) guardada(s)`;
-  if (soloDev)            return `✓ ${soloDev} devolución(es) guardada(s)`;
+  const sinDevolver = opciones && opciones.devuelve === false ? ' — sin devolver todavía' : '';
+  if (conNota && soloDev) return `✓ ${conNota} nota(s) y ${soloDev} devolución(es) guardadas${sinDevolver}`;
+  if (conNota)            return `✓ ${conNota} nota(s) guardada(s)${sinDevolver}`;
+  if (soloDev)            return `✓ ${soloDev} devolución(es) guardada(s)${sinDevolver}`;
   return 'No había cambios para guardar';
 }
 

@@ -46,6 +46,16 @@ const RUTAS = [
   // /public. Esta lista es además de dónde sale la lista de carpetas que el backup tiene que
   // respaldar o excluir a propósito (tests/unit/backupCarpetas.test.js).
   { id: 'soe',       label: 'Material del gabinete (SOE)', dir: path.join(__dirname, '../archivos/soe') },
+  // Cache de previsualización del corrector de entregas: el PDF de un Office y el DXF de un
+  // plano DWG (specs/correccion-de-entregas.spec.md, RN-17). Es la ÚNICA carpeta que la app
+  // escribe y que el backup no guarda por decisión de diseño —va en CARPETAS_EXCLUIDAS, con su
+  // motivo—, así que este panel es el único lugar donde se la puede ver crecer.
+  //
+  // Y por eso tiene que estar acá aunque no se respalde: el test que cruza las dos listas
+  // (tests/unit/backupCarpetas.test.js) parte DE ESTE inventario. Una carpeta que no esté
+  // declarada en ningún lado no la extraña nadie, y esa es exactamente la forma en que se
+  // pierde una: no da error, deja de contarse.
+  { id: 'derivados', label: 'Vistas previas convertidas (cache)', dir: path.join(__dirname, '../archivos/derivados') },
 ];
 
 // 5 minutos, no 60 segundos: como el refresco ya no se paga dentro del request, el TTL solo

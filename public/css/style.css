@@ -1947,6 +1947,255 @@ select, .select-input {
 .att-preview-body { flex: 1; overflow: hidden; display: flex; }
 .att-preview-frame { width: 100%; height: 100%; border: none; display: block; background: white; }
 
+/* ─── Modo Corrector ─────────────────────────────────────────────────────────
+   specs/correccion-de-entregas.spec.md. El visor a la izquierda y el panel a la derecha, con
+   la lista de alumnos abajo. Todo lo de acá cuelga de `.modal-detail.is-corrector`, así que
+   la PLANILLA no cambia de ancho ni de nada: RN-01, no se saca nada. */
+.modo-toggle {
+  display: flex; gap: 2px; padding: 3px; border-radius: 22px;
+  background: var(--surface-2, rgba(0,0,0,.05));
+}
+.modo-toggle button {
+  display: flex; align-items: center; gap: 5px;
+  border: none; background: transparent; cursor: pointer;
+  padding: 5px 12px; border-radius: 20px;
+  font-size: 13px; font-weight: 500; color: var(--text-secondary);
+}
+.modo-toggle button:hover { color: var(--text-primary); }
+.modo-toggle button.activo { background: var(--surface); color: var(--primary); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.modo-toggle .material-symbols-outlined { font-size: 17px !important; }
+
+/* El modal se ensancha SOLO en Modo Corrector: la planilla sigue con su ancho de siempre. */
+.modal-detail.is-corrector { max-width: min(1500px, 98vw); }
+
+.corrector-filtros {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.corrector-chip {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary);
+  border-radius: 16px; padding: 4px 12px; font-size: 12.5px; cursor: pointer;
+}
+.corrector-chip:hover  { border-color: var(--primary); color: var(--primary); }
+.corrector-chip.activo { background: var(--primary); border-color: var(--primary); color: #fff; }
+.corrector-contador { font-size: 13px; color: var(--text-secondary); margin-left: 4px; }
+.corrector-flecha {
+  width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-secondary); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.corrector-flecha:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.corrector-flecha:disabled { opacity: .35; cursor: default; }
+
+/* 62 / 38, con el panel scrolleando por su cuenta: la altura la fija el visor, que es lo que
+   se mira. Abajo de 1024 px apila (el visor arriba), y abajo de 768 el toggle se esconde
+   —corregir en el teléfono no entra en esta pantalla y prometerlo sería peor (RN-06). */
+.corrector-layout { display: flex; gap: 16px; align-items: stretch; min-height: 460px; }
+.corrector-visor {
+  flex: 0 0 62%; min-width: 0; display: flex; flex-direction: column;
+  border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  background: #1f1f1f;
+}
+.corrector-panel {
+  flex: 1; min-width: 0; max-height: 70vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.corrector-lienzo { flex: 1; min-height: 0; display: flex; position: relative; }
+.corrector-lienzo .att-preview-frame { flex: 1; }
+
+/* Estado vacío DENTRO del visor (sin alumno en el filtro, o alumno sin archivos).
+   Va aparte de `.corrector-vacio` a propósito: aquel vive en el panel claro y usa
+   `var(--text-secondary)`, que sobre el #1f1f1f de `.corrector-visor` queda ilegible.
+   Es la regla del proyecto: un fondo declarado en hex obliga a declarar su color de texto
+   también en hex, porque las variables de tema siguen al fondo de la página, no a este.
+   #9aa0a6 sobre #1f1f1f da 6,1:1 — AA de sobra, y se mantiene igual en tema claro y oscuro
+   porque el visor es oscuro en los dos. */
+.corrector-visor-vacio {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 32px 20px; text-align: center; color: #9aa0a6;
+}
+.corrector-visor-vacio .material-symbols-outlined { font-size: 40px; opacity: .55; }
+.corrector-visor-vacio p { margin: 0; font-size: 13.5px; }
+/* #8e9398 y no un gris más apagado. Medido en el navegador sobre #1f1f1f: 5,32:1. El #7e8388
+   que parecía el natural daba 4,31 y NO llegaba al 4,5:1 de AA para texto normal — el mismo
+   error que ya se había corregido una vez en los grises de texto del proyecto, y que a ojo
+   no se distingue: los dos "se ven grises". Si alguien lo retoca, que vuelva a medirlo. */
+.corrector-visor-vacio .corrector-visor-vacio-sub { font-size: 12px; color: #8e9398; }
+.corrector-tira {
+  display: flex; gap: 6px; overflow-x: auto; padding: 8px;
+  background: rgba(255,255,255,.04); border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.corrector-archivo {
+  display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+  border: 1px solid rgba(255,255,255,.14); background: transparent;
+  color: rgba(255,255,255,.7); border-radius: 16px; padding: 4px 10px;
+  font-size: 12px; cursor: pointer; max-width: 200px;
+}
+.corrector-archivo.activo { background: rgba(255,255,255,.16); color: #fff; }
+.corrector-archivo .material-symbols-outlined { font-size: 15px !important; }
+.corrector-archivo-nombre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.corrector-visor-barra {
+  display: flex; justify-content: flex-end; padding: 8px;
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+.corrector-visor-barra .btn { color: rgba(255,255,255,.8); border-color: rgba(255,255,255,.2); }
+
+.corrector-alumno { display: flex; align-items: center; gap: 10px; }
+.corrector-estado {
+  margin-left: auto; font-size: 11.5px; padding: 3px 9px; border-radius: 12px;
+  background: var(--surface-2, rgba(0,0,0,.05)); color: var(--text-secondary); white-space: nowrap;
+}
+.corrector-estado.estado-devuelto                { background: #e6f4ea; color: #137333; }
+.corrector-estado.estado-borrador                { background: #fef7e0; color: #b06000; }
+.corrector-estado.estado-entregado_sin_calificar { background: #e8f0fe; color: #1967d2; }
+.corrector-datos { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--text-secondary); }
+.corrector-datos .material-symbols-outlined { font-size: 14px !important; vertical-align: -2px; }
+.corrector-aviso {
+  display: flex; align-items: center; gap: 6px;
+  background: #fef7e0; color: #b06000; border-radius: 8px; padding: 8px 10px; font-size: 12.5px;
+}
+.corrector-aviso .material-symbols-outlined { font-size: 16px !important; }
+
+.corrector-campo { display: flex; flex-direction: column; gap: 5px; }
+.corrector-campo label { font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .4px; }
+.corrector-campo input, .corrector-campo textarea {
+  width: 100%; border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; font-size: 14px; font-family: inherit;
+  background: var(--surface); color: var(--text-primary); resize: vertical;
+}
+.corrector-acciones { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* Primario del corrector. No usa .btn-primary a propósito: saveAllGrades busca el .btn-primary
+   del modal para deshabilitarlo mientras guarda, y son botones distintos. */
+.btn-devolver { background: var(--primary); color: #fff; border: 1px solid var(--primary); }
+.btn-devolver:hover { filter: brightness(1.06); }
+
+.corrector-bloque { border-top: 1px solid var(--border); padding-top: 12px; }
+.corrector-bloque h5 {
+  margin: 0 0 8px; font-size: 12px; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: .4px;
+}
+.corrector-vacio { font-size: 13px; color: var(--text-secondary); margin: 4px 0; }
+.corrector-archivo-fila { display: flex; align-items: center; gap: 6px; }
+.corrector-archivo-link {
+  flex: 1; display: flex; align-items: center; gap: 5px; min-width: 0;
+  border: none; background: transparent; color: var(--primary); cursor: pointer;
+  font-size: 13px; text-align: left; padding: 4px 0;
+}
+.corrector-archivo-link .material-symbols-outlined { font-size: 15px !important; }
+.corrector-bajar { color: var(--text-secondary); display: flex; }
+.corrector-bajar .material-symbols-outlined { font-size: 18px !important; }
+
+.corrector-hilo { display: flex; flex-direction: column; gap: 8px; max-height: 240px; overflow-y: auto; }
+.corrector-mensaje { border-radius: 10px; padding: 7px 10px; font-size: 13px; max-width: 92%; }
+.corrector-mensaje.mio  { background: #e8f0fe; align-self: flex-end; }
+.corrector-mensaje.suyo { background: var(--surface-2, rgba(0,0,0,.05)); align-self: flex-start; }
+/* El fondo va en hex, así que el color del texto también: si no, un tema oscuro pinta texto
+   claro sobre celeste claro y el comentario se vuelve ilegible. */
+.corrector-mensaje.mio, .corrector-mensaje.mio p { color: #202124; }
+.corrector-mensaje-quien { font-size: 11px; color: var(--text-secondary); }
+.corrector-mensaje.mio .corrector-mensaje-quien { color: #5f6368; }
+.corrector-mensaje p { margin: 2px 0 0; white-space: pre-wrap; word-break: break-word; }
+.corrector-comentar { display: flex; gap: 6px; margin-top: 8px; }
+.corrector-comentar textarea {
+  flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  font-size: 13px; font-family: inherit; background: var(--surface); color: var(--text-primary);
+  resize: vertical;
+}
+
+.corrector-version { font-size: 12.5px; color: var(--text-secondary); padding: 5px 0; border-bottom: 1px dashed var(--border); }
+.corrector-version.actual { color: var(--text-primary); }
+.corrector-version-archivo { display: block; color: var(--primary); font-size: 12.5px; margin-top: 2px; }
+
+.corrector-lista { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.corrector-item {
+  display: flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-primary);
+  border-radius: 18px; padding: 5px 12px; font-size: 12.5px; cursor: pointer; max-width: 220px;
+}
+.corrector-item:hover  { border-color: var(--primary); }
+.corrector-item.activo { border-color: var(--primary); background: #e8f0fe; color: #202124; }
+.corrector-item-nombre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* El color del ítem lo decide estadoDeEntrega(), la misma función que los chips y el filtro. */
+.corrector-item.estado-devuelto                { border-left: 4px solid #137333; }
+.corrector-item.estado-borrador                { border-left: 4px solid #ea8600; }
+.corrector-item.estado-entregado_sin_calificar { border-left: 4px solid #1967d2; }
+.corrector-item.estado-sin_entregar            { border-left: 4px solid var(--border); }
+
+/* El punto de "tiene algo sin leer". Va al lado del nombre y no como columna nueva: con
+   table-layout fijo, una sexta columna aprieta las cinco que ya están (RN-31c). */
+.corrector-punto {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: #ea8600; margin-right: 6px; vertical-align: middle; flex-shrink: 0;
+}
+.gt-summary-borradores .gt-summary-val { color: #b06000; }
+.gt-summary-sinleer .gt-summary-val    { color: #b06000; }
+.unread-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: #fef7e0; color: #b06000; border-radius: 10px; padding: 1px 7px; font-size: 11.5px;
+}
+
+@media (max-width: 1024px) {
+  .corrector-layout { flex-direction: column; }
+  .corrector-visor  { flex: 0 0 auto; height: 52vh; }
+  .corrector-panel  { max-height: none; }
+}
+@media (max-width: 768px) {
+  /* Corregir con el visor partido no entra en un teléfono, y ofrecerlo sería prometer algo
+     que no se puede usar: el toggle desaparece y queda la planilla (RN-06). */
+  .modo-toggle { display: none; }
+}
+
+/* ─── Visor de imagen: zoom, arrastre y rotación ───────────────────────────
+   El caso dominante de lo que se corrige: 13.337 de 15.136 entregas son fotos del trabajo
+   hecho a mano (censo del 2026-09-21, specs/correccion-de-entregas.spec.md RN-05b). Lo monta
+   montarVisorDeImagen() en public/js/course.js, y vale para las dos monturas: este overlay a
+   pantalla completa y el panel del Modo Corrector.
+   Los colores son los del overlay (fondo oscuro, texto en blancos translúcidos) y no los del
+   tema: acá adentro el fondo es negro, no `--surface`. */
+.visor-img { position: relative; width: 100%; height: 100%; display: flex; }
+.visor-img-lienzo {
+  flex: 1; overflow: hidden; display: flex; align-items: center; justify-content: center;
+  cursor: grab; touch-action: none; /* el arrastre lo maneja el visor, no el scroll */
+}
+.visor-img-lienzo.arrastrando { cursor: grabbing; }
+.visor-img-foto {
+  max-width: 100%; max-height: 100%; object-fit: contain;
+  border-radius: 6px; box-shadow: 0 2px 12px rgba(0,0,0,.3);
+  transform-origin: center center; user-select: none; -webkit-user-drag: none;
+}
+/* Ajustada a la pantalla = el max-width manda. En tamaño real el <img> no puede achicarse
+   solo, si no el zoom no sube de la escala que entró en la ventana. */
+.visor-img-lienzo:not(.esta-ajustada) .visor-img-foto { max-width: none; max-height: none; }
+.visor-img-barra {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 4px;
+  background: rgba(0,0,0,0.72); border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 24px; padding: 4px 8px; backdrop-filter: blur(4px);
+}
+.visor-img-barra button {
+  width: 34px; height: 34px; border-radius: 50%; border: none; cursor: pointer;
+  background: transparent; color: rgba(255,255,255,0.75);
+  display: flex; align-items: center; justify-content: center; transition: background .15s;
+}
+.visor-img-barra button:hover { background: rgba(255,255,255,0.16); color: #fff; }
+.visor-img-barra .material-symbols-outlined { font-size: 20px !important; }
+.visor-img-nivel {
+  min-width: 46px; text-align: center; font-size: 12px; color: rgba(255,255,255,0.7);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Visor de documentos de Office (la cadena de RN-13) ─────────────────────
+   Contenedor de los tres pasos: el iframe de Microsoft, el del PDF convertido, o el cartel
+   con el motivo. Lo llena montarVisorOffice() en public/js/course.js. */
+.visor-office { position: relative; width: 100%; height: 100%; display: flex; }
+.visor-office .att-preview-frame { flex: 1; }
+
+/* ─── Visor de planos (dxf-viewer) ──────────────────────────────────────
+   El canvas lo crea y lo redimensiona el propio visor (autoResize): acá solo se le da el
+   lugar. El fondo oscuro es el del visor, que dibuja las líneas en claro. */
+.visor-cad { position: relative; width: 100%; height: 100%; display: flex; }
+.visor-cad-lienzo { flex: 1; min-width: 0; min-height: 0; }
+.visor-cad-lienzo canvas { display: block; }
+
 /* ─── Attachment preview: loading + no-support states ─── */
 .att-preview-body { position: relative; }
 .att-preview-loading {

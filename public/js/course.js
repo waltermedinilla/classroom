@@ -8,7 +8,7 @@ window._activities = {};
 // blanco: el violeta de los planos da 6,4:1. El gris de fallback es para lo que no está acá.
 // DWG y DXF comparten color a propósito: son el mismo plano guardado de dos maneras, y darles
 // colores distintos sugeriría una diferencia que a quien mira la tarjeta no le importa.
-const EXT_COLOR = { PDF: '#ea4335', DOC: '#1a73e8', DOCX: '#1a73e8', XLS: '#34a853', XLSX: '#34a853', DWG: '#8430ce', DXF: '#8430ce' };
+const EXT_COLOR = { PDF: '#ea4335', DOC: '#1a73e8', DOCX: '#1a73e8', XLS: '#34a853', XLSX: '#34a853', PPT: '#c43e1c', PPTX: '#c43e1c', DWG: '#8430ce', DXF: '#8430ce' };
 
 // Configuración visual por tipo de actividad: etiqueta, ícono Material Symbols, color del thumb
 // color=null → usa el color del curso (window.COURSE_COLOR)
@@ -38,7 +38,12 @@ function getDomain(url) {
 function escAtt(s) { return String(s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;'); }
 
 function _isPdf(name)    { return /\.pdf$/i.test(name || ''); }
-function _isOffice(name) { return /\.(doc|docx|xls|xlsx)$/i.test(name || ''); }
+function _isOffice(name) { return /\.(doc|docx|xls|xlsx|ppt|pptx)$/i.test(name || ''); }
+// Los planos SÍ tienen visor desde el 2026-09-21 (§ I de specs/correccion-de-entregas.spec.md):
+// el .dxf se dibuja directo en el navegador y el .dwg se dibuja vía un .dxf derivado que
+// convierte el servidor con ODA. Antes de eso los dos caían al botón Descargar, y el
+// comentario de routes/activities.js todavía lo contaba así.
+function _isCad(name)    { return /\.(dwg|dxf)$/i.test(name || ''); }
 // Delega en la regla compartida (public/js/adjuntosActividad.js) para que el visor a pantalla
 // completa y la miniatura de la lista no puedan opinar distinto sobre el mismo archivo.
 function _isImage(name)  { return Adjuntos.esImagen(name); }
@@ -139,6 +144,328 @@ function handleAttachmentClick(el) {
   });
 }
 
+/**
+ * La cadena de previsualización de documentos de Office (RN-13), montada en `contenedor`:
+ *
+ *   paso 1 → URL FIRMADA → view.officeapps.live.com
+ *        ↓ si tarda más de 8 s, o el iframe no carga
+ *   paso 2 → PDF convertido con LibreOffice en el servidor
+ *        ↓ si no hay LibreOffice, el archivo es muy grande, o la conversión falla
+ *   paso 3 → botón Descargar, con el motivo en pantalla
+ *
+ * ⭐ EL BUG QUE ESTO ARREGLA, escrito para que no se vuelva a diagnosticar mal: hasta el
+ * 2026-09-21 acá se le pasaba a Microsoft la URL pública del archivo, y Microsoft lo DESCARGA
+ * desde sus propios servidores, sin nuestra cookie. Como /activities/submission-file/ está
+ * detrás de requireAuth —que REDIRIGE a /login—, Microsoft recibía un 302 a una página HTML y
+ * mostraba su error genérico: ninguno de los 296 .docx entregados se previsualizaba. Lo que
+ * lo mantuvo invisible es que el Office del DOCENTE sí funciona (sus adjuntos viven en
+ * /public, que se sirve sin guarda), o sea que funciona justo en el caso que uno prueba
+ * primero.
+ *
+ * Los 8 segundos son un setTimeout y no una lectura del iframe: view.officeapps.live.com es
+ * cross-origin, así que NO se puede saber si cargó bien o cargó un error. El disparador es
+ * el tiempo, no el contenido.
+ */
+async function montarVisorOffice(contenedor, att) {
+  const url    = att.url  || '';
+  const nombre = att.name || '';
+  const esEntrega = /^\/activities\/submission-file\//.test(url);
+  // Microsoft tiene que poder LLEGAR al archivo. Desde localhost no puede, y ahí el paso 1
+  // no es que "falla": no existe. Se va derecho al paso 2, que corre en esta misma máquina.
+  const microsoftLlega = !/localhost|127\.0\.0\.1/.test(window.location.hostname);
+
+  const cartel = (texto) => {
+    contenedor.innerHTML = `
+      <div class="att-preview-no-support">
+        <span class="material-symbols-outlined">description</span>
+        <p>No se puede mostrar el documento acá</p>
+        <p class="att-preview-no-support-sub"></p>
+      </div>`;
+    contenedor.querySelector('.att-preview-no-support-sub').textContent = texto;
+  };
+  const esperando = (texto) => {
+    contenedor.innerHTML = `
+      <div class="att-preview-loading">
+        <div class="att-preview-spinner"></div>
+        <p></p>
+      </div>`;
+    contenedor.querySelector('.att-preview-loading p').textContent = texto;
+  };
+
+  // ── Paso 2: el PDF que convierte LibreOffice ──────────────────────────────
+  // Cada motivo de fallo tiene su texto, y el texto sale del módulo compartido: el cartel de
+  // la pantalla y el mensaje de la API dicen lo mismo porque SON lo mismo (RN-20).
+  const MOTIVO_POR_STATUS_OFFICE = { 404: 'archivo_no_esta', 413: 'archivo_muy_grande', 422: 'conversion_fallida', 501: 'sin_conversor' };
+  async function pasoDos() {
+    if (!esEntrega) return cartel(Correccion.MOTIVOS.formato_sin_visor);
+    esperando('Convirtiendo el documento…');
+    // HEAD: dispara la conversión (o la encuentra cacheada) sin bajar el PDF dos veces.
+    const sonda = await fetch(url + '/pdf', { method: 'HEAD' }).catch(() => null);
+    if (!sonda || !sonda.ok) {
+      if (sonda && sonda.status === 409) return cartel('Estamos preparando la vista previa… Probá de nuevo en unos segundos.');
+      const motivo = MOTIVO_POR_STATUS_OFFICE[sonda && sonda.status] || 'conversion_fallida';
+      return cartel(Correccion.textoDeMotivo(motivo, { bytes: att.size, tope: 15 * 1024 * 1024 }));
+    }
+    contenedor.innerHTML = '<iframe class="att-preview-frame"></iframe>';
+    contenedor.querySelector('iframe').src = url + '/pdf#toolbar=1';
+  }
+
+  // ── Paso 1: Microsoft, con la URL firmada ─────────────────────────────────
+  if (!microsoftLlega) return pasoDos();
+
+  let publico = window.location.origin + url;
+  if (esEntrega) {
+    esperando('Preparando la vista previa…');
+    const r = await fetch(url + '/enlace', { method: 'POST' }).catch(() => null);
+    // El alumno NO puede emitir enlaces firmados, ni de lo suyo (RN-15): para él la cadena
+    // arranca en el paso 2, sin un cartel de error que no tendría nada que explicarle.
+    if (!r || !r.ok) return pasoDos();
+    const datos = await r.json().catch(() => null);
+    if (!datos || !datos.url) return pasoDos();
+    publico = window.location.origin + datos.url;
+  }
+
+  esperando('Cargando previsualización…');
+  const marco = document.createElement('iframe');
+  marco.className = 'att-preview-frame';
+  marco.style.opacity = '0';
+  marco.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(publico);
+
+  const reloj = setTimeout(() => { if (contenedor.isConnected) pasoDos(); }, 8000);
+  marco.onload = () => {
+    clearTimeout(reloj);
+    const cargando = contenedor.querySelector('.att-preview-loading');
+    if (cargando) cargando.remove();
+    marco.style.opacity = '1';
+  };
+  contenedor.appendChild(marco);
+}
+
+// El bundle del visor de planos (dxf-viewer + three.js, npm run build:dxf) pesa 1,2 MB, así
+// que NO va en el <script> de course.ejs: se inyecta la PRIMERA vez que alguien abre un
+// plano, y una sola vez por pestaña. La promesa cacheada evita que dos clics seguidos
+// inyecten dos <script>.
+let _bundleDxf = null;
+function cargarVisorDxf() {
+  if (window.DxfViewer) return Promise.resolve(window.DxfViewer);
+  if (!_bundleDxf) {
+    _bundleDxf = new Promise((resolve, reject) => {
+      const tag = document.createElement('script');
+      tag.src = '/js/dxf-viewer.bundle.js';
+      tag.onload  = () => resolve(window.DxfViewer);
+      // Si el bundle no está (un despliegue que se lo olvidó), se reintenta en el próximo
+      // clic en vez de dejar la promesa rechazada para siempre.
+      tag.onerror = () => { _bundleDxf = null; reject(new Error('no se pudo cargar el visor de planos')); };
+      document.head.appendChild(tag);
+    });
+  }
+  return _bundleDxf;
+}
+
+// Qué motivo de RN-20 le corresponde a cada respuesta del derivado. El texto NO se escribe
+// acá: sale de public/js/correccion.js, para que el cartel de la pantalla y el mensaje de la
+// API digan lo mismo porque SON lo mismo.
+const MOTIVO_POR_STATUS = { 404: 'archivo_no_esta', 413: 'archivo_muy_grande', 422: 'conversion_fallida', 501: 'sin_conversor_cad' };
+
+/**
+ * Visor de planos: dibuja un .dxf (directo) o un .dwg (vía el .dxf derivado del servidor).
+ *
+ * ⚠️ TODO lo que se escriba en pantalla desde acá va por textContent, NUNCA por innerHTML
+ * (RN-40). Un .dxf es TEXTO PLANO del alumno —nombres de capa, cotas, entidades TEXT— y el
+ * derivado es igual de suyo: lo produjo ODA a partir de su archivo, no lo escribió el
+ * servidor. Pasar por un conversor no sanitiza nada.
+ */
+async function montarVisorCad(contenedor, att) {
+  const nombre = att.name || '';
+  const url    = att.url  || '';
+  const esDwg  = /\.dwg$/i.test(nombre);
+
+  // El molde es markup NUESTRO y constante; lo que viene de afuera (el motivo del error, que
+  // puede nombrar el archivo del alumno) entra después por textContent y nunca por innerHTML.
+  const cartel = (texto) => {
+    contenedor.innerHTML = `
+      <div class="att-preview-no-support">
+        <span class="material-symbols-outlined">architecture</span>
+        <p>No se puede mostrar el plano acá</p>
+        <p class="att-preview-no-support-sub"></p>
+      </div>`;
+    contenedor.querySelector('.att-preview-no-support-sub').textContent = texto;
+  };
+
+  const esperando = (texto) => {
+    contenedor.innerHTML = `
+      <div class="att-preview-loading">
+        <div class="att-preview-spinner"></div>
+        <p></p>
+      </div>`;
+    contenedor.querySelector('.att-preview-loading p').textContent = texto;
+  };
+
+  // Los topes los decide la función pura, no esta pantalla: son los mismos que aplica el
+  // servidor y salen de lo medido sobre los planos reales (RN-41).
+  const decision = Correccion.renderVisor({ name: nombre, size: att.size || 0 },
+    { conversionCadDisponible: true, dxfDerivadoListo: !esDwg });
+  if (decision.motivo) return cartel(decision.texto);
+
+  esperando('Preparando el plano…');
+
+  let urlDxf = url;
+  if (esDwg) {
+    // El derivado solo existe para las ENTREGAS: es la única ruta que sabe convertirlo.
+    if (!/^\/activities\/submission-file\//.test(url)) {
+      return cartel(Correccion.MOTIVOS.formato_sin_visor);
+    }
+    urlDxf = url + '/dxf';
+    // HEAD y no GET: alcanza para saber si la conversión salió bien y no baja el archivo dos
+    // veces. El status dice POR QUÉ falló, y cada motivo tiene su texto.
+    const sonda = await fetch(urlDxf, { method: 'HEAD' }).catch(() => null);
+    if (!sonda || !sonda.ok) {
+      const motivo = MOTIVO_POR_STATUS[sonda && sonda.status] || 'conversion_fallida';
+      return cartel(Correccion.textoDeMotivo(motivo,
+        { bytes: att.size, tope: Correccion.TOPES.entradaDwg }));
+    }
+  }
+
+  let modulo;
+  try {
+    modulo = await cargarVisorDxf();
+  } catch {
+    return cartel('El visor de planos no está disponible. Descargalo para abrirlo con AutoCAD.');
+  }
+
+  // El visor de planos dibuja con WebGL, que NO está en todas las máquinas: falta en equipos
+  // viejos, con los drivers desactualizados, o con la aceleración por hardware apagada. Se
+  // pregunta ANTES de instanciar el visor porque el error que tira three.js al no poder crear
+  // el contexto es indistinguible de un DXF roto, y confundirlos manda al docente a pedirle
+  // al alumno que vuelva a subir un archivo que está perfecto.
+  if (!hayWebgl()) return cartel(Correccion.MOTIVOS.sin_webgl);
+
+  contenedor.textContent = '';
+  const lienzo = document.createElement('div');
+  lienzo.className = 'visor-cad-lienzo';
+  contenedor.appendChild(lienzo);
+
+  try {
+    const visor = new modulo.DxfViewer(lienzo, { autoResize: true });
+    contenedor._visorCad = visor;   // para poder destruirlo al cerrar
+    await visor.Load({ url: urlDxf });
+  } catch {
+    // Descartado WebGL más arriba, acá queda el archivo: un DXF roto o algo que no es un plano.
+    cartel(Correccion.MOTIVOS.conversion_fallida);
+  }
+}
+
+// ¿Esta máquina puede dibujar con WebGL? Se consulta una sola vez y se cachea: crear un
+// contexto es caro y el resultado no cambia mientras la pestaña viva.
+let _webglOk = null;
+function hayWebgl() {
+  if (_webglOk !== null) return _webglOk;
+  try {
+    const c = document.createElement('canvas');
+    _webglOk = !!(c.getContext('webgl2') || c.getContext('webgl'));
+  } catch {
+    _webglOk = false;
+  }
+  return _webglOk;
+}
+
+/**
+ * Visor de imagen con zoom, arrastre y rotación, montado dentro de `contenedor`.
+ *
+ * Es CSS `transform` sobre un <img> y nada más: ni librerías, ni canvas, ni servidor. Y
+ * soporta los cinco formatos de imagen que decide Adjuntos.esImagen(), que es la regla
+ * compartida y no se duplica acá.
+ *
+ * ⚠️ La ROTACIÓN ES SOLO DE LA VISTA: no reescribe el archivo del alumno ni guarda nada.
+ * Enderezar la foto para leerla es del que corrige; tocar la entrega es otra cosa y necesita
+ * su propia decisión (specs/correccion-de-entregas.spec.md, "Lo que queda afuera").
+ */
+function montarVisorDeImagen(contenedor, url, nombre) {
+  let escala = 1, giro = 0, x = 0, y = 0, ajustada = true;
+
+  contenedor.innerHTML = `
+    <div class="visor-img-lienzo">
+      <img class="visor-img-foto" src="${escAtt(url)}" alt="${escAtt(nombre || '')}" draggable="false">
+    </div>
+    <div class="visor-img-barra">
+      <button type="button" data-accion="menos" title="Alejar (rueda del mouse)"><span class="material-symbols-outlined">zoom_out</span></button>
+      <span class="visor-img-nivel">100%</span>
+      <button type="button" data-accion="mas" title="Acercar (rueda del mouse)"><span class="material-symbols-outlined">zoom_in</span></button>
+      <button type="button" data-accion="izq" title="Rotar a la izquierda"><span class="material-symbols-outlined">rotate_left</span></button>
+      <button type="button" data-accion="der" title="Rotar a la derecha"><span class="material-symbols-outlined">rotate_right</span></button>
+      <button type="button" data-accion="ajustar" title="Ajustar a la pantalla / tamaño real (doble clic en la foto)"><span class="material-symbols-outlined">fit_screen</span></button>
+    </div>`;
+
+  const lienzo = contenedor.querySelector('.visor-img-lienzo');
+  const foto   = contenedor.querySelector('.visor-img-foto');
+  const nivel  = contenedor.querySelector('.visor-img-nivel');
+
+  function pintar() {
+    foto.style.transform = `translate(${x}px, ${y}px) scale(${escala}) rotate(${giro}deg)`;
+    nivel.textContent = Math.round(escala * 100) + '%';
+    lienzo.classList.toggle('esta-ajustada', ajustada);
+  }
+  function zoom(factor, centro) {
+    const previa = escala;
+    escala = Math.min(8, Math.max(0.1, escala * factor));
+    ajustada = false;
+    // Si el zoom viene de la rueda, se acerca HACIA EL PUNTERO: en una foto ampliada 4 veces,
+    // acercar siempre al centro obliga a arrastrar después de cada rueda.
+    if (centro) {
+      const caja = lienzo.getBoundingClientRect();
+      const dx = centro.clientX - (caja.left + caja.width / 2) - x;
+      const dy = centro.clientY - (caja.top + caja.height / 2) - y;
+      x -= dx * (escala / previa - 1);
+      y -= dy * (escala / previa - 1);
+    }
+    pintar();
+  }
+  function ajustar() {
+    escala = 1; x = 0; y = 0; ajustada = !ajustada;
+    pintar();
+  }
+
+  contenedor.querySelectorAll('[data-accion]').forEach(b => {
+    b.addEventListener('click', () => {
+      const a = b.dataset.accion;
+      if (a === 'mas')     zoom(1.25);
+      if (a === 'menos')   zoom(1 / 1.25);
+      if (a === 'izq')     { giro -= 90; pintar(); }
+      if (a === 'der')     { giro += 90; pintar(); }
+      if (a === 'ajustar') ajustar();
+    });
+  });
+
+  lienzo.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    zoom(e.deltaY < 0 ? 1.15 : 1 / 1.15, e);
+  }, { passive: false });
+
+  lienzo.addEventListener('dblclick', ajustar);
+
+  // Arrastrar para moverse adentro de la foto. Con pointer events anda igual con mouse y con
+  // dedo, y setPointerCapture evita que soltar afuera del visor deje el arrastre pegado.
+  let arrastrando = null;
+  lienzo.addEventListener('pointerdown', (e) => {
+    arrastrando = { px: e.clientX, py: e.clientY };
+    lienzo.setPointerCapture(e.pointerId);
+    lienzo.classList.add('arrastrando');
+  });
+  lienzo.addEventListener('pointermove', (e) => {
+    if (!arrastrando) return;
+    x += e.clientX - arrastrando.px;
+    y += e.clientY - arrastrando.py;
+    arrastrando = { px: e.clientX, py: e.clientY };
+    ajustada = false;
+    pintar();
+  });
+  const soltar = () => { arrastrando = null; lienzo.classList.remove('arrastrando'); };
+  lienzo.addEventListener('pointerup', soltar);
+  lienzo.addEventListener('pointercancel', soltar);
+
+  pintar();
+}
+
 // Abre el previsualizador:
 //  - PDF        → iframe inline en modal pantalla completa + botón Descargar
 //  - YouTube    → iframe embed en modal pantalla completa + botón Abrir en YouTube
@@ -151,6 +478,7 @@ function openAttachmentPreview(att) {
   const isPdf    = att.type === 'file' && _isPdf(name);
   const isOffice = att.type === 'file' && _isOffice(name);
   const isImage  = att.type === 'file' && _isImage(name);
+  const isCad    = att.type === 'file' && _isCad(name);
   const isYt     = _isYoutube(url);
   // '' si no es un link de Google embebible → cae en el window.open de siempre
   const gDriveUrl = att.type === 'link' ? _gDriveEmbedUrl(url) : '';
@@ -167,40 +495,19 @@ function openAttachmentPreview(att) {
     bodyContent = `<iframe src="${url}#toolbar=1" class="att-preview-frame"></iframe>`;
 
   } else if (isOffice) {
-    // Microsoft Office Online necesita la URL absoluta pública del archivo
-    const fullUrl = window.location.origin + url;
-    const isLocal = /localhost|127\.0\.0\.1/.test(window.location.hostname);
-
-    if (isLocal) {
-      // En entorno local la URL no es accesible desde internet → aviso + descarga
-      bodyContent = `<div class="att-preview-no-support">
-        <span class="material-symbols-outlined">cloud_off</span>
-        <p>Previsualización no disponible en entorno local</p>
-        <p class="att-preview-no-support-sub">
-          El visor de Microsoft Office requiere que el archivo sea accesible
-          públicamente desde internet. Descargá el archivo para abrirlo.
-        </p>
-        <a href="${url}" download="${escAtt(name)}" class="att-preview-btn" style="margin-top:8px">
-          <span class="material-symbols-outlined">download</span> Descargar
-        </a>
-      </div>`;
-    } else {
-      // Visor de Microsoft Office Online — gratis, sin registro, funciona en producción
-      const src = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fullUrl)}`;
-      bodyContent = `
-        <div class="att-preview-loading" id="attOffLoad">
-          <div class="att-preview-spinner"></div>
-          <p>Cargando previsualización…</p>
-        </div>
-        <iframe src="${src}" class="att-preview-frame" style="opacity:0"
-          onload="var l=document.getElementById('attOffLoad');if(l)l.remove();this.style.opacity='1'">
-        </iframe>`;
-    }
+    // La cadena de Office se monta después (montarVisorOffice): el paso 1 necesita pedirle
+    // un enlace firmado al servidor, y eso es una request, no HTML.
+    bodyContent = '<div class="visor-office"></div>';
 
   } else if (isImage) {
-    bodyContent = `<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;padding:20px;overflow:auto">
-      <img src="${url}" alt="${escAtt(name)}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:6px;box-shadow:0 2px 12px rgba(0,0,0,.3)">
-    </div>`;
+    // El visor de imagen se MONTA después (montarVisorDeImagen), no se arma acá: necesita
+    // listeners, no sólo HTML. Acá queda el contenedor vacío.
+    //
+    // ⭐ Por qué la foto tiene visor propio y no un <img> pelado: el 88% de lo que se
+    // entrega en esta escuela son fotos del trabajo hecho a mano (13.337 de 15.136 archivos,
+    // censo del 2026-09-21). Un <img> con max-width alcanza para MIRAR un adjunto y no
+    // alcanza para CORREGIR un ejercicio manuscrito fotografiado de lejos y torcido.
+    bodyContent = '<div class="visor-img" data-src="' + escAtt(url) + '"></div>';
 
   } else if (isYt) {
     const vid = _ytId(url);
@@ -215,6 +522,12 @@ function openAttachmentPreview(att) {
     // por eso el botón "Abrir en Google Drive" de la barra superior es la salida para el alumno.
     bodyContent = `<iframe src="${gDriveUrl}" class="att-preview-frame"
       allow="autoplay" allowfullscreen></iframe>`;
+
+  } else if (isCad) {
+    // El plano se dibuja en el NAVEGADOR, que ya tiene la cookie de sesión: el servidor solo
+    // produce el .dxf derivado cuando el original es un .dwg. Se monta después, como la
+    // imagen, porque necesita fetch y un bundle que se carga la primera vez (RN-43).
+    bodyContent = '<div class="visor-cad"></div>';
 
   } else if (att.type === 'file') {
     // Formato sin previewer (ej: ZIP). Muestra aviso + botón para descargar.
@@ -262,6 +575,18 @@ function openAttachmentPreview(att) {
   document.body.appendChild(overlay);
   document.body.style.overflow = 'hidden';
 
+  // Las dos monturas del visor de imagen (esta y la del panel del corrector) comparten la
+  // misma función: un archivo no puede verse de una manera en el overlay y de otra en el
+  // panel. Por eso el docente que nunca cambia de modo TAMBIÉN gana el zoom y la rotación.
+  const cajaImagen = overlay.querySelector('.visor-img');
+  if (cajaImagen) montarVisorDeImagen(cajaImagen, cajaImagen.dataset.src, name);
+
+  const cajaCad = overlay.querySelector('.visor-cad');
+  if (cajaCad) montarVisorCad(cajaCad, att);
+
+  const cajaOffice = overlay.querySelector('.visor-office');
+  if (cajaOffice) montarVisorOffice(cajaOffice, att);
+
   const onEsc = e => { if (e.key === 'Escape') { closeAttPreview(); document.removeEventListener('keydown', onEsc); } };
   overlay._onEsc = onEsc;
   document.addEventListener('keydown', onEsc);
@@ -271,6 +596,11 @@ function closeAttPreview() {
   const overlay = document.querySelector('.att-preview-overlay');
   if (!overlay) return;
   if (overlay._onEsc) document.removeEventListener('keydown', overlay._onEsc);
+  // El visor de planos se apaga a mano: adentro tiene un contexto WebGL, y el navegador
+  // permite unos pocos por pestaña. Sin esto, abrir y cerrar planos termina dejando la
+  // pestaña sin poder dibujar ninguno más.
+  const cajaCad = overlay.querySelector('.visor-cad');
+  if (cajaCad && cajaCad._visorCad) { try { cajaCad._visorCad.Destroy(); } catch {} }
   overlay.remove();
   document.body.style.overflow = '';
 }
@@ -1189,6 +1519,16 @@ function addActivityTabCard(act) {
       </span>`
     : '';
 
+  // Tercer chip, al lado de los otros dos y con el mismo formato: cuántas ENTREGAS tienen
+  // algo sin leer en el hilo privado (RN-31c). Solo aparece si hay algo — un chip en 0 sería
+  // ruido en las 30 tarjetas que no tienen nada. En ámbar, que es el color de "te toca a vos".
+  const sinLeerChip = (act.comentariosSinLeer > 0)
+    ? `<span class="unread-chip" data-actid="${act._id}" title="Entregas con comentarios sin leer">
+        <span class="material-symbols-outlined" style="font-size:13px;vertical-align:-3px">forum</span>
+        ${act.comentariosSinLeer} sin leer
+      </span>`
+    : '';
+
   const div = document.createElement('div');
   // act-no-visible atenúa la tarjeta: de un vistazo se distingue lo que el alumno ya tiene
   // de lo que todavía no. Sigue siendo clickeable y editable como cualquier otra.
@@ -1208,6 +1548,7 @@ function addActivityTabCard(act) {
     <div class="act-status-col">
       ${viewedChip}
       ${submittedChip}
+      ${sinLeerChip}
     </div>
     <div class="act-actions-col">
       <button class="icon-btn act-eye-btn${seVe ? '' : ' is-off'}" onclick="toggleActivityVisibility('${act._id}')"
@@ -1975,6 +2316,10 @@ async function loadTeacherDetail(activityId) {
   // Solo cuenta a los alumnos que siguen inscriptos: si uno se dio de baja, su registro de
   // vista sigue en la base pero no aparece en la tabla, y el resumen tiene que coincidir.
   const viewed    = studentGrades.filter(s => viewMap[s._id]).length;
+  // Lo guardado que el alumno TODAVÍA NO VE. Va en ámbar y solo si hay: es el número que le
+  // falta al docente que corrigió en borrador y se olvidó de devolver (RN-27b).
+  const borradores = studentGrades.filter(s => s.points != null && !Correccion.estaDevuelta(s)).length;
+  const sinLeer    = Object.values(subMap).filter(sub => sub.unreadForTeacher).length;
 
   if (studentGrades.length === 0) {
     html += '<div class="empty-state small" style="margin-top:24px"><p>No hay alumnos inscriptos</p></div>';
@@ -1985,6 +2330,12 @@ async function loadTeacherDetail(activityId) {
       <span><span class="gt-summary-val" style="color:var(--primary)">${submitted}</span>/<span>${studentGrades.length}</span> entregaron</span>
       <span class="gt-summary-sep">·</span>
       <span><span class="gt-summary-val" style="color:var(--text-secondary)">${viewed}</span>/<span>${studentGrades.length}</span> vieron</span>
+      ${borradores ? `<span class="gt-summary-sep">·</span>
+      <span class="gt-summary-borradores" title="Notas guardadas que el alumno todavía no ve">
+        <span class="gt-summary-val">${borradores}</span> sin devolver</span>` : ''}
+      ${sinLeer ? `<span class="gt-summary-sep">·</span>
+      <span class="gt-summary-sinleer" title="Entregas con comentarios sin leer">
+        <span class="gt-summary-val">${sinLeer}</span> con comentarios sin leer</span>` : ''}
     </div>
     <div class="grade-table-wrap"><table class="grade-table">
       <thead><tr>
@@ -2055,7 +2406,8 @@ async function loadTeacherDetail(activityId) {
           <div class="gt-student-cell">
             <div class="avatar" style="width:34px;height:34px;font-size:15px;flex-shrink:0">${sg.name.charAt(0).toUpperCase()}</div>
             <div style="min-width:0">
-              <div class="gt-student-name">${sg.name}</div>
+              <div class="gt-student-name">${subMap[sg._id]?.unreadForTeacher
+                ? '<span class="corrector-punto" title="Tiene comentarios sin leer"></span>' : ''}${sg.name}</div>
               <div class="gt-student-email">${sg.email}</div>
             </div>
           </div>
@@ -2119,21 +2471,599 @@ async function loadTeacherDetail(activityId) {
         <button class="btn btn-outline" onclick="exportGrades('${activity._id}')">
           <span class="material-symbols-outlined">download</span> Exportar Excel
         </button>
+        <button class="btn btn-outline" onclick="saveAllGrades('${activity._id}',${activity.points || 9999},{devolver:false})"
+          title="Guarda las notas como borrador: el alumno todavía no las ve">
+          <span class="material-symbols-outlined">save</span> Guardar sin devolver
+        </button>
         <button class="btn btn-primary" onclick="saveAllGrades('${activity._id}',${activity.points || 9999})">
-          <span class="material-symbols-outlined">save</span> Guardar
+          <span class="material-symbols-outlined">save</span> Guardar y devolver
         </button>
       </div>`;
   }
 
-  body.innerHTML = html;
+  // Los dos modos leen del MISMO objeto en memoria: cambiar de vista no recarga nada (RN-04),
+  // porque los tres fetch de arriba ya corrieron. La planilla queda envuelta pero intacta
+  // (RN-01: no se saca nada), y al lado nace el contenedor vacío del corrector.
+  window._detalleActual = { activity, studentGrades, subMap, viewMap };
+  body.innerHTML = `<div id="modoPlanilla">${html}</div><div id="modoCorrector" hidden></div>`;
+
+  // El toggle solo existe para quien gestiona la materia: este mismo modal lo abre el alumno.
+  const toggle = document.getElementById('modoToggle');
+  if (toggle) toggle.hidden = studentGrades.length === 0;
+  aplicarModoCorreccion(modoCorreccionGuardado(), { guardar: false });
+}
+
+/* ─── Modo Corrector ─────────────────────────────────────────────────────────
+   specs/correccion-de-entregas.spec.md. Corregir un alumno a la vez, con la entrega abierta
+   a la izquierda y la nota, la devolución y los comentarios a la derecha.
+
+   ⚠️ RN-01 es la regla que gobierna todo este bloque: NO SE SACA NADA. La planilla queda
+   entera y es el modo por defecto; el corrector es otra vista de LOS MISMOS datos, que ya
+   están en memoria (window._detalleActual) y no se vuelven a pedir al cambiar de modo. */
+
+// Lo que el corrector tiene abierto. `orden` se CONGELA al entrar (RN-09): guardar una nota
+// no reordena ni saca al alumno de la lista aunque deje de cumplir el filtro, porque si no,
+// calificar al #7 con el filtro "Entregados sin calificar" lo expulsa en ese mismo momento y
+// la flecha › salta a cualquier lado.
+window._corrector = { orden: [], indice: 0, filtro: 'todos', archivos: [], archivoIdx: 0, studentId: null };
+
+const FILTROS_CORRECTOR = [
+  { id: 'todos',                   label: 'Todos' },
+  { id: 'entregado_sin_calificar', label: 'Entregados sin calificar' },
+  { id: 'sin_entregar',            label: 'Sin entregar' },
+  { id: 'calificado',              label: 'Calificados' },
+];
+
+// El modo con el que hay que pintar AHORA MISMO, sin esperar ningún fetch. localStorage es
+// cache y NUNCA la fuente de verdad: la de verdad es User.modoCorreccion, que ya vino
+// renderizada en la página (RN-02).
+function modoCorreccionGuardado() {
+  try {
+    const local = localStorage.getItem('modoCorreccion');
+    if (local === 'planilla' || local === 'corrector') return local;
+  } catch {}
+  return window.USER_MODO_CORRECCION === 'corrector' ? 'corrector' : 'planilla';
+}
+
+/**
+ * Cambia de vista. NO recarga datos (RN-04) y NO puede fallar delante de nadie (RN-03): si el
+ * PATCH se cae, el modo igual cambia en pantalla y en localStorage, y no se muestra ningún
+ * error. Cambiar de vista no es una operación que pueda fallar mientras alguien corrige.
+ */
+function aplicarModoCorreccion(modo, opciones) {
+  const guardar = !(opciones && opciones.guardar === false);
+  const esCorrector = modo === 'corrector' && !!window._detalleActual;
+
+  const planilla  = document.getElementById('modoPlanilla');
+  const corrector = document.getElementById('modoCorrector');
+  if (!planilla || !corrector) return;
+
+  planilla.hidden  = esCorrector;
+  corrector.hidden = !esCorrector;
+  const modal = document.querySelector('.modal-detail');
+  if (modal) modal.classList.toggle('is-corrector', esCorrector);
+  document.querySelectorAll('#modoToggle button').forEach(b => {
+    b.classList.toggle('activo', b.dataset.modo === (esCorrector ? 'corrector' : 'planilla'));
+  });
+
+  if (esCorrector) entrarAlCorrector();
+
+  try { localStorage.setItem('modoCorreccion', esCorrector ? 'corrector' : 'planilla'); } catch {}
+  if (guardar) {
+    fetch('/courses/profile/preferencias', {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ modoCorreccion: esCorrector ? 'corrector' : 'planilla' }),
+    }).catch(() => {});   // falla ABIERTO, a propósito: ver RN-03
+  }
+}
+
+// La nota tal como está EN PANTALLA: lo guardado más lo que el docente escribió y todavía no
+// guardó. Los dos modos escriben en el mismo lugar (RN-07), así que pasar de uno a otro con
+// la nota a medio escribir no la pierde.
+function notaEnPantalla(sg) {
+  const nota = document.querySelector('#modoPlanilla .grade-input[data-student="' + sg._id + '"]');
+  const dev  = document.querySelector('#modoPlanilla .feedback-input[data-student="' + sg._id + '"]');
+  const puntos = nota
+    ? (nota.value === '' ? null : Number(nota.value))
+    : (sg.points ?? null);
+  const grade = { points: puntos, feedback: dev ? dev.value : (sg.feedback || '') };
+  // AUSENTE ≠ NULL: si el servidor no mandó `returnedAt` es una nota anterior a la feature y
+  // se lee como DEVUELTA. Copiar el campo solo cuando existe es lo que conserva esa diferencia.
+  if (sg.returnedAt !== undefined) grade.returnedAt = sg.returnedAt;
+  return grade;
+}
+
+// Arma el armazón del corrector y congela el orden. Se llama cada vez que se entra al modo:
+// el filtro elegido se conserva, pero el array se vuelve a congelar con el estado de ahora.
+function entrarAlCorrector() {
+  const { studentGrades, subMap } = window._detalleActual;
+  const c = window._corrector;
+
+  const alumnos = studentGrades.map(sg => ({
+    studentId: sg._id,
+    nombre:    sg.name,
+    email:     sg.email,
+    sub:       subMap[sg._id] || null,
+    grade:     notaEnPantalla(sg),
+  }));
+  c.orden = Correccion.ordenCorreccion(alumnos, c.filtro);
+  if (c.indice >= c.orden.length) c.indice = 0;
+
+  const cont = document.getElementById('modoCorrector');
+  cont.innerHTML =
+    '<div class="corrector-filtros">' +
+      FILTROS_CORRECTOR.map(f => '<button type="button" class="corrector-chip' + (f.id === c.filtro ? ' activo' : '') + '"' +
+        ' onclick="correctorFiltrar(\'' + f.id + '\')">' + f.label + '</button>').join('') +
+      '<span class="corrector-contador" id="correctorContador"></span>' +
+      '<span style="flex:1"></span>' +
+      '<button type="button" class="corrector-flecha" id="correctorAnterior" onclick="correctorMover(-1)" title="Alumno anterior">' +
+        '<span class="material-symbols-outlined">chevron_left</span></button>' +
+      '<button type="button" class="corrector-flecha" id="correctorSiguiente" onclick="correctorMover(1)" title="Alumno siguiente">' +
+        '<span class="material-symbols-outlined">chevron_right</span></button>' +
+    '</div>' +
+    '<div class="corrector-layout">' +
+      '<div class="corrector-visor" id="correctorVisor"></div>' +
+      '<div class="corrector-panel" id="correctorPanel"></div>' +
+    '</div>' +
+    '<div class="corrector-lista" id="correctorLista"></div>';
+
+  pintarListaCorrector();
+  correctorSeleccionar(c.indice);
+}
+
+function correctorFiltrar(filtro) {
+  window._corrector.filtro = filtro;
+  window._corrector.indice = 0;
+  entrarAlCorrector();
+}
+
+// Pasar de alumno NO guarda nada y NO dispara ningún guardado (RN-10): lo escrito queda en
+// el buffer, que es el mismo de la planilla.
+function correctorMover(paso) {
+  const c = window._corrector;
+  const nuevo = c.indice + paso;
+  if (nuevo < 0 || nuevo >= c.orden.length) return;
+  correctorSeleccionar(nuevo);
+}
+
+function pintarListaCorrector() {
+  const c = window._corrector;
+  const lista = document.getElementById('correctorLista');
+  if (!lista) return;
+  lista.innerHTML = c.orden.map((a, i) => {
+    const estado = Correccion.estadoDeEntrega(a);
+    const sinLeer = a.sub && a.sub.unreadForTeacher;
+    return '<button type="button" class="corrector-item' + (i === c.indice ? ' activo' : '') + ' estado-' + estado + '"' +
+      ' onclick="correctorSeleccionar(' + i + ')">' +
+      (sinLeer ? '<span class="corrector-punto" title="Tiene comentarios sin leer"></span>' : '') +
+      '<span class="corrector-item-nombre">' + Adjuntos.escaparTexto(a.nombre) + '</span>' +
+      '</button>';
+  }).join('');
+
+  const contador = document.getElementById('correctorContador');
+  if (contador) contador.textContent = c.orden.length ? (c.indice + 1) + ' de ' + c.orden.length : 'Nadie en este filtro';
+  const anterior  = document.getElementById('correctorAnterior');
+  const siguiente = document.getElementById('correctorSiguiente');
+  if (anterior)  anterior.disabled  = c.indice <= 0;
+  if (siguiente) siguiente.disabled = c.indice >= c.orden.length - 1;
+}
+
+// Abre a UN alumno: trae su detalle pesado, que además APAGA su "sin leer" y dispara el
+// prefetch de las conversiones de Office (RN-16b) mientras el docente lee el panel.
+async function correctorSeleccionar(indice) {
+  const c = window._corrector;
+  const { activity } = window._detalleActual;
+  c.indice = indice;
+  pintarListaCorrector();
+
+  const alumno = c.orden[indice];
+  const panel  = document.getElementById('correctorPanel');
+  const visor  = document.getElementById('correctorVisor');
+  if (!alumno || !panel) {
+    if (panel) panel.innerHTML = '<p class="corrector-vacio">No hay ningún alumno con este filtro.</p>';
+    // El visor NO se vacía: dejarlo en blanco muestra el #1f1f1f del contenedor como un
+    // rectángulo negro sin explicación, que parece algo roto y no un filtro sin resultados.
+    if (visor) visor.innerHTML = '<div class="corrector-visor-vacio">'
+      + '<span class="material-symbols-outlined">filter_alt_off</span>'
+      + '<p>Ningún alumno entra en este filtro</p>'
+      + '<p class="corrector-visor-vacio-sub">Probá con otro, o volvé a «Todos».</p>'
+      + '</div>';
+    return;
+  }
+  c.studentId = alumno.studentId;
+  panel.innerHTML = '<p class="corrector-vacio">Cargando…</p>';
+
+  let detalle = { submission: alumno.sub, grade: null, view: null };
+  try {
+    const r = await fetch('/activities/' + activity._id + '/entrega/' + alumno.studentId);
+    if (r.ok) detalle = await r.json();
+  } catch {}
+  // Si el docente ya pasó a otro alumno mientras viajaba la respuesta, esta no sirve más.
+  if (c.studentId !== alumno.studentId) return;
+
+  // El detalle viene con el hilo ya marcado como leído: el punto ámbar se apaga acá.
+  if (alumno.sub) alumno.sub.unreadForTeacher = false;
+  if (detalle.submission) alumno.sub = Object.assign({}, alumno.sub, detalle.submission);
+  pintarListaCorrector();
+
+  pintarPanelCorrector(alumno, detalle);
+  c.archivos   = (detalle.submission && detalle.submission.files) || [];
+  c.archivoIdx = 0;
+  pintarVisorCorrector();
+}
+
+// El visor de la columna izquierda: los archivos de la entrega del alumno abierto, con una
+// tira para pasar de uno a otro SIN salir del panel. Una entrega manuscrita suelen ser varias
+// hojas: 751 entregas tienen 2 o más archivos, y el máximo observado es 19 (RN-05b).
+function pintarVisorCorrector() {
+  const c = window._corrector;
+  const visor = document.getElementById('correctorVisor');
+  if (!visor) return;
+
+  if (!c.archivos.length) {
+    // Misma clase que el filtro vacío, y por el mismo motivo: `.corrector-vacio` es del panel
+    // claro y acá el fondo es #1f1f1f. Con la clase de antes el texto se leía apenas.
+    visor.innerHTML = '<div class="corrector-visor-vacio">'
+      + '<span class="material-symbols-outlined">folder_off</span>'
+      + '<p>Este alumno no adjuntó ningún archivo</p>'
+      + '<p class="corrector-visor-vacio-sub">Si escribió algo, lo vas a ver en el panel de la derecha.</p>'
+      + '</div>';
+    return;
+  }
+
+  const tira = c.archivos.map((f, i) =>
+    '<button type="button" class="corrector-archivo' + (i === c.archivoIdx ? ' activo' : '') + '"' +
+    ' onclick="correctorVerArchivo(' + i + ')" title="' + escAtt(f.name) + '">' +
+    '<span class="material-symbols-outlined">' + (Adjuntos.esImagen(f.name) ? 'image' : 'description') + '</span>' +
+    '<span class="corrector-archivo-nombre">' + Adjuntos.escaparTexto(f.name) + '</span>' +
+    '</button>').join('');
+
+  const f = c.archivos[c.archivoIdx];
+  const url = '/activities/submission-file/' + f.filename;
+  visor.innerHTML =
+    '<div class="corrector-tira">' + tira + '</div>' +
+    '<div class="corrector-lienzo" id="correctorLienzo"></div>' +
+    '<div class="corrector-visor-barra">' +
+      '<a class="btn btn-outline" href="' + escAtt(url + '?dl=1') + '" download="' + escAtt(f.name) + '">' +
+        '<span class="material-symbols-outlined">download</span> Descargar</a>' +
+    '</div>';
+
+  // El botón Descargar de arriba NO depende de que el visor pueda mostrar algo, y es a
+  // propósito: falle lo que falle —formato sin visor, conversor ausente, archivo borrado del
+  // disco— el archivo que entregó el alumno se puede bajar siempre (RN-19).
+  montarVisorEnPanel(document.getElementById('correctorLienzo'), {
+    type: 'file', name: f.name, url, mime: f.mime, size: f.size,
+  });
+}
+
+function correctorVerArchivo(i) {
+  window._corrector.archivoIdx = i;
+  pintarVisorCorrector();
+}
+
+/**
+ * La segunda montura de RN-05: lo mismo que el overlay a pantalla completa, adentro de la
+ * columna izquierda. Las dos comparten la DECISIÓN (Correccion.renderVisor y las funciones de
+ * montaje): un archivo no puede previsualizarse de una manera acá y de otra allá.
+ */
+function montarVisorEnPanel(contenedor, att) {
+  if (!contenedor) return;
+  const nombre = att.name || '';
+  contenedor.innerHTML = '';
+
+  if (_isImage(nombre)) {
+    const caja = document.createElement('div');
+    caja.className = 'visor-img';
+    contenedor.appendChild(caja);
+    montarVisorDeImagen(caja, att.url, nombre);
+    return;
+  }
+  if (_isPdf(nombre)) {
+    contenedor.innerHTML = '<iframe class="att-preview-frame"></iframe>';
+    contenedor.querySelector('iframe').src = att.url + '#toolbar=1';
+    return;
+  }
+  if (_isCad(nombre)) {
+    const caja = document.createElement('div');
+    caja.className = 'visor-cad';
+    contenedor.appendChild(caja);
+    montarVisorCad(caja, att);
+    return;
+  }
+  if (_isOffice(nombre)) {
+    const caja = document.createElement('div');
+    caja.className = 'visor-office';
+    contenedor.appendChild(caja);
+    montarVisorOffice(caja, att);
+    return;
+  }
+  // Lo que de verdad no tiene visor (un .zip). El motivo sale del módulo compartido, así que
+  // el cartel dice lo mismo acá que en el overlay y que en la API.
+  const decision = Correccion.renderVisor({ name: nombre, size: att.size || 0 }, {});
+  contenedor.innerHTML =
+    '<div class="att-preview-no-support">' +
+      '<span class="material-symbols-outlined">description</span>' +
+      '<p>No se puede ver este archivo acá</p>' +
+      '<p class="att-preview-no-support-sub"></p>' +
+    '</div>';
+  contenedor.querySelector('.att-preview-no-support-sub').textContent = decision.texto;
+}
+
+// El panel derecho: TODO lo que tiene la fila de la planilla, más el hilo y el historial. Si
+// algo de la fila no estuviera acá, el Modo Corrector sería un modo con MENOS información y
+// RN-01 estaría escrita para nada (RN-08).
+function pintarPanelCorrector(alumno, detalle) {
+  const { activity } = window._detalleActual;
+  const panel = document.getElementById('correctorPanel');
+  const sub   = detalle.submission;
+  const view  = detalle.view;
+  const grade = detalle.grade;
+  const esc   = Adjuntos.escaparTexto;
+
+  const estado = Correccion.estadoDeEntrega({ sub, grade: notaEnPantalla(
+    window._detalleActual.studentGrades.find(sg => sg._id === alumno.studentId) || {}) });
+  const ETIQUETA = {
+    sin_entregar:            'Sin entregar',
+    entregado_sin_calificar: 'Entregado, sin calificar',
+    borrador:                'Calificado — sin devolver',
+    devuelto:                'Devuelto',
+  };
+
+  const subFirstDate = sub && (sub.firstSubmittedAt || sub.createdAt);
+  const subIsUpdated = sub && subFirstDate && Math.abs(new Date(subFirstDate) - new Date(sub.updatedAt)) > 2000;
+
+  // El aviso de RN-26: entre el borrador y la devolución el alumno puede cambiar el archivo
+  // que el docente acaba de corregir, y sin este cartel eso pasaría en silencio.
+  const cambioDespues = sub && grade && grade.gradedAt && new Date(sub.updatedAt) > new Date(grade.gradedAt);
+
+  const notaActual = document.querySelector('#modoPlanilla .grade-input[data-student="' + alumno.studentId + '"]');
+  const devActual  = document.querySelector('#modoPlanilla .feedback-input[data-student="' + alumno.studentId + '"]');
+
+  let html =
+    '<div class="corrector-alumno">' +
+      '<div class="avatar" style="width:38px;height:38px;font-size:16px;flex-shrink:0">' + esc(alumno.nombre.charAt(0).toUpperCase()) + '</div>' +
+      '<div style="min-width:0">' +
+        '<div class="gt-student-name">' + esc(alumno.nombre) + '</div>' +
+        '<div class="gt-student-email">' + esc(alumno.email || '') + '</div>' +
+      '</div>' +
+      '<span class="corrector-estado estado-' + estado + '">' + ETIQUETA[estado] + '</span>' +
+    '</div>' +
+    '<div class="corrector-datos">' +
+      (sub
+        ? '<span><span class="material-symbols-outlined">assignment_turned_in</span> Entregó ' + fmtShort(subFirstDate) +
+          (subIsUpdated ? ' · Act: ' + fmtShort(sub.updatedAt) : '') + '</span>'
+        : '<span><span class="material-symbols-outlined">schedule</span> Todavía no entregó</span>') +
+      (view
+        ? '<span><span class="material-symbols-outlined">visibility</span> Vista ' + fmtShort(view.firstViewedAt) +
+          (view.viewCount > 1 ? ' · Últ: ' + fmtShort(view.lastViewedAt) : '') + '</span>'
+        : '<span><span class="material-symbols-outlined">visibility_off</span> Sin abrir</span>') +
+    '</div>' +
+    (cambioDespues ? '<p class="corrector-aviso"><span class="material-symbols-outlined">update</span> ' +
+      'La entrega cambió después de que la corregiste.</p>' : '') +
+    '<div class="corrector-campo">' +
+      '<label>Nota' + (activity.points != null ? ' <span class="gt-pts-max">/ ' + activity.points + '</span>' : '') + '</label>' +
+      '<input type="number" class="corrector-nota" min="' + NOTA_MINIMA + '" max="' + (activity.points || 9999) + '"' +
+        ' value="' + (notaActual ? escAtt(notaActual.value) : '') + '" placeholder="—"' +
+        ' oninput="correctorSincronizarNota(this)">' +
+    '</div>' +
+    '<div class="corrector-campo">' +
+      '<label>Devolución al alumno</label>' +
+      '<textarea class="corrector-feedback" rows="4" placeholder="Comentario al alumno..."' +
+        ' oninput="correctorSincronizarFeedback(this)"></textarea>' +
+    '</div>' +
+    '<div class="corrector-acciones">' +
+      '<button type="button" class="btn btn-outline" onclick="correctorGuardar(false)">' +
+        '<span class="material-symbols-outlined">save</span> Guardar</button>' +
+      '<button type="button" class="btn btn-devolver" onclick="correctorDevolver()">' +
+        '<span class="material-symbols-outlined">assignment_return</span> Devolver</button>' +
+      '<span class="grade-saved" id="gs-corrector" style="font-size:13px"></span>' +
+    '</div>';
+
+  // Archivos + Rehacer: lo mismo que ofrece la celda "Entrega" de la planilla.
+  if (sub) {
+    html += '<div class="corrector-bloque"><h5>Archivos</h5>' +
+      ((sub.files || []).map((f, i) =>
+        '<div class="corrector-archivo-fila">' +
+          '<button type="button" class="corrector-archivo-link" onclick="correctorVerArchivo(' + i + ')">' +
+            '<span class="material-symbols-outlined">attach_file</span>' + esc(f.name) + '</button>' +
+          '<a class="corrector-bajar" href="' + escAtt('/activities/submission-file/' + f.filename + '?dl=1') + '"' +
+            ' download="' + escAtt(f.name) + '" title="Descargar"><span class="material-symbols-outlined">download</span></a>' +
+        '</div>').join('') || '<p class="corrector-vacio">Sin archivos adjuntos.</p>') +
+      (sub.text ? '<p class="gt-sub-text">' + esc(sub.text) + '</p>' : '') +
+      botonRehacer(activity._id, alumno.studentId, sub) +
+      '</div>';
+  }
+
+  // El hilo privado, en los dos sentidos (RN-31). Existe cuando existe la entrega: al que no
+  // entregó se le muestra la caja deshabilitada con el motivo, en vez de dejarlo adivinando.
+  html += '<div class="corrector-bloque"><h5>Comentarios privados</h5><div class="corrector-hilo" id="correctorHilo"></div>';
+  if (sub) {
+    html += '<div class="corrector-comentar">' +
+      '<textarea id="correctorComentario" rows="2" maxlength="2000" placeholder="Escribile al alumno..."></textarea>' +
+      '<button type="button" class="btn btn-outline" onclick="correctorComentar()">' +
+        '<span class="material-symbols-outlined">send</span></button></div>';
+  } else {
+    html += '<p class="corrector-vacio">El hilo se abre con la entrega.</p>';
+  }
+  html += '</div>';
+
+  // El historial, como línea de tiempo: la actual arriba, marcada, y cada versión con sus
+  // archivos (que se abren y se bajan igual que los de ahora, RN-37).
+  const versiones = (sub && sub.versions) || [];
+  if (versiones.length) {
+    html += '<div class="corrector-bloque"><h5>Historial de la entrega</h5>' +
+      '<div class="corrector-version actual"><b>Actual</b> · ' + fmtShort(sub.updatedAt) + ' · ' +
+        (sub.files || []).length + ' archivo(s)</div>' +
+      versiones.map((v, i) =>
+        '<div class="corrector-version"><b>Versión ' + (versiones.length - i) + '</b> · ' + fmtShort(v.at) + ' · ' +
+          (v.files || []).length + ' archivo(s)' +
+          (v.files || []).map(f =>
+            '<a class="corrector-version-archivo" href="' + escAtt('/activities/submission-file/' + f.filename) + '"' +
+            ' target="_blank" rel="noopener">' + esc(f.name) + '</a>').join('') +
+        '</div>').join('') +
+      '</div>';
+  }
+
+  panel.innerHTML = html;
+
+  // El textarea se llena por textContent y no por interpolación: lo escribió el docente, pero
+  // pasa por el mismo camino que el resto y así no hay una excepción que recordar.
+  const dev = panel.querySelector('.corrector-feedback');
+  if (dev) dev.value = devActual ? devActual.value : '';
+
+  pintarHiloCorrector((sub && sub.privateComments) || []);
+}
+
+// El texto de cada comentario va por textContent, NUNCA por innerHTML: lo escribió un alumno.
+function pintarHiloCorrector(comentarios) {
+  const hilo = document.getElementById('correctorHilo');
+  if (!hilo) return;
+  hilo.innerHTML = '';
+  if (!comentarios.length) {
+    const vacio = document.createElement('p');
+    vacio.className = 'corrector-vacio';
+    vacio.textContent = 'Todavía no hay comentarios.';
+    hilo.appendChild(vacio);
+    return;
+  }
+  for (const c of comentarios) {
+    const caja = document.createElement('div');
+    caja.className = 'corrector-mensaje ' + (c.from === 'teacher' ? 'mio' : 'suyo');
+    const quien = document.createElement('span');
+    quien.className = 'corrector-mensaje-quien';
+    quien.textContent = (c.from === 'teacher' ? 'Vos' : 'El alumno') + ' · ' + fmtShort(c.at);
+    const texto = document.createElement('p');
+    texto.textContent = c.text;
+    caja.append(quien, texto);
+    hilo.appendChild(caja);
+  }
+  hilo.scrollTop = hilo.scrollHeight;
+}
+
+// ── El buffer compartido con la planilla (RN-07) ───────────────────────────
+//
+// El panel NO tiene un buffer propio: escribe en los MISMOS inputs de la planilla, que siguen
+// en el DOM aunque estén ocultos. Por eso cambiar de modo con la nota escrita y sin guardar no
+// la pierde, y por eso `saveAllGrades` y `recolectarDevoluciones` no se tocaron: lo que se
+// manda al servidor lo sigue decidiendo la planilla.
+function correctorSincronizarNota(input) {
+  const destino = document.querySelector('#modoPlanilla .grade-input[data-student="' + window._corrector.studentId + '"]');
+  if (destino) destino.value = input.value;
+}
+
+function correctorSincronizarFeedback(textarea) {
+  const destino = document.querySelector('#modoPlanilla .feedback-input[data-student="' + window._corrector.studentId + '"]');
+  if (destino) destino.value = textarea.value;
+}
+
+function avisoCorrector(texto) {
+  const el = document.getElementById('gs-corrector');
+  if (!el) return;
+  el.textContent = texto;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// "Guardar" del Modo Corrector = guardar SIN devolver (RN-27b). Reusa saveAllGrades entero:
+// manda todas las filas tocadas, no solo la del alumno abierto, que es justamente el flujo
+// "corrijo los 30 y los devuelvo juntos".
+async function correctorGuardar(devolver) {
+  const { activity } = window._detalleActual;
+  const guardadas = await saveAllGrades(activity._id, activity.points || 9999, { devolver: !!devolver });
+  // El cartel de saveAllGrades vive adentro de la planilla, que en este modo está oculta: el
+  // corrector muestra el suyo, y dice lo mismo.
+  avisoCorrector(guardadas
+    ? '✓ ' + guardadas + ' guardada(s)' + (devolver ? '' : ' — sin devolver todavía')
+    : 'No había cambios para guardar');
+  return guardadas;
+}
+
+// "Devolver": primero guarda lo que haya escrito (como borrador, para no publicar nada dos
+// veces) y después publica al alumno abierto con POST /:id/devolver, que es la ruta que
+// escribe `returnedAt` sin tocar ni la nota ni la devolución.
+async function correctorDevolver() {
+  const { activity } = window._detalleActual;
+  const c = window._corrector;
+  if (!c.studentId) return;
+
+  await saveAllGrades(activity._id, activity.points || 9999, { devolver: false });
+
+  let res;
+  try {
+    res = await fetch('/activities/' + activity._id + '/devolver', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ studentIds: [c.studentId] }),
+    });
+  } catch {
+    alert('No se pudo devolver: se cortó la conexión con el servidor.');
+    return;
+  }
+  const datos = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(datos.error || 'No se pudo devolver la corrección.');
+    return;
+  }
+  avisoCorrector('✓ Devuelta');
+
+  // El alumno ya la ve: el estado del ítem de la lista y el del panel tienen que reflejarlo
+  // sin recargar el modal entero.
+  const sg = window._detalleActual.studentGrades.find(s => s._id === c.studentId);
+  if (sg) sg.returnedAt = new Date().toISOString();
+  const alumno = c.orden[c.indice];
+  if (alumno) alumno.grade = notaEnPantalla(sg || {});
+  pintarListaCorrector();
+  correctorSeleccionar(c.indice);
+}
+
+// El comentario del docente. Llega SIEMPRE, esté la nota devuelta o en borrador: durante el
+// borrador la entrega sigue abierta, así que el alumno puede hacer lo que se le pide (RN-31).
+async function correctorComentar() {
+  const { activity } = window._detalleActual;
+  const c = window._corrector;
+  const caja = document.getElementById('correctorComentario');
+  if (!caja || !caja.value.trim()) return;
+
+  const texto = caja.value.trim();
+  caja.disabled = true;
+  let res;
+  try {
+    res = await fetch('/activities/' + activity._id + '/entrega/' + c.studentId + '/comentario', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ texto }),
+    });
+  } catch {
+    caja.disabled = false;
+    alert('No se pudo enviar el comentario: se cortó la conexión.');
+    return;
+  }
+  caja.disabled = false;
+  const datos = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(datos.error || 'No se pudo enviar el comentario.');
+    return;
+  }
+  caja.value = '';
+  const alumno = c.orden[c.indice];
+  if (alumno && alumno.sub) {
+    alumno.sub.privateComments = (alumno.sub.privateComments || []).concat(datos.comentario);
+    pintarHiloCorrector(alumno.sub.privateComments);
+  }
 }
 
 // Guarda de una sola vez las notas Y las devoluciones escritas del modal de detalle.
 // Manda una request por fila tocada; la devolución se guarda aunque la nota esté vacía
 // (ver public/js/devoluciones.js para la lógica de qué se manda y qué no).
-async function saveAllGrades(activityId, max) {
-  const inputs  = document.querySelectorAll('#detailBody .grade-input[data-student]');
-  const btn     = document.querySelector('#detailBody .btn-primary');
+// `opciones.devolver === false` guarda SIN devolver (el botón "Guardar" del Modo Corrector y
+// el "Guardar sin devolver" de la planilla, RN-27b). El default es devolver, y eso es lo que
+// mantiene intacto al botón principal de siempre: si "Guardar" dejara borradores, la docente
+// que nunca cambia de modo dejaría de publicar notas sin enterarse.
+async function saveAllGrades(activityId, max, opciones) {
+  const devolver = !(opciones && opciones.devolver === false);
+  const inputs  = document.querySelectorAll('#modoPlanilla .grade-input[data-student]');
+  const btn     = document.querySelector('#modoPlanilla .btn-primary');
   const savedEl = document.getElementById('gs-all');
   const previos = window._devolucionesOriginales || {};
 
@@ -2141,7 +3071,7 @@ async function saveAllGrades(activityId, max) {
   const filas = [];
   inputs.forEach(input => {
     const studentId  = input.dataset.student;
-    const feedbackEl = document.querySelector(`.feedback-input[data-student="${studentId}"]`);
+    const feedbackEl = document.querySelector(`#modoPlanilla .feedback-input[data-student="${studentId}"]`);
     filas.push({
       studentId,
       nombre:         input.closest('tr')?.querySelector('.gt-student-name')?.textContent || '',
@@ -2163,10 +3093,10 @@ async function saveAllGrades(activityId, max) {
   }
 
   if (guardar.length === 0) {
-    savedEl.textContent = resumenGuardado(guardar);
+    savedEl.textContent = resumenGuardado(guardar, { devuelve: devolver });
     savedEl.classList.add('show');
     setTimeout(() => savedEl.classList.remove('show'), 2500);
-    return;
+    return 0;
   }
 
   btn.disabled    = true;
@@ -2184,7 +3114,8 @@ async function saveAllGrades(activityId, max) {
       res = await fetch('/activities/' + activityId + '/grade', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(entry),
+        // RN-22b: el flag ausente significa DEVOLVER, así que solo viaja cuando es false.
+        body:    JSON.stringify(devolver ? entry : { ...entry, devolver: false }),
       });
     } catch (e) {
       restaurarBoton();
@@ -2205,12 +3136,13 @@ async function saveAllGrades(activityId, max) {
   }
 
   restaurarBoton();
-  savedEl.textContent = resumenGuardado(guardar);
+  savedEl.textContent = resumenGuardado(guardar, { devuelve: devolver });
   savedEl.classList.add('show');
   setTimeout(() => savedEl.classList.remove('show'), 2500);
 
   // Invalida el cache del gradebook para que se recargue con las notas nuevas
   window._calificacionesTabLoaded = false;
+  return guardar.length;
 }
 
 // Descarga el Excel de calificaciones de una actividad (GET /activities/:id/export-grades)
@@ -2406,7 +3338,7 @@ window._subFiles = [];
 // recomprime. Tenerlas duplicadas fue el bug del 2026-08-24: esta lista se quedó sin .heic ni
 // .webp cuando el resto de la aplicación ya los aceptaba, así que la foto del iPhone rebotaba
 // con un cartel que nombraba a las imágenes entre los formatos permitidos.
-const SUB_ALLOWED_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'zip', 'dwg', 'dxf'];
+const SUB_ALLOWED_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip', 'dwg', 'dxf'];
 const SUB_MAX_SIZE     = 20 * 1024 * 1024; // 20 MB
 
 function renderSubmissionSection(actId, submission, act, veredictoDelServidor) {
@@ -2521,9 +3453,9 @@ function renderSubmissionSection(actId, submission, act, veredictoDelServidor) {
     <div class="creator-card" style="margin-bottom:16px">
       <div class="creator-card-section-title">Adjuntar</div>
       <div class="creator-att-row">
-        <label class="creator-att-btn" title="Subir archivo (PDF, Word, Excel, plano DWG o DXF, imágenes o ZIP)">
+        <label class="creator-att-btn" title="Subir archivo (PDF, Word, Excel, PowerPoint, plano DWG o DXF, imágenes o ZIP)">
           <input type="file" id="subFileInput" multiple hidden
-            accept=".pdf,.doc,.docx,.xls,.xlsx,.zip,.dwg,.dxf,image/*,.jfif,.avif,.tif,.tiff">
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.dwg,.dxf,image/*,.jfif,.avif,.tif,.tiff">
           <div class="creator-att-circle">
             <span class="material-symbols-outlined">upload</span>
           </div>
@@ -2647,6 +3579,26 @@ function syncSubmitBtn() {
   }
 }
 
+// § K de specs/correccion-de-entregas.spec.md — avisarle al servidor que ESTE navegador
+// rechazó un formato, además de mostrar el cartel.
+//
+// ⭐ Sin esto el log del servidor queda casi vacío y MIENTE: el fileFilter de multer casi
+// nunca llega a dispararse, porque el rechazo ocurre antes (el `accept=` del input y esta
+// lista de acá). La conclusión sería "no falta ningún formato", que es justo la conclusión
+// falsa que esto viene a evitar.
+//
+// Va la EXTENSIÓN SOLA, recortada por la misma función que usa el servidor, nunca el nombre
+// del archivo (RN-46). Y no sube un solo byte: esto corre al SELECCIONAR.
+function reportarFormatoRechazado(nombre, ruta) {
+  try {
+    fetch('/diagnostico/formato', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ ext: Correccion.extensionParaLog(nombre), ruta }),
+    }).catch(() => {});   // el reporte es informativo: que falle no puede tocar la pantalla
+  } catch {}
+}
+
 // Pre-sube UN archivo con XHR + barra de progreso en tiempo real.
 // Mismo patrón que uploadFile() en views/activities/new.ejs (docente).
 function uploadSubFile(actId, file) {
@@ -2655,9 +3607,10 @@ function uploadSubFile(actId, file) {
   const extRaw = file.name.split('.').pop().toLowerCase();
   const esFoto = Adjuntos.esImagen(file.name);
   if (!esFoto && !SUB_ALLOWED_EXTS.includes(extRaw)) {
+    reportarFormatoRechazado(file.name, 'entrega');
     showUploadErrModal(
       'Tipo de archivo no permitido',
-      `"${file.name}" no es un formato aceptado.\nPodés subir PDF, Word, Excel, ZIP, un plano de AutoCAD (.dwg, .dxf) o una foto (jpg, png, webp, heic...).`
+      `"${file.name}" no es un formato aceptado.\nPodés subir PDF, Word, Excel, PowerPoint (.ppt, .pptx), ZIP, un plano de AutoCAD (.dwg, .dxf) o una foto (jpg, png, webp, heic...).`
     );
     return;
   }

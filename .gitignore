@@ -11,6 +11,9 @@ archivos/salas/
 # El material del legajo del gabinete: certificados medicos, recetas e informes de menores.
 # No va al repo bajo ninguna circunstancia. Ver specs/soe-adjuntos-y-agenda.spec.md.
 archivos/soe/
+# Cache de vistas previas del corrector de entregas (PDF de Office, DXF de planos). Se
+# regenera del original y son derivados de entregas de menores: el repo es PUBLICO.
+archivos/derivados/
 sin-commitear/
 backups/
 maintenance.json

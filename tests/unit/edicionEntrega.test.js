@@ -150,6 +150,10 @@ test('un grade de OTRO alumno no es asunto de esta regla', () => {
 });
 
 test('esCorregida() es la mitad reutilizable de la regla: la nota y solo la nota', () => {
+  // Estos grades NO traen `returnedAt`: son la forma de un documento LEGADO (anterior a
+  // specs/correccion-de-entregas.spec.md), y por RN-21 eso lee "devuelta". Por eso siguen
+  // cerrando igual sin que este test tenga que cambiar (RN-26: "las notas legadas siguen
+  // cerrando igual — la matriz entera de este archivo sigue dando lo mismo").
   assert.equal(esCorregida({ points: 5, manual: true }), true);
   assert.equal(esCorregida({ points: 0, manual: true }), true, 'un 0 es una nota');
   assert.equal(esCorregida({ points: null, feedback: 'ojo', manual: true }), false,
@@ -157,6 +161,31 @@ test('esCorregida() es la mitad reutilizable de la regla: la nota y solo la nota
   assert.equal(esCorregida({ points: null, feedback: '', manual: true }), false);
   assert.equal(esCorregida({ points: 5, manual: false }), false);
   assert.equal(esCorregida(null), false);
+});
+
+// ── RN-26 (D11, specs/correccion-de-entregas.spec.md) — el borrador NO cierra ────────────────
+//
+// "corregida = points != null && manual !== false && estaDevuelta(grade)". Antes de esta
+// feature, `esCorregida` solo miraba la nota; ahora también tiene que mirar si esa nota fue
+// DEVUELTA. Sin esto, el flujo natural del Modo Corrector ("corrijo los 30 y devuelvo al
+// final") congelaría al curso entero apenas el docente guarda la primera nota en borrador.
+
+test('RN-26 — una nota en BORRADOR (returnedAt: null) NO cierra la edición', () => {
+  assert.equal(esCorregida({ points: 8, manual: true, returnedAt: null }), false,
+    'con la nota en borrador, esCorregida tiene que dar false: el alumno todavía no la vio y ' +
+    'tiene que poder seguir editando su entrega');
+  assert.equal(motivo(act(), { points: 8, manual: true, returnedAt: null }), MOTIVOS.editable);
+  assert.equal(puede(act(), { points: 8, manual: true, returnedAt: null }), true);
+});
+
+test('RN-26 — la MISMA nota, ya DEVUELTA (returnedAt: Date), sí cierra', () => {
+  assert.equal(esCorregida({ points: 8, manual: true, returnedAt: new Date() }), true);
+  assert.equal(motivo(act(), { points: 8, manual: true, returnedAt: new Date() }), MOTIVOS.corregida);
+  assert.equal(puede(act(), { points: 8, manual: true, returnedAt: new Date() }), false);
+});
+
+test('RN-26 — un 0 en borrador tampoco cierra (el 0 sigue siendo una nota, RN-26 no cambia eso)', () => {
+  assert.equal(esCorregida({ points: 0, manual: true, returnedAt: null }), false);
 });
 
 // ── 2.bis  La reapertura del docente ────────────────────────────────────────
@@ -234,6 +263,18 @@ test('course.ejs carga edicionEntrega.js ANTES de course.js', () => {
     'edicionEntrega.js va ANTES de course.js o la regla no existe cuando course.js la usa');
 });
 
+// RN-26 (specs/correccion-de-entregas.spec.md): edicionEntrega.js ahora llama a
+// Correccion.estaDevuelta(), así que el orden de dos módulos pasa a ser de TRES.
+test('RN-26 — correccion.js se carga ANTES que edicionEntrega.js (que ahora lo usa)', () => {
+  const posCorreccion = vista.indexOf('/js/correccion.js');
+  const posModulo     = vista.indexOf('/js/edicionEntrega.js');
+  assert.ok(posCorreccion !== -1,
+    'course.ejs tiene que cargar /js/correccion.js — sin él, edicionEntrega.js no puede llamar ' +
+    'a Correccion.estaDevuelta() y la rama "corregida" explota con un ReferenceError');
+  assert.ok(posCorreccion < posModulo,
+    'correccion.js va ANTES de edicionEntrega.js: la rama "corregida" ahora depende de él');
+});
+
 test('no queda ninguna condición vieja escrita a mano en las rutas', () => {
   // La misma pregunta estaba copiada en tres lugares de routes/activities.js. El barrido
   // busca la FORMA vieja de preguntarla, no el nombre del módulo: un archivo que importe
@@ -274,11 +315,37 @@ test('reabrir la entrega tiene su ruta, y es del DOCENTE', () => {
 test('poner nota vuelve a cerrar una entrega reabierta', () => {
   // Si no se apagara, el alumno quedaría con la puerta abierta para siempre después de la
   // primera reapertura, y el docente no tendría cómo volver a cerrarla salvo a mano.
+  //
+  // ⚠️ RN-26b (specs/correccion-de-entregas.spec.md) PRECISA esta regla sin contradecirla:
+  // "reopenedAt se cierra con la DEVOLUCIÓN, no con el borrador". Este test estructural (grep)
+  // solo puede confirmar que la ruta TOCA reopenedAt en algún lado — no puede distinguir "lo
+  // cierra siempre que hay nota" de "lo cierra solo si además se devuelve", que es la
+  // diferencia que introduce RN-26b. Esa distinción de comportamiento se prueba en el smoke
+  // (CA-34: con una entrega reabierta, `devolver:false` NO cierra la reapertura; devolver sí).
   const i = rutas.indexOf("router.post('/:id/grade'");
   assert.ok(i !== -1);
   const cuerpo = rutas.slice(i, rutas.indexOf('// DELETE /activities/:id', i));
   assert.ok(/reopenedAt/.test(cuerpo),
-    'POST /:id/grade tiene que apagar la reapertura al guardar una nota');
+    'POST /:id/grade tiene que apagar la reapertura al devolver una nota (RN-26b: no al guardar un borrador)');
+});
+
+// ── CA-33 (RN-26) — los cinco lugares no cambian, ninguno ────────────────────────────────────
+
+test('CA-33 — edicionEntrega.js delega en Correccion.estaDevuelta(), no reescribe la regla', () => {
+  // RN-26: "Los cinco lugares que comparten la regla NO se tocan, ninguno... Lo único que
+  // cambia es la línea del módulo (edicionEntrega.js, rama corregida), que pasa a llamar a
+  // Correccion.estaDevuelta()." Se prueba en POSITIVO (que el módulo llame al otro módulo) en
+  // vez de en negativo (grep de "returnedAt" en cinco archivos ajenos), porque un grep amplio
+  // sobre course.js o routes/activities.js puede pisar usos legítimos y no relacionados del
+  // campo (por ejemplo, mostrar la fecha de devolución en el panel del corrector, RN-08) y
+  // producir una falla que no tiene nada que ver con esta regla.
+  const edicionEntregaSrc = fs.readFileSync(
+    path.join(raiz, 'public/js/edicionEntrega.js'), 'utf8');
+  assert.ok(/Correccion\.estaDevuelta/.test(edicionEntregaSrc),
+    'esCorregida() tiene que llamar a Correccion.estaDevuelta(grade) — RN-26. Si en cambio ' +
+    'reimplementa la lectura de returnedAt a mano acá adentro, el día que estaDevuelta() ' +
+    'cambie (por ejemplo si se agregara un cuarto estado) este archivo quedaría desincronizado ' +
+    'sin que ningún test lo note.');
 });
 
 test('retirar la entrega tiene su ruta y su guarda', () => {

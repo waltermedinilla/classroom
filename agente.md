@@ -559,6 +559,126 @@ de ellas y se portó a mano a `origin/main`.
 - Tests: `tests/unit/salaSonido.test.js` y `salaSonidoServidor.test.js` (59) y tres escenarios de
   smoke (`sala-sonido`, `sala-sonido-controles`, `sala-sonido-herencia`) más CA-38 en `sala-acceso`.
 
+### 2026-09-22 — Modo Corrector: el docente corrige mirando la entrega, sin bajar un archivo
+
+Pedido del usuario a partir de una captura de la vista de corrección de Google Classroom:
+*"podrá previsualizar los archivos que se encuentran actualmente, además podrá hacer todo lo que
+hace la captura de pantalla que te pasé, y lo que ya venía de antes… el docente podrá cambiar el
+modo de vista como lo tenía antes, ten en cuenta que **no podrás eliminar nada de lo que
+estaba** y además tener que ser capaz de ser backupeable"*. Spec:
+`specs/correccion-de-entregas.spec.md` (1.885 líneas, 74 RN, 78 CA).
+
+**Lo que hay ahora.** Al lado del Modo Planilla de siempre aparece el **Modo Corrector**: un
+alumno a la vez, su archivo ocupando la pantalla, la nota y el comentario al costado, y las
+flechas para pasar al siguiente. El interruptor entre los dos modos es una preferencia del
+docente (`User.modoCorreccion`), así que la elección sobrevive al cierre del navegador. **El Modo
+Planilla no perdió nada**: es el default y ninguno de sus botones se movió.
+
+#### La cadena de previsualización: tres pasos y ninguna pantalla en blanco
+
+Ningún visor sirve para los ocho formatos, así que la regla es caer siempre hacia adelante
+(RN-13):
+
+1. **Office** (`.doc/.docx/.xls/.xlsx/.ppt/.pptx`) → **enlace firmado** al visor de Microsoft.
+2. Si Microsoft no llega → **PDF de LibreOffice** convertido en el servidor.
+3. Si tampoco hay LibreOffice → **botón Descargar**, que es lo que había antes.
+
+**Los PDF y las imágenes se dibujan solos** (el 88% de las entregas reales son fotos: ese dato
+reordenó las prioridades del visor). Los **planos** tienen su propio camino: el `.dwg` pasa por
+**ODA File Converter** a `.dxf` en el servidor y el `.dxf` se dibuja **en el navegador** con
+`dxf-viewer` + three.js, empaquetado con esbuild (`npm run build:dxf`). Eso último tiene una
+consecuencia buena: como el dibujo es del lado del cliente, el plano **no necesita enlace
+firmado**.
+
+> ⭐ **La medición dio vuelta la suposición.** La spec arrancó asumiendo que el formato a
+> resolver era el `.dxf`. En producción hay **13 `.dwg` y 1 solo `.dxf`**: sin el conversor de
+> ODA la feature no le servía a nadie. De ahí que ODA quedara instalado en las dos máquinas.
+
+**Por qué hay un enlace firmado y no la cookie de siempre** (RN-15): Microsoft descarga el
+archivo desde *sus* servidores, sin la sesión del docente, así que `requireAuth` lo rechazaba —
+esa era la causa raíz de que la vista previa de Office no funcionara por ningún lado. El enlace
+lleva un HMAC derivado de `JWT_SECRET` y vive 5 minutos. Y para que el `_id` del docente no
+viaje a Microsoft, la firma usa un **token derivado** (`tokenDeDocente`) en vez del ObjectId.
+
+#### Lo que se agregó del lado de corregir
+
+- **Devolver ≠ Guardar.** Una nota guardada puede quedar en **borrador**: el alumno no la ve
+  hasta que el docente aprieta Devolver. Devolver es **por alumno**, no por lote, y cada hecho
+  deja su propia entrada de auditoría (`submission.return`, `submission.comment`).
+- **Comentarios privados**, ida y vuelta: escriben los dos, con marca de no leído para cada
+  lado (`unreadForTeacher` / `unreadForStudent`).
+- **Historial de versiones** (`versions[]`): cuando el alumno reemplaza su entrega, el archivo
+  viejo **no se borra**. `cleanup-files.js` se enseñó a contarlas para no barrerlas.
+- **§ K — el log de formatos rechazados.** Los cinco filtros de subida ahora dejan una línea
+  `formato_rechazado`, y `tools/ver-formatos.js` la agrupa por extensión. Sirve para responder
+  con datos "¿qué formato le falta a la escuela?". De paso entró **`.pptx`** a los formatos
+  permitidos, con el recorrido completo por los nueve lugares.
+  ⚠️ El rechazo hay que capturarlo **en el navegador**: el `fileFilter` del servidor casi nunca
+  se dispara, porque el `accept=` rechaza antes de subir un byte.
+
+#### ⭐ El campo que podía borrar todas las notas de la escuela, y por qué no lo hizo
+
+`returnedAt` es lo que distingue una nota devuelta de un borrador. **Se declaró sin `default`
+a propósito**, y esa decisión es la feature entera: `undefined` (la propiedad no existe) significa
+*"esta nota es anterior a todo esto, siempre se vio y se sigue viendo"*. Si hubiera tenido
+`default: null`, o si el código preguntara por `=== null`, **todas las notas ya puestas en el año
+habrían pasado a borrador de golpe** — invisibles para los alumnos, sin que nadie tocara nada.
+
+`undefined` sobrevive al JSON, al dump del backup y al restore sin ninguna migración. Se verificó
+**contra las notas reales de julio**: no tienen la propiedad. `tests/unit/returnedAtDefault.test.js`
+lo deja clavado.
+
+⚠️ El detalle que hay que recordar del restore: **no es byte a byte**. Mongoose descarta los
+campos que no están declarados y materializa los defaults de los que faltan. Por eso "no poner
+default" es una condición del backup, no solo del código.
+
+#### Backup
+
+Las colecciones y carpetas nuevas entraron a `COLLECTIONS` y `CARPETAS` de `routes/backup.js`
+**con `optional: true`, y eso es para siempre**: un backup hecho antes de esta fecha tiene que
+poder restaurarse igual. Lo vigilan `backupCobertura.test.js` y `backupCarpetas.test.js`, que
+son los que fallan si alguien agrega una colección y se olvida del backup.
+
+#### Las trampas que costaron tiempo (para no repetirlas)
+
+- ⭐ **`soffice.exe --version` se cuelga 15 segundos y no imprime nada.** En Windows hay dos
+  binarios al lado del otro y el `.exe` es el lanzador **gráfico**. La detección concluía
+  siempre "LibreOffice no está instalado" y toda la cadena de Office caía al botón Descargar,
+  en una máquina donde LibreOffice convertía perfecto. Va **`soffice.com`** (355 ms).
+  **El modo de falla era de los caros**: en Linux `soffice --version` anda bien, así que esto
+  fallaba **solo en la máquina de desarrollo** — roto donde se verifica, sano en producción.
+- **El rate limit iba antes de la guarda de permisos**, así que un alumno que golpeaba el
+  endpoint del docente recibía 429 en vez de 403. Se arregló poniendo
+  `exigirGestorDeLaActividad` / `exigirMiEntrega` **antes** del limitador.
+- **Un test de humo envenenaba al siguiente.** `corrector-hilo-rate-limit` se gasta el
+  presupuesto de 20 comentarios, y el spec que corría después fallaba por eso, con un síntoma
+  que no tenía nada que ver. Quedó **último**, con un comentario que explica por qué no se
+  puede mover.
+- **Sin WebGL, el plano fallaba echándole la culpa al alumno.** En una máquina sin aceleración
+  gráfica el visor de DXF no arranca, y el cartel decía que el archivo estaba mal. Es un bug de
+  producto, no del entorno: se agregó el motivo `sin_webgl`, que dice la verdad — *"el archivo
+  está bien: descargalo y abrilo con AutoCAD"*.
+- **Un gris que no llegaba a AA.** El primer gris secundario daba **4,31:1** sobre `#1f1f1f`,
+  abajo del 4,5 que pide WCAG. Se midió, no se estimó: quedó en **5,32:1**.
+- **Dos correcciones a lo que yo mismo había escrito.** (a) Reporté 61 ms por plano para el
+  conversor CAD; ese número estaba amortizado sobre una tanda. El costo real por archivo es
+  **524 ms en el VPS y 1.066 ms en Windows**, o sea 4-8× LibreOffice, no 65×. (b) Recomendé
+  configurar `cacheSizeGB` en Mongo cuando **ya estaba puesto**: el OOM que cortó las pruebas
+  dos veces fue del sistema entero, no de Mongo, que usaba 467 MB.
+- **CA-69 estaba mal redactado** y lo cazó el tester antes de implementar: un nombre con una
+  "extensión" de 2.000 caracteres da `(sin_ext)`, no `(invalida)`. El defecto era del criterio,
+  no de RN-47.
+
+#### Lo que quedó afuera a propósito
+
+- **RN-16c** (usar el PDF ya cacheado antes de llamar a Microsoft) **no está implementada**: la
+  recomendación es probar la cadena en producción primero y recién después decidir si conviene.
+- **El rate limit sigue teniendo el techo doble** de siempre (2 workers de PM2, una cola en
+  memoria por worker). Es la misma corrección ya anotada para el monitor.
+
+**Tests: 171 en 11 archivos**, todos en verde. Diez rutas nuevas (ocho en `routes/activities.js`,
+`PATCH /courses/profile/preferencias` y `POST /diagnostico/formato`).
+
 ### 2026-09-17 — Fusión de cuentas, Fase 1b: el chico cuya cuenta se apaga se entera con qué correo entrar
 
 Cierra RN-13 de `specs/fusion-de-cuentas.spec.md`. Hasta ahora el botón de DNI duplicados no

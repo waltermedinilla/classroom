@@ -5,8 +5,9 @@
 // Cruza todos los archivos en disco contra los referenciados en la BD.
 // Elimina los que ningún documento menciona y borra carpetas vacías resultantes.
 // Cubre: avatars, portadas de cursos, adjuntos de novedades,
-//        adjuntos de actividades (docente), entregas de alumnos y
-//        adjuntos del chat de la sala en vivo.
+//        adjuntos de actividades (docente), entregas de alumnos —con sus VERSIONES
+//        anteriores, ver el comentario de refEntregas—, adjuntos del chat de la sala en vivo
+//        y la cache de vistas previas convertidas.
 
 require('dotenv').config();
 const mongoose     = require('mongoose');
@@ -23,6 +24,10 @@ const RoomMessage  = require('./models/RoomMessage');
 const DRY_RUN        = process.argv.includes('--dry-run');
 const PUBLIC_BASE    = path.join(__dirname, 'public', 'archivos');
 const ENTREGAS_BASE  = path.join(__dirname, 'archivos', 'entregas');
+// Cache de vistas previas convertidas (routes/activities.js). Es el único árbol que NO está
+// en el backup, a propósito: se regenera del original. Que lo barra esta herramienta es lo
+// que impide que la cache crezca para siempre con los derivados de entregas ya borradas.
+const DERIVADOS_BASE = path.join(__dirname, 'archivos', 'derivados');
 // La constante sale del servicio, no se redefine acá: si el directorio de las salas cambia,
 // este script tiene que seguirlo o empezaría a ver TODOS los adjuntos como huérfanos y los
 // borraría en el primer `node cleanup-files.js`.
@@ -118,15 +123,41 @@ async function main() {
   console.log(`Adjuntos de actividades referenciados: ${refPublic.size - prev3}`);
 
   // Entregas de alumnos: sub.files[].storagePath = '{school}/{actId}/{studentId}/{filename}'
-  const submissions = await Submission.find({ 'files.0': { $exists: true } }).select('files').lean();
+  //
+  // ⚠️ Y TAMBIÉN sus versiones anteriores, que viven en `_versiones/` dentro de la misma
+  // carpeta (specs/correccion-de-entregas.spec.md, RN-33/RN-35). Sin esa mitad, la primera
+  // corrida de `npm run cleanup` se lleva el historial ENTERO: los archivos de `_versiones/`
+  // están en disco y no en `files[]`, así que el barrido de abajo los ve como huérfanos y
+  // los borra en silencio, con un cartel que dice que liberó espacio.
+  //
+  // Es la misma familia de bug que el borrado de datos de prueba del 07/09: filtrar por lo
+  // que corresponde, no por lo que está a mano.
+  const submissions = await Submission.find({
+    $or: [{ 'files.0': { $exists: true } }, { 'versions.0': { $exists: true } }],
+  }).select('files versions').lean();
+  let refVersiones = 0;
+  // Los NOMBRES (no las rutas) de los archivos de entrega vivos. Es lo único que hace falta
+  // para decidir si un derivado sobra: `archivos/derivados/{school}/{filename}.pdf` nombra a
+  // su original en su propio nombre.
+  const nombresDeEntrega = new Set();
   for (const sub of submissions) {
     for (const f of (sub.files || [])) {
       if (f.storagePath) {
         refEntregas.add(path.join(ENTREGAS_BASE, f.storagePath));
+        nombresDeEntrega.add(f.filename);
+      }
+    }
+    for (const v of (sub.versions || [])) {
+      for (const f of (v.files || [])) {
+        if (f.storagePath) {
+          refEntregas.add(path.join(ENTREGAS_BASE, f.storagePath));
+          nombresDeEntrega.add(f.filename);
+          refVersiones++;
+        }
       }
     }
   }
-  console.log(`Entregas de alumnos referenciadas: ${refEntregas.size}`);
+  console.log(`Entregas de alumnos referenciadas: ${refEntregas.size} (${refVersiones} de versiones anteriores)`);
 
   // Adjuntos del chat de la sala: msg.attachment.path = '{school}/{courseId}/{sessionId}/{file}'
   //
@@ -147,14 +178,24 @@ async function main() {
 
   // ── 2. Escanear disco ───────────────────────────────────────────────────────
 
-  const diskPublic   = walkDir(PUBLIC_BASE);
-  const diskEntregas = walkDir(ENTREGAS_BASE);
-  const diskSalas    = walkDir(SALAS_BASE);
+  const diskPublic    = walkDir(PUBLIC_BASE);
+  const diskEntregas  = walkDir(ENTREGAS_BASE);
+  const diskSalas     = walkDir(SALAS_BASE);
+  const diskDerivados = walkDir(DERIVADOS_BASE);
 
-  console.log(`Archivos en disco (public/archivos):    ${diskPublic.length}`);
-  console.log(`Archivos en disco (archivos/entregas):  ${diskEntregas.length}`);
-  console.log(`Archivos en disco (archivos/salas):     ${diskSalas.length}`);
-  console.log(`Total en disco: ${diskPublic.length + diskEntregas.length + diskSalas.length}\n`);
+  // Cuarto árbol, con una regla de huérfano MÁS SIMPLE que la de los otros tres: un derivado
+  // no lo referencia ningún documento —es una cache— así que lo que se mira es su nombre
+  // base. `{filename}.pdf` / `{filename}.dxf` sobra cuando `{filename}` ya no es un archivo
+  // de entrega vivo. Es lo que borra la vista previa de la entrega que alguien retiró.
+  const refDerivados = new Set(
+    diskDerivados.filter(fp => nombresDeEntrega.has(path.basename(fp).replace(/\.(pdf|dxf)$/i, ''))),
+  );
+
+  console.log(`Archivos en disco (public/archivos):     ${diskPublic.length}`);
+  console.log(`Archivos en disco (archivos/entregas):   ${diskEntregas.length}`);
+  console.log(`Archivos en disco (archivos/salas):      ${diskSalas.length}`);
+  console.log(`Archivos en disco (archivos/derivados):  ${diskDerivados.length}`);
+  console.log(`Total en disco: ${diskPublic.length + diskEntregas.length + diskSalas.length + diskDerivados.length}\n`);
 
   // ── 3. Eliminar huérfanos ───────────────────────────────────────────────────
 
@@ -173,9 +214,10 @@ async function main() {
     }
   };
 
-  processFiles(diskPublic,   refPublic,   'public');
-  processFiles(diskEntregas, refEntregas, 'entregas');
-  processFiles(diskSalas,    refSalas,    'salas');
+  processFiles(diskPublic,    refPublic,    'public');
+  processFiles(diskEntregas,  refEntregas,  'entregas');
+  processFiles(diskSalas,     refSalas,     'salas');
+  processFiles(diskDerivados, refDerivados, 'derivados');
 
   if (deletedCount === 0) {
     console.log('No se encontraron archivos huérfanos. Todo en orden.');
@@ -184,6 +226,7 @@ async function main() {
     removeEmptyDirs(PUBLIC_BASE);
     removeEmptyDirs(ENTREGAS_BASE);
     removeEmptyDirs(SALAS_BASE);
+    removeEmptyDirs(DERIVADOS_BASE);
   }
 
   // ── 4. Resumen ──────────────────────────────────────────────────────────────

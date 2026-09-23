@@ -24,6 +24,14 @@ const ACTIONS = {
   'submission.withdraw':  { label: 'retiró su entrega',       icon: 'undo',                 color: '#b06000', category: 'submission' },
   'submission.reopen':    { label: 'habilitó a rehacer',      icon: 'lock_open_right',      color: '#9334e6', category: 'submission' },
   'submission.grade':     { label: 'calificó una entrega',     icon: 'grade',                color: '#9334e6', category: 'submission' },
+  // Devolver ≠ Guardar (specs/correccion-de-entregas.spec.md): una nota guardada puede
+  // quedar en borrador, así que "se la calificó" y "se la devolvió" son dos hechos distintos
+  // y cada uno deja su entrada. La de devolver va POR ALUMNO, no por lote.
+  'submission.return':    { label: 'devolvió una corrección',  icon: 'assignment_return',    color: '#9334e6', category: 'submission' },
+  'submission.comment':   { label: 'comentó una entrega',      icon: 'forum',                color: '#0d7377', category: 'submission' },
+  // Cada emisión de un enlace firmado: durante 5 minutos ese archivo se baja sin cookie, y
+  // el archivo es de un menor. La auditoría es una de las tres cosas que acotan eso.
+  'submission.preview_link': { label: 'abrió una vista previa', icon: 'link',                color: '#5f6368', category: 'submission' },
 
   // ── Novedades ─────────────────────────────────────────────────────────────
   'announcement.create':  { label: 'publicó una novedad',      icon: 'campaign',             color: '#0d7377', category: 'announcement' },

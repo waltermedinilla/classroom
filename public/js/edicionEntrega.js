@@ -33,6 +33,12 @@
   else raiz.EdicionEntrega = api;
 })(typeof window !== 'undefined' ? window : globalThis, function () {
 
+  // La regla de "¿esta nota está devuelta?" vive en public/js/correccion.js y se usa acá
+  // adentro (esCorregida). En el navegador llega como global —course.ejs carga ese archivo
+  // ANTES que este, y el test de orden de los <script> lo fija—; bajo node y en el servidor,
+  // por require(). Mismo patrón que usa ratelimit-chart.js para resolver el módulo de fechas.
+  var Correccion = (typeof window !== 'undefined') ? window.Correccion : require('./correccion.js');
+
   // Los motivos, con el texto que se muestra. El texto sale de acá y no del HTML para que
   // el cartel de la pantalla y el mensaje del 403 digan lo mismo porque SON lo mismo.
   var MOTIVOS = {
@@ -83,7 +89,18 @@
   function esCorregida(grade) {
     if (!grade) return false;
     if (grade.manual === false) return false;
-    return grade.points != null;
+    if (grade.points == null) return false;
+    // ⭐ Y ADEMÁS tiene que estar DEVUELTA (RN-26 de specs/correccion-de-entregas.spec.md).
+    // Lo que cierra la edición pasó a ser la devolución, no la existencia de la nota: con la
+    // regla vieja, una nota en BORRADOR le contestaría al alumno "el docente ya corrigió tu
+    // entrega" por una nota que no puede ver — y como el flujo natural del Modo Corrector es
+    // "corrijo los 30 y devuelvo al final", congelaría al curso entero.
+    //
+    // La pregunta se delega y no se reescribe acá: el día que estaDevuelta() cambie (por
+    // ejemplo si apareciera un cuarto estado), este archivo tiene que cambiar con ella.
+    // Ojo con el AUSENTE: una nota anterior a esa feature no trae `returnedAt` y se lee como
+    // devuelta, así que TODO lo que ya estaba cerrado sigue cerrado exactamente igual.
+    return Correccion.estaDevuelta(grade);
   }
 
   /**

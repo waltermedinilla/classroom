@@ -175,6 +175,17 @@ const userSchema = new mongoose.Schema({
     // según el rol, pero el campo es uno solo.
     default: null,
   },
+  // Preferencia de vista del corrector de entregas (specs/correccion-de-entregas.spec.md,
+  // RN-02). Por persona, no por actividad ni por curso.
+  //
+  // Vive acá —y no solo en localStorage— porque `users` está en el backup y el localStorage
+  // no: la docente que cambia de máquina o a la que le formatean la netbook vuelve a su
+  // modo. 'planilla' es el default y lo es para siempre: es la tabla de toda la vida.
+  modoCorreccion: {
+    type: String,
+    enum: ['planilla', 'corrector'],
+    default: 'planilla',
+  },
   // Sonido del chat de la sala en vivo (specs/sonido-chat-sala.spec.md, D2). Es la última
   // elección de ESTA persona como gestora de una sala, para todos sus cursos: la sala que abra
   // arranca con esto. Vive en User y no en localStorage porque `users` está en el backup y la

@@ -118,6 +118,16 @@ const CARPETAS_EXCLUIDAS = {
   // muestra los mensajes pero no las imágenes que se compartieron en esa clase.
   [path.join(__dirname, '../archivos/salas')]:
     'adjuntos del chat de las salas en vivo; se purgan solos a los 3 meses (cleanup-rooms.js)',
+
+  // PDFs de Office y DXF de planos convertidos para poder previsualizarlos
+  // (specs/correccion-de-entregas.spec.md, RN-17 y RN-42d).
+  //
+  // No entra al backup, y la decisión es de ida y vuelta: `planDeCarpetas()` se arma SOLO
+  // desde CARPETAS, así que una restauración ni la mira. Es correcto: la clave es única por
+  // subida, lo que sobre no lo referencia nadie (lo barre cleanup-files.js) y lo que falte
+  // se regenera solo en el primer clic.
+  [path.join(__dirname, '../archivos/derivados')]:
+    'se regenera del original; respaldarla duplica el peso sin agregar información',
 };
 
 // Backups de seguridad pre-restore: persisten en disco (no en /tmp) para no perderse

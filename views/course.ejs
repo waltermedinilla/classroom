@@ -428,7 +428,7 @@
           <div class="att-buttons">
             <label class="btn btn-outline att-btn">
               <input type="file" id="activityFileInput"
-                     accept=".pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf,.jpg,.jpeg,.jfif,.png,.webp,.gif,.avif,.tif,.tiff"
+                     accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.dwg,.dxf,.jpg,.jpeg,.jfif,.png,.webp,.gif,.avif,.tif,.tiff"
                      multiple hidden>
               <span class="material-symbols-outlined">attach_file</span>
               Subir archivo
@@ -549,9 +549,22 @@
           <span class="material-symbols-outlined modal-header-icon">assignment</span>
           <h3 id="detailTitle">Actividad</h3>
         </div>
-        <button class="icon-btn" onclick="closeActivityDetail()">
-          <span class="material-symbols-outlined">close</span>
-        </button>
+        <div style="display:flex;align-items:center;gap:10px">
+          <!-- El toggle Planilla/Corrector, donde se lo busca: a la derecha del título
+               (specs/correccion-de-entregas.spec.md, RN-04). Nace oculto y lo muestra
+               loadTeacherDetail: el alumno abre el MISMO modal y no tiene corrector. -->
+          <div class="modo-toggle" id="modoToggle" hidden>
+            <button type="button" data-modo="planilla" onclick="aplicarModoCorreccion('planilla')">
+              <span class="material-symbols-outlined">table_rows</span> Planilla
+            </button>
+            <button type="button" data-modo="corrector" onclick="aplicarModoCorreccion('corrector')">
+              <span class="material-symbols-outlined">rate_review</span> Corrector
+            </button>
+          </div>
+          <button class="icon-btn" onclick="closeActivityDetail()">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
       </div>
       <div class="modal-body" id="detailBody" style="min-height:120px">
       </div>
@@ -759,10 +772,20 @@
       if (e.key === 'Escape') closeUploadErrModal();
     });
     window.USER_INITIAL = '<%= user.name.charAt(0).toUpperCase() %>';
+    // Preferencia de vista del corrector de entregas (RN-02). La fuente de verdad es la base
+    // —viaja en el backup y sobrevive a que le formateen la netbook a la docente—; el
+    // localStorage es solo cache anti-parpadeo para pintar sin esperar un fetch.
+    window.USER_MODO_CORRECCION = '<%= user.modoCorreccion || "planilla" %>';
     window.COURSE_COLOR = '<%= (course.header && course.header.color) ? course.header.color : "#1a73e8" %>';
     window.COURSE_COLOR2 = '<%= (course.header && course.header.color2) ? course.header.color2 : "" %>';
   </script>
   <script src="/js/devoluciones.js"></script>
+  <!-- Modo Corrector: los tres valores de returnedAt (una nota SIN el campo está devuelta),
+       qué visor le toca a cada archivo y el recorte de la extensión que se reporta. Va ANTES
+       de edicionEntrega.js, que desde RN-26 le pregunta si la nota está devuelta para decidir
+       si la entrega sigue abierta — si se carga después, esa rama explota con un
+       ReferenceError. Ver specs/correccion-de-entregas.spec.md. -->
+  <script src="/js/correccion.js"></script>
   <!-- Regla de visibilidad de actividades (la misma que aplica el servidor). Va ANTES de
        course.js, que la usa en addActivityTabCard() para el chip y el botón de ojo. -->
   <script src="/js/visibilidadActividad.js"></script>

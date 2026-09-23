@@ -80,6 +80,23 @@ test('devolución escrita SIN nota no es "calificada"', () => {
   assert.equal(clave(a), 'entregada', 'una devolución sin nota no la da por calificada');
 });
 
+// RN-24 (specs/correccion-de-entregas.spec.md): con la nota en BORRADOR (returnedAt: null),
+// el servidor OMITE myGrade entero — no manda ni points ni feedback (a diferencia del caso de
+// arriba, "devolución sin nota", donde SÍ viaja myGrade con points:null). Desde el punto de
+// vista de esta función pura la diferencia no se nota: en los dos casos act.myGrade llega
+// "sin nota utilizable" (null, o un objeto con points:null), así que el estado tiene que ser
+// el mismo: 'entregada', nunca 'calificada'. Este test documenta el motivo NUEVO por el que el
+// caso ya cubierto arriba también protege RN-24 — si `GET /activities/course/:courseId`
+// dejara de omitir myGrade en borrador, el síntoma sería un alumno viendo "Calificada" (o la
+// nota en sí, más grave) para una corrección que el docente todavía no devolvió.
+test('RN-24 — un borrador (myGrade omitido por el servidor) tampoco es "calificada"', () => {
+  const a = act({ mySubmission: entregada, myGrade: null }); // el servidor no mandó nada: borrador
+  assert.equal(clave(a), 'entregada',
+    'si el servidor deja de omitir myGrade en borrador, este mismo caso (myGrade ausente) ' +
+    'seguiría dando "entregada" acá — la protección real está del lado del servidor (RN-24), ' +
+    'no acá: este test deja constancia de qué es lo que NO puede llegar a filtrarse');
+});
+
 test('cada estado trae su etiqueta y su clase CSS', () => {
   assert.equal(ESTADOS.entregada.etiqueta, 'Entregada');
   assert.equal(ESTADOS.entregada.css, 'status-submitted');

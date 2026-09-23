@@ -22,7 +22,11 @@ const { computeAutoGrade } = require('../services/autoGrader');
 // comparte el navegador: si la escribiéramos dos veces, la pantalla podría aceptar un valor que
 // el servidor rechaza. No la usa el autocalificador — ver el comentario del propio archivo.
 const { notaValidaManual } = require('../public/js/devoluciones');
-const { logDeRuta } = require('../middleware/route-log');
+// Modo Corrector: los tres valores de `returnedAt` (RN-21), qué visor le toca a cada archivo
+// y el recorte de la extensión que se loguea. Vive en public/js por lo mismo que las otras:
+// la pantalla y el servidor tienen que contestar igual. Ver specs/correccion-de-entregas.spec.md.
+const Correccion = require('../public/js/correccion');
+const { logDeRuta, logRechazo } = require('../middleware/route-log');
 // Guarda de forma del :id, en la primera línea de cada handler con parámetro. Ver
 // middleware/objectId.js y el issue conocido nº 10 de agente.md. Ojo con `como: 'json'`:
 // varios GET de este router son endpoints de fetch(), no vistas.
@@ -56,6 +60,18 @@ const { esUrlDeAdjunto } = require('../public/js/adjuntosActividad');
 // novedades y la sala en vivo.
 const { subirImagen, guardarImagenOptimizada, ImagenInvalidaError } = require('../middleware/image-upload');
 const { EXT_IMAGENES } = require('../config/imagePresets');
+// Previsualización de documentos y de planos. Los tres son del corrector de entregas:
+// la URL firmada que necesita Microsoft (RN-15), LibreOffice (RN-16) y ODA (RN-42).
+const firmaArchivo     = require('../services/firmaArchivo');
+const conversionOffice = require('../services/conversionOffice');
+const conversionCad    = require('../services/conversionCad');
+// El historial de la entrega: el tope de 5 versiones y dónde viven los archivos viejos (RN-33).
+const { recortarVersiones, rutaEnVersiones, DIR_VERSIONES } = require('../services/versionesEntrega');
+// El limitador del hilo de comentarios va POR PERSONA, no por IP (RN-32): toda la escuela
+// sale por una sola IP NAT. `ipKeyGenerator` es el fallback correcto para IPv6 cuando no hay
+// usuario, igual que en routes/diagnostico.js.
+const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 
 // Adjuntos del docente: dentro de /public (acceso estático directo)
 // Estructura: public/archivos/{schoolId}/actividades/{courseId}/{filename}
@@ -64,6 +80,21 @@ const ARCHIVOS_BASE = path.join(__dirname, '../public/archivos');
 // Entregas de alumnos: FUERA de /public (protegidas por ruta auth)
 // Estructura: archivos/entregas/{schoolId}/{activityId}/{studentId}/{filename}
 const ENTREGAS_BASE = path.join(__dirname, '../archivos/entregas');
+
+// Cache de derivados: el PDF de un Office (RN-16b) y el DXF de un DWG (RN-42d).
+// Estructura: archivos/derivados/{schoolId}/{filename}.{pdf|dxf}
+//
+// NO entra al backup y está declarado así a propósito (routes/backup.js, CARPETAS_EXCLUIDAS):
+// se regenera del original, y respaldarla duplica el peso sin agregar información. La clave
+// es única por subida (`uniqueFilename`), así que la cache NO se invalida nunca: cada archivo
+// se convierte una sola vez en su vida. El derivado se borra CON su original — es una copia
+// del trabajo de un menor y no puede sobrevivirlo.
+const DERIVADOS_BASE = path.join(__dirname, '../archivos/derivados');
+
+// El derivado que le toca a un archivo de entrega. `ext` con punto ('.pdf' | '.dxf').
+function rutaDerivada(schoolId, filename, ext) {
+  return path.join(DERIVADOS_BASE, String(schoolId || 'general'), path.basename(filename) + ext);
+}
 
 // Extensiones permitidas para adjuntos del docente.
 //
@@ -79,7 +110,12 @@ const ENTREGAS_BASE = path.join(__dirname, '../archivos/entregas');
 // promueve un `image/*` a HTML. Lo que sí importa es que eso NO se apoye en el contenido:
 // la lista cerrada sigue siendo la primera defensa. Ver tests/unit/subidaPlanos.test.js,
 // que ata los nueve lugares donde vive "qué se puede subir".
-const EXT_ALLOWED     = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.dwg', '.dxf'];
+//
+// `.ppt` y `.pptx` entraron el 2026-09-21 (§ J de specs/correccion-de-entregas.spec.md).
+// Corrigen una asimetría que no decidió nadie: la sala en vivo YA los aceptaba
+// (services/liveRoom.js, EXT_ARCHIVOS), así que un docente podía compartir un PowerPoint en
+// clase pero no adjuntarlo a la actividad ni recibirlo como entrega.
+const EXT_ALLOWED     = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.dwg', '.dxf'];
 // Tope de un adjunto del docente: holgado a propósito, son PDFs escolares escaneados. Una
 // sola constante para los dos multer que lo usan (crear la actividad y el pre-upload) y para
 // los mensajes de error, que antes repetían el número a mano.
@@ -90,7 +126,19 @@ const ADJUNTO_MAX_MB  = 50;
 // recomprime a WebP. Las de imagen se dejan igual en esta lista a propósito, como red: un
 // navegador con el JS viejo en cache sigue mandando la foto a esta ruta, y es mejor que se
 // guarde entera a que le rebote. Cuando el cache ya no importe se pueden sacar.
-const EXT_SUBMISSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.zip', '.dwg', '.dxf', '.jpg', '.jpeg', '.png', '.gif'];
+const EXT_SUBMISSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.zip', '.dwg', '.dxf', '.jpg', '.jpeg', '.png', '.gif'];
+
+// § K — el rechazo por extensión deja una línea en el log, y no es auditoría: es poder
+// contestar dentro de dos semanas QUÉ FORMATO LE ESTÁ FALTANDO A LA ESCUELA, que hoy es
+// imposible. Hasta esta feature los tres fileFilter de acá abajo hacían `cb(null, false)`
+// sin loguear nada, así que un formato rechazado no dejaba rastro EN NINGÚN LADO: el archivo
+// no llega al disco y los reportes de /diagnostico solo cubren motivos de red.
+//
+// Va la EXTENSIÓN SOLA, nunca el nombre del archivo (RN-46): los alumnos nombran la entrega
+// con su propio nombre («TP3-Juan-Perez.docx»), que es un dato personal y no aporta nada a
+// la pregunta. Y va recortada (Correccion.extensionParaLog, RN-47) porque el nombre lo
+// escribe el cliente: sin el recorte, una "extensión" de 2.000 caracteres infla
+// logs/combined.log, que NO rota.
 
 // Genera un nombre único para evitar colisiones en disco: timestamp + random + extensión original
 function uniqueFilename(originalname) {
@@ -148,7 +196,15 @@ const upload = multer({
   }),
   limits: { fileSize: ADJUNTO_MAX_MB * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    cb(null, EXT_ALLOWED.includes(path.extname(file.originalname).toLowerCase()));
+    const ext = path.extname(file.originalname).toLowerCase();
+    // Recortada antes de tocar el log: ver el bloque de § K de arriba (RN-46/RN-47).
+    const extParaLog = Correccion.extensionParaLog(file.originalname);
+    const permitida = EXT_ALLOWED.includes(ext);
+    if (!permitida) {
+      logRechazo(req.res, 400, 'formato no permitido',
+        { evento: 'formato_rechazado', ext: extParaLog, ruta: 'actividad_adjunto', origen: 'servidor' });
+    }
+    cb(null, permitida);
   },
 });
 // Ídem la entrega del alumno: sin esto, crear la actividad con un adjunto pasado de tamaño
@@ -196,7 +252,15 @@ const submissionUpload = multer({
   }),
   limits: { fileSize: SUBMISSION_MAX_SIZE },
   fileFilter: (req, file, cb) => {
-    cb(null, EXT_SUBMISSIONS.includes(path.extname(file.originalname).toLowerCase()));
+    const ext = path.extname(file.originalname).toLowerCase();
+    // Recortada antes de tocar el log: ver el bloque de § K de arriba (RN-46/RN-47).
+    const extParaLog = Correccion.extensionParaLog(file.originalname);
+    const permitida = EXT_SUBMISSIONS.includes(ext);
+    if (!permitida) {
+      logRechazo(req.res, 400, 'formato no permitido',
+        { evento: 'formato_rechazado', ext: extParaLog, ruta: 'entrega', origen: 'servidor' });
+    }
+    cb(null, permitida);
   },
 });
 
@@ -258,7 +322,7 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
       // Para el docente: conteo de entregas (chip "X/Y entregaron") y de aperturas
       // (chip "X/Y vieron"). Los dos aggregates son independientes → van en paralelo.
       const actIds = activities.map(a => a._id);
-      const [counts, viewCounts] = await Promise.all([
+      const [counts, viewCounts, unreadCounts] = await Promise.all([
         Submission.aggregate([
           { $match: { activity: { $in: actIds } } },
           { $group: { _id: '$activity', count: { $sum: 1 } } },
@@ -270,17 +334,30 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
           { $match: { activity: { $in: actIds }, student: { $in: course.students } } },
           { $group: { _id: '$activity', count: { $sum: 1 } } },
         ]),
+        // Chip "N sin leer" del hilo privado (RN-31c). Va como TERCER aggregate del
+        // Promise.all que ya corría dos, y no como una request por actividad: la solapa de
+        // actividades no puede sumar 30 llamadas para pintar un chip. Lo resuelve el índice
+        // { activity, unreadForTeacher } de models/Submission.js.
+        Submission.aggregate([
+          { $match: { activity: { $in: actIds }, unreadForTeacher: true } },
+          { $group: { _id: '$activity', count: { $sum: 1 } } },
+        ]),
       ]);
       const countMap     = {};
       counts.forEach(c => { countMap[c._id.toString()] = c.count; });
       const viewMap      = {};
       viewCounts.forEach(c => { viewMap[c._id.toString()] = c.count; });
+      const unreadMap    = {};
+      unreadCounts.forEach(c => { unreadMap[c._id.toString()] = c.count; });
       const totalStudents = course.students.length;
 
       result = activities.map(act => {
         const obj          = act.toObject();
         obj.submittedCount = countMap[obj._id.toString()] || 0;
         obj.viewedCount    = viewMap[obj._id.toString()]  || 0;
+        // Cuenta ENTREGAS con algo sin leer, no comentarios: el dato accionable es a
+        // cuántos alumnos hay que contestarles.
+        obj.comentariosSinLeer = unreadMap[obj._id.toString()] || 0;
         obj.totalStudents  = totalStudents;
         return obj;
       });
@@ -296,10 +373,15 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
       const misEntregas = await Submission.find({
         student:  userId,
         activity: { $in: activities.map(a => a._id) },
-      }).select('activity firstSubmittedAt createdAt');
+      }).select('activity firstSubmittedAt createdAt unreadForStudent');
       const entregaPorActividad = {};
       misEntregas.forEach(s => {
-        entregaPorActividad[s.activity.toString()] = s.firstSubmittedAt || s.createdAt;
+        entregaPorActividad[s.activity.toString()] = {
+          at: s.firstSubmittedAt || s.createdAt,
+          // "Comentario nuevo" en la tarjeta (RN-31d). Es el mismo mecanismo del otro lado
+          // del hilo, y por eso es un booleano y no un contador.
+          comentariosSinLeer: !!s.unreadForStudent,
+        };
       });
 
       result = activities.map(act => {
@@ -312,13 +394,20 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
         // autocalificación como corrección del docente: sin él, el alumno vería cerrado el
         // cuestionario que acaba de responder (el servidor decidiría bien igual, pero la
         // pantalla le mostraría un cartel que no corresponde).
-        obj.myGrade = myGrade
+        //
+        // ⚠️ En BORRADOR no viaja NADA (RN-24): esta es la única puerta del alumno a su nota,
+        // así que acá se omite `myGrade` entero. No alcanzaba con anular `points` — el
+        // alumno también vería `feedback` y el chip "devolución sin nota" de
+        // estadoActividad.js, o sea que se enteraría igual de que ya lo corrigieron.
+        obj.myGrade = (myGrade && Correccion.estaDevuelta(myGrade))
           ? { points: myGrade.points ?? null, feedback: myGrade.feedback || '', manual: myGrade.manual !== false }
           : null;
-        // Su propia entrega: { at } o null. Nunca los archivos ni el texto — para eso está
-        // GET /activities/:id/my-submission, que es lo que abre el modal de detalle.
+        // Su propia entrega: { at, comentariosSinLeer } o null. Nunca los archivos ni el
+        // texto — para eso está GET /activities/:id/my-submission, que abre el modal.
         const entregadaEl = entregaPorActividad[obj._id.toString()];
-        obj.mySubmission = entregadaEl ? { at: entregadaEl } : null;
+        obj.mySubmission = entregadaEl
+          ? { at: entregadaEl.at, comentariosSinLeer: entregadaEl.comentariosSinLeer }
+          : null;
         delete obj.grades; // No exponer notas de otros alumnos
         // Si es una actividad interactiva, filtrar las respuestas correctas del snapshot
         // (el autoGrader corre siempre server-side; el alumno nunca las necesita ver).
@@ -550,7 +639,15 @@ const uploadSingle = multer({
   }),
   limits: { fileSize: ADJUNTO_MAX_MB * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    cb(null, EXT_ALLOWED.includes(path.extname(file.originalname).toLowerCase()));
+    const ext = path.extname(file.originalname).toLowerCase();
+    // Recortada antes de tocar el log: ver el bloque de § K de arriba (RN-46/RN-47).
+    const extParaLog = Correccion.extensionParaLog(file.originalname);
+    const permitida = EXT_ALLOWED.includes(ext);
+    if (!permitida) {
+      logRechazo(req.res, 400, 'formato no permitido',
+        { evento: 'formato_rechazado', ext: extParaLog, ruta: 'actividad_adjunto_presubida', origen: 'servidor' });
+    }
+    cb(null, permitida);
   },
 });
 
@@ -708,17 +805,28 @@ router.get('/:id/grades', requireAuth, async (req, res) => {
     // Índice O(1) studentId → { points, feedback } para cruzar con la lista de alumnos
     const gradeMap = {};
     activity.grades.forEach(g => {
-      gradeMap[g.student.toString()] = { points: g.points, feedback: g.feedback || '' };
+      // `returnedAt` viaja TAL CUAL, incluido el caso ausente: el navegador lo lee con
+      // Correccion.estaDevuelta() y ahí undefined significa "nota anterior a la feature, ya
+      // devuelta" (RN-21). Normalizarlo a null acá convertiría todas las notas viejas en
+      // borradores a los ojos de la planilla.
+      gradeMap[g.student.toString()] = { points: g.points, feedback: g.feedback || '', returnedAt: g.returnedAt };
     });
 
     // Para cada alumno inscripto: su nota y feedback, o null si no fue calificado todavía
-    const studentGrades = course.students.map(s => ({
-      _id:      s._id,
-      name:     s.name,
-      email:    s.email,
-      points:   gradeMap[s._id.toString()]?.points ?? null,
-      feedback: gradeMap[s._id.toString()]?.feedback || '',
-    }));
+    const studentGrades = course.students.map(s => {
+      const g = gradeMap[s._id.toString()];
+      const fila = {
+        _id:      s._id,
+        name:     s.name,
+        email:    s.email,
+        points:   g?.points ?? null,
+        feedback: g?.feedback || '',
+      };
+      // Solo se agrega si el grade TIENE el campo: una nota legada no puede llegar al
+      // navegador con `returnedAt: null` (= borrador) por culpa del armado de este objeto.
+      if (g && g.returnedAt !== undefined) fila.returnedAt = g.returnedAt;
+      return fila;
+    });
 
     res.json({ activity, studentGrades });
   } catch (err) {
@@ -735,10 +843,17 @@ router.get('/:id/grades', requireAuth, async (req, res) => {
 // La nota es OPCIONAL: el docente puede mandar solo `feedback` para dejar una devolución
 // sin calificar todavía. Si `points` no viene, la nota que ya estuviera cargada NO se toca
 // (mandar solo feedback nunca borra una nota existente).
+//
+// Desde specs/correccion-de-entregas.spec.md acepta además `devolver?: boolean`, y el flag
+// AUSENTE significa DEVOLVER (RN-22b). Es lo que contiene el radio de explosión de toda la
+// feature: todos los clientes que ya existen —las tres pantallas que cargan notas, los ocho
+// llamados del smoke y cualquier curl— siguen publicando exactamente como hoy.
 router.post('/:id/grade', requireAuth, async (req, res) => {
   if (idMalo(req, res, 'Actividad no encontrada')) return;
   try {
     const { studentId, points, feedback } = req.body;
+    // `devolver: false` es la ÚNICA forma de crear un borrador, y es explícita.
+    const devolver = req.body.devolver !== false;
     const activity = await Activity.findById(req.params.id);
     if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
 
@@ -767,16 +882,26 @@ router.post('/:id/grade', requireAuth, async (req, res) => {
 
     const existing = activity.grades.find(g => g.student.toString() === studentId);
     if (existing) {
+      // Se pregunta ANTES de tocar nada: RN-23 dice que una nota ya devuelta no vuelve a
+      // borrador. Sin esto, editar una nota vieja con `devolver: false` se la escondería al
+      // alumno que ya la había visto, de a una por vez y sin que nadie se entere.
+      const yaEstabaDevuelta = Correccion.estaDevuelta(existing);
       if (mandaNota) existing.points = nota;
       existing.gradedAt = new Date();
       existing.manual   = true; // el docente sobrescribe → protege contra re-autocalificación
       if (feedback !== undefined) existing.feedback = feedback.trim();
+      // Corolario de RN-22: la ruta escribe `returnedAt` SIEMPRE explícitamente. El campo no
+      // tiene default (no puede tenerlo), así que "no tocarlo" dejaría toda nota nueva en
+      // undefined — que lee DEVUELTA, o sea publicando sin que nadie lo haya decidido.
+      if (devolver) existing.returnedAt = new Date();
+      else if (!yaEstabaDevuelta) existing.returnedAt = null;
     } else {
       activity.grades.push({
         student:  studentId,
         points:   mandaNota ? nota : null, // null = devolución sin nota
         feedback: (feedback || '').trim(),
         manual:   true,
+        returnedAt: devolver ? new Date() : null, // null = borrador (RN-21)
       });
     }
 
@@ -786,7 +911,11 @@ router.post('/:id/grade', requireAuth, async (req, res) => {
     // se cierra. Sin esto, la primera vez que el docente aprieta "Permitir que lo rehaga" le
     // dejaría la puerta abierta para siempre. Solo con NOTA: una devolución escrita no
     // cierra nada (ver esCorregida en public/js/edicionEntrega.js).
-    if (mandaNota) {
+    //
+    // ⚠️ Y solo al DEVOLVER (RN-26b): ese "se cierra" pertenece al momento en que al alumno
+    // se le avisa. Un docente que corrige 30 en borrador cerraría 30 reaperturas antes de
+    // devolver nada, y varias de esas entregas estaban abiertas SOLO por la reapertura.
+    if (mandaNota && devolver) {
       await Submission.updateOne(
         { activity: req.params.id, student: studentId },
         { $set: { reopenedAt: null, reopenedBy: null } },
@@ -806,12 +935,88 @@ router.post('/:id/grade', requireAuth, async (req, res) => {
         ...(mandaNota
           ? { puntos: nota, ...(activity.points != null ? { maximo: activity.points } : {}) }
           : { devolucion: 'sin nota' }),
+        // Lo que NO se ve en la pantalla del alumno tiene que verse en la auditoría: una
+        // nota guardada en borrador es una nota puesta que todavía nadie recibió.
+        ...(devolver ? {} : { estado: 'borrador' }),
       },
     );
 
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ error: e.message });
+  }
+});
+
+// POST /activities/:id/devolver
+// Publica correcciones ya guardadas. Body: { studentIds: [...] }
+//
+// Devolver ≠ Guardar (D5 de specs/correccion-de-entregas.spec.md): esta ruta NO toca
+// `points` ni `feedback`, solo decide CUÁNDO el alumno ve lo que el docente ya escribió. Es
+// lo que permite el flujo natural del Modo Corrector, "corrijo los 30 y los devuelvo juntos".
+//
+// El alumno sin nada que devolver no es un error: vuelve en `omitidas[]` y el lote sigue.
+router.post('/:id/devolver', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Actividad no encontrada')) return;
+  try {
+    const activity = await Activity.findById(req.params.id);
+    if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
+
+    const course = await Course.findById(activity.course);
+    if (!course || !course.canManage(res.locals.user)) {
+      return res.status(403).json({ error: 'Sin acceso' });
+    }
+
+    const pedidos = Array.isArray(req.body.studentIds) ? req.body.studentIds.map(String) : [];
+    const ahora = new Date();
+    const devueltas = [];
+    const omitidas  = [];
+
+    for (const sid of pedidos) {
+      const grade = activity.grades.find(g => g.student.toString() === sid);
+      // La misma función pura que gobierna el botón: el docente no puede pedir por API algo
+      // que la pantalla no le deja pedir (RN-27).
+      if (!Correccion.puedeDevolver(grade)) { omitidas.push(sid); continue; }
+      grade.returnedAt = ahora;
+      devueltas.push(sid);
+    }
+
+    if (!devueltas.length) {
+      return res.status(400).json({
+        error: 'No hay ninguna corrección para devolver: falta la nota o la devolución escrita.',
+        codigo: 'NADA_PARA_DEVOLVER',
+        omitidas,
+      });
+    }
+
+    await activity.save();
+
+    // Devolver SÍ cierra la reapertura (RN-26b): es el momento en el que al alumno se le
+    // avisa, que es lo que significaba el "se cierra" de la regla original.
+    await Submission.updateMany(
+      { activity: req.params.id, student: { $in: devueltas } },
+      { $set: { reopenedAt: null, reopenedBy: null } },
+    );
+
+    // Una entrada POR ALUMNO: el lote es una comodidad de la pantalla, no una unidad de
+    // auditoría. Dentro de un mes, la pregunta es "¿cuándo se le devolvió a ESTE alumno?".
+    const alumnos = await User.find({ _id: { $in: devueltas } }).select('name').lean();
+    const nombre = {};
+    alumnos.forEach(a => { nombre[a._id.toString()] = a.name; });
+    for (const sid of devueltas) {
+      logAudit(req, 'submission.return',
+        [
+          { type: 'activity', id: activity._id, name: activity.title },
+          { type: 'user',     id: sid,          name: nombre[sid] || '' },
+          { type: 'course',   id: course._id,   name: course.name },
+        ],
+        {},
+      );
+    }
+
+    res.json({ ok: true, devueltas: devueltas.length, omitidas });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error al devolver las correcciones' });
   }
 });
 
@@ -890,12 +1095,14 @@ router.delete('/:id', requireAuth, async (req, res) => {
 
     // 1. Borrar archivos físicos de entregas de alumnos
     // storagePath es relativo desde ENTREGAS_BASE: schoolId/actId/studentId/filename
+    //
+    // Incluye las VERSIONES anteriores y los derivados (RN-36). Si se las salteara quedarían
+    // archivos de menores en disco sin ningún documento que los nombre — y como
+    // cleanup-files.js ahora SÍ referencia `versions[].files[]`, no los limpiaría nunca más:
+    // serían huérfanos permanentes, invisibles para las dos herramientas.
     const submissions = await Submission.find({ activity: req.params.id });
     submissions.forEach(sub => {
-      sub.files.forEach(f => {
-        const fp = path.join(ENTREGAS_BASE, f.storagePath);
-        if (fs.existsSync(fp)) fs.unlinkSync(fp);
-      });
+      archivosDeLaEntrega(sub).forEach(borrarArchivoDeEntrega);
     });
 
     // 2. Borrar todos los documentos Submission (incluye texto/comentario del alumno)
@@ -1049,26 +1256,81 @@ router.put('/:id', requireAuth, async (req, res) => {
 
 /* ─── Entregas ─── */
 
+// Busca un archivo de entrega por su filename único, EN LA ENTREGA ACTUAL O EN SUS VERSIONES
+// anteriores (RN-37). Devuelve { submission, file } o { submission: null }.
+//
+// Las dos consultas van por separado y en orden: la de `files` es la que se usa el 99% de
+// las veces y resuelve por el índice de siempre; la de `versions` solo corre si la primera
+// no encontró nada.
+async function buscarArchivoDeEntrega(filename) {
+  let submission = await Submission.findOne({ 'files.filename': filename }).populate('activity');
+  if (submission) {
+    return { submission, file: submission.files.find(f => f.filename === filename) };
+  }
+  submission = await Submission.findOne({ 'versions.files.filename': filename }).populate('activity');
+  if (!submission) return { submission: null, file: null };
+  for (const v of submission.versions || []) {
+    const file = (v.files || []).find(f => f.filename === filename);
+    if (file) return { submission, file };
+  }
+  return { submission: null, file: null };
+}
+
+// Borra un archivo de entrega del disco CON sus derivados. Los tres llamadores son los tres
+// momentos en los que un archivo deja de existir: la versión que se cae del tope, la entrega
+// que el alumno retira y la actividad que el docente borra.
+//
+// El derivado se va con el original y no queda para después: es una copia del trabajo de un
+// menor y no puede sobrevivirlo. Y como cleanup-files.js ya referencia las versiones
+// (RN-35), un derivado huérfano que quedara acá no lo limpiaría nadie nunca más.
+function borrarArchivoDeEntrega(f) {
+  try {
+    const fp = path.join(ENTREGAS_BASE, f.storagePath);
+    if (fs.existsSync(fp)) fs.unlinkSync(fp);
+  } catch {}
+  const schoolId = String(f.storagePath || '').split('/')[0];
+  for (const ext of ['.pdf', '.dxf']) {
+    try {
+      const derivado = rutaDerivada(schoolId, f.filename, ext);
+      if (fs.existsSync(derivado)) fs.unlinkSync(derivado);
+    } catch {}
+  }
+}
+
+// Todos los archivos de una entrega: los actuales Y los de sus versiones anteriores.
+function archivosDeLaEntrega(sub) {
+  return [
+    ...(sub.files || []),
+    ...(sub.versions || []).flatMap(v => v.files || []),
+  ];
+}
+
+// La guarda de siempre, tal cual: o es el alumno que entregó, o es alguien que gestiona la
+// materia. Se extrae a una función porque ahora la usan cuatro rutas (el archivo, el PDF
+// derivado, el DXF derivado y la emisión del enlace firmado) y no puede divergir entre ellas.
+async function puedeVerEntrega(submission, usuario) {
+  if (submission.student.toString() === usuario._id.toString()) return true;
+  const course = await Course.findById(submission.activity.course);
+  return !!(course && course.canManage(usuario));
+}
+
 // GET /activities/submission-file/:filename
 // Descarga protegida de archivos de entrega: solo el alumno que entregó o el docente del curso
 // Verifica propiedad buscando el Submission por filename, luego chequea si es el alumno o el docente
 router.get('/submission-file/:filename', requireAuth, async (req, res) => {
   try {
     const { filename } = req.params;
-    const userId = res.locals.user._id.toString();
 
-    // Busca la entrega que contiene este archivo (por el filename único)
-    const submission = await Submission.findOne({ 'files.filename': filename }).populate('activity');
+    // La búsqueda incluye las VERSIONES anteriores (RN-37): el archivo que el alumno
+    // reemplazó ya no está en `files[]` pero sigue en disco, dentro de `_versiones/`, y
+    // tanto el docente como el propio alumno tienen que poder abrirlo. La guarda es
+    // EXACTAMENTE la misma de siempre — lo único que cambia es dónde se busca el archivo.
+    const { submission, file } = await buscarArchivoDeEntrega(filename);
     if (!submission) return res.status(404).send('Archivo no encontrado');
-
-    const isStudent = submission.student.toString() === userId;
-    if (!isStudent) {
-      // Si no es el alumno, verifica que sea docente del curso (o admin de la escuela)
-      const course = await Course.findById(submission.activity.course);
-      if (!course || !course.canManage(res.locals.user)) return res.status(403).send('Acceso denegado');
+    if (!(await puedeVerEntrega(submission, res.locals.user))) {
+      return res.status(403).send('Acceso denegado');
     }
 
-    const file     = submission.files.find(f => f.filename === filename);
     const filePath = path.join(ENTREGAS_BASE, file.storagePath);
     if (!fs.existsSync(filePath)) return res.status(404).send('Archivo no encontrado en disco');
 
@@ -1082,6 +1344,197 @@ router.get('/submission-file/:filename', requireAuth, async (req, res) => {
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).send('Error del servidor');
+  }
+});
+
+// POST /activities/submission-file/:filename/enlace
+// Emite una URL firmada de vida corta para que el visor de Microsoft pueda BAJAR el archivo
+// (RN-15). Responde { url, expiraEn }.
+//
+// Solo la emite quien puede ver el archivo por la ruta normal Y gestiona la materia: el
+// ALUMNO no puede emitir enlaces firmados de nada, ni de lo suyo. Un enlace firmado es una
+// puerta sin cookie durante 5 minutos, y esa decisión es del docente que está corrigiendo,
+// no del dueño del archivo.
+router.post('/submission-file/:filename/enlace', requireAuth, async (req, res) => {
+  try {
+    const { filename } = req.params;
+    const { submission } = await buscarArchivoDeEntrega(filename);
+    if (!submission) return res.status(404).json({ error: 'Archivo no encontrado' });
+
+    const course = await Course.findById(submission.activity.course);
+    if (!course || !course.canManage(res.locals.user)) {
+      return res.status(403).json({ error: 'Sin acceso' });
+    }
+
+    const { url, expiraEn } = firmaArchivo.firmar(filename, res.locals.user._id.toString());
+
+    // Cada emisión se audita: es la contrapartida escrita de abrir una puerta sin cookie
+    // sobre el archivo de un menor, aunque dure cinco minutos.
+    logAudit(req, 'submission.preview_link',
+      [
+        { type: 'activity', id: submission.activity._id, name: submission.activity.title },
+        { type: 'user',     id: submission.student,      name: '' },
+        { type: 'course',   id: course._id,              name: course.name },
+      ],
+      { archivo: Correccion.extensionParaLog(filename) },
+    );
+
+    res.json({ url, expiraEn });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error al preparar la vista previa' });
+  }
+});
+
+// GET /activities/entrega-firmada/:filename?exp&sig
+// La otra punta del enlace firmado. NO pasa por requireAuth, y por eso es una ruta APARTE:
+// un bypass condicional adentro de la ruta con guarda es como nacen los agujeros de auth.
+// Lo único que la protege es la firma, que ata el archivo, el vencimiento y el docente que
+// la pidió.
+router.get('/entrega-firmada/:filename', async (req, res) => {
+  try {
+    const { filename } = req.params;
+    const veredicto = firmaArchivo.verificar({ filename, exp: req.query.exp, sig: req.query.sig });
+    if (!veredicto.ok) {
+      const texto = veredicto.motivo === 'ENLACE_VENCIDO'
+        ? 'El enlace venció. Volvé a abrir la vista previa.'
+        : 'El enlace no es válido.';
+      logRechazo(res, 403, veredicto.motivo, { ruta: 'entrega_firmada' });
+      return res.status(403).json({ error: texto, codigo: veredicto.motivo });
+    }
+
+    const { submission, file } = await buscarArchivoDeEntrega(filename);
+    if (!submission) return res.status(404).json({ error: 'Archivo no encontrado' });
+
+    const filePath = path.join(ENTREGAS_BASE, file.storagePath);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Archivo no encontrado en disco' });
+
+    // `inline`: del otro lado hay un visor, no un navegador que descarga.
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+    res.sendFile(filePath);
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Traduce el error de un conversor al par (status, código) de la spec. Ninguno de los
+// caminos de conversión puede terminar en 500: el archivo del alumno se puede descargar
+// siempre, así que un conversor caído es una degradación, no una falla del servidor.
+const HTTP_DE_CONVERSION = {
+  SIN_CONVERSOR:            501,
+  SIN_CONVERSOR_CAD:        501,
+  ARCHIVO_DEMASIADO_GRANDE: 413,
+  CONVERSION_EN_CURSO:      409,
+  CONVERSION_FALLIDA:       422,
+};
+
+function responderErrorDeConversion(res, err, textoPorDefecto) {
+  const codigo = HTTP_DE_CONVERSION[err?.codigo] ? err.codigo : 'CONVERSION_FALLIDA';
+  const texto = codigo === 'CONVERSION_FALLIDA' ? textoPorDefecto : err.message;
+  return res.status(HTTP_DE_CONVERSION[codigo]).json({ error: texto, codigo });
+}
+
+// GET /activities/submission-file/:filename/pdf
+// El PDF derivado de un Office (paso 2 de la cadena, RN-16). Mismo permiso que el original.
+// La cache es permanente y no se invalida nunca: el filename es único por subida, así que
+// cada archivo se convierte UNA vez en su vida.
+router.get('/submission-file/:filename/pdf', requireAuth, async (req, res) => {
+  try {
+    const { filename } = req.params;
+    const { submission, file } = await buscarArchivoDeEntrega(filename);
+    if (!submission) return res.status(404).json({ error: 'Archivo no encontrado' });
+    if (!(await puedeVerEntrega(submission, res.locals.user))) {
+      return res.status(403).json({ error: 'Sin acceso' });
+    }
+    if (!Correccion.EXT_OFFICE.includes(Correccion.extensionDe(file.name || filename))) {
+      return res.status(400).json({ error: 'Ese archivo no se convierte a PDF' });
+    }
+
+    const origen = path.join(ENTREGAS_BASE, file.storagePath);
+    if (!fs.existsSync(origen)) {
+      return res.status(404).json({
+        error: 'El archivo no está en el servidor. Avisale al alumno que lo vuelva a subir.',
+        codigo: 'ARCHIVO_NO_ENCONTRADO',
+      });
+    }
+
+    const destino = rutaDerivada(String(file.storagePath).split('/')[0], filename, '.pdf');
+    try {
+      await conversionOffice.convertirAPdf(origen, destino);
+    } catch (err) {
+      return responderErrorDeConversion(res, err,
+        'No se pudo convertir el archivo para verlo acá (puede estar dañado o protegido con contraseña).');
+    }
+
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(path.basename(file.name, path.extname(file.name)) + '.pdf')}`);
+    res.sendFile(destino);
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /activities/submission-file/:filename/dxf
+// El DXF derivado de un DWG (RN-42a). De acá en adelante el plano lo dibuja el navegador,
+// igual que un .dxf subido — incluida la regla de RN-40: el texto que viene adentro es del
+// alumno, no lo escribió el servidor, y pasar por un conversor no sanitiza nada.
+//
+// Por DEMANDA, en el clic: medio segundo en el VPS. Sin cola y sin prefetch, al revés que
+// Office — poner el plano atrás de una conversión de cuatro segundos que no tiene nada que
+// ver con él sería peor que esperarlo.
+router.get('/submission-file/:filename/dxf', requireAuth, async (req, res) => {
+  try {
+    const { filename } = req.params;
+    const { submission, file } = await buscarArchivoDeEntrega(filename);
+    if (!submission) return res.status(404).json({ error: 'Archivo no encontrado' });
+    if (!(await puedeVerEntrega(submission, res.locals.user))) {
+      return res.status(403).json({ error: 'Sin acceso' });
+    }
+    if (Correccion.extensionDe(file.name || filename) !== '.dwg') {
+      return res.status(400).json({ error: 'Ese archivo no es un plano .dwg' });
+    }
+
+    const origen = path.join(ENTREGAS_BASE, file.storagePath);
+    if (!fs.existsSync(origen)) {
+      return res.status(404).json({
+        error: 'El archivo no está en el servidor. Avisale al alumno que lo vuelva a subir.',
+        codigo: 'ARCHIVO_NO_ENCONTRADO',
+      });
+    }
+
+    const destino = rutaDerivada(String(file.storagePath).split('/')[0], filename, '.dxf');
+    if (!fs.existsSync(destino)) {
+      // El tope de ENTRADA rebota antes de mandar nada a convertir, y está calculado para que
+      // su peor expansión medida (×5,8) siga entrando en el tope de dibujo (RN-41).
+      if (fs.statSync(origen).size > Correccion.TOPES.entradaDwg) {
+        return res.status(413).json({
+          error: 'El plano es demasiado grande para previsualizarlo. Descargalo y abrilo con AutoCAD.',
+          codigo: 'ARCHIVO_DEMASIADO_GRANDE',
+        });
+      }
+      if (!(await conversionCad.odaDisponible())) {
+        return res.status(501).json({
+          error: 'El servidor no tiene instalado el conversor de planos, así que este .dwg solo se puede descargar.',
+          codigo: 'SIN_CONVERSOR_CAD',
+        });
+      }
+      try {
+        await conversionCad.convertirDwgADxf(origen, { destino });
+      } catch (err) {
+        return responderErrorDeConversion(res, err,
+          'No se pudo convertir el plano para verlo acá (puede estar dañado).');
+      }
+    }
+
+    // Se sirve `attachment` con su mime, igual que el original: lo que lo dibuja es un
+    // fetch() del navegador, al que el Content-Disposition no le importa (RN-39).
+    res.setHeader('Content-Type', 'image/vnd.dxf');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(file.name, path.extname(file.name)) + '.dxf')}`);
+    res.sendFile(destino);
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error del servidor' });
   }
 });
 
@@ -1387,15 +1840,49 @@ router.post('/:id/submit', requireAuth, uploadLimiter, exigirAlumnoQuePuedeEntre
       });
     }
 
-    // Lo que quedó afuera se borra del disco. Se compara por filename contra la lista final,
-    // así que también cubre el caso viejo (reemplazo total) sin repetir el recorrido.
+    // ⭐ Lo que quedó afuera YA NO SE BORRA: se MUEVE a `_versiones/` (RN-33). Hasta el
+    // 2026-09-21 acá había un unlink, y con él, si el alumno reemplazaba el archivo después
+    // de que el docente lo corrigió, lo corregido no existía en ninguna parte.
+    //
+    // `_versiones/` vive dentro de la carpeta del propio alumno, que ya está en CARPETAS
+    // (id `entregas`): el historial entra al backup sin agregar una sola carpeta nueva.
     const sobreviven = new Set(filesToSave.map(f => f.filename));
-    (existing?.files || []).forEach(f => {
-      if (sobreviven.has(f.filename)) return;
-      const fp = path.join(ENTREGAS_BASE, f.storagePath);
-      if (fs.existsSync(fp)) fs.unlinkSync(fp);
-    });
-    const borrados = (existing?.files || []).filter(f => !sobreviven.has(f.filename)).length;
+    const desplazados = (existing?.files || []).filter(f => !sobreviven.has(f.filename));
+    const borrados = desplazados.length;
+
+    let versionesFinales = null;
+    if (desplazados.length) {
+      const movidos = [];
+      for (const f of desplazados) {
+        const origen     = path.join(ENTREGAS_BASE, f.storagePath);
+        const destinoRel = rutaEnVersiones(f.storagePath);
+        try {
+          const destino = path.join(ENTREGAS_BASE, destinoRel);
+          fs.mkdirSync(path.dirname(destino), { recursive: true });
+          fs.renameSync(origen, destino);
+          movidos.push({
+            name: f.name, filename: f.filename, storagePath: destinoRel,
+            mime: f.mime || '', size: f.size || 0,
+          });
+        } catch (err) {
+          // Si el rename falla, se borra como se hacía hasta ahora y se deja la línea en el
+          // log: guardar el historial no puede romper la entrega del alumno.
+          logDeRuta(err, res, { paso: 'mover la versión anterior a _versiones/' });
+          try { if (fs.existsSync(origen)) fs.unlinkSync(origen); } catch {}
+        }
+      }
+      if (movidos.length) {
+        const { versiones, descartada } = recortarVersiones(
+          existing?.versions || [],
+          { at: existing?.updatedAt || new Date(), text: existing?.text || '', files: movidos },
+        );
+        versionesFinales = versiones;
+        // La que se cayó del tope se borra DE VERDAD, con sus derivados: el tope existe
+        // porque `archivos/entregas` es el 99,8% del peso del backup y el backup viaja por
+        // FTP a la PC del dueño.
+        (descartada?.files || []).forEach(borrarArchivoDeEntrega);
+      }
+    }
 
     // Si la actividad viene de una plantilla interactiva, aceptar respuestas
     // estructuradas y autocalificar server-side. El campo `answers` viaja en el
@@ -1422,6 +1909,7 @@ router.post('/:id/submit', requireAuth, uploadLimiter, exigirAlumnoQuePuedeEntre
     };
     if (answersToSave) submissionUpdate.$set.answers = answersToSave;
     if (autoGraded)    submissionUpdate.$set.autoGraded = autoGraded;
+    if (versionesFinales) submissionUpdate.$set.versions = versionesFinales;
 
     const submission = await Submission.findOneAndUpdate(
       { activity: req.params.id, student: userId },
@@ -1435,11 +1923,16 @@ router.post('/:id/submit', requireAuth, uploadLimiter, exigirAlumnoQuePuedeEntre
     if (autoGraded) {
       const gExisting = activity.grades.find(g => g.student.toString() === userId);
       if (!gExisting || gExisting.manual === false) {
+        // ⚠️ El autocalificador NUNCA queda retenido en borrador (RN-25): escribe
+        // `returnedAt` con la fecha, siempre. Este camino no pasa por POST /:id/grade, así
+        // que si no lo escribiera acá, el alumno respondería el cuestionario y no vería su
+        // propia nota hasta que un docente se acordara de devolvérsela.
         if (gExisting) {
           gExisting.points   = autoGraded.points;
           gExisting.feedback = 'Autocalificado';
           gExisting.gradedAt = autoGraded.gradedAt;
           gExisting.manual   = false;
+          gExisting.returnedAt = new Date();
         } else {
           activity.grades.push({
             student:  userId,
@@ -1447,6 +1940,7 @@ router.post('/:id/submit', requireAuth, uploadLimiter, exigirAlumnoQuePuedeEntre
             feedback: 'Autocalificado',
             gradedAt: autoGraded.gradedAt,
             manual:   false,
+            returnedAt: new Date(),
           });
         }
         await activity.save();
@@ -1555,10 +2049,9 @@ router.delete('/:id/submission', requireAuth, exigirAlumnoQuePuedeEntregar, asyn
     const { activity, course, submission } = req.entrega;
     if (!submission) return res.status(404).json({ error: 'No tenés una entrega para retirar' });
 
-    submission.files.forEach(f => {
-      const fp = path.join(ENTREGAS_BASE, f.storagePath);
-      if (fs.existsSync(fp)) fs.unlinkSync(fp);
-    });
+    // Retirar la entrega SÍ borra todo, versiones incluidas (RN-33): es una decisión
+    // explícita del alumno sobre su propio trabajo, no una rotación.
+    archivosDeLaEntrega(submission).forEach(borrarArchivoDeEntrega);
     const archivos = submission.files.length;
     await Submission.deleteOne({ _id: submission._id });
 
@@ -1587,7 +2080,20 @@ router.get('/:id/my-submission', requireAuth, async (req, res) => {
       activity: req.params.id,
       student:  res.locals.user._id,
     });
-    res.json({ submission: submission || null });
+
+    // Abrir el detalle apaga el no-leído del alumno, igual que GET /:id/entrega/:studentId
+    // lo apaga del lado del docente: es donde el hilo se pinta (RN-31b).
+    if (submission?.unreadForStudent) {
+      await Submission.updateOne({ _id: submission._id }, { $set: { unreadForStudent: false } });
+      submission.unreadForStudent = false;
+    }
+
+    // El hilo viaja aparte de `submission` y no adentro: es lo que pinta el modal, y así el
+    // cliente no tiene que saber que vive embebido en la entrega.
+    res.json({
+      submission: submission || null,
+      privateComments: submission?.privateComments || [],
+    });
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
@@ -1612,7 +2118,20 @@ router.get('/:id/submissions', requireAuth, async (req, res) => {
       .populate('student', 'name email dni')
       .sort({ updatedAt: -1 }); // Las más recientes primero
 
-    res.json({ submissions });
+    // La planilla necesita SABER que hay historial y que hay hilo, no traérselos: son 30
+    // entregas por actividad y los arrays completos multiplicarían el peso de esta respuesta
+    // por nada. El detalle pesado de UN alumno lo sirve GET /:id/entrega/:studentId.
+    const lista = submissions.map(s => {
+      const obj = s.toObject();
+      obj.versionesCount    = (obj.versions || []).length;
+      obj.comentariosCount  = (obj.privateComments || []).length;
+      obj.unreadForTeacher  = !!obj.unreadForTeacher;
+      delete obj.versions;
+      delete obj.privateComments;
+      return obj;
+    });
+
+    res.json({ submissions: lista });
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
@@ -1655,6 +2174,237 @@ router.post('/:id/view', requireAuth, async (req, res) => {
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+/* ─── Modo Corrector: el detalle de UN alumno y el hilo privado ─── */
+
+// Los Office de esta entrega que todavía no tienen su PDF derivado, listos para el prefetch
+// de RN-16b: [{ origen, destino }]. El schoolId sale del propio storagePath y no de la
+// sesión — el que mira puede ser un admin de la escuela, pero el archivo vive donde vive.
+function officeParaConvertir(submission) {
+  return (submission?.files || [])
+    .filter(f => Correccion.EXT_OFFICE.includes(Correccion.extensionDe(f.name || f.filename)))
+    .map(f => ({
+      origen:  path.join(ENTREGAS_BASE, f.storagePath),
+      destino: rutaDerivada(String(f.storagePath || '').split('/')[0], f.filename, '.pdf'),
+    }))
+    .filter(par => fs.existsSync(par.origen) && !fs.existsSync(par.destino));
+}
+
+// GET /activities/:id/entrega/:studentId
+// El detalle pesado de UN alumno: su entrega completa (con hilo e historial), su nota y su
+// acuse de lectura. Es la puerta del Modo Corrector y solo la abre quien gestiona la materia.
+//
+// Hace dos cosas más, y las dos están acá y no en otro lado a propósito:
+//   · APAGA el no-leído del docente. Se marca al abrir EL DETALLE, que es donde el hilo se
+//     pinta — no en POST /:id/view, que se dispara igual aunque nadie haya mirado el hilo.
+//   · DISPARA el prefetch de las conversiones de Office (RN-16b), fire-and-forget: los
+//     segundos de LibreOffice transcurren mientras el docente lee el panel.
+router.get('/:id/entrega/:studentId', requireAuth, async (req, res) => {
+  if (idMalo(req, res, 'Actividad no encontrada', { como: 'json' })) return;
+  if (idMalo(req, res, 'Alumno no encontrado', { param: 'studentId', como: 'json' })) return;
+  try {
+    const activity = await Activity.findById(req.params.id);
+    if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
+
+    const course = await Course.findById(activity.course);
+    if (!course || !course.canManage(res.locals.user)) {
+      return res.status(403).json({ error: 'Sin acceso' });
+    }
+
+    const submission = await Submission.findOne({
+      activity: req.params.id,
+      student:  req.params.studentId,
+    }).populate('student', 'name email dni');
+
+    if (submission?.unreadForTeacher) {
+      await Submission.updateOne({ _id: submission._id }, { $set: { unreadForTeacher: false } });
+      submission.unreadForTeacher = false;
+    }
+
+    const grade = activity.grades.find(g => g.student.toString() === req.params.studentId) || null;
+    const view  = await ActivityView.findOne({
+      activity: req.params.id,
+      student:  req.params.studentId,
+    });
+
+    if (submission) conversionOffice.prefetch(officeParaConvertir(submission));
+
+    res.json({ submission: submission || null, grade, view: view || null });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// El hilo privado de una entrega (RN-29 a RN-32). Los límites viven acá y no en el schema
+// porque los dos son del HILO, no del comentario: 2.000 caracteres es el maxlength de
+// privateCommentSchema, y 100 comentarios es el tope de la conversación.
+const MAX_COMENTARIOS = 100;
+
+// Rate limit POR PERSONA, no por IP: toda la escuela sale por una sola IP NAT, así que un
+// límite por IP castigaría al aula entera por lo que hace uno. Mismo criterio y mismo
+// mecanismo que diagLimiter (routes/diagnostico.js).
+// ⚠️ El techo real es 40 por los 2 workers de PM2, como todo límite en memoria de este proyecto.
+const comentarioLimiter = rateLimit({
+  windowMs:        5 * 60 * 1000,
+  max:             20,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator:    (req) => req.userId || ipKeyGenerator(req.ip),
+  message:         { error: 'Esperá un momento antes de mandar otro comentario.', codigo: 'DEMASIADOS_COMENTARIOS' },
+});
+
+// La guarda del docente, ANTES del limitador y no adentro del handler.
+//
+// ⚠️ El orden importa y ya se pagó una vez en este proyecto: con el limitador primero, un
+// alumno que toca la ruta del DOCENTE recibe "esperá un momento antes de mandar otro
+// comentario" —"no tan rápido" cuando la respuesta correcta es "no podés"— y encima le
+// consume cupo al limitador alguien que nunca debió pasar la puerta. Es la misma doctrina que
+// pone a `exigirAlumnoQuePuedeEntregar` antes de multer: la guarda barata va primero.
+async function exigirGestorDeLaActividad(req, res, next) {
+  if (idMalo(req, res, 'Actividad no encontrada')) return;
+  if (req.params.studentId && idMalo(req, res, 'Alumno no encontrado', { param: 'studentId' })) return;
+  try {
+    const activity = await Activity.findById(req.params.id);
+    if (!activity) return res.status(404).json({ error: 'Actividad no encontrada' });
+    const course = await Course.findById(activity.course);
+    if (!course || !course.canManage(res.locals.user)) {
+      return res.status(403).json({ error: 'Sin acceso' });
+    }
+    req.actividad = activity;
+    req.curso = course;
+    next();
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+}
+
+// Ídem del lado del alumno: sin entrega no hay hilo, y ese 404 tampoco tiene por qué gastarle
+// cupo al limitador.
+async function exigirMiEntrega(req, res, next) {
+  if (idMalo(req, res, 'Actividad no encontrada')) return;
+  try {
+    const submission = await Submission.findOne({
+      activity: req.params.id,
+      student:  res.locals.user._id,
+    });
+    if (!submission) {
+      return res.status(404).json({ error: 'El hilo se abre con la entrega.', codigo: 'SIN_ENTREGA' });
+    }
+    req.miEntrega = submission;
+    next();
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+}
+
+// Valida el texto que llega de cualquiera de las dos puntas. Devuelve { texto } o { error }.
+function validarComentario(body, submission) {
+  const texto = typeof body?.texto === 'string' ? body.texto.trim() : '';
+  if (!texto) {
+    return { error: { status: 400, codigo: 'COMENTARIO_VACIO', mensaje: 'Escribí algo antes de enviar el comentario.' } };
+  }
+  if (texto.length > 2000) {
+    return { error: { status: 400, codigo: 'COMENTARIO_LARGO', mensaje: 'El comentario no puede superar los 2000 caracteres.' } };
+  }
+  if ((submission.privateComments || []).length >= MAX_COMENTARIOS) {
+    return { error: { status: 400, codigo: 'HILO_LLENO', mensaje: 'Este hilo llegó al máximo de comentarios.' } };
+  }
+  return { texto };
+}
+
+// El texto se guarda TAL CUAL, con sus `<` y sus `>`: el escape es al PINTAR (textContent,
+// nunca innerHTML), no al guardar. Escapar en la base rompe el texto del alumno que escribió
+// "a < b" y no protege de nada que el pintado no proteja mejor.
+function agregarComentario(submission, from, autorId, texto) {
+  submission.privateComments.push({ from, author: autorId, text: texto });
+  // Escribe el docente → le queda sin leer al alumno, y al revés. Dos booleanos y no un
+  // readAt por comentario: con marcas por comentario, pintar el chip de una tarjeta
+  // obligaría a traer y recorrer los 30 hilos de esa actividad en cada carga (RN-31b).
+  if (from === 'teacher') submission.unreadForStudent = true;
+  else                    submission.unreadForTeacher = true;
+  return submission.privateComments[submission.privateComments.length - 1];
+}
+
+// POST /activities/:id/entrega/:studentId/comentario — la punta del DOCENTE.
+//
+// Ruta separada de la del alumno, no una ruta con un `if` adentro (mismo criterio que la URL
+// firmada): la del alumno no lleva `:studentId` en la URL, así que no existe el parámetro
+// que habría que validar. Antecedente `fuga_datos_api_curso`: la pantalla decía 403 y la API
+// contestaba 200.
+router.post('/:id/entrega/:studentId/comentario', requireAuth, exigirGestorDeLaActividad,
+  comentarioLimiter, async (req, res) => {
+  try {
+    const { actividad: activity, curso: course } = req;
+
+    const submission = await Submission.findOne({
+      activity: req.params.id,
+      student:  req.params.studentId,
+    });
+    // El hilo es de la ENTREGA, así que existe cuando existe la entrega (RN-31). NO se crea
+    // una Submission vacía para alojar un comentario: rompería el contador "N entregaron" y
+    // el estado `mySubmission` del alumno.
+    if (!submission) {
+      return res.status(404).json({ error: 'El hilo se abre con la entrega.', codigo: 'SIN_ENTREGA' });
+    }
+
+    const { texto, error } = validarComentario(req.body, submission);
+    if (error) return res.status(error.status).json({ error: error.mensaje, codigo: error.codigo });
+
+    // 'teacher' es el rol EN ESTE HILO, no el rol del usuario: quien gestiona la materia
+    // escribe como docente aunque sea admin o directivo (mismo criterio que roleAtSend).
+    const comentario = agregarComentario(submission, 'teacher', res.locals.user._id, texto);
+    await submission.save();
+
+    logAudit(req, 'submission.comment',
+      [
+        { type: 'activity', id: activity._id, name: activity.title },
+        { type: 'user',     id: req.params.studentId, name: '' },
+        { type: 'course',   id: course._id,   name: course.name },
+      ],
+      { de: 'docente' },
+    );
+
+    res.json({ comentario });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error al guardar el comentario' });
+  }
+});
+
+// POST /activities/:id/mi-comentario — la punta del ALUMNO, sobre SU entrega.
+//
+// Sin `:studentId`: el alumno sale de la sesión. Puede escribir EN CUALQUIER MOMENTO —antes
+// de que le corrijan, con la nota en borrador y después de devuelta— porque los dos casos
+// que justifican el hilo pasan antes de la devolución: "subí el archivo equivocado, el bueno
+// es el segundo" y "no entendí el punto 3".
+router.post('/:id/mi-comentario', requireAuth, exigirMiEntrega, comentarioLimiter, async (req, res) => {
+  try {
+    const submission = req.miEntrega;
+
+    const { texto, error } = validarComentario(req.body, submission);
+    if (error) return res.status(error.status).json({ error: error.mensaje, codigo: error.codigo });
+
+    const comentario = agregarComentario(submission, 'student', res.locals.user._id, texto);
+    await submission.save();
+
+    const activity = await Activity.findById(req.params.id).select('title course');
+    logAudit(req, 'submission.comment',
+      [
+        ...(activity ? [{ type: 'activity', id: activity._id, name: activity.title }] : []),
+        ...(activity ? [{ type: 'course',   id: activity.course, name: '' }] : []),
+      ],
+      { de: 'alumno' },
+    );
+
+    res.json({ comentario });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error al guardar el comentario' });
   }
 });
 

@@ -34,6 +34,9 @@ const { subirImagen, guardarImagenOptimizada, ImagenInvalidaError } = require('.
 const { EXT_IMAGENES } = require('../config/imagePresets');
 const { logDeRuta, logRechazo } = require('../middleware/route-log');
 const { SONIDO_DE_DEFAULT } = require('../public/js/salaSonido');
+// Solo por el recorte de la extensión que se loguea al rechazar un formato (§ K de
+// specs/correccion-de-entregas.spec.md, RN-47). Nada más del corrector entra a la sala.
+const { extensionParaLog } = require('../public/js/correccion');
 const live = require('../services/liveRoom');
 const { courseCache, invalidateUser } = require('../middleware/cache');
 const permisos = require('../services/cursoPermisos');
@@ -894,7 +897,17 @@ const subirArchivo = multer({
   }),
   limits:  { fileSize: live.MAX_ARCHIVO_BYTES },
   fileFilter: (req, file, cb) => {
-    cb(null, live.EXT_ARCHIVOS.includes(path.extname(file.originalname).toLowerCase()));
+    const ext = path.extname(file.originalname).toLowerCase();
+    // La extensión sola y recortada, nunca el nombre del archivo (§ K, RN-46/RN-47).
+    const extParaLog = extensionParaLog(file.originalname);
+    const permitida = live.EXT_ARCHIVOS.includes(ext);
+    // Sin esta línea el rechazo era mudo, que es el mismo bug que ya había dejado escrito
+    // logRechazo cuando la sala rebotaba los .heic: un log vacío parece "no pasó nada".
+    if (!permitida) {
+      logRechazo(req.res, 400, 'formato no permitido',
+        { evento: 'formato_rechazado', ext: extParaLog, ruta: 'sala_archivo', origen: 'servidor' });
+    }
+    cb(null, permitida);
   },
 });
 

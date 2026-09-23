@@ -35,7 +35,8 @@
     "migrate:examen:dry": "node migrate-examen-to-evaluacion.js --dry-run",
     "prepare": "husky || true",
     "iconos:actualizar": "node tools/actualizar-iconos.js",
-    "build:mediasoup": "esbuild --bundle --format=iife --global-name=mediasoupClient --minify --target=es2019 --outfile=public/js/mediasoup-client.bundle.js node_modules/mediasoup-client/lib/index.js"
+    "build:mediasoup": "esbuild --bundle --format=iife --global-name=mediasoupClient --minify --target=es2019 --outfile=public/js/mediasoup-client.bundle.js node_modules/mediasoup-client/lib/index.js",
+    "build:dxf": "esbuild --bundle --format=iife --global-name=DxfViewer --minify --target=es2019 --outfile=public/js/dxf-viewer.bundle.js node_modules/dxf-viewer/src/index.js"
   },
   "dependencies": {
     "basic-ftp": "^6.2.0",
@@ -63,8 +64,10 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "dxf-viewer": "^1.0.49",
     "esbuild": "^0.28.2",
     "husky": "^9.1.7",
-    "nodemon": "^2.0.20"
+    "nodemon": "^2.0.20",
+    "three": "^0.186.0"
   }
 }

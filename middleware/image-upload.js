@@ -18,6 +18,9 @@ const fsp    = require('fs/promises');
 const crypto = require('crypto');
 const logger = require('../config/logger');
 const { logRechazo } = require('./route-log');
+// Solo por el recorte de la extensión que se loguea (§ K de
+// specs/correccion-de-entregas.spec.md, RN-47).
+const { extensionParaLog } = require('../public/js/correccion');
 const {
   optimizar, heifSoportado, MENSAJE_HEIC_SIN_CODEC, ImagenInvalidaError,
 } = require('../services/imageOptimizer');
@@ -100,7 +103,17 @@ function subirImagen(campo) {
       // pasar por subirImagen(), ya está cubierta.
       if (!err && req.imagenRechazada) {
         const motivo = req.imagenRechazada.message;
-        logRechazo(res, 400, motivo);
+        // El quinto de los cinco filtros de § K (specs/correccion-de-entregas.spec.md,
+        // RN-45): acá el log ya existía y el error ya guardaba `this.ext`, así que lo único
+        // que faltaba era la marca. Sin ella, este rechazo no se puede contar junto con los
+        // otros cuatro y la pregunta "qué formato le falta a la escuela" sigue sin respuesta.
+        //
+        // La extensión pasa igual por el recorte de RN-47: `this.ext` sale de path.extname()
+        // del nombre que mandó el cliente, o sea que puede medir lo que quiera. El nombre
+        // completo del archivo no va en ningún campo (RN-46).
+        const ext = extensionParaLog('x' + (req.imagenRechazada.ext || ''));
+        logRechazo(res, 400, motivo,
+          ext ? { evento: 'formato_rechazado', ext, ruta: 'imagen', origen: 'servidor' } : {});
         return res.status(400).json({ error: motivo });
       }
       if (!err) return next();

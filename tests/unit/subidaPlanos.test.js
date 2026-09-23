@@ -16,9 +16,24 @@
 // lo que se escribió: la segunda extensión entró por los nueve lugares sin tener que salir a
 // buscarlos de nuevo.
 //
-// Lo que NO se agrega es tan deliberado como lo que sí: los planos no tienen visor en el
-// navegador, así que no entran en ninguna lista de "ver en línea" ni cuentan como imagen. Se
-// descargan y se abren con AutoCAD, y el previsualizador los manda al botón "Descargar".
+// ⚠️ ACTUALIZADO por specs/correccion-de-entregas.spec.md (2026-09-21), y esto es la mitad
+// importante del cambio, no un detalle: hasta acá decía "los planos no tienen visor en el
+// navegador... el previsualizador los manda al botón Descargar", y eso DEJÓ DE SER CIERTO para
+// los dos formatos (§ I): el `.dxf` se dibuja DIRECTO en el navegador (`dxf-viewer`, RN-42) y
+// el `.dwg` se dibuja vía un `.dxf` derivado que convierte el servidor con ODA File Converter
+// (RN-42a). Las aserciones de abajo sobre `VER_EN_LINEA`, en cambio, SIGUEN SIENDO CIERTAS Y NO
+// SE TOCAN: `VER_EN_LINEA` es la lista de la SALA EN VIVO (qué se sirve `inline` en el chat), y
+// esa decisión no cambió — los planos se siguen bajando `attachment` con su mime y `nosniff`
+// (RN-39/RN-42g). Lo que cambió es que AHORA HAY UN VISOR APARTE (el del corrector), no que la
+// sala empezó a mostrarlos inline. Ver el bloque "§ I — los planos SÍ tienen visor" más abajo.
+//
+// Esta suite también se generalizó de "los planos" a "los formatos que tienen que estar en
+// las siete listas de RN-44" (RN-44d, CA-64): además de .dwg/.dxf ahora exige .ppt/.pptx en
+// los mismos lugares (§ J de la spec de corrección de entregas). PowerPoint SÍ tiene visor
+// (recorre la cadena de Office, RN-44e) — por eso NO entra en las aserciones de "no se puede
+// previsualizar" que siguen valiendo para los planos... que ahora tampoco valen para ellos. La
+// única extensión que de verdad sigue sin ningún visor, a los fines de esta suite, es una que
+// no está en ninguna de las listas (se usa `.zip` como testigo en el bloque de abajo).
 
 const test   = require('node:test');
 const assert = require('node:assert');
@@ -31,6 +46,10 @@ const Adjuntos = require('../../public/js/adjuntosActividad');
 // Los dos formatos de plano, siempre juntos. Sumar un tercero (un .rvt de Revit, un .skp de
 // SketchUp) es agregarlo acá y correr la suite: lo que falle es la lista que quedó atrás.
 const PLANOS = ['.dwg', '.dxf'];
+
+// § J — PowerPoint (RN-44). Van los dos formatos, igual que los planos: no tiene sentido
+// aceptar .pptx y dejar .ppt afuera, ni al revés.
+const POWERPOINT = ['.ppt', '.pptx'];
 
 const raiz = path.join(__dirname, '..', '..');
 const leer = (rel) => fs.readFileSync(path.join(raiz, rel), 'utf8');
@@ -80,6 +99,21 @@ test('las tres listas del servidor aceptan los dos planos', () => {
       `la entrega del alumno tiene que aceptar ${plano}`);
     assert.ok(EXT_ARCHIVOS.includes(plano),
       `el archivo de la sala en vivo tiene que aceptar ${plano}`);
+  }
+});
+
+// RN-44 (§ J, specs/correccion-de-entregas.spec.md): PowerPoint YA entra por la sala en vivo
+// (EXT_ARCHIVOS) pero no por acá — esa asimetría es justo lo que RN-44 corrige. CA-64 pide
+// literalmente que ESTE archivo (el que ata las listas entre sí) sea el que falle si `.pptx`
+// se cae de alguna de las siete.
+test('RN-44 / CA-64 — las tres listas del servidor aceptan PowerPoint (.ppt y .pptx)', () => {
+  for (const ppt of POWERPOINT) {
+    assert.ok(EXT_ALLOWED.includes(ppt),
+      `el adjunto de la actividad (docente) tiene que aceptar ${ppt} — RN-44, lugar #1`);
+    assert.ok(EXT_SUBMISSIONS.includes(ppt),
+      `la entrega del alumno tiene que aceptar ${ppt} — RN-44, lugar #2`);
+    assert.ok(EXT_ARCHIVOS.includes(ppt),
+      `la sala en vivo YA acepta ${ppt} desde antes de esta feature — si esto falla, se rompió algo que ya andaba`);
   }
 });
 
@@ -142,6 +176,23 @@ for (const [fuente, id, archivo, quien] of SELECTORES_DE_DOCUMENTO) {
   });
 }
 
+// CA-63(c): "el accept= de los tres inputs lo ofrece — verificado leyendo el atributo, no a
+// ojo, porque su olvido no da error: deja el archivo en gris sin cartel ni log" (RN-44b). Son
+// los mismos tres selectores de docente/alumno de arriba — el de la sala en vivo (lrFileArchivo)
+// queda afuera de este chequeo puntual porque RN-44 dice que YA los ofrece desde antes.
+const SELECTORES_DE_ACTIVIDAD = SELECTORES_DE_DOCUMENTO.filter(([, id]) => id !== 'lrFileArchivo');
+
+for (const [fuente, id, archivo, quien] of SELECTORES_DE_ACTIVIDAD) {
+  test(`CA-63(c) — el selector #${id} (${quien}) ofrece PowerPoint (.ppt y .pptx)`, () => {
+    const accept = acceptDe(fuente, id, archivo);
+    for (const ppt of POWERPOINT) {
+      assert.ok(accept.includes(ppt),
+        `#${id} no ofrece ${ppt}; declara: ${accept.join(',')} — RN-44b: esto no da error, deja ` +
+        'el archivo en gris en el explorador y nadie se entera de por qué');
+    }
+  });
+}
+
 // ── 4. El plano se descarga, no se intenta abrir ────────────────────────────
 
 test('un plano no cuenta como imagen en ningún lado', () => {
@@ -177,16 +228,40 @@ test('el DXF es texto plano y aun así no se sirve como texto', () => {
     'ningún formato de texto se abre en línea, por la misma razón');
 });
 
-test('el previsualizador manda el plano al botón Descargar', () => {
-  // El modal elige rama por el NOMBRE del archivo. Si alguna de las dos ramas con visor
-  // (PDF y Office) llegara a nombrar un plano, el alumno vería un iframe vacío en vez del
-  // cartel que le dice que lo descargue.
+// ⚠️ REESCRITO por specs/correccion-de-entregas.spec.md (§ I, 2026-09-21) — no borrado, porque
+// lo que hay que dejar es POR QUÉ cambió (mismo criterio que pide la spec para
+// backupCarpetas.test.js): hasta acá este test se llamaba "el previsualizador manda el plano al
+// botón Descargar" y afirmaba que un plano NUNCA tiene visor. Eso dejó de ser cierto para los
+// dos formatos: el `.dxf` se dibuja DIRECTO en el navegador (RN-42) y el `.dwg` se dibuja vía un
+// `.dxf` derivado que convierte el servidor con ODA (RN-42a). Las aserciones sobre `_isPdf` y
+// `_isOffice` de la versión vieja SIGUEN SIENDO CIERTAS y no se tocan: el plano nunca pasó ni va
+// a pasar por esas dos ramas, tenga o no visor propio. Lo que cambia es que ahora existe una
+// TERCERA rama (el visor CAD) que sí lo reconoce, y la rama de "no se puede previsualizar"
+// sigue en pie para todo lo que de verdad no tiene visor (acá, un testigo: `.zip`).
+test('un plano NO pasa por las ramas de PDF ni de Office (siguen siendo ciertas, sin tocar)', () => {
   const pdf    = courseJs.match(/function _isPdf\(name\)[^\n]*/)[0];
   const office = courseJs.match(/function _isOffice\(name\)[^\n]*/)[0];
   assert.ok(!/dwg|dxf/i.test(pdf),    '_isPdf no puede reconocer un plano');
   assert.ok(!/dwg|dxf/i.test(office), '_isOffice no puede reconocer un plano');
+});
+
+test('CA-55/CA-56 — el .dxf y el .dwg SÍ tienen visor: pasan por la rama CAD, no por Descargar', () => {
+  // Nombre de función propuesto por el tester (no fijado por la spec): _isCad(name). Si el
+  // implementador elige otro nombre, este test es el que hay que actualizar — a propósito,
+  // para que quede un solo lugar marcando el contrato.
+  const m = courseJs.match(/function _isCad\(name\)[^\n]*/);
+  assert.ok(m,
+    'falta _isCad(name) en public/js/course.js (o el nombre que el implementador elija — este ' +
+    'test documenta el contrato propuesto): la rama que reconoce .dwg/.dxf para el visor CAD (§ I)');
+  if (m) {
+    assert.ok(/dxf/i.test(m[0]), '_isCad tiene que reconocer .dxf (visor directo, RN-42)');
+    assert.ok(/dwg/i.test(m[0]), '_isCad tiene que reconocer .dwg (visor vía derivado, RN-42a)');
+  }
+});
+
+test('la rama de "no se puede previsualizar" sigue existiendo para lo que de verdad no tiene visor', () => {
   assert.ok(/no se puede previsualizar/.test(courseJs),
-    'tiene que seguir existiendo la rama que ofrece descargar lo que no se puede mostrar');
+    'tiene que seguir existiendo la rama que ofrece descargar lo que no se puede mostrar (p.ej. un .zip)');
 });
 
 // ── 5. Los carteles ─────────────────────────────────────────────────────────
@@ -208,6 +283,19 @@ test('los carteles del navegador nombran los dos planos', () => {
   for (const [quien, cartel] of [['docente', cartelDocente], ['alumno', cartelAlumno]]) {
     assert.ok(/dwg/i.test(cartel), `el cartel del ${quien} no nombra el .dwg`);
     assert.ok(/dxf/i.test(cartel), `el cartel del ${quien} no nombra el .dxf`);
+  }
+});
+
+// RN-44c / CA-65: "El olvido de un accept= no da error: da un archivo en gris" — pero ACÁ el
+// error de origen sería el opuesto (un cartel que no lo menciona no es un bug técnico, pero
+// deja a la persona sin saber qué hacer). Extiende el mismo criterio que ya regía para los
+// planos: el test se extiende, no se duplica (RN-44d).
+test('RN-44c/CA-65 — los carteles escritos a mano nombran PowerPoint', () => {
+  const cartelDocente = nuevaEjs.match(/no es un formato aceptado[^`]*/)[0];
+  const cartelAlumno  = courseJs.match(/no es un formato aceptado[^`]*/)[0];
+  for (const [quien, cartel] of [['docente', cartelDocente], ['alumno', cartelAlumno]]) {
+    assert.ok(/powerpoint|pptx?/i.test(cartel),
+      `el cartel del ${quien} tiene que nombrar PowerPoint (.ppt/.pptx), como ya nombra el .dwg y el .dxf`);
   }
 });
 

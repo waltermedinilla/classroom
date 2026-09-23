@@ -33,6 +33,10 @@ const rateLimit = require('express-rate-limit');
 const { ipKeyGenerator } = require('express-rate-limit');
 const logger = require('../config/logger');
 const { requireAuth } = require('../middleware/auth');
+// El recorte de la extensión que se loguea (§ K de specs/correccion-de-entregas.spec.md,
+// RN-47): el mismo que aplican los cinco filtros del servidor, para que la tabla de
+// tools/ver-formatos.js pueda agrupar las dos puntas por el mismo valor.
+const { extensionParaLog } = require('../public/js/correccion');
 
 const router = express.Router();
 
@@ -115,6 +119,47 @@ router.post('/subida', requireAuth, diagLimiter, (req, res) => {
     conexion:   texto(b.conexion, 40),
     pantalla:   texto(b.pantalla, MAX_TEXTO),
     userAgent:  texto(req.get('user-agent'), MAX_TEXTO),
+  });
+
+  res.json({ ok: true });
+});
+
+// POST /diagnostico/formato — el NAVEGADOR cuenta que rechazó un formato antes de subirlo.
+// Body: { ext, ruta }
+//
+// ⭐ Sin esta ruta, el log de § K (specs/correccion-de-entregas.spec.md) queda casi vacío y
+// MIENTE. El fileFilter del servidor casi nunca se dispara, porque el rechazo ocurre antes:
+// primero el `accept=` del input (que deja el archivo EN GRIS en el explorador, así que la
+// persona ni lo selecciona) y después la lista de JS. Si solo se logueara del lado del
+// servidor, la conclusión sería "no falta ningún formato" — que es exactamente la conclusión
+// falsa que esto viene a evitar.
+//
+// Va en una ruta propia y NO dentro de /subida: esa exige un código SUB-XXXXXX y contesta
+// otra pregunta (cuántos bytes llegaron). Meter los rechazos ahí produciría reportes sin
+// bytes que harían mentir al veredicto() de tools/ver-subida.js.
+//
+// Rutas conocidas por las que puede entrar un archivo. Cualquier otra cosa se guarda como
+// 'desconocida', con el mismo criterio que MOTIVOS: no se confía en el string del cliente,
+// pero tampoco se descarta el reporte por eso.
+const RUTAS_DE_SUBIDA = ['entrega', 'actividad_adjunto', 'sala_archivo', 'imagen'];
+
+router.post('/formato', requireAuth, diagLimiter, (req, res) => {
+  const b = req.body || {};
+  // El cliente manda la extensión, no el nombre: el recorte igual se aplica acá porque lo
+  // que llega es lo que el cliente quiso mandar (RN-46/RN-47). Se le antepone una letra para
+  // que un '.pdf' suelto tenga la forma de un nombre de archivo y el mismo regex lo resuelva.
+  const ext = extensionParaLog('x' + texto(b.ext, 20));
+
+  logger.warn('Formato rechazado', {
+    evento:  'formato_rechazado',        // ← la misma marca que usan los cinco filtros
+    ext,
+    ruta:    RUTAS_DE_SUBIDA.includes(b.ruta) ? b.ruta : 'desconocida',
+    origen:  'navegador',
+    // De la sesión, no del cliente.
+    usuario: res.locals.user?.email || req.userId,
+    rol:     res.locals.user?.role,
+    escuela: res.locals.user?.school ? String(res.locals.user.school) : null,
+    requestId: req.id || null,
   });
 
   res.json({ ok: true });

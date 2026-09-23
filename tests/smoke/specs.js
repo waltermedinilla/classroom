@@ -2071,7 +2071,14 @@ const specs = [
       const e3 = await guardar(actId, { text: 'Solo el segundo', keepFiles: [b.filename] });
       assert(e3.json.submission.files.length === 1, 'debería quedar 1 archivo');
       assert(e3.json.submission.files[0].filename === b.filename, 'el que queda es el segundo');
-      await client.get('scopedStudent', `/activities/submission-file/${a.filename}`, { expectStatus: 404 });
+      // ⚠️ Esta aserción esperaba 404 hasta el historial de entregas (RN-37, 2026-09-21).
+      // Ya NO: el archivo que el alumno saca de su entrega no se borra del disco, se mueve a
+      // `_versiones/`, y tanto él como el docente lo siguen pudiendo abrir — es exactamente
+      // para lo que existe el historial. Lo que NO cambió es la guarda: sigue siendo la misma
+      // de siempre, por eso el spec de permisos de más abajo vale igual.
+      // El 404 de verdad sigue probado en el paso 9 (retirar la entrega SÍ borra las
+      // versiones), que es el caso donde el archivo tiene que desaparecer.
+      await client.get('scopedStudent', `/activities/submission-file/${a.filename}`, { expectStatus: 200 });
 
       // ── 4. keepFiles con un filename ajeno se ignora ──────────────────────
       // El navegador elige cuál de SUS archivos sobrevive, no qué archivo existe.
@@ -2214,6 +2221,647 @@ const specs = [
       assert(r.json.motivo === 'congelada', `esperaba motivo congelada: ${JSON.stringify(r.json)}`);
     },
   },
+  /* ─── specs/correccion-de-entregas.spec.md — Modo Corrector ───
+     Todo lo de acá abajo usa actividades PROPIAS (nunca state.activityId, que usan los specs
+     de nota/gradebook de más abajo) para no interferir con lo que esos specs esperan
+     encontrar. Las actividades quedan colgando del curso de smoke: la limpieza en cascada de
+     'cleanup-course' se las lleva puestas, igual que hace con 'edicion-de-la-entrega'. */
+
+  {
+    id: 'corrector-preferencia-modo-vista',
+    title: 'RN-02/RN-03 — la preferencia de vista vive en el usuario, y guardarla no puede fallar visiblemente',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // CA-03 — un valor fuera del enum es un 400 con su código, no un 500.
+      const malo = await client.patch('scopedTeacher', '/courses/profile/preferencias', {
+        body: { modoCorreccion: 'no-existe' }, expectStatus: 400,
+      });
+      assert(malo.json?.error === 'PREFERENCIA_INVALIDA' || /no existe/i.test(malo.json?.error || ''),
+        `esperaba PREFERENCIA_INVALIDA: ${JSON.stringify(malo.json)}`);
+
+      // Camino feliz.
+      const ok = await client.patch('scopedTeacher', '/courses/profile/preferencias', {
+        body: { modoCorreccion: 'corrector' }, expectStatus: 200,
+      });
+      assert(ok.json?.modoCorreccion === 'corrector', `esperaba modoCorreccion:'corrector': ${JSON.stringify(ok.json)}`);
+
+      // CA-02 — "cambia a Corrector, cierra sesión, entra desde otra máquina: abre en
+      // Corrector". Una sesión nueva (cookie jar propio) con las mismas credenciales simula la
+      // otra máquina; si la preferencia viviera solo en localStorage, esto no tendría cómo
+      // verse desde acá.
+      await client.post('scopedTeacherOtraMaquina', '/login', {
+        body: { email: state.scopedTeacherEmail, password: teacher.password }, expectStatus: 200,
+      });
+      const vista = await client.get('scopedTeacherOtraMaquina', `/courses/${state.courseId}`, { expectStatus: 200 });
+      // El contrato REAL que renderiza views/course.ejs es `window.USER_MODO_CORRECCION`.
+      // Este assert lo nombra en vez de buscar un `corrector` suelto en el HTML: la palabra
+      // aparece en varios lados de la página (el botón del toggle, clases de CSS), así que un
+      // /corrector/i pasaría aunque la preferencia no hubiera viajado — que es justo lo que el
+      // spec existe para detectar.
+      const m = vista.text.match(/USER_MODO_CORRECCION\s*=\s*'([^']*)'/);
+      assert(m && m[1] === 'corrector',
+        'la vista renderizada desde la sesión nueva tiene que reflejar el modo guardado en el '
+        + `servidor, no "planilla" por defecto (renderizó: ${m ? m[1] : 'la variable no está'})`);
+
+      // Se deja como estaba, para no afectar otros specs que abren el curso.
+      await client.patch('scopedTeacher', '/courses/profile/preferencias', {
+        body: { modoCorreccion: 'planilla' }, expectStatus: 200,
+      });
+    },
+  },
+
+  {
+    id: 'corrector-enlace-firmado',
+    title: 'RN-15 — el enlace firmado: sin cookie, con firma alterada, cruzado, y solo lo emite el docente',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env, assert }) {
+      const nueva = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: 'Corrector: enlace firmado (smoke)', type: 'tarea', points: '10' },
+        expectStatus: 201,
+      });
+      const actId = nueva.json.activity._id;
+
+      const fd = new FormData();
+      fd.append('file', new Blob(['PK\x03\x04 docx de prueba, no hace falta que abra de verdad'],
+        { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), 'trabajo.docx');
+      const up = await client.post('scopedStudent', `/activities/${actId}/upload-submission-file`, {
+        form: fd, expectStatus: 200,
+      });
+      await client.post('scopedStudent', `/activities/${actId}/submit`, {
+        body: { text: 'Mi docx', uploadedFiles: [up.json] }, expectStatus: 200,
+      });
+      const filename = up.json.filename;
+
+      // CA-14 — el alumno no puede emitir un enlace de NADA, ni de lo suyo.
+      await client.post('scopedStudent', `/activities/submission-file/${filename}/enlace`, { expectStatus: 403 });
+
+      // El docente sí.
+      const enlace = await client.post('scopedTeacher', `/activities/submission-file/${filename}/enlace`, { expectStatus: 200 });
+      assert(enlace.json?.url && enlace.json?.expiraEn, `esperaba { url, expiraEn }: ${JSON.stringify(enlace.json)}`);
+
+      const parsed = new URL(enlace.json.url, 'http://localhost');
+
+      // CA-13(a) — funciona SIN cookie (actor null = sin sesión) y devuelve el archivo entero.
+      const sinCookie = await client.get(null, parsed.pathname + parsed.search, { expectStatus: 200 });
+      assert(sinCookie.byteLength > 0, 'el archivo tendría que bajar entero sin estar logueado');
+
+      // CA-13(c) — sig alterada.
+      const conSigMala = new URL(parsed);
+      const sigOriginal = conSigMala.searchParams.get('sig') || '';
+      conSigMala.searchParams.set('sig', sigOriginal ? (sigOriginal.slice(0, -1) + (sigOriginal.slice(-1) === '0' ? '1' : '0')) : 'x');
+      await client.get(null, conSigMala.pathname + conSigMala.search, { expectStatus: 403 });
+
+      // CA-13(d) — la firma de ESTE archivo pedida para otro filename.
+      const cruzado = new URL(parsed);
+      await client.get(null, cruzado.pathname.replace(filename, 'otro-archivo-cualquiera.docx') + cruzado.search, {
+        expectStatus: 403,
+      });
+
+      // CA-13(b) — vencido: esperar 5 minutos de verdad en un smoke no es razonable. Queda
+      // cubierto sin red en tests/unit/firmaArchivo.test.js (ENLACE_VENCIDO con exp en el
+      // pasado). Documentado acá para que no se lea como un hueco silencioso.
+
+      // CA-15 — cada emisión deja una entrada de auditoría.
+      const { MongoClient } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        let evento = null;
+        for (let i = 0; i < 20 && !evento; i++) {
+          evento = await mongo.db().collection('auditlogs').findOne({ action: 'submission.preview_link' });
+          if (!evento) await new Promise(r => setTimeout(r, 100));
+        }
+        assert(evento, 'RN-15: la emisión del enlace firmado tiene que quedar en submission.preview_link');
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+
+  {
+    id: 'corrector-devolver-vs-guardar',
+    title: 'RN-21 a RN-27b — borrador, devolver, y el alumno viendo (o no) su nota',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const nueva = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: 'Corrector: devolver vs guardar (smoke)', type: 'tarea', points: '10' },
+        expectStatus: 201,
+      });
+      const actId = nueva.json.activity._id;
+      await client.post('scopedStudent', `/activities/${actId}/submit`, {
+        body: { text: 'Mi entrega' }, expectStatus: 200,
+      });
+
+      // CA-29 — devolver:false deja un BORRADOR: el alumno no recibe myGrade (ni points ni
+      // feedback), y su tarjeta sigue diciendo "Entregada", no "Calificada".
+      await client.post('scopedTeacher', `/activities/${actId}/grade`, {
+        body: { studentId: state.scopedStudentId, points: '7', feedback: 'Borrador, todavía no lo ve', devolver: false },
+        expectStatus: 200,
+      });
+      const listaBorrador = await client.get('scopedStudent', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      const actBorrador = listaBorrador.json.activities.find(a => a._id === actId);
+      assert(actBorrador, 'la actividad tendría que seguir apareciéndole al alumno');
+      assert(!actBorrador.myGrade, `con la nota en borrador, myGrade tiene que venir OMITIDO por completo: ${JSON.stringify(actBorrador.myGrade)}`);
+
+      // Nota: GET /:id/my-submission solo devuelve { submission }, nunca la nota — la nota del
+      // alumno viaja por GET /activities/course/:courseId (myGrade, ya verificado arriba). No
+      // hay una segunda puerta que revisar acá para RN-24.
+
+      // CA-32 (mitad 1) — con la nota en borrador, el alumno TODAVÍA puede editar su entrega.
+      await client.post('scopedStudent', `/activities/${actId}/submit`, {
+        body: { text: 'Retoco mientras está en borrador' }, expectStatus: 200,
+      });
+
+      // CA-36 — en Modo Planilla, POST /:id/grade SIN el flag (ausente) devuelve en el acto
+      // (RN-22b: ausente = devolver). Es la forma en la que ya publican los clientes de hoy.
+      await client.post('scopedTeacher', `/activities/${actId}/grade`, {
+        body: { studentId: state.scopedStudentId, points: '8', feedback: 'Ahora sí, devuelvo' },
+        expectStatus: 200,
+      });
+      const listaDevuelta = await client.get('scopedStudent', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      const actDevuelta = listaDevuelta.json.activities.find(a => a._id === actId);
+      assert(actDevuelta.myGrade?.points === 8, `esperaba ver la nota 8 ya devuelta: ${JSON.stringify(actDevuelta.myGrade)}`);
+
+      // CA-32 (mitad 2) — devuelta, el alumno YA NO puede editar: 403 motivo "corregida".
+      const cerrada = await client.post('scopedStudent', `/activities/${actId}/submit`, {
+        body: { text: 'Intento después de la devolución' }, expectStatus: 403,
+      });
+      assert(cerrada.json?.motivo === 'corregida', `esperaba motivo corregida: ${JSON.stringify(cerrada.json)}`);
+
+      // CA-30 — sobre una nota YA devuelta, editar con devolver:false la cambia y el alumno ve
+      // el valor nuevo en el acto (RN-23: una nota devuelta no vuelve a borrador).
+      await client.post('scopedTeacher', `/activities/${actId}/grade`, {
+        body: { studentId: state.scopedStudentId, points: '9', devolver: false },
+        expectStatus: 200,
+      });
+      const listaEditada = await client.get('scopedStudent', `/activities/course/${state.courseId}`, { expectStatus: 200 });
+      const actEditada = listaEditada.json.activities.find(a => a._id === actId);
+      assert(actEditada.myGrade?.points === 9,
+        `RN-23: editar con devolver:false una nota YA devuelta no la esconde, solo la actualiza: ${JSON.stringify(actEditada.myGrade)}`);
+
+      // CA-37 — el personal sigue viendo el borrador como una nota puesta (gradebook no filtra
+      // por returnedAt). Se prueba con OTRO alumno para no interferir con lo de arriba.
+      const gradebook = await client.get('scopedTeacher', `/courses/${state.courseId}/gradebook`, { expectStatus: 200 });
+      assert(gradebook.json.gradeMap?.[actId]?.[state.scopedStudentId] === 9,
+        'el gradebook tiene que mostrar la nota igual, esté devuelta o en borrador');
+    },
+  },
+
+  {
+    id: 'corrector-devolver-endpoint-y-reapertura',
+    title: 'RN-27/RN-26b — POST /devolver en lote, quién queda omitido, y la reapertura que un borrador no cierra',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env, assert }) {
+      const nueva = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: 'Corrector: devolver en lote (smoke)', type: 'tarea', points: '10' },
+        expectStatus: 201,
+      });
+      const actId = nueva.json.activity._id;
+      await client.post('scopedStudent', `/activities/${actId}/submit`, { body: { text: 'Entrego' }, expectStatus: 200 });
+
+      // Deja la nota en borrador primero, para que /devolver tenga algo que devolver.
+      await client.post('scopedTeacher', `/activities/${actId}/grade`, {
+        body: { studentId: state.scopedStudentId, points: '6', devolver: false }, expectStatus: 200,
+      });
+
+      // CA-35 — un tercer id inventado (nadie con esa nota) tiene que quedar en omitidas[], no
+      // romper el lote. El alumno normal se devuelve.
+      const idInventado = '6a7472072ab622c547577099';
+      const dev = await client.post('scopedTeacher', `/activities/${actId}/devolver`, {
+        body: { studentIds: [state.scopedStudentId, idInventado] }, expectStatus: 200,
+      });
+      assert(dev.json.devueltas === 1, `esperaba 1 devuelta: ${JSON.stringify(dev.json)}`);
+      assert(Array.isArray(dev.json.omitidas) && dev.json.omitidas.length === 1,
+        `esperaba 1 omitida: ${JSON.stringify(dev.json)}`);
+
+      // El alumno recibe 403 al intentar devolverse a sí mismo.
+      await client.post('scopedStudent', `/activities/${actId}/devolver`, {
+        body: { studentIds: [state.scopedStudentId] }, expectStatus: 403,
+      });
+
+      // CA-15 — una entrada de auditoría POR ALUMNO devuelto.
+      const { MongoClient } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        let evento = null;
+        for (let i = 0; i < 20 && !evento; i++) {
+          evento = await mongo.db().collection('auditlogs').findOne({ action: 'submission.return' });
+          if (!evento) await new Promise(r => setTimeout(r, 100));
+        }
+        assert(evento, 'RN-27: devolver tiene que dejar submission.return en la auditoría');
+      } finally {
+        await mongo.close();
+      }
+
+      // CA-34 — reapertura: un borrador explícito NO la cierra; devolver sí.
+      const rehecha = await client.post('scopedStudent', `/activities/${actId}/submit`, {
+        body: { text: 'Después de la devolución' }, expectStatus: 403,
+      });
+      assert(rehecha.json?.motivo === 'corregida');
+
+      await client.post('scopedTeacher', `/activities/${actId}/reopen-submission`, {
+        body: { studentId: state.scopedStudentId }, expectStatus: 200,
+      });
+      await client.post('scopedStudent', `/activities/${actId}/submit`, { body: { text: 'Rehecho' }, expectStatus: 200 });
+
+      // Guarda un borrador sobre la entrega reabierta: RN-26b dice que ESTO no la vuelve a cerrar.
+      await client.post('scopedTeacher', `/activities/${actId}/grade`, {
+        body: { studentId: state.scopedStudentId, points: '5', devolver: false }, expectStatus: 200,
+      });
+      const siguAbierta = await client.post('scopedStudent', `/activities/${actId}/submit`, {
+        body: { text: 'Todavía tendría que poder' }, expectStatus: 200,
+      });
+      assert(siguAbierta.json?.submission?.reopenedAt,
+        'RN-26b: un borrador explícito NO puede cerrar la reapertura — el alumno tiene que poder seguir editando');
+
+      // Ahora sí, devolver la cierra.
+      await client.post('scopedTeacher', `/activities/${actId}/devolver`, {
+        body: { studentIds: [state.scopedStudentId] }, expectStatus: 200,
+      });
+      const yaCerrada = await client.post('scopedStudent', `/activities/${actId}/submit`, {
+        body: { text: 'Ahora sí debería estar cerrada' }, expectStatus: 403,
+      });
+      assert(yaCerrada.json?.motivo === 'corregida', 'RN-26b: devolver SÍ cierra la reapertura');
+    },
+  },
+
+  {
+    id: 'corrector-hilo-comentarios',
+    title: 'RN-29 a RN-32 — el hilo de dos puntas: quién ve qué, el no-leído y sus límites',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const nueva = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: 'Corrector: hilo de comentarios (smoke)', type: 'tarea', points: '10' },
+        expectStatus: 201,
+      });
+      const actId = nueva.json.activity._id;
+
+      // CA-41 — sin entrega, no hay hilo: 404 SIN_ENTREGA, y el contador de entregas no se mueve.
+      const antesDeEntregar = await client.get('scopedTeacher', `/activities/${actId}/submissions`, { expectStatus: 200 });
+      const nEntregaronAntes = antesDeEntregar.json.submissions.length;
+      const sinEntrega = await client.post('scopedStudent', `/activities/${actId}/mi-comentario`, {
+        body: { texto: 'Todavía no entregué nada' }, expectStatus: 404,
+      });
+      assert(sinEntrega.json?.error === 'SIN_ENTREGA' || /hilo se abre con la entrega/i.test(sinEntrega.json?.error || ''),
+        `esperaba SIN_ENTREGA: ${JSON.stringify(sinEntrega.json)}`);
+      const despuesSinEntregar = await client.get('scopedTeacher', `/activities/${actId}/submissions`, { expectStatus: 200 });
+      assert(despuesSinEntregar.json.submissions.length === nEntregaronAntes,
+        'un comentario rechazado por SIN_ENTREGA no puede crear una Submission ni sumar al contador');
+
+      await client.post('scopedStudent', `/activities/${actId}/submit`, { body: { text: 'Ahora sí' }, expectStatus: 200 });
+
+      // CA-40 — el alumno comenta ANTES de que le corrijan nada (nota en borrador ni siquiera existe).
+      await client.post('scopedStudent', `/activities/${actId}/mi-comentario`, {
+        body: { texto: 'Subí el archivo equivocado, perdón' }, expectStatus: 200,
+      });
+
+      // CA-42 — el docente lo ve como sin leer, y GET /entrega/:id lo apaga (POST /:id/view NO).
+      const detalleAntes = await client.get('scopedTeacher', `/activities/${actId}/entrega/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(detalleAntes.json?.submission?.privateComments?.some(c => c.from === 'student'),
+        `el docente tiene que ver el comentario del alumno: ${JSON.stringify(detalleAntes.json?.submission)}`);
+
+      // CA-40 — el docente contesta, con la nota TODAVÍA sin poner (ni borrador). El comentario
+      // tiene que llegarle igual al alumno: RN-31 dice que el hilo no espera a la devolución.
+      await client.post('scopedTeacher', `/activities/${actId}/entrega/${state.scopedStudentId}/comentario`, {
+        body: { texto: 'Dale, resubilo cuando puedas' }, expectStatus: 200,
+      });
+      const miEntrega = await client.get('scopedStudent', `/activities/${actId}/my-submission`, { expectStatus: 200 });
+      assert(miEntrega.json?.privateComments?.some(c => c.from === 'teacher'),
+        'el comentario del docente tiene que llegarle al alumno aunque no haya nota puesta');
+
+      // CA-46 — límites: 2001 caracteres, y el texto se ve como texto (no HTML) en las dos puntas.
+      const largo = await client.post('scopedStudent', `/activities/${actId}/mi-comentario`, {
+        body: { texto: 'x'.repeat(2001) }, expectStatus: 400,
+      });
+      assert(largo.json?.error === 'COMENTARIO_LARGO' || /2000/.test(largo.json?.error || ''),
+        `esperaba COMENTARIO_LARGO: ${JSON.stringify(largo.json)}`);
+
+      await client.post('scopedStudent', `/activities/${actId}/mi-comentario`, {
+        body: { texto: '<script>alert(1)</script>' }, expectStatus: 200,
+      });
+      const conScript = await client.get('scopedTeacher', `/activities/${actId}/entrega/${state.scopedStudentId}`, { expectStatus: 200 });
+      const textoGuardado = conScript.json?.submission?.privateComments?.at(-1)?.text || '';
+      assert(textoGuardado.includes('<script>'),
+        'el TEXTO guardado tiene que conservar los caracteres tal cual (el escape es al PINTAR, con textContent, no al guardar)');
+
+      // CA-45 — el alumno B no puede tocar el hilo de A, en NINGÚN endpoint JSON (no solo la
+      // pantalla — antecedente fuga_datos_api_curso).
+      const emailB = `smoke.hiloB.${RUN_ID}@example.com`;
+      const altaB = await client.post('admin', '/admin/users/create', {
+        body: {
+          name: `Smoke Hilo B ${RUN_ID}`, email: emailB, password: 'SmokeTest1234',
+          role: 'student', dni: dniSmoke(41),
+        },
+        expectStatus: 201,
+      });
+      await client.post('hiloB', '/login', { body: { email: emailB, password: 'SmokeTest1234' }, expectStatus: 200 });
+
+      await client.get('hiloB', `/activities/${actId}/entrega/${state.scopedStudentId}`, { expectStatus: [403, 404] });
+      await client.post('hiloB', `/activities/${actId}/entrega/${state.scopedStudentId}/comentario`, {
+        body: { texto: 'no debería poder' }, expectStatus: [403, 404],
+      });
+      // La ruta del alumno no lleva :studentId — "escribir en la entrega de A" para B solo
+      // puede significar escribir en LA SUYA, así que lo que se prueba es que B nunca ve ni un
+      // rastro del hilo de A por esta puerta.
+      await client.post('hiloB', `/activities/${actId}/mi-comentario`, { body: { texto: 'lo mío' }, expectStatus: [200, 404] });
+
+      if (altaB.json?.user?._id) {
+        await client.post('admin', `/admin/users/${altaB.json.user._id}/delete`, { expectStatus: 200 }).catch(() => {});
+      }
+    },
+  },
+
+  {
+    id: 'corrector-historial-versiones',
+    title: 'RN-33 a RN-38 — el archivo viejo sobrevive en _versiones/, el tope de 5, y cleanup-files.js no se lo lleva',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const nueva = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: 'Corrector: historial (smoke)', type: 'tarea', points: '10' },
+        expectStatus: 201,
+      });
+      const actId = nueva.json.activity._id;
+
+      const subirYEnviar = async (nombre, texto) => {
+        const fd = new FormData();
+        fd.append('file', new Blob([`%PDF-1.4 ${nombre} ${RUN_ID}`], { type: 'application/pdf' }), nombre);
+        const up = await client.post('scopedStudent', `/activities/${actId}/upload-submission-file`, { form: fd, expectStatus: 200 });
+        await client.post('scopedStudent', `/activities/${actId}/submit`, {
+          body: { text: texto, uploadedFiles: [up.json] }, expectStatus: 200,
+        });
+        return up.json;
+      };
+
+      // CA-49 — reenvía B: la entrega tiene B, versions[0] tiene A, y A sigue en disco.
+      const a = await subirYEnviar('version-A.pdf', 'Primera');
+      const b = await subirYEnviar('version-B.pdf', 'Segunda');
+
+      const detalle = await client.get('scopedTeacher', `/activities/${actId}/entrega/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(detalle.json?.submission?.versions?.length === 1,
+        `esperaba 1 versión guardada: ${JSON.stringify(detalle.json?.submission?.versions)}`);
+      assert(detalle.json.submission.versions[0].files?.some(f => f.filename === a.filename),
+        'versions[0] tiene que ser la versión A (la que quedó afuera)');
+
+      // El archivo viejo se sigue pudiendo bajar (se movió, no se borró).
+      await client.get('scopedStudent', `/activities/submission-file/${a.filename}`, { expectStatus: 200 });
+
+      // CA-53 — otro alumno no puede pedir la versión de este.
+      const emailC = `smoke.historialC.${RUN_ID}@example.com`;
+      const altaC = await client.post('admin', '/admin/users/create', {
+        body: {
+          name: `Smoke Historial C ${RUN_ID}`, email: emailC, password: 'SmokeTest1234',
+          role: 'student', dni: dniSmoke(42),
+        },
+        expectStatus: 201,
+      });
+      await client.post('historialC', '/login', { body: { email: emailC, password: 'SmokeTest1234' }, expectStatus: 200 });
+      await client.get('historialC', `/activities/submission-file/${a.filename}`, { expectStatus: 403 });
+
+      // CA-50 — al sexto reenvío hay 5 versiones y la primera ya no está.
+      let ultimaVersion = b;
+      for (let i = 2; i <= 6; i++) {
+        ultimaVersion = await subirYEnviar(`version-${i}.pdf`, `Reenvío ${i}`);
+      }
+      const detalleFinal = await client.get('scopedTeacher', `/activities/${actId}/entrega/${state.scopedStudentId}`, { expectStatus: 200 });
+      assert(detalleFinal.json.submission.versions.length === 5,
+        `esperaba tope de 5 versiones: ${detalleFinal.json.submission.versions.length}`);
+      await client.get('scopedStudent', `/activities/submission-file/${a.filename}`, { expectStatus: 404 });
+
+      // CA-51 — cleanup-files.js --dry-run no reporta ninguna versión como huérfana. Sin el
+      // arreglo de RN-35, `a.filename` (que YA se movió a _versiones/, pero en el sexto
+      // reenvío se cayó del tope de 5 y por lo tanto además se BORRÓ de verdad) no sirve como
+      // testigo porque ya no está en disco; el testigo válido es un archivo que SIGUE en
+      // _versiones/ ahora mismo: el de la penúltima versión viva.
+      const archivoEnVersiones = detalleFinal.json.submission.versions[0]?.files?.[0]?.filename;
+      assert(archivoEnVersiones, 'el fixture no dejó ningún archivo en versions[0] para usar de testigo');
+
+      const { execFileSync } = require('child_process');
+      const path = require('path');
+      const raiz = path.join(__dirname, '..', '..');
+      const salida = execFileSync('node', ['cleanup-files.js', '--dry-run'], { cwd: raiz, stdio: 'pipe' }).toString();
+      assert(!salida.includes(archivoEnVersiones),
+        `RN-35: cleanup-files.js --dry-run quiere borrar ${archivoEnVersiones}, que está VIVO en ` +
+        `_versiones/ — la query de refEntregas no está incluyendo versions[].files[].storagePath:\n${salida.slice(0, 2000)}`);
+
+      // CA-52 — borrar la actividad deja la carpeta vacía (actuales, _versiones/ y derivados).
+      await client.delete('scopedTeacher', `/activities/${actId}`, { expectStatus: 200 });
+      await client.get('scopedStudent', `/activities/submission-file/${ultimaVersion.filename}`, { expectStatus: 404 });
+
+      if (altaC.json?.user?._id) {
+        await client.post('admin', `/admin/users/${altaC.json.user._id}/delete`, { expectStatus: 200 }).catch(() => {});
+      }
+    },
+  },
+
+  {
+    id: 'corrector-cad-camino-degradado',
+    title: 'RN-42c/RN-42e/CA-54 — un .dwg sin conversor disponible cae a Descargar, nunca a un 500',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // No se apaga ODA de verdad (está instalado y probado, § Dependencias 2b): se prueba el
+      // camino de un archivo que NO es un DWG válido, que es el otro disparador real de
+      // CONVERSION_FALLIDA documentado en RN-42e (ODA presente pero la conversión falla). El
+      // camino "ODA ausente" (detección apuntada a un binario inexistente) queda cubierto sin
+      // red por tests/unit/conversionCad.test.js (CA-54b) — acá lo que importa es que un DWG
+      // que ODA no puede procesar no cuelga el servidor ni tira 500.
+      const nueva = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: 'Corrector: CAD degradado (smoke)', type: 'tarea', points: '10' },
+        expectStatus: 201,
+      });
+      const actId = nueva.json.activity._id;
+      const fd = new FormData();
+      fd.append('file', new Blob(['esto no es un DWG de verdad'], { type: 'image/vnd.dwg' }), 'plano-roto.dwg');
+      const up = await client.post('scopedStudent', `/activities/${actId}/upload-submission-file`, { form: fd, expectStatus: 200 });
+      await client.post('scopedStudent', `/activities/${actId}/submit`, {
+        body: { text: 'Mi plano', uploadedFiles: [up.json] }, expectStatus: 200,
+      });
+
+      // Pedir el derivado no puede dar 500 ni colgarse: CONVERSION_FALLIDA (422) o el archivo
+      // si por lo que sea ODA lo tolera, pero JAMÁS un error de servidor.
+      const r = await client.get('scopedTeacher', `/activities/submission-file/${up.json.filename}/dxf`, { timeoutMs: 15000 });
+      assert(r.status !== 500, `un DWG inválido no puede tirar 500: ${r.status} ${JSON.stringify(r.json)}`);
+      assert([200, 422, 501].includes(r.status), `esperaba 200/422/501, dio ${r.status}`);
+
+      // El original se sigue pudiendo descargar SIEMPRE (RN-19), pase lo que pase con el derivado.
+      await client.get('scopedStudent', `/activities/submission-file/${up.json.filename}`, { expectStatus: 200 });
+    },
+  },
+
+  {
+    id: 'corrector-powerpoint-siete-lugares',
+    title: 'RN-44 — un .pptx real: lo adjunta el docente, lo entrega el alumno, los dos se descargan',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // CA-63(a) — el docente PRE-sube un .pptx (mismo camino que cualquier adjunto de
+      // actividad: POST /activities/upload-attachment?courseId=..., y recién después se crea
+      // la actividad con `uploadedFiles` apuntando a esa URL — ver 'upload-attachment-sube-y-
+      // respeta-permisos' para el mismo patrón con un PDF).
+      const fdDocente = new FormData();
+      fdDocente.append('file', new Blob(['PK\x03\x04 pptx del docente'],
+        { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }), 'clase.pptx');
+      const preAdjunto = await client.post('scopedTeacher', `/activities/upload-attachment?courseId=${state.courseId}`, {
+        form: fdDocente, expectStatus: 200, timeoutMs: 30000,
+      });
+      assert(/\.pptx$/i.test(preAdjunto.json?.url || ''), `esperaba una URL .pptx: ${JSON.stringify(preAdjunto.json)}`);
+
+      const nueva = await client.post('scopedTeacher', '/activities/create', {
+        body: {
+          courseId: state.courseId, title: 'Corrector: PowerPoint (smoke)', type: 'tarea', points: '10',
+          uploadedFiles: JSON.stringify([preAdjunto.json]),
+        },
+        expectStatus: 201,
+      });
+      const actId = nueva.json.activity._id;
+      const adjunto = (nueva.json.activity.attachments || [])[0];
+      assert(adjunto && adjunto.url === preAdjunto.json.url,
+        `la actividad debería quedar con el .pptx adjunto: ${JSON.stringify(nueva.json.activity.attachments)}`);
+
+      // CA-63(b) — el alumno entrega otro .pptx.
+      const fdAlumno = new FormData();
+      fdAlumno.append('file', new Blob(['PK\x03\x04 pptx del alumno'],
+        { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }), 'mi-presentacion.pptx');
+      const upAlumno = await client.post('scopedStudent', `/activities/${actId}/upload-submission-file`, {
+        form: fdAlumno, expectStatus: 200,
+      });
+      await client.post('scopedStudent', `/activities/${actId}/submit`, {
+        body: { text: 'Mi PowerPoint', uploadedFiles: [upAlumno.json] }, expectStatus: 200,
+      });
+
+      // Los dos se descargan.
+      await client.get('scopedStudent', `/activities/submission-file/${upAlumno.json.filename}`, { expectStatus: 200 });
+    },
+  },
+
+  {
+    id: 'corrector-log-de-formatos',
+    title: 'RN-45/RN-48/RN-49 — un formato rechazado deja rastro con evento formato_rechazado, sin el nombre del archivo',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const nueva = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: 'Corrector: log de formatos (smoke)', type: 'tarea', points: '10' },
+        expectStatus: 201,
+      });
+      const actId = nueva.json.activity._id;
+
+      // RN-45 #2 — el servidor rechaza un .exe en la entrega del alumno.
+      const fd = new FormData();
+      fd.append('file', new Blob(['MZ ejecutable falso'], { type: 'application/x-msdownload' }), 'virus-de-mentira.exe');
+      const rechazo = await client.post('scopedStudent', `/activities/${actId}/upload-submission-file`, {
+        form: fd, expectStatus: 400,
+      });
+      assert(rechazo.json?.error === 'FORMATO_NO_PERMITIDO' || /no se puede subir/i.test(rechazo.json?.error || ''),
+        `esperaba el 400 de formato: ${JSON.stringify(rechazo.json)}`);
+
+      // La línea tiene que quedar en combined.log con el evento nuevo y SIN el nombre del archivo.
+      const fs = require('fs');
+      const path = require('path');
+      const log = path.join(__dirname, '../../logs/combined.log');
+      let linea = null;
+      for (let i = 0; i < 20 && !linea; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        const txt = fs.readFileSync(log, 'utf8');
+        const idx = txt.lastIndexOf('formato_rechazado');
+        if (idx !== -1) {
+          const desde = txt.lastIndexOf('\n', idx) + 1;
+          const hasta = txt.indexOf('\n', idx);
+          try { linea = JSON.parse(txt.slice(desde, hasta === -1 ? undefined : hasta)); } catch {}
+        }
+      }
+      assert(linea, 'RN-45/RN-49: el rechazo de un .exe en la entrega tiene que dejar evento formato_rechazado en el log');
+      if (linea) {
+        assert(linea.ext === '.exe', `esperaba ext:'.exe': ${JSON.stringify(linea)}`);
+        assert(!JSON.stringify(linea).includes('virus-de-mentira'),
+          'RN-46: el nombre completo del archivo NO puede aparecer en el evento logueado');
+      }
+
+      // CA-70 — el rechazo del NAVEGADOR también reporta, y no sube un solo byte. Se simula
+      // llamando directo a la ruta de diagnóstico (lo que haría el JS del cartel del alumno).
+      const reporteNavegador = await client.post('scopedStudent', '/diagnostico/formato', {
+        body: { ext: '.exe', ruta: 'entrega' }, expectStatus: 200,
+      });
+      assert(reporteNavegador.json?.ok === true, `esperaba { ok: true }: ${JSON.stringify(reporteNavegador.json)}`);
+    },
+  },
+
+  {
+    // "Tests necesarios" → Roles, de specs/correccion-de-entregas.spec.md: "el alumno NUNCA
+    // entra al corrector — incluso sobre su PROPIA entrega". Es una guarda más fuerte que
+    // CA-45 (que prueba a un alumno contra la entrega de OTRO): acá el mismo dueño de la
+    // entrega prueba las rutas que son EXCLUSIVAS del docente, y tienen que rechazarlo igual.
+    id: 'corrector-alumno-nunca-entra-al-modo-docente',
+    title: 'El alumno no puede usar las rutas del docente ni siquiera sobre su propia entrega',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const nueva = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: 'Corrector: alumno sin acceso docente (smoke)', type: 'tarea', points: '10' },
+        expectStatus: 201,
+      });
+      const actId = nueva.json.activity._id;
+      await client.post('scopedStudent', `/activities/${actId}/submit`, { body: { text: 'Mi entrega' }, expectStatus: 200 });
+
+      await client.get('scopedStudent', `/activities/${actId}/entrega/${state.scopedStudentId}`, { expectStatus: 403 });
+      await client.post('scopedStudent', `/activities/${actId}/devolver`, {
+        body: { studentIds: [state.scopedStudentId] }, expectStatus: 403,
+      });
+      await client.post('scopedStudent', `/activities/${actId}/entrega/${state.scopedStudentId}/comentario`, {
+        body: { texto: 'no debería poder' }, expectStatus: 403,
+      });
+
+      // Su única puerta al hilo es la ruta sin :studentId.
+      const fd = new FormData();
+      fd.append('file', new Blob(['%PDF-1.4 x'], { type: 'application/pdf' }), 'x.pdf');
+      const up = await client.post('scopedStudent', `/activities/${actId}/upload-submission-file`, { form: fd, expectStatus: 200 });
+      await client.post('scopedStudent', `/activities/${actId}/submit`, {
+        body: { text: 'x', uploadedFiles: [up.json] }, expectStatus: 200,
+      });
+      await client.post('scopedStudent', `/activities/submission-file/${up.json.filename}/enlace`, { expectStatus: 403 });
+      await client.post('scopedStudent', `/activities/${actId}/mi-comentario`, {
+        body: { texto: 'esta sí es la mía' }, expectStatus: 200,
+      });
+    },
+  },
+
+  {
+    id: 'corrector-hilo-rate-limit',
+    title: 'RN-32 — el límite de comentarios es POR PERSONA, no por IP (la NAT de la escuela)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    // ⚠️ ESTE SPEC VA ÚLTIMO ENTRE LOS DEL CORRECTOR, Y NO ES CASUAL.
+    //
+    // Agota a propósito las 20 publicaciones de `scopedStudent` para probar CA-47, y el cupo
+    // NO se repone hasta 5 minutos después (`comentarioLimiter`, ventana de 5 min por persona).
+    // Cualquier spec posterior que publique un comentario con ese mismo actor recibe 429 y
+    // falla por una causa que no tiene nada que ver con lo que está probando.
+    //
+    // Ya pasó: hasta el 2026-09-21 este spec estaba ANTES de
+    // `corrector-alumno-nunca-entra-al-modo-docente`, y ese fallaba con
+    // "esperaba 200, recibió 429" — un síntoma que manda a investigar los permisos cuando el
+    // problema era el orden. Si hace falta sumar un spec que publique comentarios, va ARRIBA
+    // de este, nunca abajo.
+    async run({ client, state, assert }) {
+      const nueva = await client.post('scopedTeacher', '/activities/create', {
+        body: { courseId: state.courseId, title: 'Corrector: rate limit del hilo (smoke)', type: 'tarea', points: '10' },
+        expectStatus: 201,
+      });
+      const actId = nueva.json.activity._id;
+      await client.post('scopedStudent', `/activities/${actId}/submit`, { body: { text: 'x' }, expectStatus: 200 });
+
+      // CA-47 — 20 entran, el 21 rebota con 429, todo desde el MISMO actor (misma IP también,
+      // porque todo este smoke pega contra un único server local — lo que se prueba es que el
+      // límite se agota a las 20 veces del MISMO usuario y no antes, que es la mitad que se
+      // puede verificar sin dos IPs reales).
+      let ultimoStatus = 200;
+      for (let i = 0; i < 21; i++) {
+        const r = await client.post('scopedStudent', `/activities/${actId}/mi-comentario`, {
+          body: { texto: `comentario ${i}` },
+        });
+        ultimoStatus = r.status;
+        if (r.status === 429) break;
+      }
+      assert(ultimoStatus === 429, `esperaba que el intento 21 diera 429, dio ${ultimoStatus}`);
+    },
+  },
+
   {
     id: 'activity-grade',
     title: 'El docente ve la entrega y la califica',
@@ -7634,6 +8282,13 @@ const specs = [
         ['scopedTeacher', 'GET',  id => `/announcements/course/${id}`],
         ['scopedTeacher', 'POST', id => `/announcements/${id}/comment`],
         ['scopedTeacher', 'PUT',  id => `/announcements/${id}`],
+        // specs/correccion-de-entregas.spec.md — rutas nuevas del Modo Corrector.
+        ['scopedTeacher', 'POST',   id => `/activities/${id}/devolver`],
+        ['scopedStudent', 'POST',   id => `/activities/${id}/mi-comentario`],
+        ['scopedTeacher', 'POST',   id => `/activities/submission-file/${id}/enlace`],
+        ['scopedTeacher', 'GET',    id => `/activities/submission-file/${id}/pdf`],
+        ['scopedTeacher', 'GET',    id => `/activities/submission-file/${id}/dxf`],
+
         ['scopedTeacher', 'POST', id => `/announcements/${id}/delete`],
 
         // routes/tasks.js — si TASK_TEMPLATES_ENABLED='false' el router ni se monta y la URL
@@ -7709,6 +8364,14 @@ const specs = [
         // pierdan. Van con el curso REAL del smoke: con uno inexistente cortaría antes
         // `cargarSala` con su propio 404 y estas dos no probarían nada.
         ['scopedTeacher', 'DELETE', `/courses/${state.courseId}/sala/mensajes/no-es-un-id`],
+        // specs/correccion-de-entregas.spec.md — GET /:id/entrega/:studentId y
+        // POST /:id/entrega/:studentId/comentario, con el id malo primero de un lado y
+        // después del otro. Van con el activityId REAL del smoke: con uno inexistente el 404
+        // saldría de ahí y no probaría nada del segundo parámetro.
+        ['scopedTeacher', 'GET',  `/activities/${state.activityId}/entrega/no-es-un-id`],
+        ['scopedTeacher', 'GET',  `/activities/no-es-un-id/entrega/${bueno}`],
+        ['scopedTeacher', 'POST', `/activities/${state.activityId}/entrega/no-es-un-id/comentario`],
+        ['scopedTeacher', 'POST', `/activities/no-es-un-id/entrega/${bueno}/comentario`],
         ['scopedTeacher', 'POST',   `/courses/${state.courseId}/sala/silenciar/no-es-un-id`],
       ];
 
@@ -7731,7 +8394,13 @@ const specs = [
       }
       for (const [actor, metodo, ruta] of dosParams) {
         try {
-          const res = await client.request(actor, metodo, ruta, { body: {}, timeoutMs: 5000 });
+          // Mismo cuidado que el bucle de arriba: `fetch` rechaza un GET con cuerpo, así que
+          // el body vacío va solo donde corresponde. Hasta 2026-09-21 esta lista era toda de
+          // POST/DELETE y el detalle no se notaba; las dos rutas GET del Modo Corrector lo
+          // destaparon, y el síntoma era engañoso — el spec informaba "no dio 404" cuando en
+          // realidad la request nunca había salido.
+          const res = await client.request(actor, metodo, ruta,
+            { ...(metodo === 'GET' ? {} : { body: {} }), timeoutMs: 5000 });
           if (res.status !== 404) fallas.push(`${metodo} ${ruta} → ${res.status}`);
         } catch (err) {
           fallas.push(err.message);

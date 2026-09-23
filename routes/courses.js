@@ -550,6 +550,37 @@ router.patch('/profile/contact', requireAuth, async (req, res) => {
   }
 });
 
+// PATCH /courses/profile/preferencias
+// La preferencia de vista del corrector de entregas (specs/correccion-de-entregas.spec.md,
+// RN-02). Body: { modoCorreccion: 'planilla' | 'corrector' }.
+//
+// Vive en la base y no solo en localStorage porque `users` está en el backup y el
+// localStorage no: la docente que cambia de máquina vuelve a su modo.
+//
+// ⚠️ El cliente la manda y SIGUE DE LARGO (RN-03): si esto falla, el modo igual cambia en
+// pantalla y no se muestra ningún error. Cambiar de vista no es una operación que pueda
+// fallar delante de una docente que está corrigiendo. Por eso la respuesta no la espera
+// nadie — lo único que importa acá es que el valor que se guarda esté en el enum.
+router.patch('/profile/preferencias', requireAuth, async (req, res) => {
+  try {
+    const MODOS = ['planilla', 'corrector'];
+    const modoCorreccion = req.body?.modoCorreccion;
+    if (!MODOS.includes(modoCorreccion)) {
+      return res.status(400).json({ error: 'Ese modo de vista no existe.', codigo: 'PREFERENCIA_INVALIDA' });
+    }
+
+    const user = await User.findByIdAndUpdate(req.userId, { modoCorreccion }, { new: true, runValidators: true });
+    invalidateUser(user._id);
+
+    // No se audita: es una preferencia de pantalla, de alto volumen y cero valor forense
+    // (mismo criterio que POST /activities/:id/view).
+    res.json({ ok: true, modoCorreccion: user.modoCorreccion });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // PATCH /courses/profile/about
 // El propio usuario actualiza su perfil personal: presentación, intereses y proyecto/formación.
 // Va separada de /profile/contact a propósito: son datos de naturaleza distinta y el usuario

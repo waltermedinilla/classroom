@@ -121,6 +121,45 @@ test('cada exclusión dice por qué', () => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// RN-17 (specs/correccion-de-entregas.spec.md) — CA-74 / CA-62
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `archivos/derivados/` (el PDF de Office y el DXF derivado de un DWG, § D y § I) es la
+// primera carpeta nueva de esta feature: cachea algo que se REGENERA del original, así que va
+// EXCLUIDA a propósito, no respaldada. La spec es explícita sobre por qué este test tiene que
+// nombrar la carpeta en vez de conformarse con el test genérico de arriba ("toda carpeta... o
+// excluida a propósito"): "si no entra a RUTAS, el test pasa sin haber mirado nada, que es lo
+// contrario de para lo que existe". O sea: sin este test puntual, alguien podría OLVIDARSE de
+// declarar `archivos/derivados` en `services/diskStats.js` (RUTAS) y el test genérico de arriba
+// pasaría en verde igual — porque no hay forma de que un test note la ausencia de algo que
+// nadie declaró en ningún lado. Este test la busca por nombre, así que si no está en RUTAS
+// falla acá, explícitamente, en vez de call en silencio.
+test('RN-17/CA-74 — archivos/derivados entra a RUTAS Y a CARPETAS_EXCLUIDAS, con motivo', () => {
+  const rutaDerivados = path.join(__dirname, '../../archivos/derivados');
+
+  const enRutas = RUTAS.some(r => norm(r.dir) === norm(rutaDerivados));
+  assert.ok(enRutas,
+    'falta declarar archivos/derivados en RUTAS (services/diskStats.js): sin esto, el panel de ' +
+    'disco del superadmin no la cuenta Y el test genérico de arriba ("toda carpeta... o ' +
+    'excluida") pasa sin haberla mirado nunca — es exactamente el hueco que este test tapa.');
+
+  const entradaExcluida = Object.entries(CARPETAS_EXCLUIDAS)
+    .find(([dir]) => norm(dir) === norm(rutaDerivados));
+  assert.ok(entradaExcluida,
+    'falta excluir archivos/derivados en CARPETAS_EXCLUIDAS (routes/backup.js): es una cache ' +
+    'que se regenera del original, respaldarla duplicaría peso sin agregar información (RN-17)');
+  if (entradaExcluida) {
+    const [, motivo] = entradaExcluida;
+    assert.ok(typeof motivo === 'string' && motivo.length > 15,
+      'la exclusión de archivos/derivados tiene que traer el motivo escrito, no solo la ruta');
+  }
+
+  const enCarpetas = CARPETAS.some(c => norm(c.dir) === norm(rutaDerivados));
+  assert.strictEqual(enCarpetas, false,
+    'archivos/derivados NO puede estar en CARPETAS: es una de las dos listas, nunca las dos');
+});
+
 // El id es el nombre de la carpeta DENTRO del .tar.gz (`files/<id>/`), y el restore busca
 // por ahí. Cambiarlo convierte todos los backups ya generados en backups que, al restaurar,
 // dejan esa carpeta sin reemplazar y en silencio.

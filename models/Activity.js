@@ -16,6 +16,23 @@ const gradeSchema = new mongoose.Schema({
   // Default true: los grades históricos existentes se leen como "manuales", que
   // es exactamente lo que eran (no había autocalificador antes).
   manual:   { type: Boolean, default: true },
+  // Cuándo esta corrección se le PUBLICÓ al alumno. Tres valores y los tres significan algo
+  // distinto — es la misma regla de `keepFiles` (AUSENTE ≠ VACÍO) de la spec de edición:
+  //
+  //   ausente (undefined) → la nota es anterior a esta feature: está DEVUELTA. El alumno la
+  //                         viene viendo desde el día que se la pusieron y no puede dejar de
+  //                         verla porque nosotros estrenemos un campo.
+  //   null                → BORRADOR. El docente la guardó y todavía no la devolvió.
+  //   Date                → devuelta, y cuándo.
+  //
+  // ⚠️ NO LLEVA `default`, y eso es lo único que impide el peor desenlace de la feature de
+  // corrección (specs/correccion-de-entregas.spec.md, RN-22): con `default: null`, el
+  // próximo Activity.findById() materializa null en las miles de notas ya cargadas y TODAS
+  // las notas de la escuela desaparecen de la vista del alumno — el día del deploy, y otra
+  // vez el día que alguien restaure un backup anterior a la feature. Una migración no lo
+  // cubriría: el backup de julio no la trae. La protección tiene que ser la semántica del
+  // campo, y quien la lee es Correccion.estaDevuelta() (public/js/correccion.js).
+  returnedAt: { type: Date },
 });
 
 // Sub-schema para un adjunto (archivo o enlace) agregado por el docente al crear la actividad
