@@ -62,6 +62,8 @@ const MODULOS = [
     // puerto de salida de TODAS las escuelas del servidor, así que lo sensato es arrancar con
     // dos o tres docentes y mirar qué pasa, no repartirla de golpe.
     alcance:     'escuela+persona',
+    // La pregunta que encabeza la lista de docentes en /superadmin/schools → editar.
+    preguntaPersonas: '¿Quiénes pueden transmitir?',
   },
   {
     // La mitad barata de la transmisión: SOLO la voz. Ver specs/sala-hablar.spec.md.
@@ -81,6 +83,7 @@ const MODULOS = [
     // Mismo eje que la transmisión, y con la misma sutileza: se le pregunta a quien ABRE la
     // voz (el docente), nunca al alumno que escucha o que pulsa para hablar.
     alcance:     'escuela+persona',
+    preguntaPersonas: '¿Qué docentes pueden hablar en la sala?',
   },
   {
     id:          'verificacion',

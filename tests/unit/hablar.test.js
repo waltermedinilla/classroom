@@ -273,6 +273,16 @@ test('H11 · el catálogo declara hablar como módulo de DOS ejes, sin solapas p
   assert.strictEqual(h.localsKey, 'hablarEnabled');
 });
 
+test('H11 · en el panel del superadmin, la lista de docentes de Hablar pregunta por HABLAR', () => {
+  // El formulario de la escuela es uno solo para todos los módulos de dos ejes, y decía
+  // "¿Quiénes pueden transmitir?" también para Hablar.
+  const h = MODULOS.find(m => m.id === 'hablar');
+  assert.match(h.preguntaPersonas || '', /hablar/i);
+  const form = fs.readFileSync(path.join(RAIZ, 'views', 'superadmin', 'school-form.ejs'), 'utf8');
+  assert.doesNotMatch(form, /¿Quiénes pueden transmitir\?/,
+    'la pregunta sale del catálogo, no escrita a mano para un solo módulo');
+});
+
 test('H11 · transmision sigue en el catálogo, independiente', () => {
   const tx = MODULOS.find(m => m.id === 'transmision');
   assert.ok(tx);
