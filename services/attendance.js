@@ -509,38 +509,94 @@ async function tomasAbiertasDelAlumno(user, divisionIds, now = new Date()) {
 
 // ── Sugerencia desde la sala en vivo ─────────────────────────────────────────
 
-// Quiénes están AHORA conectados a una sala en vivo de alguna materia de este curso.
-// Devuelve Map<studentId, nombreDeMateria>.
-//
-// Es SOLO una sugerencia: no escribe ninguna marca (decisión del usuario). Cuando el
+// Es SOLO una sugerencia: no escribe ninguna marca (decisión del usuario del 10/08). Cuando el
 // preceptor la acepta, la marca queda con origen 'preceptor', porque la puso él.
 //
-// El $match arranca por { school, closedAt } porque ESE es el índice que tiene RoomSession.
-// Filtrar por `division` sola recorrería la colección entera —una sesión por materia y por
-// día, o sea decenas de miles al año— cada 15 segundos y por cada preceptor mirando su grilla.
-async function presentesEnSalasDeDivision(division, now = new Date()) {
-  const school = division.school?._id || division.school;
-  if (!school) return new Map();
+// ⭐ HASTA EL 2026-09-23 SOLO SUGERÍA A LOS CONECTADOS AHORA, y eso dejaba afuera justo al caso
+// del reclamo que cerró specs/sala-presencia-en-actividad.spec.md: el curso entra a la clase,
+// la docente plantea la actividad, los chicos se van a hacerla… y preceptoría pasa lista en ese
+// momento. La sala no le sugería a nadie, y el "desconectado" terminaba en una falta real.
+// Ahora sugiere a todo el que estuvo HOY en una clase en vivo del curso, y distingue:
+//   "está ahora en Matemática"  /  "estuvo en Matemática, 08:05 – 08:40"
 
-  const sesiones = await RoomSession.find({
-    school, closedAt: null, division: division._id,
-  }).select('_id course').populate('course', 'name').lean();
-  if (!sesiones.length) return new Map();
-
-  const cutoff = new Date(now.getTime() - live.ONLINE_WINDOW_MS);
-  const presencias = await RoomPresence.find({
-    session: { $in: sesiones.map(s => s._id) }, lastPingAt: { $gte: cutoff },
-  }).select('user userRole session').lean();
-
+// La parte pura: de las sesiones y las presencias, qué se le sugiere de cada alumno.
+//   sesiones:   [{ _id, course: { name }, closedAt }]
+//   presencias: [{ user, userRole, session, firstSeenAt, lastPingAt, enMateriaAt }]
+// Devuelve Map<studentId, { materia, ahora, detalle }>.
+//
+// "Ahora" es en la sala (45 s) O haciendo la actividad (el latido de la materia, 3 min): los
+// dos están en clase en este momento. Con varias clases el mismo día gana la de ahora y, si no,
+// la más reciente — es la que el preceptor puede corroborar.
+//
+// ⚠️ Una sesión CERRADA nunca es "ahora", aunque el último ping sea de hace segundos: la
+// docente cierra, preceptoría mira enseguida, y "está ahora en Lengua" de una clase que ya
+// terminó sería mentira.
+function sugerenciaDeSalas(sesiones = [], presencias = [], now = new Date()) {
   const materiaDe = new Map(sesiones.map(s => [String(s._id), s.course?.name || '—']));
-  const enClase = new Map();
+  const cerrada   = new Set(sesiones.filter(s => s.closedAt).map(s => String(s._id)));
+  const mejor = new Map();
+
   for (const p of presencias) {
     // La docente y el preceptor también dejan presencia en la sala: no son asistencia.
     if (live.STAFF_ROLES.includes(p.userRole)) continue;
+
+    const ahora = !cerrada.has(String(p.session)) && (
+      live.isOnline(p.lastPingAt, now) ||
+      live.isOnline(p.enMateriaAt, now, live.VENTANA_EN_MATERIA_MS));
+    // Lo último que se supo de él en esa clase: en la sala o, si salió, en la materia.
+    const hasta = [p.lastPingAt, p.enMateriaAt].filter(Boolean)
+      .map(d => new Date(d)).sort((a, b) => b - a)[0] || null;
+    const materia = materiaDe.get(String(p.session)) || '—';
+
+    const cand = {
+      materia, ahora, hasta,
+      detalle: ahora
+        ? `está ahora en ${materia}`
+        : `estuvo en ${materia}, ${live.hora(p.firstSeenAt)} – ${live.hora(hasta)}`,
+    };
+
     const id = String(p.user);
-    if (!enClase.has(id)) enClase.set(id, materiaDe.get(String(p.session)) || '—');
+    const prev = mejor.get(id);
+    const gana = !prev ||
+      (cand.ahora && !prev.ahora) ||
+      (cand.ahora === prev.ahora && (cand.hasta?.getTime() || 0) > (prev.hasta?.getTime() || 0));
+    if (gana) mejor.set(id, cand);
   }
-  return enClase;
+
+  const salida = new Map();
+  for (const [id, c] of mejor) salida.set(id, { materia: c.materia, ahora: c.ahora, detalle: c.detalle });
+  return salida;
+}
+
+// La parte con base: las clases de HOY de la división —abiertas o ya cerradas— y sus
+// presencias de alumnos.
+//
+// El día es el `diaEscolar()` de la escuela, NUNCA un Date local: producción corre en UTC, y
+// "desde la medianoche" con setHours cortaría el día escolar a las 21:00 de la escuela. Se piden
+// las sesiones de las últimas 26 h por índice ({ school, division, openedAt }, RN-10) y se
+// recortan acá por día escolar. Las ABIERTAS van siempre, sean del día que sean: es lo que se
+// sugería antes, y una clase que sigue abierta sigue siendo una clase de ahora.
+//
+// Corre en el poll de la grilla (cada 15 s por preceptor mirando), solo con la toma abierta.
+async function sugerenciasDeSalas(division, now = new Date()) {
+  const school = division.school?._id || division.school;
+  if (!school) return new Map();
+
+  const hoy   = live.diaEscolar(now);
+  const desde = new Date(now.getTime() - 26 * 60 * 60 * 1000);
+  const candidatas = await RoomSession.find({
+    school, division: division._id,
+    $or: [{ closedAt: null }, { openedAt: { $gte: desde } }],
+  }).select('_id course openedAt closedAt').populate('course', 'name').lean();
+
+  const sesiones = candidatas.filter(s => !s.closedAt || live.diaEscolar(s.openedAt) === hoy);
+  if (!sesiones.length) return new Map();
+
+  const presencias = await RoomPresence.find({
+    session: { $in: sesiones.map(s => s._id) }, userRole: { $nin: live.STAFF_ROLES },
+  }).select('user userRole session firstSeenAt lastPingAt enMateriaAt').lean();
+
+  return sugerenciaDeSalas(sesiones, presencias, now);
 }
 
 // ── Historial y reportes ─────────────────────────────────────────────────────
@@ -659,11 +715,11 @@ module.exports = {
   ESTADOS, ESTADO_LABELS, ORIGEN_LABELS, POLL_MS, NOTE_MAX, CIERRE_MAX_MIN,
   // puras
   diaEscolar, normalizarEstado, resumen, shouldAutoClose, puedeAutoMarcarse, esCorreccion,
-  rangoValido, rangoDelMes, porcentajeAsistencia, calcularCierre,
+  rangoValido, rangoDelMes, porcentajeAsistencia, calcularCierre, sugerenciaDeSalas,
   // con base
   rosterDeDivision, abrirToma, nuevaPasada, cerrarToma, autocerrarVencidas, setAutoasistencia,
   marcar, marcarLote, marcasDeToma, estadoDeHoy,
-  autoMarcarse, tomasAbiertasDelAlumno, presentesEnSalasDeDivision, historialDeDivision,
+  autoMarcarse, tomasAbiertasDelAlumno, sugerenciasDeSalas, historialDeDivision,
   // export
   csvAsistenciaDia, csvAsistenciaMes,
 };

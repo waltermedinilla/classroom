@@ -23,6 +23,9 @@
 <script src="/js/salaPoll.js"></script>
 <%# El sonido de aviso del chat (specs/sonido-chat-sala.spec.md). Arriba de todo por lo mismo. %>
 <script src="/js/salaSonido.js"></script>
+<%# Los cuatro estados de la presencia y el latido del alumno que salió a hacer la actividad
+    (specs/sala-presencia-en-actividad.spec.md). Arriba de todo por lo mismo. %>
+<script src="/js/salaPresencia.js"></script>
 <style>
   <%# --lr-tenue es el gris de los textos secundarios del chat: la hora, el pie de las cards,
       los avisos del sistema, el "Mensaje eliminado" y los botones "responder" y "borrar".
@@ -59,6 +62,20 @@
   .lr-on   { box-shadow:0 0 0 2px var(--surface), 0 0 0 4px #34a853; }
   .lr-staff{ box-shadow:0 0 0 2px var(--surface), 0 0 0 4px #9334e6; }
   .lr-off  { opacity:.45; }
+  <%# Los dos estados de quien estuvo en la clase y ahora no está en la sala
+      (specs/sala-presencia-en-actividad.spec.md). Conservan su color: estuvieron, no son el
+      gris desvaído del que no entró.
+        · en la actividad: anillo ámbar lleno — tiene la materia abierta ahora mismo.
+        · estuvo: contorno verde PUNTEADO — el verde de "en la sala", pero cortado. %>
+  .lr-actividad { box-shadow:0 0 0 2px var(--surface), 0 0 0 4px #f9ab00; }
+  .lr-estuvo    { outline:2px dashed #34a853; outline-offset:2px; }
+  .lr-leyenda { flex-basis:100%; display:flex; flex-wrap:wrap; gap:4px 14px; font-size:12px; color:var(--lr-tenue); }
+  <%# Los puntos van dibujados con BORDE y no con fondo: no llevan texto, y un fondo en hex
+      obliga a declarar su color de texto (RN-D2 de tests/unit/salaChat.test.js). %>
+  .lr-leyenda i { display:inline-block; width:0; height:0; border-radius:50%; margin-right:5px; vertical-align:-1px; }
+  .lr-leyenda .l-on  { border:5px solid #34a853; }
+  .lr-leyenda .l-act { border:5px solid #f9ab00; }
+  .lr-leyenda .l-est { border:2px dashed #34a853; width:6px; height:6px; }
   .lr-nombre { font-size:11px; color:var(--text-secondary); margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .lr-chat { height:380px; overflow-y:auto; padding-right:6px; }
   .lr-msg { display:flex; gap:10px; margin-bottom:12px; }
@@ -540,6 +557,9 @@
   // actividad muestre el botón "Ver actividad": en la página suelta (dirección y preceptoría)
   // el link llevaría a /courses/:id, que es justamente lo que esos roles NO pueden abrir.
   const EN_MATERIA = <%= locals.enLaMateria ? 'true' : 'false' %>;
+  // ¿Es un ALUMNO de verdad? Por el rol, no por `esAlumno`: el de esta sala quiere decir "no
+  // gestiona el curso" y da true para preceptoría. Decide si late cuando sale de la sala.
+  const ES_ALUMNO = <%= (!esGestor && locals.user && locals.user.role === 'student') ? 'true' : 'false' %>;
   const POLL   = <%= pollMs %>;
   const BASE   = '/courses/' + CURSO + '/sala';
 
@@ -572,6 +592,14 @@
   const cursor  = SalaPoll.crearCursor({ seq: SALA.seq, sessionId: SALA.sessionId });
   let estado    = SALA.estado;
   let timer     = null;
+  // true = el latido del alumno recibió 409 (la sala se cerró). Vive acá arriba y no al lado de
+  // latirAlumno() porque pintarEstado() lo toca en la primera pintada, que corre antes.
+  let latidoCerrado = false;
+  // ¿Ya vino una respuesta REAL del poll? En la página de la materia la sala arranca pintada
+  // como 'cerrada' sin haberle preguntado a nadie (views/course.ejs no paga esa consulta), y el
+  // poll solo corre con la solapa a la vista. Sin esto, el alumno que recarga la página parado
+  // en Actividades no latiría nunca, aunque la clase siga abierta.
+  let salaConfirmada = false;
   const vistos  = new Set();
 
   // Huella de la fila de presencia que YA está pintada (RN-2 de sala-en-vivo-escala.spec.md).
@@ -633,14 +661,46 @@
         '</div>'
       );
     });
+    // Los que estuvieron y ya no están en la sala (specs/sala-presencia-en-actividad.spec.md).
+    // Primero los que están haciendo la actividad ahora, después los que se retiraron: es el
+    // orden en que a la docente le importan. Dentro de cada grupo, el del roster.
+    //
+    // `|| []`: una pestaña que quedó abierta desde antes del deploy recibe listas sin esta
+    // clave hasta que recarga, y no puede romper la fila entera por eso.
+    const estuvieron = p.estuvieron || [];
+    estuvieron.filter(e => e.enActividad).concat(estuvieron.filter(e => !e.enActividad)).forEach(e => {
+      const dentro = e.avatar
+        ? '<img src="' + esc(e.avatar) + '" alt="">'
+        : esc(e.inicial);
+      bolas.push(
+        '<div class="lr-persona" title="' + esc(SalaPresencia.titulo(e)) + '">' +
+          '<div class="lr-bola ' + (e.enActividad ? 'lr-actividad' : 'lr-estuvo') + '" style="background:' + color(e.nombre) + '">' + dentro + '</div>' +
+          '<div class="lr-nombre">' + esc(e.nombre.split(',')[0]) + '</div>' +
+        '</div>'
+      );
+    });
     p.ausentes.forEach(a => {
       bolas.push(
-        '<div class="lr-persona" title="' + esc(a.nombre) + ' · sin conectarse">' +
+        '<div class="lr-persona" title="' + esc(SalaPresencia.titulo(a, 'ausente')) + '">' +
           '<div class="lr-bola lr-off" style="background:#9aa0a6">' + esc(a.inicial) + '</div>' +
           '<div class="lr-nombre" style="color:#9aa0a6">' + esc(a.nombre.split(',')[0]) + '</div>' +
         '</div>'
       );
     });
+
+    // La leyenda aparece recién cuando hay a quién aplicarla: con toda la clase adentro, los
+    // círculos son los de siempre y no hace falta explicar nada. En un celular no hay tooltip,
+    // así que sin esto el contorno punteado no se entiende.
+    if (estuvieron.length) {
+      const E = SalaPresencia.ETIQUETAS;
+      bolas.push(
+        '<div class="lr-leyenda">' +
+          '<span><i class="l-on"></i>en la sala</span>' +
+          '<span><i class="l-act"></i>' + esc(E.enActividad) + '</span>' +
+          '<span><i class="l-est"></i>' + esc(E.estuvo) + '</span>' +
+        '</div>'
+      );
+    }
     cont.innerHTML = bolas.join('');
   }
 
@@ -904,9 +964,13 @@
     estado = s.estado;
     const abierta = s.estado === 'abierta';
     $('lrPunto').className = 'lr-punto' + (abierta ? '' : ' off');
+    // El texto lo arma el módulo: "18 de 25 presentes", o "18 en la sala · 24 de 25 …" cuando
+    // alguien salió a hacer la actividad (specs/sala-presencia-en-actividad.spec.md, D3).
     $('lrEstadoTexto').textContent = abierta
-      ? 'Sala abierta · ' + s.presencia.presentes + ' de ' + s.presencia.total + ' presentes'
+      ? SalaPresencia.cartel(s.presencia)
       : 'La sala no está abierta';
+    // Una sala que el poll ve abierta vuelve a habilitar el latido del alumno (ver latirAlumno).
+    if (abierta) latidoCerrado = false;
 
     if (GESTOR) {
       $('lrAbrir').style.display  = abierta ? 'none' : '';
@@ -1174,6 +1238,7 @@
       // presencia y su `puedoEscribir` son igual de viejos. Este `return` es el arreglo del
       // reclamo del 2026-09-07 — sin él, la respuesta lenta pisaba lo que ya estaba pintado.
       if (d.descartar) return;
+      salaConfirmada = true;
 
       // `SALA.sessionId` NO se sincroniza acá: desde que existe el cursor, el dueño de ese dato
       // es él y `SALA` solo aporta el valor inicial. Dos copias del mismo estado, movidas desde
@@ -1369,6 +1434,38 @@
     } catch (e) { /* un latido perdido no rompe nada: el próximo va en 20 s */ }
   }
   if (GESTOR) setInterval(latir, LATIDO_MS);
+
+  // ── Latido del ALUMNO que salió de la sala ─────────────────────────────────
+  //
+  // specs/sala-presencia-en-actividad.spec.md. El alumno abre la actividad que planteó la
+  // docente —en otra solapa de esta misma página—, el poll de arriba se corta (aLaVista) y a los
+  // 45 s dejaba de figurar en la sala, con el mismo gris que el que nunca entró. Esto le avisa
+  // al servidor, una vez por minuto, que sigue con la materia abierta.
+  //
+  // ⚠️ NO ES EL LATIDO DE ARRIBA, y la diferencia es la regla que el comentario de `latir()`
+  // defiende: el del personal manda el POLL y lo deja en la sala; este va a otra ruta que solo
+  // escribe `enMateriaAt`. El "N de M presentes" sigue queriendo decir "en la sala".
+  //
+  // Cuándo late lo decide SalaPresencia.debeLatir (probado en tests/unit): alumno, sala abierta,
+  // sala fuera de vista y pestaña del navegador AL FRENTE — la pestaña de fondo no es "está
+  // trabajando" (P2). Con 409 la sala se cerró: deja de latir hasta que el poll la vea abierta.
+  //
+  // Mientras el poll no haya contestado nunca (`salaConfirmada`), el 'cerrada' de la pantalla
+  // es un relleno y no un dato: se late igual, y el primer 409 lo apaga. Es un pedido por carga
+  // de página en el peor caso, y solo si el alumno se queda más de un minuto.
+  async function latirAlumno() {
+    if (latidoCerrado) return;
+    const late = SalaPresencia.debeLatir({
+      alumno: ES_ALUMNO && EN_MATERIA, abierta: estado === 'abierta' || !salaConfirmada,
+      salaALaVista: aLaVista(), pestanaOculta: document.hidden,
+    });
+    if (!late) return;
+    try {
+      const r = await fetch(BASE + '/latido', { method: 'POST', headers: { Accept: 'application/json' } });
+      if (r.status === 409) latidoCerrado = true;
+    } catch (e) { /* un latido perdido no rompe nada: el próximo va en un minuto */ }
+  }
+  if (ES_ALUMNO && EN_MATERIA) setInterval(latirAlumno, SalaPresencia.LATIDO_ALUMNO_MS);
 
   // ── Acciones ───────────────────────────────────────────────────────────────
   const post = (url, body) => fetch(url, {

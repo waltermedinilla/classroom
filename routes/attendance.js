@@ -98,12 +98,13 @@ async function cargarToma(req, res, next) {
 async function estadoDeToma(session, division) {
   const marcas = await asistencia.marcasDeToma(session._id);
 
-  // Sugerencia de la sala en vivo: los que todavía no están marcados pero están conectados
-  // AHORA a una clase de este curso. Solo con la toma abierta — en una planilla cerrada no
-  // hay nada que sugerir, y sería una query por poll al pedo.
+  // Sugerencia de la sala en vivo: los que no figuran asistiendo pero estuvieron HOY en una
+  // clase en vivo de este curso —ahora mismo o más temprano, ver sugerenciasDeSalas y
+  // specs/sala-presencia-en-actividad.spec.md—. Solo con la toma abierta — en una planilla
+  // cerrada no hay nada que sugerir, y sería una query por poll al pedo.
   let enClase = [];
   if (!session.closedAt) {
-    const enSala = await asistencia.presentesEnSalasDeDivision(division);
+    const enSala = await asistencia.sugerenciasDeSalas(division);
     if (enSala.size) {
       // Se sugiere a todo el que NO figura asistiendo (ni presente ni tarde) y está en una
       // clase en vivo ahora mismo. Incluye a los que el preceptor marcó ausente: ese es el
@@ -113,11 +114,18 @@ async function estadoDeToma(session, division) {
       const YA_ASISTE = ['presente', 'tarde'];
       enClase = marcas
         .filter(m => !YA_ASISTE.includes(m.status) && enSala.has(String(m.student)))
-        .map(m => ({
-          studentId: String(m.student),
-          nombre:    m.studentName || '—',
-          materia:   enSala.get(String(m.student)),
-        }));
+        .map(m => {
+          const s = enSala.get(String(m.student));
+          return {
+            studentId: String(m.student),
+            nombre:    m.studentName || '—',
+            materia:   s.materia,
+            // true = en la sala o haciendo la actividad en este momento; false = estuvo más
+            // temprano. `detalle` ya viene armado con la hora de la escuela.
+            ahora:     s.ahora,
+            detalle:   s.detalle,
+          };
+        });
     }
   }
 

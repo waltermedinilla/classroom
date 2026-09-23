@@ -136,4 +136,11 @@ roomSessionSchema.index({ school: 1, closedAt: 1 });
 // "Clases anteriores" de una materia, de la más reciente a la más vieja.
 roomSessionSchema.index({ course: 1, openedAt: -1 });
 
+// Las clases de HOY de una división, abiertas o ya cerradas: de ahí sale la sugerencia de
+// "estuvo en Matemática, 8:05 – 8:40" en la grilla de preceptoría
+// (sugerenciasDeSalas en services/attendance.js, RN-10 de specs/sala-presencia-en-actividad).
+// Corre en el poll de esa grilla, cada 15 s por preceptor mirando: sin este índice, el filtro
+// por división y fecha recorrería todas las sesiones de la escuela.
+roomSessionSchema.index({ school: 1, division: 1, openedAt: -1 });
+
 module.exports = mongoose.model('RoomSession', roomSessionSchema);

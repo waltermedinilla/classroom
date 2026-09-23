@@ -14,6 +14,9 @@ const RoomSession  = require('../models/RoomSession');
 const RoomMessage  = require('../models/RoomMessage');
 const RoomPresence = require('../models/RoomPresence');
 const { SONIDO_DE, SONIDO_DE_DEFAULT } = require('../public/js/salaSonido');
+// Solo por LATIDO_ALUMNO_MS: la ventana de escritura del latido se mide contra el intervalo del
+// navegador, y los dos números tienen que salir del mismo lado.
+const { LATIDO_ALUMNO_MS } = require('../public/js/salaPresencia');
 
 // ── Constantes ───────────────────────────────────────────────────────────────
 
@@ -66,6 +69,26 @@ const STAFF_ONLINE_WINDOW_MS = 3 * 60 * 1000;
 // ⚠️ TIENE QUE SER MENOR QUE ONLINE_WINDOW_MS, y con holgura. Si se acercara, alguien podría
 // caerse de la lista de conectados por no haber alcanzado a escribir todavía.
 const PING_WINDOW_MS = 15 * 1000;
+
+// ── El alumno que salió de la sala a hacer la actividad ─────────────────────
+// specs/sala-presencia-en-actividad.spec.md.
+//
+// Mientras el alumno tiene la página de la materia abierta pero la solapa de la sala fuera de
+// vista —típicamente porque abrió la actividad que planteó la docente— su navegador late una
+// vez por minuto (LATIDO_ALUMNO_MS, public/js/salaPresencia.js). Ese latido es OTRO dato: va a
+// `enMateriaAt`/`msEnMateria` y nunca a `lastPingAt`/`msPresente` (D4), así que el "N de M
+// presentes" sigue queriendo decir "en la sala".
+//
+// "En la actividad" = latió hace menos de esto. Es la ventana del personal y por el mismo
+// motivo: tolerar un latido perdido sin hacerlo parpadear (RN-7).
+const VENTANA_EN_MATERIA_MS = STAFF_ONLINE_WINDOW_MS;
+
+// Cada cuánto se ESCRIBE el latido, mismo criterio que PING_WINDOW_MS con el poll.
+//
+// ⚠️ TIENE QUE SER MENOR QUE LATIDO_ALUMNO_MS, con holgura: si fueran iguales, un latido que
+// llega 100 ms antes del minuto se saltearía y el siguiente escribiría recién a los dos. Hay un
+// test guarda que falla si esa relación se rompe.
+const LATIDO_ESCRITURA_MS = Math.round(LATIDO_ALUMNO_MS * 0.75);
 
 // Autocierre por inactividad. Cubre el caso real de la docente que se olvida la sala abierta
 // al terminar la clase.
@@ -284,6 +307,11 @@ function presenceSummary(presences = [], roster = [], now = new Date()) {
 
   const conectados = [];
   const ausentes   = [];
+  // Los que tienen presencia en esta sesión pero no están en la sala AHORA: estuvieron y se
+  // fueron, casi siempre a hacer la actividad (specs/sala-presencia-en-actividad.spec.md).
+  // Hasta el 2026-09-23 caían en `ausentes`, con el mismo gris que el que nunca entró.
+  const estuvieron = [];
+  const todas = new Map(presences.map(p => [String(p.user), p]));
 
   // Personal primero, en el orden en que llegó.
   const staff = [...onlineById.values()]
@@ -315,12 +343,28 @@ function presenceSummary(presences = [], roster = [], now = new Date()) {
         rol:     'student',
         etiqueta: '',
       });
+    } else if (todas.has(id) && !STAFF_ROLES.includes(todas.get(id).userRole)) {
+      const vieja = todas.get(id);
+      estuvieron.push({
+        id,
+        nombre:  alumno.name,
+        inicial: initial(alumno.name),
+        avatar:  alumno.avatar || null,
+        // La HORA, no "hace N minutos": un relativo cambiaría en cada vuelta y movería la
+        // huella de presencia en cada poll (RN-3). La hora solo cambia si vuelve a la sala.
+        seRetiro: hora(vieja.lastPingAt),
+        enActividad: isOnline(vieja.enMateriaAt, now, VENTANA_EN_MATERIA_MS),
+      });
     } else {
       ausentes.push({ id, nombre: alumno.name, inicial: initial(alumno.name) });
     }
   }
 
-  return { presentes, total: roster.length, conectados, ausentes };
+  // `asistieron` viaja con los contadores, siempre (ver presenciaParaCliente en routes/rooms.js).
+  return {
+    presentes, total: roster.length, asistieron: presentes + estuvieron.length,
+    conectados, estuvieron, ausentes,
+  };
 }
 
 // Huella del bloque de presencia. RN-2 de specs/sala-en-vivo-escala.spec.md.
@@ -468,6 +512,31 @@ function minutosPresente(presence) {
     ? presence.msPresente
     : (presence?.pings || 0) * POLL_MS;
   return Math.max(1, Math.round(ms / 60000));
+}
+
+// La hermana de decidirPing, para el latido del alumno fuera de la sala (RN-5 y RN-6 de
+// specs/sala-presencia-en-actividad.spec.md). Misma forma y misma regla de fondo: se acredita
+// el tiempo REAL entre dos escrituras, topeado con la ventana — un hueco más grande es tiempo
+// en que no estaba.
+//
+// `previo` es la presencia que ya existe en la sesión ({ enMateriaAt }) o null. ⭐ Con null NO
+// se escribe: el latido no crea presencias. Un alumno que nunca entró a la sala y tiene la
+// materia abierta no pasa a "estuvo" por latir. Estar en la clase empieza por entrar.
+function decidirLatido(previo, ahora = new Date()) {
+  if (!previo) return { escribir: false, acreditar: 0 };
+  if (!previo.enMateriaAt) return { escribir: true, acreditar: 0 };
+
+  const desde = ahora - new Date(previo.enMateriaAt);
+  if (desde < LATIDO_ESCRITURA_MS) return { escribir: false, acreditar: 0 };
+  return { escribir: true, acreditar: Math.min(Math.max(desde, 0), VENTANA_EN_MATERIA_MS) };
+}
+
+// Minutos que el alumno pasó en la materia FUERA de la sala. `null` para las presencias
+// anteriores a este dato: no se inventa un 0 que no se midió (mismo criterio que msPresente).
+// Sin piso de 1, al revés que minutosPresente: 0 acá es "no salió de la sala", un dato válido.
+function minutosEnMateria(presence) {
+  if (!presence || presence.msEnMateria == null) return null;
+  return Math.round(presence.msEnMateria / 60000);
 }
 
 // Peso de un adjunto, listo para imprimir: "840 KB", "1,4 MB".
@@ -891,6 +960,28 @@ async function touchPresence(session, user, { ahora = new Date() } = {}) {
   return { creada: !previo, escrito: true };
 }
 
+// El latido del alumno que tiene la materia abierta fuera de la sala.
+// specs/sala-presencia-en-actividad.spec.md, RN-5 y RN-6.
+//
+// Lo que NO hace es tan importante como lo que hace, y hay un test que lo vigila:
+//   · no hace upsert: sin presencia en la sesión no escribe nada (RN-6).
+//   · no toca `lastPingAt` ni `msPresente`: el "N de M presentes" sigue siendo la sala (D4).
+//   · no toca la sesión: no la mantiene viva. Si la docente se fue media hora, la clase
+//     terminó aunque los chicos sigan trabajando (D5).
+async function registrarLatido(session, user, { ahora = new Date() } = {}) {
+  const previo = await RoomPresence.findOne({ session: session._id, user: user._id })
+    .select('_id enMateriaAt').lean();
+
+  const { escribir, acreditar } = decidirLatido(previo, ahora);
+  if (!escribir) return { escrito: false };
+
+  await RoomPresence.updateOne(
+    { _id: previo._id },
+    { $set: { enMateriaAt: ahora }, $inc: { msEnMateria: acreditar } }
+  );
+  return { escrito: true };
+}
+
 // Tarjetas de "clases en curso" para los paneles de supervisión.
 // UN solo aggregate para toda la pantalla, no una query por tarjeta.
 //   divisionIds: undefined = toda la escuela (dirección). Un array = solo esas divisiones
@@ -1040,7 +1131,12 @@ const fecha = fechaHora;
 // CSV de asistencia: una fila por alumno del curso, haya entrado o no.
 function csvAsistencia(roster, presences) {
   const byUser = new Map(presences.map(p => [String(p.user), p]));
-  const rows = [['Alumno', 'DNI', 'Estado', 'Primer ingreso', 'Último registro', 'Minutos estimados']];
+  // "Último registro" es la última vez que tuvo la SALA a la vista: el "se retiró" de la
+  // pantalla. La última columna es el tiempo en la materia fuera de la sala, casi siempre
+  // haciendo la actividad (specs/sala-presencia-en-actividad.spec.md, RN-11). Vacía en las
+  // clases anteriores a ese dato.
+  const rows = [['Alumno', 'DNI', 'Estado', 'Primer ingreso', 'Último registro', 'Minutos estimados',
+    'Minutos en la materia (fuera de la sala)']];
   for (const a of roster) {
     const p = byUser.get(String(a._id));
     rows.push([
@@ -1050,6 +1146,7 @@ function csvAsistencia(roster, presences) {
       p ? fecha(p.firstSeenAt) : '',
       p ? fecha(p.lastPingAt)  : '',
       p ? minutosPresente(p)   : 0,
+      p ? (minutosEnMateria(p) ?? '') : '',
     ]);
   }
   return csvRows(rows);
@@ -1084,7 +1181,7 @@ function csvTranscripcion(messages) {
 module.exports = {
   // constantes
   POLL_MS, DIRECTIVO_POLL_MS, ONLINE_WINDOW_MS, STAFF_ONLINE_WINDOW_MS, AUTO_CLOSE_MS, PURGE_AFTER_MS,
-  MSG_MAX, MSG_PER_MIN, PING_WINDOW_MS, EMOJIS, STAFF_ROLES, ROLE_LABELS, TZ,
+  MSG_MAX, MSG_PER_MIN, PING_WINDOW_MS, VENTANA_EN_MATERIA_MS, LATIDO_ESCRITURA_MS, EMOJIS, STAFF_ROLES, ROLE_LABELS, TZ,
   EXT_ARCHIVOS, MAX_ARCHIVO_BYTES, UPLOADS_PER_10MIN, UPLOADS_ALUMNO_PER_10MIN, SALAS_BASE,
   EXTRACTO_MAX,
   // hora (zona fija de la escuela)
@@ -1093,7 +1190,7 @@ module.exports = {
   anio,
   // puras
   isOnline, presenceSummary, huellaDePresencia, shouldAutoClose, horaDeCierre, gestorEnLinea, sanitizeText,
-  minutosPresente, decidirPing, initial, pesoLegible, etiquetaExt, textoAdjunto,
+  minutosPresente, decidirPing, decidirLatido, minutosEnMateria, initial, pesoLegible, etiquetaExt, textoAdjunto,
   // permisos dentro de la sala (puros: reciben un contexto plano, no `req`)
   puedeEscribir, puedeCompartirImagen, puedeBorrarMensaje, citaDeMensaje,
   // sonido de aviso del chat (puras, y la lectura al abrir con el modelo inyectado)
@@ -1101,7 +1198,7 @@ module.exports = {
   // con base
   openSession, closeSession, closeStaleSessions, postMessage, postAttachment, systemMessage,
   resolverCita, apagarCitasDe,
-  touchPresence, getOpenSessions, getTodayClosed,
+  touchPresence, registrarLatido, getOpenSessions, getTodayClosed,
   // export
   csvAsistencia, csvTranscripcion,
   // El "dialecto" de CSV del proyecto (punto y coma + BOM, para el Excel en español). Se

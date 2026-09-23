@@ -89,6 +89,24 @@ const roomStudentImageLimiter = rateLimit({
   message:         { error: 'Esperá unos minutos antes de subir más imágenes.' },
 });
 
+// Latido del alumno que salió de la sala a hacer la actividad: 10 por minuto POR USUARIO.
+// specs/sala-presencia-en-actividad.spec.md, RN-8.
+//
+// El navegador late uno por minuto (LATIDO_ALUMNO_MS en public/js/salaPresencia.js). 10 deja
+// lugar para varias pestañas de la misma materia —pasa: la guía en una, la entrega en otra— y
+// corta un bucle suelto. Propio y no el del poll porque la sala está fuera del generalLimiter
+// (server.js) y porque un latido de más no puede comerle cupo a nada de lo que se escribe.
+//
+// ⚠️ El techo real es el DOBLE: el store es en memoria y hay dos workers (monitor_ratelimit).
+const roomLatidoLimiter = rateLimit({
+  windowMs:        60 * 1000,
+  max:             10,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator:    (req) => req.userId || ipKeyGenerator(req.ip),
+  message:         { error: 'Demasiados latidos.' },
+});
+
 // Envío de mensajes del superadmin: 20 por hora POR USUARIO.
 //
 // Un solo envío puede crear cientos de documentos (uno por destinatario), así que el límite
@@ -183,6 +201,7 @@ const verificacionCodigoLimiter = rateLimit({
 
 module.exports = {
   uploadLimiter, roomMessageLimiter, roomUploadLimiter, roomStudentImageLimiter,
+  roomLatidoLimiter,
   messageSendLimiter, messageReplyLimiter, attendanceCheckinLimiter,
   verificacionEnvioLimiter, verificacionCodigoLimiter,
 };

@@ -8631,6 +8631,41 @@ const specs = [
     },
   },
   {
+    // specs/sala-presencia-en-actividad.spec.md — RN-4 a RN-8. El alumno que salió de la sala a
+    // hacer la actividad late una vez por minuto; eso NO es el poll y no lo vuelve "presente en
+    // la sala". Lo que depende del paso del tiempo (en la actividad / estuvo) está en
+    // tests/unit/salaPresenciaActividad.test.js: acá va el cableado HTTP.
+    id: 'sala-latido-alumno',
+    title: 'El alumno fuera de la sala late sin contar como presente en la sala; el personal no late por ahí',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const url = `/courses/${state.courseId}/sala/latido`;
+      const json = { Accept: 'application/json' };
+
+      const antes = await client.get('scopedTeacher', `/courses/${state.courseId}/sala/poll`,
+        { expectStatus: 200, headers: json });
+
+      // El alumno (que ya tiene presencia de 'sala-presencia') late: 204 sin cuerpo.
+      const r = await client.post('scopedStudent', url, { headers: json, expectStatus: 204 });
+      assert(!r.json, 'el latido no devuelve la sala: no es el poll');
+      // Uno seguido: tampoco falla (el servidor decide no escribir, RN-5).
+      await client.post('scopedStudent', url, { headers: json, expectStatus: 204 });
+
+      // D3/D4: latir no suma al "N de M presentes".
+      const despues = await client.get('scopedTeacher', `/courses/${state.courseId}/sala/poll`,
+        { expectStatus: 200, headers: json });
+      assert(despues.json.presencia.presentes === antes.json.presencia.presentes,
+        `el latido no puede inflar "presentes": ${antes.json.presencia.presentes} → ${despues.json.presencia.presentes}`);
+      assert(typeof despues.json.presencia.asistieron === 'number',
+        '`asistieron` viaja siempre con los contadores');
+      assert(Array.isArray(despues.json.presencia.estuvieron),
+        'la lista completa trae a los que estuvieron');
+
+      // RN-8: la docente no late por acá (tiene su latido, que sí la deja en la sala).
+      await client.post('scopedTeacher', url, { headers: json, expectStatus: 403 });
+    },
+  },
+  {
     // specs/actividades-en-clase.spec.md — CA-05, CA-06.
     id: 'sala-crear-actividad',
     title: 'La docente crea una actividad desde la clase y la sala lo avisa',
@@ -8702,6 +8737,10 @@ const specs = [
       const sugerido = (poll.json.enClase || []).find(a => a.studentId === state.scopedStudentId);
       assert(sugerido, 'el alumno que figura ausente y está en la sala debería aparecer como sugerencia');
       assert(sugerido.materia, 'la sugerencia tiene que decir en qué materia está');
+      // specs/sala-presencia-en-actividad.spec.md: con la clase en curso, la sugerencia dice
+      // "ahora" — la de una clase ya terminada se prueba en 'attendance-sugerencia-clase-terminada'.
+      assert(sugerido.ahora === true && /^está ahora en /.test(sugerido.detalle || ''),
+        `con el alumno en la sala, la sugerencia es de AHORA; vino ${JSON.stringify(sugerido)}`);
 
       // Lo importante: sugerir NO marca. Sigue figurando ausente hasta que el preceptor
       // decida otra cosa.
@@ -9737,6 +9776,48 @@ const specs = [
       // sistema (CA-09).
       assert(detalle.text.includes('creó la actividad'),
         'la transcripción debería conservar el aviso de la actividad creada en clase');
+    },
+  },
+  {
+    // specs/sala-presencia-en-actividad.spec.md — CA-16 y CA-12. Va DESPUÉS del cierre por lo
+    // mismo que el de abajo: es el único momento con la sala cerrada.
+    //
+    // ⭐ ES EL CASO DEL RECLAMO, visto desde preceptoría: el alumno estuvo en la clase, la
+    // clase terminó (o él se fue a hacer la actividad), y preceptoría pasa lista después.
+    // Hasta el 2026-09-23 la sala solo sugería a los conectados AHORA, y este chico no
+    // aparecía en ningún lado.
+    id: 'attendance-sugerencia-clase-terminada',
+    title: 'Preceptoría ve sugerido al que estuvo HOY en una clase ya terminada; el latido con la sala cerrada da 409',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // CA-12: con la sala cerrada el latido no escribe nada.
+      await client.post('scopedStudent', `/courses/${state.courseId}/sala/latido`,
+        { headers: { Accept: 'application/json' }, expectStatus: 409 });
+
+      if (!state.tomaSalaId || !state.scopedStudentId) return;
+
+      await client.post('salaPreceptor', `/preceptor/asistencia/toma/${state.tomaSalaId}/reabrir`,
+        { expectStatus: 200 });
+      await client.post('salaPreceptor', `/preceptor/asistencia/toma/${state.tomaSalaId}/marcar`, {
+        body: { studentId: state.scopedStudentId, status: 'ausente' },
+        expectStatus: 200,
+      });
+
+      const poll = await client.get('salaPreceptor', `/preceptor/asistencia/toma/${state.tomaSalaId}/poll`,
+        { expectStatus: 200 });
+      const sugerido = (poll.json.enClase || []).find(a => a.studentId === state.scopedStudentId);
+      assert(sugerido,
+        'el alumno que estuvo hoy en una clase ya cerrada tiene que aparecer como sugerencia');
+      assert(sugerido.ahora === false, 'la clase terminó: la sugerencia no puede decir "ahora"');
+      assert(/^estuvo en .+, \d\d:\d\d – \d\d:\d\d$/.test(sugerido.detalle || ''),
+        `tiene que decir en qué clase estuvo y de qué hora a qué hora; dijo "${sugerido.detalle}"`);
+
+      // Sugerir sigue sin marcar (D6).
+      const marca = poll.json.marcas.find(m => m.studentId === state.scopedStudentId);
+      assert(marca.estado === 'ausente', `la sugerencia no marca sola; quedó ${marca.estado}`);
+
+      await client.post('salaPreceptor', `/preceptor/asistencia/toma/${state.tomaSalaId}/cerrar`,
+        { expectStatus: 200 });
     },
   },
   {

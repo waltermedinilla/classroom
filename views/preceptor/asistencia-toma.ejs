@@ -224,22 +224,33 @@
       ).join('');
     }
 
-    // Sugerencia de la sala en vivo: los que todavía no están marcados pero están conectados
-    // AHORA a una clase de este curso. NO marca nada solo — la decisión sigue siendo del
-    // preceptor, que acá la toma de a uno (en su fila) o de todos juntos.
+    // Sugerencia de la sala en vivo: los que no figuran asistiendo pero estuvieron HOY en una
+    // clase en vivo de este curso, ahora o más temprano (specs/sala-presencia-en-actividad.spec.md:
+    // el curso que se fue a hacer la actividad ya no se pierde). NO marca nada solo — la
+    // decisión sigue siendo del preceptor, que acá la toma de a uno (en su fila) o de todos.
+    //
+    // `a.detalle` viene armado del servidor con la hora de la escuela: "está ahora en Lengua" o
+    // "estuvo en Matemática, 08:05 – 08:40". El `|| a.materia` es para una respuesta de un
+    // servidor anterior, mientras dura el deploy.
     function pintarSala() {
       const enClase = estado.enClase || [];
       if (estado.estado !== 'abierta' || !enClase.length) { $('tmSala').innerHTML = ''; return; }
 
       const nombres = enClase.map(a =>
-        '<span>' + esc(a.nombre) + ' <em>· ' + esc(a.materia) + '</em></span>').join('');
+        '<span>' + esc(a.nombre) + ' <em>· ' + esc(a.detalle || a.materia) + '</em></span>').join('');
 
+      // El título dice "están en clase ahora" solo si es verdad para todos.
+      const todosAhora = enClase.every(a => a.ahora !== false);
       $('tmSala').innerHTML =
         '<div class="tm-sala">' +
           '<div class="tm-sala-tit">' +
-            (enClase.length === 1
-              ? '1 alumno está en clase ahora y no figura presente'
-              : enClase.length + ' alumnos están en clase ahora y no figuran presentes') +
+            (todosAhora
+              ? (enClase.length === 1
+                  ? '1 alumno está en clase ahora y no figura presente'
+                  : enClase.length + ' alumnos están en clase ahora y no figuran presentes')
+              : (enClase.length === 1
+                  ? '1 alumno estuvo hoy en una clase en vivo y no figura presente'
+                  : enClase.length + ' alumnos estuvieron hoy en una clase en vivo y no figuran presentes')) +
           '</div>' +
           '<div class="tm-sala-lista">' + nombres + '</div>' +
           '<button class="tm-btn" data-sala>Marcar presentes a ' +

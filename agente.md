@@ -527,6 +527,52 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-23 — El alumno que sale de la sala a hacer la actividad ya no figura ausente
+
+Reclamo del usuario: *"los alumnos se van conectando y luego se retiran para hacer las
+actividades que planteó, pero cuando eso ocurre, al alumno figura como desconectado […] porque
+estuvo presente, y no quiero que por eso, siempre tenga ausente"*. Spec:
+`specs/sala-presencia-en-actividad.spec.md` (aprobada con las tres fases).
+
+**La causa.** El detalle de la actividad se abre en **otra solapa de la misma página de la
+materia**; el poll de la sala se corta con la solapa fuera de vista (`aLaVista()`) y a los 45 s
+el alumno caía en `ausentes`, con el mismo gris y el mismo "sin conectarse" que el que nunca
+entró. El historial y el CSV **ya** lo daban presente; lo que mentía era la sala en vivo y, peor,
+la sugerencia a preceptoría, que solo miraba a los conectados AHORA.
+
+**Lo que hay ahora.**
+- **Fase 1 — cuatro estados en la sala:** en la sala (verde), trabajando en la materia (ámbar),
+  estuvo · se retiró a las HH:MM (contorno punteado), no entró (gris). `presenceSummary()` suma
+  `estuvieron` y `asistieron`; el cartel pasa a *"18 en la sala · 24 de 25 asistieron"* solo cuando
+  alguien salió. **"presentes" sigue queriendo decir "en la sala"**. Textos y reglas en
+  `public/js/salaPresencia.js`, compartido con el servidor.
+- **Fase 2 — latido del alumno:** con la materia abierta, la sala fuera de vista y la pestaña al
+  frente, `POST /courses/:id/sala/latido` una vez por minuto (`roomLatidoLimiter`, 10/min). Escribe
+  **solo** `RoomPresence.enMateriaAt`/`msEnMateria`: sin upsert (el que nunca entró no pasa a
+  "estuvo"), sin tocar `lastPingAt`/`msPresente` y sin mantener viva la sesión.
+- **Fase 3 — preceptoría:** `sugerenciasDeSalas()` (reemplaza a `presentesEnSalasDeDivision`)
+  sugiere a todo el que estuvo **hoy** en una clase en vivo del curso: *"está ahora en Lengua"* o
+  *"estuvo en Matemática, 08:05 – 08:40"*. Sigue sin marcar sola. Índice nuevo
+  `RoomSession { school, division, openedAt }`.
+- Historial de la clase y CSV: *"+N en la actividad"* y la columna *"Minutos en la materia (fuera
+  de la sala)"* (vacía en clases anteriores: no se inventa un 0).
+
+**Tres cosas que salieron distintas de la spec al implementar:**
+1. En la página de la materia la sala arranca pintada como "cerrada" sin preguntar
+   (`views/course.ejs`), y el poll solo corre con la solapa a la vista. Sin `salaConfirmada`, el
+   alumno que recarga parado en Actividades no latía nunca. El primer 409 lo apaga.
+2. Ese 409 se contesta directo y **no** por `fallar()`: si no, cada alumno que abre una materia
+   sin clase dejaría una línea `warn`.
+3. Una sesión **cerrada** nunca es "ahora" en la sugerencia, aunque el último ping sea de hace
+   segundos (lo encontró el smoke: la docente cierra y preceptoría mira enseguida).
+
+La columna "Se retiró" que pedía RN-11 no se agregó: es la "Último registro" que el CSV ya tenía.
+
+Tests: `tests/unit/salaPresenciaActividad.test.js` (38; CA-1 y CA-16 verificados en rojo con la
+lógica vieja), dos de `liveRoom.test.js` adecuados, y en el smoke `sala-latido-alumno`,
+`attendance-sugerencia-clase-terminada` y una aserción más en `attendance-sugerencia-desde-la-sala`.
+
+
 ### 2026-09-23 — Sonido de aviso en el chat de la sala en vivo
 
 Spec: `specs/sonido-chat-sala.spec.md` (aprobada el 22/09, CONFORME del revisor el 23/09). Se

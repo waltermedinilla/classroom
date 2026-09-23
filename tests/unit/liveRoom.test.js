@@ -115,9 +115,13 @@ test('presenceSummary: cuenta solo alumnos y pone al docente primero', () => {
   assert.strictEqual(r.conectados[0].rol, 'teacher', 'la docente va primera en la fila');
   assert.strictEqual(r.conectados[0].etiqueta, 'Docente');
   assert.strictEqual(r.conectados.length, 4, '3 alumnos + la docente');
-  // El que dejó de pollear sigue existiendo, pero del lado de los ausentes.
-  assert.ok(r.ausentes.some(a => a.id === 'a4'));
-  assert.strictEqual(r.ausentes.length, 22);
+  // El que dejó de pollear sigue existiendo, pero ya no en `ausentes`: estuvo, y se fue
+  // (specs/sala-presencia-en-actividad.spec.md). Hasta el 2026-09-23 caía en la misma lista
+  // que los que nunca entraron, que es exactamente el reclamo que cerró esa spec.
+  assert.ok(r.estuvieron.some(a => a.id === 'a4'));
+  assert.ok(!r.ausentes.some(a => a.id === 'a4'));
+  assert.strictEqual(r.ausentes.length, 21);
+  assert.strictEqual(r.asistieron, 4);
 });
 
 test('presenceSummary: el preceptor también es personal, no alumno presente', () => {
@@ -145,6 +149,7 @@ test('presenceSummary: una materia sin alumnos da 0 de 0, sin NaN', () => {
   assert.strictEqual(r.total, 0);
   assert.deepStrictEqual(r.conectados, []);
   assert.deepStrictEqual(r.ausentes, []);
+  assert.deepStrictEqual(r.estuvieron, []);
   assert.ok(!Number.isNaN(r.presentes) && !Number.isNaN(r.total));
 });
 
@@ -541,7 +546,7 @@ test('RN-2: el servidor manda los contadores siempre, y las listas solo si cambi
 
   assert.match(rooms, /function presenciaParaCliente\(presencia, vista\)/,
     'la decisión vive en una función sola');
-  assert.match(rooms, /\{ presentes: presencia\.presentes, total: presencia\.total \}/,
+  assert.match(rooms, /\{ presentes: presencia\.presentes, total: presencia\.total, asistieron: presencia\.asistieron \}/,
     'sin cambios se mandan igual los contadores del cartel "N de M presentes"');
   assert.match(rooms, /req\.query\.pv \|\| null/,
     'la ruta del poll tiene que leer la huella del navegador');

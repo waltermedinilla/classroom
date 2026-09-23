@@ -50,6 +50,22 @@ const roomPresenceSchema = new mongoose.Schema({
   // falta migrarlos, y migrarlos sería inventar un dato que no se midió.
   msPresente: { type: Number, default: 0 },
 
+  // ── Fuera de la sala, en la materia ────────────────────────────────────────
+  //
+  // specs/sala-presencia-en-actividad.spec.md. El alumno que se va de la sala a hacer la
+  // actividad que planteó la docente sigue con la página de la materia abierta, y su navegador
+  // late una vez por minuto (registrarLatido en services/liveRoom.js). Esto es lo que deja.
+  //
+  // ⚠️ SON CAMPOS APARTE A PROPÓSITO, y no un `lastPingAt` más generoso: el "N de M presentes"
+  // tiene que seguir queriendo decir "en la sala", y `msPresente` sigue midiendo la sala (D4).
+  //
+  // Último latido desde la materia. `null` = nunca salió de la sala con la materia abierta.
+  enMateriaAt: { type: Date, default: null },
+  // Tiempo en la materia fuera de la sala, acumulado por tramos con la misma regla que
+  // `msPresente`. Las presencias anteriores al 2026-09-23 no lo tienen, y eso se lee como
+  // "no se midió" (celda vacía), no como 0.
+  msEnMateria: { type: Number, default: 0 },
+
   // ── Transmisión en vivo ────────────────────────────────────────────────────
   //
   // Estos tres campos son de DIAGNÓSTICO, no de asistencia. La distinción es deliberada y es

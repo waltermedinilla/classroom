@@ -28,7 +28,8 @@ const User         = require('../models/User');
 
 const { requireAuth }        = require('../middleware/auth');
 const { logAudit }           = require('../middleware/audit');
-const { roomMessageLimiter, roomUploadLimiter, roomStudentImageLimiter } = require('../middleware/rate-limits');
+const { roomMessageLimiter, roomUploadLimiter, roomStudentImageLimiter,
+        roomLatidoLimiter } = require('../middleware/rate-limits');
 const { loadPreceptorScope } = require('../middleware/preceptor');
 const { subirImagen, guardarImagenOptimizada, ImagenInvalidaError } = require('../middleware/image-upload');
 const { EXT_IMAGENES } = require('../config/imagePresets');
@@ -286,7 +287,9 @@ function presenciaParaCliente(presencia, vista) {
   const sinCambios   = !!vista && vista === presenciaVer;
   return {
     presencia: sinCambios
-      ? { presentes: presencia.presentes, total: presencia.total }
+      // `asistieron` es el segundo número del cartel ("18 en la sala · 24 de 25 asistieron",
+      // specs/sala-presencia-en-actividad.spec.md): va siempre por lo mismo que los otros dos.
+      ? { presentes: presencia.presentes, total: presencia.total, asistieron: presencia.asistieron }
       : presencia,
     presenciaVer,
   };
@@ -304,7 +307,10 @@ async function estadoDeSala(req, session, since = 0, presenciaVista = null) {
         studentsCanWrite: true, reactionsOn: true, studentsCanShareImages: true,
         sonido: false, sonidoDe: SONIDO_DE_DEFAULT,
       },
-      ...presenciaParaCliente({ presentes: 0, total: course.students.length, conectados: [], ausentes: [] }, presenciaVista),
+      ...presenciaParaCliente({
+        presentes: 0, total: course.students.length, asistieron: 0,
+        conectados: [], estuvieron: [], ausentes: [],
+      }, presenciaVista),
       // Una forma SOLA, también con la sala cerrada: el navegador no tiene que preguntarse si
       // la clave existe. Mismo criterio que el resto de este objeto.
       transmision: hayTransmision(req) ? tx.estadoParaCliente(null, ctxTx(req)) : null,
@@ -620,6 +626,30 @@ router.get('/:id/sala/poll', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── Latido del alumno fuera de la sala ───────────────────────────────────────
+
+// POST /courses/:id/sala/latido — el alumno tiene la materia abierta, pero no la sala.
+// specs/sala-presencia-en-actividad.spec.md, RN-4 a RN-8.
+//
+// Es lo que convierte "estuvo y se fue" en "está haciendo la actividad". NO es el poll: no
+// devuelve la sala, no escribe `lastPingAt` y no mantiene viva la sesión (ver registrarLatido).
+// Una vez por minuto, y solo con la solapa de la sala fuera de vista (SalaPresencia.debeLatir).
+//
+// 204 sin cuerpo también cuando no escribe —porque el alumno nunca entró a la sala, o porque
+// el latido anterior es reciente—: no hay nada que contarle al navegador, y un código distinto
+// solo serviría para que alguien averigüe desde afuera qué registra la sala.
+router.post('/:id/sala/latido', roomLatidoLimiter, async (req, res, next) => {
+  try {
+    if (!req.esAlumno || req.esGestor) return fallar(req, res, 403, 'Solo para alumnos de la materia');
+    const session = await sesionAbierta(req.course._id);
+    // 409 directo y NO por fallar(): no es un rechazo, es la respuesta normal a una pestaña que
+    // todavía no sabe si hay clase (ver `salaConfirmada` en views/partials/live-room.ejs). Con
+    // fallar() dejaría una línea `warn` por cada alumno que abre la materia sin clase en curso.
+    if (!session) return res.status(409).json({ error: 'La sala no está abierta' });
+    await live.registrarLatido(session, usuario(req));
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
 
 // ── Abrir / cerrar ───────────────────────────────────────────────────────────
 
@@ -1491,6 +1521,9 @@ router.get('/:id/sala/clases/:sid', cargarSesion, async (req, res, next) => {
         presente: !!p,
         desde:   p ? p.firstSeenAt : null,
         minutos: p ? live.minutosPresente(p) : 0,
+        // Minutos en la materia fuera de la sala (haciendo la actividad). null = clase anterior
+        // a este dato; la vista no muestra nada (specs/sala-presencia-en-actividad.spec.md).
+        enMateria: p ? live.minutosEnMateria(p) : null,
       };
     });
 

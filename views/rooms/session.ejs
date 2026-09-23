@@ -164,8 +164,12 @@
             <div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;
                         border-bottom:1px solid var(--border);font-size:13px">
               <span style="<%= a.presente ? '' : 'color:#9aa0a6' %>"><%= a.nombre %></span>
-              <span style="white-space:nowrap;color:<%= a.presente ? '#137333' : '#9aa0a6' %>">
-                <%= a.presente ? '~' + a.minutos + ' min' : 'ausente' %>
+              <%# "+N en la actividad": minutos con la materia abierta FUERA de la sala, casi
+                  siempre haciendo la actividad (specs/sala-presencia-en-actividad.spec.md).
+                  Solo si hay: las clases anteriores a ese dato traen null y no muestran nada. %>
+              <span style="white-space:nowrap;color:<%= a.presente ? '#137333' : '#9aa0a6' %>"
+                    <% if (a.enMateria) { %>title="~<%= a.minutos %> min en la sala y ~<%= a.enMateria %> min en la materia fuera de la sala"<% } %>>
+                <%= a.presente ? '~' + a.minutos + ' min' : 'ausente' %><% if (a.enMateria) { %> · +<%= a.enMateria %> en la actividad<% } %>
               </span>
             </div>
           <% }); %>
