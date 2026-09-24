@@ -15,18 +15,32 @@
 //
 // ⚠️ Nada que ver con middleware/sections.js: aquél es el enforcement de las SOLAPAS del
 // panel. Acá "sección" es la entidad de datos de models/Section.js.
+//
+// ── EL DOCENTE JEFE ─────────────────────────────────────────────────────────────────────
+// Un `teacher` que figura en Section.heads también entra, acotado a sus secciones y sin
+// dejar de ser docente (specs/docente-jefe-de-seccion.spec.md). Para él la jefatura no la da
+// el rol: la da la sección. Por eso requireJefe lo deja pasar solo como CANDIDATO y la
+// barrera real es loadJefaturaScope — una ruta de jefatura montada fuera de esa cadena le
+// abriría el panel a cualquier docente.
 
 const Section = require('../models/Section');
 const Course  = require('../models/Course');
+const logger  = require('../config/logger');
+const { logRechazo } = require('./route-log');
+const {
+  ROLES_JEFATURA_SIN_LIMITE, ROLES_JEFATURA_POR_ROL, ROLES_JEFATURA_POR_SECCION,
+  modoJefatura, decidirAccesoJefatura,
+} = require('../services/jefaturaAcceso');
 
 // Roles que pueden entrar al panel. Los de mayor privilegio ven lo mismo que un jefe,
-// misma filosofía que middleware/directivo.js y middleware/preceptor.js.
-const ROLES_CON_ACCESO = ['jefe', 'directivo', 'admin', 'superadmin'];
+// misma filosofía que middleware/directivo.js y middleware/preceptor.js. El `teacher` está
+// como candidato: sin ninguna sección a cargo, loadJefaturaScope le contesta 403.
+const ROLES_CON_ACCESO = [...ROLES_JEFATURA_POR_ROL, ...ROLES_JEFATURA_SIN_LIMITE, ...ROLES_JEFATURA_POR_SECCION];
 
 // Roles que NO están acotados a las secciones donde figuran como jefe: ven todas las
 // secciones de su escuela. Un directivo o un admin entra a mirar el panel sin que nadie
 // tenga que agregarlo como jefe de cada sección.
-const ROLES_SIN_LIMITE = ['directivo', 'admin', 'superadmin'];
+const ROLES_SIN_LIMITE = ROLES_JEFATURA_SIN_LIMITE;
 
 const requireJefe = (req, res, next) => {
   if (!res.locals.user || !ROLES_CON_ACCESO.includes(res.locals.user.role)) {
@@ -35,6 +49,83 @@ const requireJefe = (req, res, next) => {
   next();
 };
 
+// El docente sin ninguna sección recibe 403 y no la pantalla "Todavía no tenés secciones a
+// cargo": esa le habla a un jefe que espera una asignación, y mostrársela a cualquier docente
+// que escriba la URL le haría creer que le falta una. Queda en el log para poder contestar
+// "no me deja entrar a Jefatura" sin adivinar.
+function rechazarDocente(res) {
+  logRechazo(res, 403, 'docente sin secciones a cargo');
+  return res.status(403).send('Acceso denegado');
+}
+
+// ── ¿Este docente está a cargo de alguna sección? ─────────────────────────────────────
+// Memo POR REQUEST y nunca entre requests: un caché le dejaría el menú desactualizado hasta
+// que venza, y su invalidación tendría el mismo problema de los dos workers que ya documenta
+// middleware/cache.js. Lo comparten el guard de /admin/secciones y el menú: la misma página
+// paga una sola consulta.
+//
+// Si la consulta falla, la promesa rechaza y decide quien llama: el guard responde 500, el
+// menú pinta sin el enlace.
+const MEMO_PERTENENCIA = Symbol('pertenenciaJefatura');
+
+function pertenenciaJefatura(req, res, SectionModel = Section) {
+  if (!req[MEMO_PERTENENCIA]) {
+    const user = res.locals.user;
+    req[MEMO_PERTENENCIA] = (async () => {
+      // Sin escuela no cuenta nada: figurar en heads de otra escuela no es estar a cargo.
+      const esJefe = !!(user && user.school)
+        && !!(await SectionModel.exists({ school: user.school, heads: user._id }));
+      res.locals.esJefeDeSeccion = esJefe;
+      return esJefe;
+    })();
+  }
+  return req[MEMO_PERTENENCIA];
+}
+
+// ── La marca del menú: res.locals.esJefeDeSeccion ─────────────────────────────────────
+// Global, montado en server.js antes de las rutas. La consulta se hace AL RENDERIZAR y no al
+// entrar, porque solo la necesita el menú lateral: el poll de la sala (un JSON cada 4 s por
+// persona), las subidas y los redirects no pintan ningún menú y no la pagan. Moverla a la
+// entrada del request "para simplificar" es volver a pagarla en cada poll.
+//
+// Se envuelve res.render, que es un patrón nuevo en el proyecto (DA-7). Lo que no puede
+// romper: llamar al render original UNA vez, pasarle los mismos datos, y no tragarse sus
+// errores. Una vista armada con ejs.render + res.send queda sin el enlace: falla cerrada.
+function marcarDocenteJefe(SectionModel = Section) {
+  return (req, res, next) => {
+    res.locals.esJefeDeSeccion = false;
+    const user = res.locals.user;
+    if (!user || !user.school || modoJefatura(user.role) !== 'por-seccion') return next();
+
+    const renderOriginal = res.render;
+    res.render = function (view, options, callback) {
+      if (typeof options === 'function') { callback = options; options = undefined; }
+      return pertenenciaJefatura(req, res, SectionModel)
+        // Nunca un 500 por el menú: la página se pinta sin el enlace. El acceso a /jefatura
+        // no depende de esto, lo decide loadJefaturaScope con su propia query.
+        .catch((err) => {
+          logger.warn('menú: no se pudo resolver si el docente está a cargo de una sección', {
+            requestId: req.id || null,
+            usuario:   user._id,
+            error:     err && err.message,
+          });
+          return false;
+        })
+        .then((esJefe) => {
+          res.locals.esJefeDeSeccion = esJefe === true;
+          // Va también en las opciones y no solo en res.locals: al mezclarse, las opciones de
+          // la ruta le ganan a res.locals, y la marca es de este middleware, no de la ruta.
+          const opciones = { ...(options || {}), esJefeDeSeccion: res.locals.esJefeDeSeccion };
+          return renderOriginal.call(res, view, opciones, callback);
+        })
+        // Un throw sincrónico del render original, que Express le habría pasado al next de
+        // la ruta. Mismo destino que usa el callback por defecto de res.render.
+        .catch((err) => (req.next || next)(err));
+    };
+    next();
+  };
+}
+
 // Resuelve el alcance y lo deja en:
 //   req.scopeCourseIds  Array<String> — las materias que el usuario puede mirar
 //   req.scopeSections   [{ _id, name, divisions, courses }] — para los títulos de la vista
@@ -42,17 +133,24 @@ const requireJefe = (req, res, next) => {
 //
 // Cuesta dos queries, las dos indexadas: { heads: 1 } en Section y { division: 1 } / _id
 // en Course. Mismo orden de magnitud que loadPreceptorScope.
+//
+// Para el docente, la primera query ES la de pertenencia: si no trae ninguna sección, 403.
+// Deja cargado el memo de pertenenciaJefatura para que el menú de la misma página no
+// vuelva a preguntar.
 const loadJefaturaScope = async (req, res, next) => {
   const user = res.locals.user;
   res.locals.scopeAll   = false;
   req.scopeCourseIds    = [];
   req.scopeSections     = [];
 
-  if (!user || !user.school) return next(); // sin escuela no hay nada que mostrar
+  const porSeccion = !!user && modoJefatura(user.role) === 'por-seccion';
+
+  if (!user || !user.school) { // sin escuela no hay nada que mostrar
+    return porSeccion ? rechazarDocente(res) : next();
+  }
 
   try {
-    const sinLimite = ROLES_SIN_LIMITE.includes(user.role);
-    res.locals.scopeAll = sinLimite;
+    const sinLimite = modoJefatura(user.role) === 'sin-limite';
 
     // El filtro por escuela se aplica SIEMPRE, también sobre las secciones donde figura
     // como jefe: si un superadmin lo mueve de escuela (POST /superadmin/users/:id/school no
@@ -66,6 +164,14 @@ const loadJefaturaScope = async (req, res, next) => {
       .select('_id name divisions courses')
       .sort({ name: 1 })
       .lean();
+
+    const acceso = decidirAccesoJefatura(user, secciones.length);
+    if (porSeccion) {
+      req[MEMO_PERTENENCIA]      = Promise.resolve(acceso.entra);
+      res.locals.esJefeDeSeccion = acceso.entra;
+    }
+    if (!acceso.entra) return rechazarDocente(res);
+    res.locals.scopeAll = acceso.scopeAll;
 
     if (!secciones.length) return next(); // fail-closed: sin secciones, sin acceso
 
@@ -116,5 +222,6 @@ const docenteEnScope = async (req, teacherId) => {
 
 module.exports = {
   requireJefe, loadJefaturaScope, materiaEnScope, docenteEnScope,
+  pertenenciaJefatura, marcarDocenteJefe,
   ROLES_CON_ACCESO, ROLES_SIN_LIMITE,
 };

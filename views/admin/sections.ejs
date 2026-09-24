@@ -155,10 +155,13 @@
                   Sin jefe asignado
                 </span>
               <% } else { %>
+                <%# El rol va solo cuando no es el esperable (Jefe de Sección): un Docente a cargo
+                    se lee "· Docente", y uno con un rol que no entra a Jefatura, además
+                    "(sin acceso)" — sigue en heads hasta que el admin lo destilde. %>
                 <% s.heads.forEach(h => { %>
                   <span class="sec-chip" title="<%= h.email %>">
                     <span class="material-symbols-outlined" style="font-size:13px">badge</span>
-                    <%= h.name %><%= h.active === false ? ' (deshabilitado)' : '' %>
+                    <%= h.name %><%= h.role !== 'jefe' ? ' · ' + (roleNames[h.role] || h.role) : '' %><%= h.sinAcceso ? ' (sin acceso)' : '' %><%= h.active === false ? ' (deshabilitado)' : '' %>
                   </span>
                 <% }) %>
               <% } %>

@@ -115,20 +115,27 @@
             A cargo de
             <span class="sf-hint">
               <% if (puedeAdministrar) { %>
-                Solo aparecen los usuarios con el rol Jefe de Sección. Si no ves a la persona,
-                primero asignale ese rol desde <a href="/admin/users">Usuarios</a>.
+                Aparecen los Docentes y los Jefes de Sección de la escuela.
               <% } else { %>
                 Quién está a cargo lo define el administrador de la escuela.
               <% } %>
             </span>
           </label>
 
+          <%# Por qué un jefe actual ya no sería elegible (routes/sections.js, datosFormularioSeccion).
+              Se lo sigue mostrando tildado: sacarlo es destildarlo, a la vista del admin. %>
+          <% const textoMotivo = (j) => j.motivo === 'deshabilitada' ? 'cuenta deshabilitada'
+               : j.motivo === 'rol' ? 'con el rol ' + (roleNames[j.rol] || j.rol) + ' no puede entrar a Jefatura'
+               : ''; %>
+
           <%# Para el jefe la lista es de solo lectura: si pudiera editarla podría darle acceso
               a las notas de su sección a cualquier otro jefe —o sacárselo a un colega— sin que
               el admin se entere. El servidor conserva los `heads` que ya estaban, así que da
-              igual lo que mande el formulario (ver armarSeccion en routes/sections.js). %>
+              igual lo que mande el formulario (ver armarSeccion en routes/sections.js).
+              Sale de los jefes ACTUALES y no de los candidatos: filtrarlos contra los
+              candidatos escondía a un Docente a cargo. %>
           <% if (!puedeAdministrar) { %>
-            <% const aCargo = jefes.filter(j => seccion.heads.includes(j.id)) %>
+            <% const aCargo = jefes.filter(j => j.actual) %>
             <% if (!aCargo.length) { %>
               <p class="sf-hint">Nadie figura a cargo de esta sección.</p>
             <% } else { %>
@@ -140,36 +147,57 @@
                   <span class="material-symbols-outlined" style="font-size:18px;color:var(--text-secondary);margin-top:2px">badge</span>
                   <div style="min-width:0">
                     <div class="sf-jefe-nombre">
-                      <%= j.nombre %><%= j.activo ? '' : ' — cuenta deshabilitada' %>
+                      <%= j.nombre %><%= j.motivo ? ' — ' + textoMotivo(j) : '' %>
                     </div>
-                    <div class="sf-jefe-mail"><%= j.email %></div>
+                    <div class="sf-jefe-mail"><%= roleNames[j.rol] || j.rol %> · <%= j.email %></div>
                   </div>
                 </div>
               <% }) %>
             <% } %>
-          <% } else if (!jefes.length) { %>
-            <div class="sf-aviso">
-              <span class="material-symbols-outlined" style="font-size:17px">warning</span>
-              <span>
-                Todavía no hay ningún usuario con el rol Jefe de Sección en esta escuela.
-                Podés crear la sección igual y asignarle jefes después.
-              </span>
-            </div>
           <% } else { %>
-            <div style="max-height:240px;overflow-y:auto">
-              <% jefes.forEach(j => { %>
-                <label class="sf-jefe">
-                  <input type="checkbox" class="sf-jefe-check" value="<%= j.id %>"
-                    <%= seccion && seccion.heads.includes(j.id) ? 'checked' : '' %>>
-                  <div style="min-width:0">
-                    <div class="sf-jefe-nombre">
-                      <%= j.nombre %><%= j.activo ? '' : ' — cuenta deshabilitada' %>
+            <%# Los que estaban a cargo y ya no existen o son de otra escuela. No se pintan con
+                nombre ni correo —el admin no ve datos de otra institución—, pero tampoco se
+                van en silencio: se avisa antes de guardar. %>
+            <% if (huerfanos > 0) { %>
+              <div class="sf-aviso">
+                <span class="material-symbols-outlined" style="font-size:17px">warning</span>
+                <span>
+                  <%= huerfanos %> <%= huerfanos === 1
+                    ? 'persona que estaba a cargo ya no pertenece a esta escuela. Al guardar, se quita de la sección.'
+                    : 'personas que estaban a cargo ya no pertenecen a esta escuela. Al guardar, se quitan de la sección.' %>
+                </span>
+              </div>
+            <% } %>
+            <% if (!jefes.length) { %>
+              <div class="sf-aviso">
+                <span class="material-symbols-outlined" style="font-size:17px">warning</span>
+                <span>
+                  Todavía no hay ningún Docente ni Jefe de Sección activo en esta escuela para
+                  dejar a cargo. Podés crear la sección igual y asignarle jefes después.
+                </span>
+              </div>
+            <% } else { %>
+              <%# La lista pasó de unos pocos jefes a todos los docentes de la escuela: sin el
+                  filtro no se encuentra a nadie. Esconder una fila no la destilda. %>
+              <div class="input-group" style="margin-bottom:10px">
+                <span class="material-symbols-outlined input-icon">search</span>
+                <input type="text" id="buscadorJefes" placeholder="Filtrar por nombre o correo...">
+              </div>
+              <div style="max-height:240px;overflow-y:auto">
+                <% jefes.forEach(j => { %>
+                  <label class="sf-jefe" data-texto="<%= (j.nombre + ' ' + (j.email || '')).toLowerCase() %>">
+                    <input type="checkbox" class="sf-jefe-check" value="<%= j.id %>"
+                      <%= j.actual ? 'checked' : '' %>>
+                    <div style="min-width:0">
+                      <div class="sf-jefe-nombre">
+                        <%= j.nombre %><%= j.motivo ? ' — ' + textoMotivo(j) : '' %>
+                      </div>
+                      <div class="sf-jefe-mail"><%= roleNames[j.rol] || j.rol %> · <%= j.email %></div>
                     </div>
-                    <div class="sf-jefe-mail"><%= j.email %></div>
-                  </div>
-                </label>
-              <% }) %>
-            </div>
+                  </label>
+                <% }) %>
+              </div>
+            <% } %>
           <% } %>
 
           <div class="form-error" id="formError" style="margin-top:12px"></div>
@@ -338,6 +366,18 @@
     document.getElementById('buscador').addEventListener('input', filtrar);
     pintar();
 
+    // Filtro de la lista de jefes. Solo esconde: un tildado que queda afuera del filtro sigue
+    // tildado y se manda igual al guardar (el submit lee los :checked, no los visibles).
+    const buscadorJefes = document.getElementById('buscadorJefes');
+    if (buscadorJefes) {
+      buscadorJefes.addEventListener('input', () => {
+        const q = buscadorJefes.value.trim().toLowerCase();
+        document.querySelectorAll('.sf-jefe[data-texto]').forEach(fila => {
+          fila.style.display = !q || fila.dataset.texto.includes(q) ? '' : 'none';
+        });
+      });
+    }
+
     document.getElementById('seccionForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const errorEl = document.getElementById('formError');
@@ -369,7 +409,11 @@
       btn.innerHTML = etiqueta;
 
       if (!res.ok) {
-        errorEl.textContent = data.error || 'No se pudo guardar.';
+        // HEAD_NOT_ELIGIBLE trae a quién no se pudo agregar. Los de otra escuela vienen sin
+        // nombre a propósito, así que se nombra solo a los que lo traen.
+        const nombres = (data.rechazados || []).map(r => r.nombre).filter(Boolean);
+        errorEl.textContent = (data.error || 'No se pudo guardar.')
+          + (nombres.length ? ' No se pudo agregar a: ' + nombres.join(', ') + '.' : '');
         errorEl.classList.add('show');
         return;
       }

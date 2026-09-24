@@ -235,6 +235,19 @@ async function main() {
           continue;
         }
 
+        // Segunda excepción documentada a "figura en `roles` → entra", junto a la del SOE de
+        // arriba: specs/docente-jefe-de-seccion.spec.md (D2/RN-02/RN-13a). Desde esa spec,
+        // `teacher` figura en `roles` de jefe_dashboard, jefe_teachers y admin_sections —
+        // pero el acceso real depende de figurar en `Section.heads` (RN-01), no del rol. El
+        // actor `teacher` de ESTE chequeo no está en ningún `heads`, así que el 403 es lo
+        // correcto y no una fuga: es exactamente CA-50. El actor `docente-jefe` de más abajo
+        // (3c) prueba el camino contrario, con un `teacher` que SÍ está a cargo de una sección.
+        if (['jefe_dashboard', 'jefe_teachers', 'admin_sections'].includes(s.key) && rol === 'teacher') {
+          if (!abierto) { ok++; notas.push(`${s.key}: ${r.status} (docente sin sección a cargo, CA-50)`); }
+          else { fugas++; anotar('FUGA', rol, `${s.path} devolvió 200 sin que el docente esté en heads de ninguna sección`); }
+          continue;
+        }
+
         // El panel 'app' son los accesos del menú lateral y, salvo excepción, los ve todo el
         // mundo: `app_courses` no lista al superadmin en `roles` y sin embargo entra.
         //
@@ -250,6 +263,70 @@ async function main() {
       }
       linea(rol, `${ok}/${SECTIONS.length} como se espera · fugas: ${fugas} · rotas: ${rotas} · 500: ${err500}`);
       notas.forEach(n => console.log(`               ${n}`));
+    }
+
+    // ── 3c) El Docente jefe de sección (CA-50 de specs/docente-jefe-de-seccion.spec.md) ──
+    // No se pudo tejer como un rol más del mapa `actores`: esas otras filas usan el nombre
+    // de la clave como el ROL LITERAL que se manda a /admin/users/create y que se compara
+    // contra config/sections.js `roles` (que trae 'teacher', no 'docente-jefe'). Es un actor
+    // aparte, autocontenido, con su propia alta y su propia limpieza.
+    console.log('\n3c) Docente jefe de sección: un `teacher` puesto en heads de una sección (CA-50)\n');
+    let docenteJefeId = null;
+    try {
+      const email = `rolcheck.docente-jefe.${RUN}@example.com`;
+      const alta = await c.post('admin0', '/admin/users/create', {
+        body: { name: 'RolCheck Docente Jefe', email, password: PASS, role: 'teacher', dni: `79${String(Date.now()).slice(-6)}` },
+        expectStatus: 201,
+      });
+      docenteJefeId = alta.json.user._id;
+      creados.push(docenteJefeId); // así la limpieza del paso 7 también se lo lleva
+      await c.post('a_docente_jefe', '/login', { body: { email, password: PASS }, expectStatus: 200 });
+
+      // Se lo suma a la sección del chequeo, JUNTO al jefe que ya tenía (RN-22.2: un jefe
+      // actual se conserva sin revalidar; acá no hace falta simularlo, alcanza con mandarlo
+      // en headIds junto al que ya estaba).
+      await c.post('admin0', `/admin/secciones/${seccionId}/edit`, {
+        body: { name: `Sección RolCheck ${RUN}`, divisionIds: [divisionId], courseIds: [], headIds: [actores.jefe.id, docenteJefeId] },
+        expectStatus: 200,
+      });
+
+      const okKeys = ['jefe_dashboard', 'jefe_teachers', 'admin_sections'];
+      for (const key of okKeys) {
+        const sec = SECTIONS.find(s => s.key === key);
+        const r = await c.get('a_docente_jefe', sec.path);
+        const ok = r.status === 200;
+        linea('docente-jefe', `${sec.path} → ${r.status} ${ok ? '✓' : '✗ se esperaba 200 (es Docente jefe de S)'}`);
+        if (!ok) anotar('ROTO', 'docente-jefe', `${sec.path} devolvió ${r.status}, se esperaba 200: figura en heads de una sección`);
+      }
+
+      // El resto del panel de admin sigue cerrado: ser Docente jefe no lo hace admin.
+      const restoAdmin = SECTIONS.filter(s => s.panel === 'admin' && !okKeys.includes(s.key));
+      let fugasAdmin = 0;
+      for (const s of restoAdmin) {
+        const r = await c.get('a_docente_jefe', s.path);
+        if (r.status === 200) { fugasAdmin++; anotar('FUGA', 'docente-jefe', `${s.path} devolvió 200 y el Docente jefe no debería entrar`); }
+      }
+      linea('docente-jefe', `${restoAdmin.length - fugasAdmin}/${restoAdmin.length} solapas de admin correctamente bloqueadas`);
+
+      // Conserva la vista de Docente: "/" sigue yendo a /courses (RN-07), nunca a /jefatura.
+      const home = await c.get('a_docente_jefe', '/');
+      const okHome = home.status === 302 && home.headers.get('location') === '/courses';
+      linea('docente-jefe', `GET / → ${home.status} ${home.headers.get('location') || ''} ${okHome ? '✓' : '✗ se esperaba 302 → /courses'}`);
+      if (!okHome) anotar('ROTO', 'docente-jefe', `GET / → ${home.status} ${home.headers.get('location')}, se esperaba 302 a /courses`);
+    } catch (e) {
+      anotar('ERROR', 'docente-jefe', `paso 3c: ${e.message}`);
+    } finally {
+      // Se restaura la sección (solo el jefe original) ANTES de la limpieza general del
+      // paso 7, para no dejarle a `seccionId` un head que el paso 7 va a borrar de todos
+      // modos como usuario, pero que hasta entonces conviene que no quede colgado.
+      if (docenteJefeId) {
+        try {
+          await c.post('admin0', `/admin/secciones/${seccionId}/edit`, {
+            body: { name: `Sección RolCheck ${RUN}`, divisionIds: [divisionId], courseIds: [], headIds: [actores.jefe.id] },
+            expectStatus: 200,
+          });
+        } catch (e) { console.log(`   docente-jefe: no se pudo restaurar la sección — ${e.message}`); }
+      }
     }
 
     // ── 4) Menú ──────────────────────────────────────────────────────────────

@@ -7,6 +7,9 @@ const { SONIDO_DE, SONIDO_DE_DEFAULT } = require('../public/js/salaSonido');
 // las Secciones que tiene a cargo (models/Section.js). Su alcance NO vive acá: vive en
 // Section.heads, así que agregarlo o sacarlo de una sección no pasa por el cache de 45s
 // de este documento — solo el cambio de rol sí.
+// No es el único camino a la jefatura: un 'teacher' que figura en Section.heads también
+// entra, acotado a sus secciones y sin dejar de ser docente (el Docente jefe,
+// services/jefaturaAcceso.js). No hay campo acá para eso, a propósito.
 const ROLES = ['superadmin', 'admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'student'];
 
 const userSchema = new mongoose.Schema({

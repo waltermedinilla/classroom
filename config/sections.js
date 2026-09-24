@@ -45,11 +45,13 @@ const SECTIONS = [
   { key: 'admin_divisions',      panel: 'admin', label: 'Cursos',     icon: 'class',        path: '/admin/divisions',      roles: ['admin', 'superadmin'] },
   { key: 'admin_courses',        panel: 'admin', label: 'Materias',   icon: 'menu_book',    path: '/admin/courses',        roles: ['admin', 'superadmin'] },
   { key: 'admin_subjects',       panel: 'admin', label: 'Catálogo',   icon: 'auto_stories', path: '/admin/subjects',       roles: ['admin', 'superadmin'] },
-  // Secciones = el alcance del rol Jefe de Sección (models/Section.js). Nada que ver con
+  // Secciones = el alcance de quien está a cargo (models/Section.js). Nada que ver con
   // las "secciones" de este archivo, que son las solapas — coinciden en la palabra y nada más.
   // El rol `jefe` entra a esta solapa para configurar las secciones que tiene a cargo — es
   // la única del panel de admin que ve, y la sirve routes/sections.js, no routes/admin.js.
-  { key: 'admin_sections',       panel: 'admin', label: 'Secciones',  icon: 'groups',       path: '/admin/secciones',      roles: ['admin', 'superadmin', 'jefe'] },
+  // `teacher` también, pero CONDICIONAL: solo el Docente que figura en Section.heads (P1 = A
+  // de specs/docente-jefe-de-seccion.spec.md). Ver la excepción en el panel Jefatura, abajo.
+  { key: 'admin_sections',       panel: 'admin', label: 'Secciones',  icon: 'groups',       path: '/admin/secciones',      roles: ['admin', 'superadmin', 'jefe', 'teacher'] },
   { key: 'admin_import',         panel: 'admin', label: 'Importar',   icon: 'upload_file',  path: '/admin/import',         roles: ['admin', 'superadmin'] },
   { key: 'admin_audit',          panel: 'admin', label: 'Auditoría',  icon: 'history',      path: '/admin/audit',          roles: ['admin', 'superadmin'] },
   // Las tres de abajo editan la configuración de UNA escuela (el tema, las tareas y las
@@ -109,8 +111,17 @@ const SECTIONS = [
   // ── Panel Jefatura de Sección (base: middleware/jefatura.js ROLES_CON_ACCESO) ──
   // 'Actividades' es la pantalla de entrada del panel, por eso va locked (ver la INVARIANTE
   // de arriba). 'Docentes' sí se puede apagar: es una vista derivada de la misma información.
-  { key: 'jefe_dashboard', panel: 'jefatura', label: 'Actividades', icon: 'assignment', path: '/jefatura',          roles: ['jefe', 'directivo', 'admin', 'superadmin'], locked: true },
-  { key: 'jefe_teachers',  panel: 'jefatura', label: 'Docentes',    icon: 'badge',      path: '/jefatura/docentes', roles: ['jefe', 'directivo', 'admin', 'superadmin'] },
+  //
+  // ⚠️ SEGUNDA EXCEPCIÓN a "figura en `roles` → entra", junto a la del SOE de más abajo. Para
+  // `teacher` el acceso base es CONDICIONAL: entra solo si figura en Section.heads (el Docente
+  // jefe, specs/docente-jefe-de-seccion.spec.md). Quien lo decide es loadJefaturaScope; acá
+  // está para que el nav de jefatura le pinte las solapas y /superadmin/roles tenga la celda.
+  // Consecuencia: can('jefe_dashboard') da true para TODO docente, así que ningún enlace a la
+  // jefatura puede depender solo de can() — el menú lo cruza con res.locals.esJefeDeSeccion.
+  // No "arreglarlo" sacando `teacher` de acá: eso le esconde el nav al Docente jefe. Y va
+  // atado a ROLES_JEFATURA_POR_SECCION de services/jefaturaAcceso.js (test CA-52).
+  { key: 'jefe_dashboard', panel: 'jefatura', label: 'Actividades', icon: 'assignment', path: '/jefatura',          roles: ['jefe', 'teacher', 'directivo', 'admin', 'superadmin'], locked: true },
+  { key: 'jefe_teachers',  panel: 'jefatura', label: 'Docentes',    icon: 'badge',      path: '/jefatura/docentes', roles: ['jefe', 'teacher', 'directivo', 'admin', 'superadmin'] },
 
   // ── Panel Orientación Escolar (base: middleware/soe.js requireSoe) ─────────
   // ⚠️ ATENCIÓN, ACÁ LA REGLA ES DISTINTA. Que `directivo` figure en `roles` NO le da acceso:

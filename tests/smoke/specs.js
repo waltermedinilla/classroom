@@ -140,6 +140,14 @@ const jefe = {
   email:    `smoke.jefe.${RUN_ID}@example.com`,
   password: 'SmokeTest1234',
 };
+// El "docente-jefe" de specs/docente-jefe-de-seccion.spec.md: un `teacher` que además
+// figura en `heads` de una sección. Cuenta aparte de `teacher` (que en ese bloque hace de
+// "docenteSolo": un Docente que no está a cargo de nada).
+const docenteJefe = {
+  name:     'Smoke Docente Jefe',
+  email:    `smoke.docentejefe.${RUN_ID}@example.com`,
+  password: 'SmokeTest1234',
+};
 // Alumno dado de alta POR el preceptor (no por el admin), para verificar que su alta
 // matricula igual que la del panel de administración.
 const preceptorStudent = {
@@ -7903,8 +7911,11 @@ const specs = [
     },
   },
   {
+    // CA-49 (specs/docente-jefe-de-seccion.spec.md): desde que el Docente jefe existe, un
+    // `teacher` SÍ puede quedar a cargo (ROLES_ELEGIBLES_JEFE = ['jefe', 'teacher']). El id
+    // que tiene que seguir rechazándose es uno que no es ni jefe ni docente — acá, un alumno.
     id: 'jefatura-rechaza-jefe-que-no-tiene-el-rol',
-    title: 'Poner como jefe a alguien que no tiene el rol devuelve 400',
+    title: 'Poner como jefe a alguien que no es Jefe de Sección ni Docente devuelve 400',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, state, assert }) {
       // Sin esto se podría guardar un alcance para una cuenta que nunca va a poder entrar
@@ -7912,11 +7923,38 @@ const specs = [
       const res = await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
         body: {
           name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [],
-          headIds: [state.scopedTeacherId],
+          headIds: [state.scopedStudentId],
         },
         expectStatus: 400,
       });
       assert(res.json?.error, 'debería explicar por qué no se puede');
+      assert(res.json?.code === 'HEAD_NOT_ELIGIBLE', `código esperado HEAD_NOT_ELIGIBLE, fue ${res.json?.code}`);
+    },
+  },
+  {
+    // La contracara de arriba (CA-49): un `teacher` activo de la escuela SÍ es elegible
+    // ahora. Se prueba y se restaura en el mismo spec para no dejar a `scopedTeacher` como
+    // Docente jefe mientras corren los cientos de specs que lo usan para otra cosa.
+    id: 'jefatura-acepta-teacher-activo-como-jefe',
+    title: 'Poner como jefe a un Docente activo de la escuela ahora devuelve 200 (CA-49)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+        body: {
+          name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [],
+          headIds: [state.scopedTeacherId],
+        },
+        expectStatus: 200,
+      });
+      assert(res.json.seccion.heads.map(String).includes(String(state.scopedTeacherId)),
+        'el docente activo debería haber quedado en heads');
+
+      // Se restaura enseguida: la sección vuelve a como estaba (sin jefes) para que el resto
+      // del bloque jefatura-* siga corriendo con el escenario que espera.
+      await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+        body: { name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [], headIds: [] },
+        expectStatus: 200,
+      });
     },
   },
   {
@@ -8181,6 +8219,843 @@ const specs = [
         `debería cortar por registro cerrado; dijo ${JSON.stringify(r.json)}`);
     },
   },
+
+  // ════════════════════════════════════════════════════════════════════════════════════
+  // ██  INICIO — bloque `docente-jefe-*` (specs/docente-jefe-de-seccion.spec.md)        ██
+  // ██  Agregado por el Tester. Va delimitado a propósito: tests/smoke/specs.js tiene    ██
+  // ██  cambios sin commitear de OTRAS features (git status del 2026-09-24) y este       ██
+  // ██  bloque tiene que poder commitearse solo, sin arrastrarlos (riesgo 7 de la spec).  ██
+  // ════════════════════════════════════════════════════════════════════════════════════
+  //
+  // Reusa el escenario de jefatura de arriba: state.seccionId (= S), state.jefDivIn (DIN,
+  // adentro de S), state.jefDivOut (DOUT, afuera), state.jefActIn (AIN), state.jefActOut
+  // (AOUT), state.seccionAjenaId (S2), state.jefeId (jefe), state.scopedTeacherId
+  // (docenteSolo: un Docente que no figura en ningún heads) y state.scopedStudentId.
+  // En este punto S tiene heads: [jefeId] y divisions: [jefDivIn] — lo dejó así
+  // 'jefatura-secciones-no-cambia-los-jefes'.
+  {
+    id: 'docente-jefe-setup',
+    title: 'Se arma el caso de María: un Docente titular de MP (fuera de S) y lo suman a S junto al jefe',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      const u = await client.post('admin', '/admin/users/create', {
+        body: { name: docenteJefe.name, email: docenteJefe.email, password: docenteJefe.password, role: 'teacher', dni: dniSmoke(43) },
+        expectStatus: 201,
+      });
+      state.docenteJefeId = u.json.user._id;
+      await client.post('docenteJefe', '/login', {
+        body: { email: docenteJefe.email, password: docenteJefe.password }, expectStatus: 200,
+      });
+
+      // MP: su materia titular, FUERA de S. AP: su actividad ahí. Sirven para CA-05/CA-19.
+      const mp = await client.post('admin', '/admin/courses/create', {
+        body: { name: `Materia Propia Docente Jefe ${RUN_ID}`, divisionId: state.jefDivOut, teacherId: state.docenteJefeId },
+        expectStatus: 201,
+      });
+      state.mpCourseId = mp.json.course._id;
+      const ap = await client.post('docenteJefe', '/activities/create', {
+        body: { courseId: state.mpCourseId, title: `Actividad Propia AP ${RUN_ID}`, type: 'tarea' },
+        expectStatus: 201,
+      });
+      state.apActId = ap.json.activity._id;
+
+      // Se lo suma a S: el jefe que ya estaba se conserva SIN revalidar (RN-22.2) y él entra
+      // como nuevo elegible (RN-22.3). Queda [jefe, docenteJefe], como pide CA-39.
+      const edit = await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+        body: {
+          name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [],
+          headIds: [state.jefeId, state.docenteJefeId],
+        },
+        expectStatus: 200,
+      });
+      state.seccionHeadsOriginales = edit.json.seccion.heads.map(String);
+    },
+  },
+  {
+    id: 'docente-jefe-ve-su-seccion',
+    title: 'CA-01 (el caso de María): entra a /jefatura acotado a S — ni AOUT ni AP',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('docenteJefe', '/jefatura', { expectStatus: 200 });
+      assert(res.text.includes(`Actividad DENTRO ${RUN_ID}`), 'debería listar AIN, la actividad de su sección');
+      assert(!res.text.includes(`Actividad FUERA ${RUN_ID}`), 'NO debería listar AOUT');
+      assert(!res.text.includes(`Actividad Propia AP ${RUN_ID}`), 'NO debería listar AP: es suya, pero de una materia fuera de S (RN-10)');
+    },
+  },
+  {
+    id: 'docente-jefe-docente-solo-403',
+    title: 'CA-02: un Docente que no está en heads de nada recibe 403 en las 4 rutas del panel',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const rutas = [
+        '/jefatura', '/jefatura/docentes',
+        `/jefatura/actividades/${state.jefActIn}`, `/jefatura/docentes/${state.docenteJefeId}`,
+      ];
+      for (const ruta of rutas) {
+        const res = await client.get('scopedTeacher', ruta, { expectStatus: 403 });
+        assert(!/Todav[ií]a no ten[eé]s secciones a cargo/.test(res.text || ''),
+          `${ruta}: no debería mostrar la pantalla del jefe sin alcance (RN-03: acá es 403 liso)`);
+      }
+    },
+  },
+  {
+    id: 'docente-jefe-otra-escuela-403',
+    title: 'CA-03: figurar en heads de una sección de OTRA escuela no da acceso',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env }) {
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      let ajenaId = null;
+      try {
+        await mongo.connect();
+        const ins = await mongo.db().collection('sections').insertOne({
+          name: `Sección Ajena Otra Escuela ${RUN_ID}`, school: new ObjectId(),
+          divisions: [], courses: [], heads: [new ObjectId(state.scopedTeacherId)],
+          createdAt: new Date(), updatedAt: new Date(),
+        });
+        ajenaId = ins.insertedId;
+        await client.get('scopedTeacher', '/jefatura', { expectStatus: 403 });
+      } finally {
+        if (ajenaId) await mongo.db().collection('sections').deleteOne({ _id: ajenaId });
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'docente-jefe-fuera-de-alcance-403',
+    title: 'CA-04/CA-05/CA-06: actividad ajena, su propia actividad fuera de S, y un alumno — los tres 403',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.get('docenteJefe', `/jefatura/actividades/${state.jefActOut}`, { expectStatus: 403 }); // CA-04
+      await client.get('docenteJefe', `/jefatura/actividades/${state.apActId}`,   { expectStatus: 403 }); // CA-05 (RN-10)
+      await client.get('docenteJefe', `/jefatura/docentes/${state.scopedStudentId}`, { expectStatus: 403 }); // CA-06
+    },
+  },
+  {
+    id: 'docente-jefe-seccion-vacia',
+    title: 'CA-07: si su ÚNICA sección no tiene contenido, ve 200 con "secciones vacías" (no "sin alcance")',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+        body: { name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [], headIds: [state.jefeId] },
+        expectStatus: 200,
+      });
+      const vacia = await client.post('admin', '/admin/secciones/create', {
+        body: { name: `Sección Vacía Docente Jefe ${RUN_ID}`, divisionIds: [], courseIds: [], headIds: [state.docenteJefeId] },
+        expectStatus: 201,
+      });
+      state.seccionVaciaId = vacia.json.seccion._id;
+
+      try {
+        const res = await client.get('docenteJefe', '/jefatura', { expectStatus: 200 });
+        assert(/Tus secciones todav[ií]a est[aá]n vac[ií]as/.test(res.text), 'debería mostrar la pantalla de secciones vacías');
+        assert(!/Todav[ií]a no ten[eé]s secciones a cargo/.test(res.text), 'no es "sin alcance": es jefe, lo vacío es la sección (RN-03)');
+        assert(!res.text.includes(`Actividad DENTRO ${RUN_ID}`), 'no debería listar ninguna actividad');
+      } finally {
+        await client.post('admin', `/admin/secciones/${state.seccionVaciaId}/delete`, { expectStatus: 200 });
+        await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+          body: { name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [], headIds: [state.jefeId, state.docenteJefeId] },
+          expectStatus: 200,
+        });
+      }
+    },
+  },
+  {
+    id: 'docente-jefe-cambio-de-heads-efecto-inmediato',
+    title: 'CA-09/CA-10: sacarlo o agregarlo a S cambia el 403/200 en el request SIGUIENTE, sin esperar nada',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // CA-09: el admin lo destilda → 403 ya.
+      await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+        body: { name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [], headIds: [state.jefeId] },
+        expectStatus: 200,
+      });
+      await client.get('docenteJefe', '/jefatura', { expectStatus: 403 });
+
+      // CA-10: el admin agrega a docenteSolo → 200 ya, sin login de nuevo ni nada.
+      await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+        body: { name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [], headIds: [state.jefeId, state.scopedTeacherId] },
+        expectStatus: 200,
+      });
+      await client.get('scopedTeacher', '/jefatura', { expectStatus: 200 });
+
+      // Se restaura el escenario para el resto del bloque.
+      await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+        body: { name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [], headIds: [state.jefeId, state.docenteJefeId] },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'docente-jefe-roles-sin-jefatura-en-heads-403',
+    title: 'CA-15: preceptor, soe y student metidos en heads por Mongo NUNCA ganan la jefatura',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env }) {
+      const roles = ['preceptor', 'soe', 'student'];
+      const ids = {};
+      for (const [i, role] of roles.entries()) {
+        const email = `smoke.dj.${role}.${RUN_ID}@example.com`;
+        const u = await client.post('admin', '/admin/users/create', {
+          body: { name: `Smoke DJ ${role}`, email, password: 'SmokeTest1234', role, dni: dniSmoke(44 + i) },
+          expectStatus: 201,
+        });
+        ids[role] = u.json.user._id;
+        await client.post(`dj_${role}`, '/login', { body: { email, password: 'SmokeTest1234' }, expectStatus: 200 });
+      }
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        await mongo.db().collection('sections').updateOne(
+          { _id: new ObjectId(state.seccionId) },
+          { $set: { heads: [state.jefeId, state.docenteJefeId, ...Object.values(ids)].map(id => new ObjectId(id)) } },
+        );
+        for (const role of roles) {
+          await client.get(`dj_${role}`, '/jefatura', { expectStatus: 403 });
+        }
+      } finally {
+        await mongo.db().collection('sections').updateOne(
+          { _id: new ObjectId(state.seccionId) },
+          { $set: { heads: [state.jefeId, state.docenteJefeId].map(id => new ObjectId(id)) } },
+        );
+        await mongo.close();
+        for (const role of roles) {
+          await client.post('admin', `/admin/users/${ids[role]}/delete`, { expectStatus: [200, 204] });
+        }
+      }
+    },
+  },
+  {
+    id: 'docente-jefe-conserva-vista-docente',
+    title: 'CA-16 a CA-19: "/" → /courses, ve MP, el encabezado dice Docente, y sigue pudiendo ser titular',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const home = await client.get('docenteJefe', '/', { expectStatus: 302 });
+      assert(home.headers.get('location') === '/courses', `"/" debería llevar a /courses, fue ${home.headers.get('location')}`); // CA-16
+
+      const courses = await client.get('docenteJefe', '/courses', { expectStatus: 200 }); // CA-17
+      assert(courses.text.includes(`Materia Propia Docente Jefe ${RUN_ID}`), 'debería listar MP en /courses');
+      assert(courses.text.includes('>Docente<'), 'el encabezado debería mostrar el rol Docente'); // CA-18
+
+      const nueva = await client.post('admin', '/admin/courses/create', { // CA-19
+        body: { name: `Materia Nueva Titular DJ ${RUN_ID}`, divisionId: state.jefDivOut, teacherId: state.docenteJefeId },
+        expectStatus: 201,
+      });
+      state.mpNuevaCourseId = nueva.json.course._id;
+      assert(String(nueva.json.course.owner) === String(state.docenteJefeId), 'debería poder ser titular de una materia nueva (resolveCourseTeacher)');
+    },
+  },
+  {
+    id: 'docente-jefe-menu-mis-secciones',
+    title: 'CA-20/CA-21: "Mis secciones" aparece para el Docente jefe y NO para el que no está a cargo de nada',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const conJefatura = await client.get('docenteJefe', '/courses', { expectStatus: 200 });
+      assert(/<a href="\/jefatura" class="drawer-item">/.test(conJefatura.text), 'debería tener el link a /jefatura');
+      assert(conJefatura.text.includes('Mis secciones'), 'debería decir "Mis secciones"');
+
+      const sinJefatura = await client.get('scopedTeacher', '/courses', { expectStatus: 200 });
+      assert(!sinJefatura.text.includes('href="/jefatura"'), 'un Docente sin sección a cargo no debería tener el link');
+    },
+  },
+  {
+    id: 'docente-jefe-nav-panel',
+    title: 'CA-22: el nav de /jefatura trae las 3 solapas, y "Clases" del menú sigue yendo a "/"',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('docenteJefe', '/jefatura', { expectStatus: 200 });
+      assert(res.text.includes('/jefatura/docentes'), 'el nav debería ofrecer Docentes');
+      assert(res.text.includes('/admin/secciones'), 'el nav debería ofrecer Secciones');
+      assert(/<a href="\/" class="drawer-item">/.test(res.text), 'el menú lateral debería seguir teniendo "Clases" con href="/"');
+    },
+  },
+  {
+    id: 'docente-jefe-celda-jefe-teachers-denegada',
+    title: 'CA-23: denegar Jefatura › Docentes al rol Docente NO afecta al rol Jefe de Sección',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert }) {
+      if (!state.rolesSchoolId) { console.log('   (salteado: falta state.rolesSchoolId — corré roles-screen-loads antes)'); return; }
+      const toggle = (enabled) => client.post('superadmin', '/superadmin/roles/toggle', {
+        body: { schoolId: state.rolesSchoolId, role: 'teacher', key: 'jefe_teachers', enabled }, expectStatus: 200,
+      });
+      try {
+        await toggle(false);
+        await client.get('docenteJefe', '/jefatura/docentes', { expectStatus: 403 });
+        const nav = await client.get('docenteJefe', '/jefatura', { expectStatus: 200 });
+        assert(!nav.text.includes('/jefatura/docentes'), 'el nav no debería ofrecer Docentes');
+        await client.get('jefe', '/jefatura/docentes', { expectStatus: 200 }); // el jefe (rol) no se entera
+      } finally {
+        await toggle(true);
+      }
+      await client.get('docenteJefe', '/jefatura/docentes', { expectStatus: 200 });
+    },
+  },
+  {
+    id: 'docente-jefe-suplantado-sin-enlace',
+    title: 'CA-24: mientras lo suplantan no se ve el enlace (DA-4), pero /jefatura responde 200 igual',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD'],
+    async run({ client, state, env, assert }) {
+      // Con el SUPERADMIN, no con el admin: es el caso real del Plan de migración (paso 2,
+      // "un superadmin suplanta a María") y evita cualquier ambigüedad sobre a quién
+      // pertenece el menú que se está leyendo.
+      await client.post('djImpersonador', '/login', {
+        body: { email: env.SMOKE_SUPERADMIN_EMAIL, password: env.SMOKE_SUPERADMIN_PASSWORD }, expectStatus: 200,
+      });
+      await client.post('djImpersonador', `/admin/users/${state.docenteJefeId}/impersonate`, { expectStatus: 200 });
+      const courses = await client.get('djImpersonador', '/courses', { expectStatus: 200 });
+      assert(!courses.text.includes('href="/jefatura"'), 'durante la suplantación no debería verse el enlace');
+      await client.get('djImpersonador', '/jefatura', { expectStatus: 200 });
+      await client.get('djImpersonador', '/exit-impersonate', { expectStatus: 302 });
+    },
+  },
+  {
+    id: 'docente-jefe-admin-secciones-ve-la-suya',
+    title: 'CA-30: en /admin/secciones ve S y no S2, ni el botón de crear',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('docenteJefe', '/admin/secciones', { expectStatus: 200 });
+      assert(res.text.includes(`Sección Smoke ${RUN_ID}`), 'debería listar S');
+      assert(!res.text.includes(`Sección Ajena ${RUN_ID}`), 'NO debería listar S2 (ajena)');
+      assert(!res.text.includes('Nueva Sección'), 'no debería ofrecerle crear secciones');
+    },
+  },
+  {
+    id: 'docente-jefe-admin-secciones-ajena-403',
+    title: 'CA-31: abrir o editar S2 (ajena) da 403 aunque se escriba la URL',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.get('docenteJefe', `/admin/secciones/${state.seccionAjenaId}/edit`, { expectStatus: 403 });
+      await client.post('docenteJefe', `/admin/secciones/${state.seccionAjenaId}/edit`, {
+        body: { name: `Sección Ajena ${RUN_ID}`, divisionIds: [], courseIds: [], headIds: [] }, expectStatus: 403,
+      });
+    },
+  },
+  {
+    id: 'docente-jefe-admin-secciones-no-crea-ni-borra',
+    title: 'CA-32: no puede crear secciones nuevas ni borrar la suya',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.get('docenteJefe', '/admin/secciones/create', { expectStatus: 403 });
+      await client.post('docenteJefe', '/admin/secciones/create', {
+        body: { name: `No debería crearse DJ ${RUN_ID}`, divisionIds: [], courseIds: [], headIds: [] }, expectStatus: 403,
+      });
+      await client.post('docenteJefe', `/admin/secciones/${state.seccionId}/delete`, { expectStatus: 403 });
+    },
+  },
+  {
+    id: 'docente-jefe-admin-secciones-headids-se-ignora',
+    title: 'CA-33: puede ampliar el contenido de S; el headIds que mande se ignora (headsFijos)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('docenteJefe', `/admin/secciones/${state.seccionId}/edit`, {
+        body: {
+          name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn, state.jefDivOut], courseIds: [],
+          headIds: [state.scopedTeacherId], // ni siquiera manda a los jefes reales: no se mira igual
+        },
+        expectStatus: 200,
+      });
+      assert(res.json.seccion.divisions.map(String).includes(String(state.jefDivOut)), 'debería haber sumado DOUT');
+      const headsGuardados = res.json.seccion.heads.map(String).sort().join(',');
+      const headsEsperados = [state.jefeId, state.docenteJefeId].map(String).sort().join(',');
+      assert(headsGuardados === headsEsperados, `heads no debería haber cambiado; esperaba [${headsEsperados}], fue [${headsGuardados}]`);
+
+      const jefatura = await client.get('docenteJefe', '/jefatura', { expectStatus: 200 });
+      assert(jefatura.text.includes(`Actividad FUERA ${RUN_ID}`), 'con DOUT sumada, AOUT debería entrar al alcance ya');
+
+      await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+        body: { name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [], headIds: [state.jefeId, state.docenteJefeId] },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'docente-solo-admin-secciones-403',
+    title: 'CA-34: un Docente sin sección a cargo recibe 403 en /admin/secciones (NO la pantalla vacía del jefe)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('scopedTeacher', '/admin/secciones', { expectStatus: 403 });
+      assert(!/Todav[ií]a no ten[eé]s ninguna secci[oó]n a cargo/.test(res.text || ''),
+        'no debería ver la pantalla vacía que ve el jefe sin secciones (RN-18)');
+
+      const post = await client.post('scopedTeacher', `/admin/secciones/${state.seccionId}/edit`, {
+        body: { name: 'x', divisionIds: [], courseIds: [], headIds: [] },
+        headers: { Accept: 'application/json' },
+        expectStatus: 403,
+      });
+      assert(post.json?.error === 'Acceso denegado', `esperaba { error: 'Acceso denegado' }, fue ${JSON.stringify(post.json)}`);
+    },
+  },
+  {
+    id: 'docente-jefe-celda-admin-sections-denegada',
+    title: 'CA-35: denegar Administración › Secciones al rol Docente da 403 y lo saca del nav de /jefatura',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert }) {
+      if (!state.rolesSchoolId) { console.log('   (salteado: falta state.rolesSchoolId)'); return; }
+      const toggle = (enabled) => client.post('superadmin', '/superadmin/roles/toggle', {
+        body: { schoolId: state.rolesSchoolId, role: 'teacher', key: 'admin_sections', enabled }, expectStatus: 200,
+      });
+      try {
+        await toggle(false);
+        await client.get('docenteJefe', '/admin/secciones', { expectStatus: 403 });
+        const nav = await client.get('docenteJefe', '/jefatura', { expectStatus: 200 });
+        assert(!nav.text.includes('/admin/secciones'), 'el nav no debería ofrecer Secciones');
+      } finally {
+        await toggle(true);
+      }
+      await client.get('docenteJefe', '/admin/secciones', { expectStatus: 200 });
+    },
+  },
+  {
+    id: 'docente-jefe-editor-setup',
+    title: 'Fixtures del editor: un Docente deshabilitado, uno de otra escuela, un preceptor y un directivo',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env }) {
+      const deshabilitado = await client.post('admin', '/admin/users/create', {
+        body: {
+          name: `Smoke DJ Deshabilitado ${RUN_ID}`, email: `smoke.dj.deshabilitado.${RUN_ID}@example.com`,
+          password: 'SmokeTest1234', role: 'teacher', dni: dniSmoke(47),
+        },
+        expectStatus: 201,
+      });
+      state.djDeshabilitadoId = deshabilitado.json.user._id;
+      await client.post('admin', `/admin/users/${state.djDeshabilitadoId}/toggle-active`, { expectStatus: 200 });
+
+      // Preceptor y directivo propios: los actores generales `preceptor`/`directivo` del
+      // smoke ya fueron borrados por 'cleanup-preceptor'/'directivo-cleanup', que corren
+      // mucho antes que este bloque — reusar esos ids probaría "no existe", no "no es
+      // elegible". CA-36 necesita cuentas VIVAS con esos roles.
+      const dj_preceptor = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke DJ Preceptor ${RUN_ID}`, email: `smoke.dj.preceptor.${RUN_ID}@example.com`, password: 'SmokeTest1234', role: 'preceptor', dni: dniSmoke(49) },
+        expectStatus: 201,
+      });
+      state.djPreceptorId = dj_preceptor.json.user._id;
+      const dj_directivo = await client.post('admin', '/admin/users/create', {
+        body: { name: `Smoke DJ Directivo ${RUN_ID}`, email: `smoke.dj.directivo.${RUN_ID}@example.com`, password: 'SmokeTest1234', role: 'directivo', dni: dniSmoke(50) },
+        expectStatus: 201,
+      });
+      state.djDirectivoId = dj_directivo.json.user._id;
+
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const doc = await mongo.db().collection('users').insertOne({
+          name: `Smoke DJ Otra Escuela ${RUN_ID}`, email: `smoke.dj.otraescuela.${RUN_ID}@example.com`,
+          role: 'teacher', school: new ObjectId(), active: true, password: 'x', dni: dniSmoke(48),
+          createdAt: new Date(), updatedAt: new Date(),
+        });
+        state.djOtraEscuelaId = doc.insertedId.toString();
+
+        // El admin de la escuela: no lo crea este spec (es el mismo actor 'admin' de todo el
+        // smoke), se busca por email para tener su _id y probar que TAMPOCO tiene checkbox.
+        const adminDoc = await mongo.db().collection('users').findOne(
+          { email: env.SMOKE_ADMIN_EMAIL }, { projection: { _id: 1 } },
+        );
+        state.djAdminId = adminDoc && adminDoc._id.toString();
+      } finally {
+        await mongo.close();
+      }
+      state.djInexistenteId = '6a7472072ab622c547577099'; // 24 hex válidos, ningún usuario así
+    },
+  },
+  {
+    id: 'docente-jefe-editor-candidatos',
+    title: 'CA-36: candidatos = jefe + teacher activos de la escuela; ningún otro rol, ni deshabilitado, ni de otra escuela',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert }) {
+      const res = await client.get('admin', '/admin/secciones/create', { expectStatus: 200 });
+      const html = res.text;
+      assert(html.includes(`value="${state.scopedTeacherId}"`), 'debería ofrecer a docenteSolo (un Docente) como candidato');
+      assert(html.includes(`value="${state.jefeId}"`), 'debería ofrecer al jefe como candidato');
+      assert(!html.includes(`value="${state.djDeshabilitadoId}"`), 'NO debería ofrecer a un Docente deshabilitado (DA-1)');
+      assert(!html.includes(`value="${state.djOtraEscuelaId}"`), 'NO debería ofrecer a un Docente de otra escuela');
+      assert(!html.includes(`value="${state.scopedStudentId}"`), 'NO debería ofrecer a un alumno');
+      // RN-19/DA-3: ROLES_ELEGIBLES_JEFE es exactamente ['jefe', 'teacher']. Ninguno de estos
+      // tres roles puede quedar a cargo, aunque estén activos y de la escuela.
+      assert(!html.includes(`value="${state.djPreceptorId}"`), 'NO debería ofrecer a un preceptor (DA-3)');
+      assert(!html.includes(`value="${state.djDirectivoId}"`), 'NO debería ofrecer a un directivo (DA-3)');
+      assert(state.djAdminId && !html.includes(`value="${state.djAdminId}"`), 'NO debería ofrecer al admin de la escuela (DA-3)');
+    },
+  },
+  {
+    id: 'docente-jefe-editor-crea-con-docente',
+    title: 'CA-37: el admin puede crear una sección con un Docente como jefe desde cero',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('admin', '/admin/secciones/create', {
+        body: { name: `Sección Con Docente ${RUN_ID}`, divisionIds: [], courseIds: [], headIds: [state.scopedTeacherId] },
+        expectStatus: 201,
+      });
+      state.seccionConDocenteId = res.json.seccion._id;
+      assert(res.json.seccion.heads.map(String).includes(String(state.scopedTeacherId)), 'heads debería contener a docenteSolo');
+      assert((res.json.jefes?.agregados || []).includes(teacher.name), `jefes.agregados debería traer su nombre, fue ${JSON.stringify(res.json.jefes)}`);
+    },
+  },
+  {
+    id: 'docente-jefe-editor-rechaza-no-elegibles',
+    title: 'CA-38: agregar un alumno, un Docente deshabilitado o uno de otra escuela da 400 HEAD_NOT_ELIGIBLE y no guarda nada',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert }) {
+      const casos = [
+        { id: state.scopedStudentId, motivo: 'un alumno' },
+        { id: state.djDeshabilitadoId, motivo: 'un Docente deshabilitado' },
+        { id: state.djOtraEscuelaId, motivo: 'un Docente de otra escuela' },
+      ];
+      for (const caso of casos) {
+        const res = await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+          body: {
+            name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [],
+            headIds: [state.jefeId, state.docenteJefeId, caso.id],
+          },
+          expectStatus: 400,
+        });
+        assert(res.json?.code === 'HEAD_NOT_ELIGIBLE', `${caso.motivo}: esperaba code HEAD_NOT_ELIGIBLE, fue ${JSON.stringify(res.json)}`);
+        assert((res.json.rechazados || []).some(r => String(r.id) === String(caso.id)), `${caso.motivo}: debería figurar en rechazados`);
+      }
+      // "todo o nada": la sección no cambió un pelo con ninguno de los tres 400.
+      const sigue = await client.get('docenteJefe', '/jefatura', { expectStatus: 200 });
+      assert(sigue.text.includes(`Actividad DENTRO ${RUN_ID}`), 'la sección no debería haber cambiado tras los 400');
+
+      // La misma regla en `create`: el 400 no deja ninguna sección a medio crear.
+      const nombreFallido = `Sección Que No Debería Existir ${RUN_ID}`;
+      const crear = await client.post('admin', '/admin/secciones/create', {
+        body: { name: nombreFallido, divisionIds: [], courseIds: [], headIds: [state.scopedStudentId] },
+        expectStatus: 400,
+      });
+      assert(crear.json?.code === 'HEAD_NOT_ELIGIBLE', `create con un alumno: esperaba HEAD_NOT_ELIGIBLE, fue ${JSON.stringify(crear.json)}`);
+      const grilla = await client.get('admin', '/admin/secciones', { expectStatus: 200 });
+      assert(!grilla.text.includes(nombreFallido), 'un create rechazado no debería haber creado ninguna sección');
+
+      // "Todo o nada" también alcanza al NOMBRE: si el 400 fuera solo por los jefes, un
+      // cambio de nombre en el mismo body podría colarse igual. No debe.
+      const nombreQueNoDeberiaQuedar = `Sección Smoke Renombrada Sin Querer ${RUN_ID}`;
+      await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+        body: {
+          name: nombreQueNoDeberiaQuedar, divisionIds: [state.jefDivIn], courseIds: [],
+          headIds: [state.jefeId, state.docenteJefeId, state.scopedStudentId],
+        },
+        expectStatus: 400,
+      });
+      const edit = await client.get('admin', `/admin/secciones/${state.seccionId}/edit`, { expectStatus: 200 });
+      assert(!edit.text.includes(nombreQueNoDeberiaQuedar), 'el nombre NO debería haber cambiado: el 400 es todo o nada (RN-22.4)');
+      const seccionesGrilla = await client.get('admin', '/admin/secciones', { expectStatus: 200 });
+      assert(seccionesGrilla.text.includes(`Sección Smoke ${RUN_ID}`), 'el nombre viejo debería seguir siendo el vigente');
+    },
+  },
+  {
+    id: 'docente-jefe-editor-trampa-no-expulsa',
+    title: 'CA-39 (la trampa): abrir S con [jefe, docenteJefe] y reenviar el formulario tal cual no lo saca',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const edit = await client.get('admin', `/admin/secciones/${state.seccionId}/edit`, { expectStatus: 200 });
+      const tildado = new RegExp(`value="${state.docenteJefeId}"[^>]*checked`).test(edit.text)
+        || new RegExp(`checked[^>]*value="${state.docenteJefeId}"`).test(edit.text);
+      assert(tildado, 'el checkbox de docenteJefe debería estar tildado en el formulario de edición');
+
+      const res = await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+        body: {
+          name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [],
+          headIds: [state.jefeId, state.docenteJefeId], // "los tildados", sin tocar nada
+        },
+        expectStatus: 200,
+      });
+      const heads = res.json.seccion.heads.map(String).sort().join(',');
+      const esperado = [state.jefeId, state.docenteJefeId].map(String).sort().join(',');
+      assert(heads === esperado, `heads no debería haber cambiado; esperaba [${esperado}], fue [${heads}]`);
+      assert(!(res.json.jefes?.quitados || []).length, 'jefes.quitados debería venir vacío');
+
+      await client.get('docenteJefe', '/jefatura', { expectStatus: 200 });
+    },
+  },
+  {
+    id: 'docente-jefe-editor-sin-jefes-en-la-escuela',
+    title: 'CA-40 (la variante peor de la trampa): sin NINGÚN rol jefe en la escuela, sigue tildado y sin el aviso',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env, assert }) {
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const users = mongo.db().collection('users');
+        await users.updateOne({ _id: new ObjectId(state.jefeId) }, { $set: { role: 'preceptor' } });
+
+        const edit = await client.get('admin', `/admin/secciones/${state.seccionId}/edit`, { expectStatus: 200 });
+        const tildado = new RegExp(`value="${state.docenteJefeId}"[^>]*checked`).test(edit.text)
+          || new RegExp(`checked[^>]*value="${state.docenteJefeId}"`).test(edit.text);
+        assert(tildado, 'docenteJefe debería seguir tildado aunque no quede ningún usuario con rol jefe');
+        // El aviso es "jefes.length === 0" (routes/sections.js datosFormularioSeccion), y
+        // `jefes` incluye a los ACTUALES sea cual sea su rol: con docenteJefe a cargo, ese
+        // array nunca da 0, así que la aserción corre SIEMPRE — no depende de si además
+        // quedan otros usuarios con rol jefe en la escuela (la escuela del smoke tiene
+        // docentes de sobra, esto no puede depender de "que no haya ninguno").
+        assert(!/para\s+dejar a cargo/i.test(edit.text),
+          'NO debería aparecer el aviso "Todavía no hay ningún Docente ni Jefe de Sección activo... para dejar a cargo": hay un jefe actual (docenteJefe)');
+
+        const res = await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+          body: { name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [], headIds: [state.jefeId, state.docenteJefeId] },
+          expectStatus: 200,
+        });
+        assert(res.json.seccion.heads.map(String).includes(String(state.docenteJefeId)), 'guardar debería conservarlo');
+      } finally {
+        await mongo.db().collection('users').updateOne({ _id: new ObjectId(state.jefeId) }, { $set: { role: 'jefe' } });
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'docente-jefe-editor-jefe-actual-inelegible',
+    title: 'CA-41: un jefe actual con un rol que ya no entra a Jefatura, o deshabilitado, sigue tildado y con el motivo',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env, assert }) {
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        await mongo.db().collection('users').updateOne({ _id: new ObjectId(state.docenteJefeId) }, { $set: { role: 'preceptor' } });
+
+        const edit = await client.get('admin', `/admin/secciones/${state.seccionId}/edit`, { expectStatus: 200 });
+        const tildado = new RegExp(`value="${state.docenteJefeId}"[^>]*checked`).test(edit.text)
+          || new RegExp(`checked[^>]*value="${state.docenteJefeId}"`).test(edit.text);
+        assert(tildado, 'debería seguir tildado con el rol Preceptor');
+        assert(/con el rol Preceptor no puede entrar a Jefatura/.test(edit.text),
+          'debería explicar por qué ese jefe actual ya no es elegible');
+
+        const res = await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+          body: { name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [], headIds: [state.jefeId, state.docenteJefeId] },
+          expectStatus: 200,
+        });
+        assert(res.json.seccion.heads.map(String).includes(String(state.docenteJefeId)), 'reenviar tal cual debería conservarlo');
+      } finally {
+        await mongo.db().collection('users').updateOne({ _id: new ObjectId(state.docenteJefeId) }, { $set: { role: 'teacher' } });
+        await mongo.close();
+      }
+
+      // Misma idea con la cuenta deshabilitada, por el camino de la app.
+      await client.post('admin', `/admin/users/${state.docenteJefeId}/toggle-active`, { expectStatus: 200 });
+      try {
+        const edit2 = await client.get('admin', `/admin/secciones/${state.seccionId}/edit`, { expectStatus: 200 });
+        assert(/cuenta deshabilitada/.test(edit2.text), 'debería avisar "cuenta deshabilitada"');
+        await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+          body: { name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [], headIds: [state.jefeId, state.docenteJefeId] },
+          expectStatus: 200,
+        });
+      } finally {
+        await client.post('admin', `/admin/users/${state.docenteJefeId}/toggle-active`, { expectStatus: 200 });
+      }
+    },
+  },
+  {
+    id: 'docente-jefe-editor-jefes-huerfanos',
+    title: 'CA-42: un jefe de otra escuela o inexistente (sembrados por Mongo) no muestran datos y se avisan con la cantidad',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env, assert }) {
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      const inexistente = new ObjectId();
+      try {
+        await mongo.connect();
+        await mongo.db().collection('sections').updateOne(
+          { _id: new ObjectId(state.seccionId) },
+          { $set: { heads: [state.jefeId, state.docenteJefeId, state.djOtraEscuelaId].map(id => new ObjectId(id)).concat(inexistente) } },
+        );
+
+        const edit = await client.get('admin', `/admin/secciones/${state.seccionId}/edit`, { expectStatus: 200 });
+        assert(!edit.text.includes(`Smoke DJ Otra Escuela ${RUN_ID}`), 'no debería mostrar el nombre del usuario de otra escuela');
+        assert(!edit.text.includes(`smoke.dj.otraescuela.${RUN_ID}@example.com`), 'ni su correo (D3 de identidad-multiescuela)');
+        assert(/2\s*persona/.test(edit.text), 'debería avisar la cantidad de huérfanos (2)');
+
+        const res = await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+          body: {
+            name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [],
+            headIds: [state.jefeId, state.docenteJefeId, state.djOtraEscuelaId, inexistente.toString()],
+          },
+          expectStatus: 200,
+        });
+        const heads = res.json.seccion.heads.map(String).sort().join(',');
+        const esperado = [state.jefeId, state.docenteJefeId].map(String).sort().join(',');
+        assert(heads === esperado, `ninguno de los dos huérfanos debería quedar en heads, fue [${heads}]`);
+        assert(res.json.jefes?.descartados === 2, `jefes.descartados debería ser 2, fue ${res.json.jefes?.descartados}`);
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'docente-jefe-editor-destildar-audita',
+    title: 'CA-43: destildar a docenteJefe lo saca, y queda nombrado en jefesQuitados del ÚLTIMO section.edit de la auditoría',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, env, assert }) {
+      const res = await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+        body: { name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [], headIds: [state.jefeId] },
+        expectStatus: 200,
+      });
+      assert(res.json.seccion.heads.map(String).join(',') === String(state.jefeId),
+        `heads debería quedar solo con el jefe, fue ${JSON.stringify(res.json.seccion.heads)}`);
+      assert((res.json.jefes?.quitados || []).includes(docenteJefe.name), `jefes.quitados debería traer su nombre, fue ${JSON.stringify(res.json.jefes)}`);
+
+      // Se consulta la auditoría DIRECTO por Mongo, filtrando por acción + la sección exacta
+      // y ordenando por timestamp desc: leer la página buscaba la PRIMERA aparición de
+      // "jefesQuitados" en todo el HTML, que en una escuela con más historial de
+      // section.edit no tiene por qué ser este evento. logAudit es fire-and-forget (no
+      // hace await en la ruta), así que se da un margen antes de leer.
+      await new Promise((r) => setTimeout(r, 400));
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const ultimo = await mongo.db().collection('auditlogs')
+          .find({ action: 'section.edit', 'targets.id': new ObjectId(state.seccionId) })
+          .sort({ timestamp: -1 }).limit(1).toArray();
+        assert(ultimo.length === 1, 'debería haber al menos un section.edit auditado para S');
+        const meta = ultimo[0].meta || {};
+        assert(Array.isArray(meta.jefesQuitados) && meta.jefesQuitados.includes(docenteJefe.name),
+          `el último section.edit debería traer jefesQuitados con su nombre, fue ${JSON.stringify(meta.jefesQuitados)}`);
+      } finally {
+        await mongo.close();
+      }
+
+      await client.post('admin', `/admin/secciones/${state.seccionId}/edit`, {
+        body: { name: `Sección Smoke ${RUN_ID}`, divisionIds: [state.jefDivIn], courseIds: [], headIds: [state.jefeId, state.docenteJefeId] },
+        expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'docente-jefe-editor-solo-lectura-ve-los-dos',
+    title: 'CA-44: la vista de solo lectura del jefe (rol) muestra a los DOS jefes actuales, no solo a los candidatos',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('jefe', `/admin/secciones/${state.seccionId}/edit`, { expectStatus: 200 });
+      assert(res.text.includes(jefe.name), 'debería mostrar al jefe');
+      assert(res.text.includes(docenteJefe.name), 'debería mostrar también al Docente jefe (arregla section-form.ejs:131)');
+    },
+  },
+  {
+    id: 'docente-jefe-grilla-marca-el-rol',
+    title: 'CA-45: en /admin/secciones, junto al nombre de docenteJefe la columna "A cargo de" dice "· Docente"',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const res = await client.get('admin', '/admin/secciones', { expectStatus: 200 });
+      const i = res.text.indexOf(docenteJefe.name);
+      assert(i !== -1, 'debería listar el nombre de docenteJefe en la grilla');
+      assert(/·\s*Docente/.test(res.text.slice(i, i + 150)), 'debería agregar "· Docente" junto a su nombre, porque su rol no es jefe');
+    },
+  },
+  {
+    id: 'docente-jefe-cambio-de-rol-pierde-y-recupera',
+    title: 'CA-47/CA-48: cambiarle el rol le saca la jefatura; devolvérselo se la repone sin que nadie toque heads',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      for (const rolNuevo of ['preceptor', 'student']) {
+        await client.post('admin', `/admin/users/${state.docenteJefeId}/role`, { body: { role: rolNuevo }, expectStatus: 200 });
+        await client.get('docenteJefe', '/jefatura', { expectStatus: 403 });
+        await client.get('docenteJefe', '/admin/secciones', { expectStatus: 403 });
+      }
+      const grilla = await client.get('admin', '/admin/secciones', { expectStatus: 200 });
+      assert(grilla.text.includes(docenteJefe.name), 'debería seguir figurando en heads pese a los cambios de rol (RN-27/RN-28)');
+
+      await client.post('admin', `/admin/users/${state.docenteJefeId}/role`, { body: { role: 'teacher' }, expectStatus: 200 });
+      await client.get('docenteJefe', '/jefatura', { expectStatus: 200 }); // CA-48: sin que nadie reasigne nada
+
+      await client.post('admin', `/admin/users/${state.docenteJefeId}/role`, { body: { role: 'jefe' }, expectStatus: 200 });
+      const home = await client.get('docenteJefe', '/', { expectStatus: 302 });
+      assert(home.headers.get('location') === '/jefatura', `con rol jefe, "/" debería llevar a /jefatura, fue ${home.headers.get('location')}`);
+
+      // Se restaura: vuelve a Docente para el resto del bloque y para la limpieza.
+      await client.post('admin', `/admin/users/${state.docenteJefeId}/role`, { body: { role: 'teacher' }, expectStatus: 200 });
+    },
+  },
+  {
+    // No está en la lista explícita de § Tests necesarios del smoke (ver el informe del
+    // tester), pero usa exactamente el mismo patrón que roles-toggle-hides-and-blocks y
+    // cubre DA-6/RN-13d: las tres celdas nuevas del rol Docente en /superadmin/roles.
+    id: 'docente-jefe-celdas-en-superadmin-roles',
+    title: 'CA-51: las 3 celdas nuevas del rol Docente en /superadmin/roles (2 configurables, 1 con candado)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'SMOKE_SUPERADMIN_EMAIL', 'SMOKE_SUPERADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ client, state, assert }) {
+      if (!state.rolesSchoolId) { console.log('   (salteado: falta state.rolesSchoolId)'); return; }
+      const res = await client.get('superadmin', `/superadmin/roles?school=${state.rolesSchoolId}`, { expectStatus: 200 });
+      assert(res.text.includes('jefe_teachers'), 'debería listar la celda Jefatura › Docentes');
+      assert(res.text.includes('admin_sections'), 'debería listar la celda Administración › Secciones');
+      // jefe_dashboard es locked: su celda es un candado sin la key en el HTML, así que se
+      // busca la fila por el path. Que para Docente sea candado lo prueba el 400 de abajo.
+      assert(res.text.includes('<span class="sec-path">/jefatura</span>'), 'debería listar la fila Jefatura › Actividades');
+
+      // La celda Docente × Jefatura›Actividades tiene que ser el CANDADO (cell-lock), no el
+      // guion de "sin acceso" (cell-off): antes de esta spec `teacher` no estaba en `roles`
+      // de jefe_dashboard, así que esa celda era cell-off. Ubica la tabla del panel Jefatura
+      // (la que trae el path exacto "/jefatura", sin confundir con "/jefatura/docentes"),
+      // encuentra en qué columna cae el rol Docente por su <th> (el badge role-teacher) y
+      // lee esa celda dentro de la fila de "/jefatura".
+      function celdaDeSolapa(html, secPathExacto, rol) {
+        const marcador = `sec-path">${secPathExacto}<`;
+        const iMarcador = html.indexOf(marcador);
+        if (iMarcador === -1) return null;
+        const iTablaIni = html.lastIndexOf('<table class="perm-grid">', iMarcador);
+        const iTablaFin = html.indexOf('</table>', iMarcador);
+        const tabla = html.slice(iTablaIni, iTablaFin);
+
+        const thead = tabla.slice(tabla.indexOf('<thead>'), tabla.indexOf('</thead>'));
+        const badges = [...thead.matchAll(/role-badge role-(\w+)"/g)].map(m => m[1]);
+        const col = badges.indexOf(rol);
+        if (col === -1) return null;
+
+        const iEnTabla = tabla.indexOf(marcador);
+        const iFilaIni = tabla.lastIndexOf('<tr>', iEnTabla);
+        const iFilaFin = tabla.indexOf('</tr>', iEnTabla);
+        const fila = tabla.slice(iFilaIni, iFilaFin);
+        const tds = fila.split('<td').slice(1).map(s => '<td' + s.split('</td>')[0] + '</td>');
+        return tds[1 + col] || null; // tds[0] es la celda sec-name
+      }
+
+      const celdaDocente = celdaDeSolapa(res.text, '/jefatura', 'teacher');
+      assert(celdaDocente !== null, 'no se pudo ubicar la celda Docente × /jefatura en la grilla — revisar el parseo');
+      assert(celdaDocente.includes('cell-lock'), `la celda Docente × /jefatura debería ser un candado (cell-lock), fue: ${celdaDocente}`);
+      assert(!celdaDocente.includes('cell-off'), `la celda Docente × /jefatura NO debería ser "sin acceso" (cell-off): teacher ya está en roles, fue: ${celdaDocente}`);
+
+      const toggle = (key, enabled, expectStatus = 200) => client.post('superadmin', '/superadmin/roles/toggle', {
+        body: { schoolId: state.rolesSchoolId, role: 'teacher', key, enabled }, expectStatus,
+      });
+      await toggle('jefe_teachers', false);
+      await toggle('jefe_teachers', true);
+      await toggle('admin_sections', false);
+      await toggle('admin_sections', true);
+      await toggle('jefe_dashboard', false, 400); // locked: no se puede denegar
+    },
+  },
+  {
+    id: 'cleanup-docente-jefe',
+    title: 'Limpieza: borra MP, la sección creada con docenteSolo, los fixtures del editor y a docenteJefe',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, env }) {
+      // Las materias van antes que los usuarios: un titular con materias da 409.
+      for (const id of [state.mpCourseId, state.mpNuevaCourseId]) {
+        if (id) await client.post('admin', `/admin/courses/${id}/delete`, { expectStatus: 200 });
+      }
+      if (state.seccionConDocenteId) await client.post('admin', `/admin/secciones/${state.seccionConDocenteId}/delete`, { expectStatus: 200 });
+      if (state.docenteJefeId) await client.post('admin', `/admin/users/${state.docenteJefeId}/delete`, { expectStatus: 200 });
+      if (state.djDeshabilitadoId) await client.post('admin', `/admin/users/${state.djDeshabilitadoId}/delete`, { expectStatus: 200 });
+      if (state.djPreceptorId) await client.post('admin', `/admin/users/${state.djPreceptorId}/delete`, { expectStatus: 200 });
+      if (state.djDirectivoId) await client.post('admin', `/admin/users/${state.djDirectivoId}/delete`, { expectStatus: 200 });
+
+      // djOtraEscuelaId se sembró directo por Mongo (no es de la escuela del admin de smoke,
+      // así que /admin/users no lo alcanza): se borra por el mismo camino.
+      if (state.djOtraEscuelaId && env.MONGODB_URI) {
+        const { MongoClient, ObjectId } = require('mongodb');
+        const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+        try {
+          await mongo.connect();
+          await mongo.db().collection('users').deleteOne({ _id: new ObjectId(state.djOtraEscuelaId) });
+        } finally {
+          await mongo.close();
+        }
+      }
+    },
+  },
+  // ════════════════════════════════════════════════════════════════════════════════════
+  // ██  FIN — bloque `docente-jefe-*`                                                    ██
+  // ════════════════════════════════════════════════════════════════════════════════════
 
   // Issue conocido nº 10 de agente.md. Un `:id` que no tiene forma de ObjectId hace lanzar
   // CastError a findById, y de ahí salen DOS síntomas según cómo esté escrito el handler:

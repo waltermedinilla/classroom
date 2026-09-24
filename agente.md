@@ -269,8 +269,9 @@ Agregar `data-analytics="nombre_del_evento"` al `<button>`/`<a>` — no hace fal
 | POST | `/admin/import/upload` | Parsea XLS, auto-detecta tipo, devuelve JSON |
 | POST | `/admin/import/execute` | Ejecuta la importación según tipo y opciones |
 
-#### Secciones (`routes/sections.js`) — `requireAuth` + rol `admin`/`superadmin`/**`jefe`** + `requireSection('admin_sections')`
+#### Secciones (`routes/sections.js`) — `requireAuth` + rol `admin`/`superadmin`/**`jefe`**/**Docente jefe** + `requireSection('admin_sections')`
 > Vive **fuera** de `routes/admin.js` aunque su path empiece con `/admin`, y se monta antes que él en `server.js`. Es lo que permite dejar entrar al Jefe de Sección sin aflojar el `requireAdmin` que cubre todo el panel. El jefe solo ve y edita las secciones donde figura en `Section.heads`.
+> Desde el 2026-09-24 entra también el **Docente jefe**: un `teacher` que figura en `heads` de al menos una sección, con la misma columna "Jefe" de abajo. Un `teacher` que no figura en ninguna recibe 403 (`specs/docente-jefe-de-seccion.spec.md`).
 
 | Método | Ruta | Comportamiento | Jefe |
 |---|---|---|---|
@@ -526,6 +527,21 @@ creadas, no.
 ---
 
 ## Historial de Cambios (Changelog)
+
+### 2026-09-24 — El Docente que es jefe de sección entra a Jefatura sin dejar de ser Docente
+
+**Pedido**: una docente (titular de 4 materias) figuraba como jefa de "CONSTRUCCIONES 1" y no podía verla con ese rol. El sistema admite **un solo `User.role`**: como Docente, `/jefatura` le daba 403 aunque estuviera en `Section.heads`; como Jefe, dejaba de ser docente para el resto del sistema (titularidad, selectores, panel del directivo).
+
+**Lo que se hizo** (spec `specs/docente-jefe-de-seccion.spec.md`, opción A): la jefatura pasa a depender de **figurar en `Section.heads`**, no del rol. Un `teacher` que es jefe de al menos una sección entra a `/jefatura` acotado a **sus** secciones (nunca `scopeAll`), ve "Mis secciones" en el menú, configura sus secciones como el rol `jefe` y conserva intacta su vista de Docente (`/` sigue yendo a `/courses`). La lógica pura vive en `services/jefaturaAcceso.js`.
+
+- **Fail-closed**: un Docente sin secciones recibe 403; `preceptor`, `soe` y `student` en `heads` nunca ganan la jefatura; cambiarle el rol a un Docente jefe le saca el acceso en el request siguiente.
+- **El menú no suma una query por request**: `marcarDocenteJefe` (`middleware/jefatura.js`, montado en `server.js`) envuelve `res.render` y consulta la pertenencia **solo al pintar HTML de un `teacher`** — cero en JSON, en el poll de la sala y para los demás roles. Es un patrón nuevo en la casa (DA-7, aprobado por el revisor).
+- **La trampa que la motivó**: el editor de secciones solo ofrecía candidatos con rol `jefe`, así que un Docente jefe **ni se pintaba** y cualquier admin que guardara la sección lo expulsaba sin aviso. Ahora los candidatos son `jefe` + `teacher` activos, y **un jefe actual siempre se pinta tildado y se conserva** sin revalidar (`resolverHeads`, RN-22). Los ids huérfanos (otra escuela / inexistentes) se quitan con aviso previo y auditoría (`jefesAgregados`/`jefesQuitados`/`jefesDescartados` en `section.edit`).
+- `config/sections.js`: `teacher` en `admin_sections`, `jefe_dashboard` y `jefe_teachers`. Eso **no abre nada del panel /admin**: esas listas solo pueden quitar acceso, nunca darlo. En `/superadmin/roles` aparecen 3 celdas nuevas para Docente (2 configurables, 1 con candado).
+- **Sin migración ni datos tocados**. Pero el deploy **cambia permisos**: todo `teacher` que hoy figure en algún `heads` gana `/jefatura` al subir.
+- Tests: `tests/unit/jefaturaAcceso.test.js` (49), 31 smoke `docente-jefe-*` + CA-49 adecuado, bloque 3c en `tests/roles/check-roles.js`.
+
+**Quedaron afuera, a propósito**: el multi-rol general sigue en `specs/identidad-multiescuela.spec.md` (D2 pendiente); esta feature no choca con su fase 1. Previos y anotados aparte: el superadmin sin escuela que vacía una sección al guardarla, y `?search` sin validar en `GET /admin/secciones`.
 
 ### 2026-09-24 — El botón "Dar presente" se ve aunque el alumno esté abajo, en el chat
 

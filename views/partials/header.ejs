@@ -357,6 +357,18 @@ const _activeTheme = (function() {
           <span>Reservas</span>
         </a>
       <% } %>
+      <%# El Docente jefe: un docente que además está a cargo de alguna sección. Sigue siendo
+          docente ("Clases" lo lleva a /courses) y esto le abre el panel de sus secciones.
+          ⚠️ can('jefe_dashboard') da true para TODO docente (config/sections.js), así que no
+          alcanza solo: lo que dice si está a cargo es esJefeDeSeccion, que marca
+          marcarDocenteJefe en middleware/jefatura.js. Mientras se lo suplanta no se pinta,
+          igual que el "Mis secciones" del jefe. %>
+      <% if (typeof user !== 'undefined' && user && user.role === 'teacher' && typeof esJefeDeSeccion !== 'undefined' && esJefeDeSeccion === true && !impersonating && puede('jefe_dashboard')) { %>
+        <a href="/jefatura" class="drawer-item">
+          <span class="material-symbols-outlined">groups</span>
+          <span>Mis secciones</span>
+        </a>
+      <% } %>
       <% if (typeof user !== 'undefined' && user && user.role === 'directivo' && !impersonating && puede('directivo_dashboard')) { %>
         <a href="/directivo" class="drawer-item">
           <span class="material-symbols-outlined">supervisor_account</span>

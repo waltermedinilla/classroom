@@ -40,6 +40,7 @@ const { MODULOS, moduloActivo } = require('./config/modulos');
 const { estadoContacto }        = require('./public/js/estadoVerificacion');
 // Túnel del WebSocket de la transmisión en vivo (ver el comentario donde se monta, más abajo).
 const { montarProxyRtc } = require('./middleware/rtc-proxy');
+const { marcarDocenteJefe } = require('./middleware/jefatura');
 
 // Log del deploy automático (POST /deploy). Va a un archivo propio y no al logger de
 // winston a propósito: el proceso que escribe acá sobrevive al worker que lo lanzó
@@ -696,6 +697,13 @@ app.use(async (req, res, next) => {
   }
   next();
 });
+
+// ── Docente jefe de sección: el "Mis secciones" del menú ────────────────────
+// res.locals.esJefeDeSeccion. No consulta nada al entrar: envuelve res.render y pregunta
+// recién al pintar una página de un docente. Por eso va acá, pegado a las rutas y detrás del
+// mantenimiento y la mudanza: esas pantallas no llevan menú y no tienen por qué pagarla. Ver
+// middleware/jefatura.js para por qué NO se mueve a la entrada del request.
+app.use(marcarDocenteJefe());
 
 // ── Rutas ────────────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {

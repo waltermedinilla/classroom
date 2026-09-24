@@ -2,9 +2,10 @@ const mongoose = require('mongoose');
 const { Schema } = mongoose;
 
 // Sección: un recorte del establecimiento con nombre, a cargo de uno o más "Jefes de
-// Sección" (rol `jefe`). Es el alcance de ese rol, igual que assignedDivisions lo es del
-// preceptor — pero con un grano más fino, porque una sección no coincide con una división
-// ni con una materia: se arma a mano mezclando las dos cosas.
+// Sección" (rol `jefe`) o Docentes (rol `teacher`, el Docente jefe de
+// specs/docente-jefe-de-seccion.spec.md). Es el alcance de quien está a cargo, igual que
+// assignedDivisions lo es del preceptor — pero con un grano más fino, porque una sección no
+// coincide con una división ni con una materia: se arma a mano mezclando las dos cosas.
 //
 // ⚠️ NO CONFUNDIR con config/sections.js ni con middleware/sections.js. Aquéllas son las
 // "secciones" en el sentido de SOLAPAS del panel (qué ve cada rol en el nav). Esto es una
@@ -60,8 +61,10 @@ const sectionSchema = new Schema({
   //      sin invalidar nada. Lo único que sigue tardando hasta 45s es el cambio de ROL.
   //
   // Muchos a muchos: una sección puede tener varios jefes y un jefe varias secciones (su
-  // alcance es la unión). Solo se aceptan usuarios con role 'jefe' de la misma escuela;
-  // eso lo valida routes/admin.js al guardar, no el schema.
+  // alcance es la unión). Para AGREGAR a alguien tiene que ser `jefe` o `teacher`, activo y
+  // de la misma escuela; los que ya estaban se conservan aunque después cambien de rol o se
+  // deshabiliten (figurar con un rol que no entra no da acceso a nada). Eso lo valida
+  // routes/sections.js al guardar, con services/jefaturaAcceso.js — no el schema.
   heads: [{
     type: Schema.Types.ObjectId,
     ref: 'User',
