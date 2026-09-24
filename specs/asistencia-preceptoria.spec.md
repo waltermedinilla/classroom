@@ -36,6 +36,14 @@
 >   marcar: "marcaste ausente a Juan y está en Matemática ahora" es el aviso más útil, y
 >   filtrando solo por "sin marcar" la sugerencia no volvía a aparecer después del primer cierre.
 >
+> **2026-09-24 — RN-22 y RN-23, pedidas por el usuario ("a algunos alumnos se les demora en
+> aparecer el botón").** El botón NO tardaba: medido en el espejo (38 tomas y 612 presentes
+> desde el 11/09), el primer alumno de cada toma lo da a los **0,6 min** (mediana; p90 2,1). Lo
+> que tardaba era que el alumno **lo viera**: en la sala, el cartel queda arriba de todo y el
+> alumno está en el chat, 1.000 a 1.450 px más abajo en el celular. Se aprobaron los arreglos
+> A (RN-22, aviso fijo abajo) y C (RN-23, corte del sondeo a los 15 s). El B, que era mostrarlo
+> en todas las solapas de la materia, **no** se aprobó.
+>
 > Flujo SDD: arquitecto → **spec aprobada** → tester → implementador → revisor.
 >
 > Decisiones ya cerradas con el usuario el **2026-08-10** — no reabrirlas sin él:
@@ -531,6 +539,48 @@ materias de dos años). En la práctica trae una sola.
   · **Un solo renderizador** (`public/js/asistenciaBanda.js`), que llaman el servidor y el
     navegador. Dos marcados para la misma banda divergen a la primera corrección.
 
+- **RN-22 — Si el cartel está en la pantalla pero fuera de la vista, un aviso fijo abajo lo
+  trae (2026-09-24).** El reclamo: *"a algunos alumnos se les demora en aparecer el botón"*. El
+  botón aparecía en menos de un minuto (RN-21), pero en la sala en vivo el cartel va arriba de
+  todo, y en el celular el alumno que escribe en el chat lo tiene **1.000 px más arriba (1.450
+  con transmisión)**, medido a 360 y 390 px. Encima, el *scroll anchoring* del navegador hace
+  que la inserción no mueva nada: no hay ninguna señal de que apareció.
+
+  · **Cuándo se muestra**: hay al menos una banda **pendiente** (sin dar) **y** el cartel está
+    en la pantalla actual **y** no se ve en la ventana. Lo decide una función pura,
+    `mostrarAviso()` de `public/js/asistenciaBanda.js`.
+  · **"En la pantalla actual"** = el contenedor se dibuja (`getClientRects().length > 0`). En
+    una solapa oculta de la materia **no** aparece: mostrarlo ahí era el arreglo B, que no se
+    aprobó. Es una condición de una línea si algún día se quiere.
+  · **"Se ve"** lo informa un `IntersectionObserver` sobre `#asBanda`, descontando los 64 px del
+    encabezado fijo. **Sin `IntersectionObserver`** (navegador muy viejo) se asume que se ve y
+    el aviso no aparece nunca: degrada a lo de antes, no a algo roto.
+  · **El botón del aviso da el presente, con UN solo camino de código**: hace `click()` en el
+    botón de la banda pendiente. Así el POST, el manejo de errores, los textos de `ETIQUETAS` y
+    el caso `respetada: false` (RN-11) son los de la banda, sin copias. La banda avisa el
+    resultado con un evento, y el aviso muestra *"Listo, quedó tu presente"* unos segundos o el
+    error.
+  · **Se va solo** al quedar dado, cuando el cartel entra en la vista o cuando la toma deja de
+    venir en el sondeo (se cerró).
+  · **Se puede cerrar (×)**. Cerrado, no vuelve hasta que cambie el **conjunto** de tomas: la
+    misma firma de RN-21. Con eso no reaparece a cada rato, pero sí si se abre otra toma.
+  · **No tapa la sala para siempre**: mientras se ve, la página suma abajo el alto del aviso, y
+    así el cuadro de escribir sigue alcanzable con el scroll.
+  · Solo alumnos, igual que el cartel. El texto sale del módulo (la regla del test del
+    literal): el partial no trae ni "Dar presente" ni el texto del aviso escritos a mano.
+  · Colores: fondo verde `#137333` con texto blanco (5,9:1) y botón blanco con texto `#0d652d`
+    (7,5:1). Son pares cerrados, que se leen igual en los dos temas: un fondo fijo declara su
+    color de texto. Íconos: `front_hand`, `task_alt` y `close`, que ya están en la lista de
+    `head-iconos`.
+
+- **RN-23 — El sondeo del cartel se corta a los 15 s (2026-09-24).** `fetch` no trae timeout.
+  En una red de celular que cuelga el pedido, `enVuelo` quedaba en `true` y **todos** los
+  ciclos siguientes —incluido el de volver a la pestaña— salían sin preguntar hasta que ese
+  fetch terminara de fallar, que pueden ser minutos. Ahora el pedido lleva un
+  `AbortController` de 15 s. Un corte cuenta como falta de red: **no borra lo que ya está
+  pintado** y el ciclo se reprograma normal. Lo hace `pedirTomas(fetch, ms)` del módulo, que
+  devuelve la lista o `null` y se testea con un fetch falso que nunca contesta.
+
 ## Casos de uso
 
 1. **Pase de lista de la mañana.** El preceptor entra a `/preceptor/asistencia`, ve sus cuatro
@@ -692,6 +742,29 @@ materias de dos años). En la práctica trae una sola.
 - **CA-53** — Dadas las tres colecciones de la sala en vivo, entonces **ninguna cambió** después
   de una jornada completa de asistencia: esta feature solo las lee (RN-09, RN-20).
 
+### El cartel a la vista (RN-22, RN-23) — 2026-09-24
+
+- **CA-54** — Dada una banda pendiente, con el cartel en la pantalla y fuera de la vista,
+  entonces `mostrarAviso()` da `true`. Con el cartel a la vista, `false`.
+- **CA-55** — Dado que no hay bandas pendientes (ninguna toma, o todas dadas), entonces
+  `mostrarAviso()` da `false` aunque el cartel esté fuera de la vista.
+- **CA-56** — Dado un cartel que no se dibuja (solapa oculta de la materia), entonces
+  `mostrarAviso()` da `false` (el arreglo B no se aprobó).
+- **CA-57** — Dado que el alumno cerró el aviso con la firma X, entonces no vuelve mientras la
+  firma siga siendo X, y vuelve si cambia (se abrió otra toma).
+- **CA-58** — Dado el marcado del aviso, entonces trae el texto del botón de `ETIQUETAS.dar` y
+  un botón para cerrar con `aria-label`, y el partial no trae ese texto escrito a mano (CA del
+  literal, extendido).
+- **CA-59** — Dado el partial, entonces el botón del aviso NO hace un POST propio: dispara el
+  botón de la banda. Hay un solo `fetch('/asistencia/' + …)`.
+- **CA-60** — Dado un `/asistencia/abierta` que no contesta nunca, entonces `pedirTomas()`
+  resuelve `null` a los `ms` indicados, y el `AbortController` corta el pedido.
+- **CA-61** — Dado un `/asistencia/abierta` que contesta 200 con `{tomas}`, entonces
+  `pedirTomas()` devuelve la lista; con un no-OK o un JSON sin `tomas`, `null`.
+- **CA-62** — Dado `npm run test:smoke` y `npm run test:roles`, entonces siguen verdes (el
+  aviso vive solo en JS: `student-attendance-banner` y `attendance-autoasistencia-toggle` no
+  cambian).
+
 ## Errores posibles
 
 | CODIGO | HTTP | Mensaje en español | Cuándo |
@@ -725,6 +798,8 @@ ventanas de tiempo se testea acá, sin Mongo: son funciones puras que reciben `n
 
 **Roles** — `tests/roles/check-roles.js`: la solapa nueva entra en la matriz de roles ×
 solapas, con los 8 roles (CA-48).
+
+**Unitarios del cartel (2026-09-24)** — `tests/unit/asistenciaBanda.test.js`: CA-54 a CA-61.
 
 **Manual, en el navegador** — la grilla con 25 alumnos en un celular (es donde el preceptor la
 va a usar de verdad), y el cartel del alumno en el inicio.

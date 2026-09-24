@@ -59,6 +59,39 @@
   @media (max-width: 768px) {
     .as-band-btn { flex:1 1 100%; min-height:46px; }
   }
+
+  /* ── RN-22: el aviso fijo, cuando el cartel quedó fuera de la vista (2026-09-24) ──────────
+     En la sala, el alumno que escribe en el chat tiene el cartel 1.000 a 1.450 px más arriba
+     en el celular. Este aviso lo alcanza donde esté.
+     Pares cerrados de fondo+texto: verde #137333 con blanco (5,9:1) y el botón blanco con
+     #0d652d (7,5:1). Se leen igual en los dos temas, así que no llevan variante oscura, y cada
+     fondo fijo declara su color de texto.
+     z-index 250: arriba del encabezado (200), debajo del menú lateral (300) y de los modales
+     (500), para no tapar nada que el alumno haya abierto a propósito. */
+  .as-aviso { position:fixed; left:12px; right:12px; bottom:calc(12px + env(safe-area-inset-bottom, 0px));
+              max-width:560px; margin:0 auto; z-index:250; box-sizing:border-box;
+              display:flex; align-items:center; gap:10px; padding:8px 6px 8px 14px;
+              border-radius:14px; background:#137333; color:#fff; font-size:14px; line-height:1.3;
+              box-shadow:0 6px 20px rgba(0,0,0,.28); }
+  .as-aviso[hidden] { display:none; }
+  .as-aviso > .material-symbols-outlined { flex:none; color:#fff; }
+  .as-aviso-txt { flex:1; min-width:0; color:#fff; }
+  .as-aviso-txt small { display:block; font-size:12px; color:#e6f4ea; margin-top:2px; }
+  .as-aviso-btn { flex:none; display:inline-flex; align-items:center; gap:6px; min-height:44px;
+                  padding:0 14px; border-radius:10px; border:none; background:#fff; color:#0d652d;
+                  font:inherit; font-weight:600; cursor:pointer; }
+  .as-aviso-btn .material-symbols-outlined { font-size:20px; line-height:1; }
+  .as-aviso-btn:disabled { background:#e6f4ea; color:#0d652d; cursor:default; }
+  .as-aviso-x { flex:none; width:44px; height:44px; display:inline-flex; align-items:center;
+                justify-content:center; border:none; border-radius:50%; background:none;
+                color:#fff; cursor:pointer; }
+  /* Mientras se ve, la página suma abajo su alto: sin esto tapaba para siempre lo último de la
+     pantalla, que en la sala es justo el cuadro de escribir. */
+  body.as-aviso-on { padding-bottom:84px; }
+  @media (max-width: 400px) {
+    .as-aviso { gap:6px; padding-left:12px; }
+    .as-aviso > .material-symbols-outlined { display:none; }
+  }
 </style>
 
 <%# El host existe SIEMPRE (aunque no haya ninguna toma abierta): es lo que le da al sondeo un
@@ -69,6 +102,9 @@
     navegador, así que el inicio sigue sirviendo HTML hecho. `data-tomas` ausente = "nadie me
     sirvió nada, pedilo vos", que es el caso de la sala en vivo. %>
 <div id="asBanda"<% if (Array.isArray(locals.tomasAsistencia)) { %> data-tomas="<%= JSON.stringify(tomasAsistencia) %>"<% } %>><%- locals.tomasAsistenciaHTML || '' %></div>
+<%# RN-22: el aviso fijo. Arranca vacío y oculto: su texto lo escribe avisoHTML() solo cuando
+    hay algo que avisar (la regla del literal: ver el test del partial). %>
+<div id="asAviso" class="as-aviso" hidden></div>
 
 <script src="/js/asistenciaBanda.js"></script>
 <script>
@@ -88,15 +124,15 @@
     if (!r.repintar) return;          // el conjunto no cambió: no se toca el DOM
     firmaPintada = r.firma;
     host.innerHTML = r.html;
+    evaluarAviso();
   }
 
+  // RN-23: con tope de 15 s. Sin él, un pedido colgado por la red del celular dejaba `enVuelo`
+  // en true y ningún ciclo volvía a preguntar hasta que terminara de fallar. `null` = falla o
+  // corte: se reintenta en el próximo turno y no se borra lo que ya está pintado.
   async function consultar() {
-    try {
-      const r = await fetch('/asistencia/abierta', { headers: { Accept: 'application/json' } });
-      if (!r.ok) return;
-      const d = await r.json();
-      if (Array.isArray(d.tomas)) aplicar(d.tomas);
-    } catch { /* sin red: se reintenta en el próximo turno, no se borra lo que hay */ }
+    const tomas = await AB.pedirTomas(window.fetch.bind(window), AB.TOPE_MS);
+    if (tomas) aplicar(tomas);
   }
 
   // Ciclo encadenado (setTimeout y no setInterval) por lo mismo que el poll de la sala: con
@@ -155,13 +191,99 @@
         ? 'Preceptoría ya te había tomado la asistencia. Quedó registrado que diste el presente.' +
           '<small>Si no coincide con lo que pasó, hablalo con preceptoría.</small>'
         : 'Listo, quedó tu presente de hoy.<small>Lo puede corregir preceptoría.</small>';
+      avisarResultado(true);
     } catch (e) {
       btn.disabled = false;
       pintarBoton(AB.ETIQUETAS.dar.icono, AB.ETIQUETAS.dar.texto);
       band.querySelector('.as-band-txt').insertAdjacentHTML('beforeend',
         '<small style="color:#d93025">' + e.message + '</small>');
+      avisarResultado(false, e.message);
     }
   });
+
+  // ── RN-22: el aviso fijo, cuando el cartel quedó fuera de la vista ───────────────────────
+  //
+  // UN SOLO CAMINO para dar el presente: el botón del aviso NO hace su propio POST, aprieta el
+  // de la banda. Así el manejo de errores, los textos y el "Preceptoría ya te había tomado la
+  // asistencia" (respetada: false) son los de la banda, sin copias que diverjan.
+  const aviso = document.getElementById('asAviso');
+  let visible      = true;    // sin IntersectionObserver se asume a la vista: degrada a lo de antes
+  let firmaCerrada = null;    // cerrado con la ×, no vuelve hasta que cambie el conjunto de tomas
+  let desdeAviso   = false;   // hay un envío en curso que salió del aviso
+  let retener      = null;    // el "Listo" se deja unos segundos antes de irse
+
+  function mostrarEnAviso(estado, mensaje) {
+    aviso.innerHTML = AB.avisoHTML(estado, mensaje);
+    if (aviso.hidden) {
+      // Quien está al fondo de todo (en la sala: escribiendo) quedaría con lo último tapado por
+      // el aviso hasta volver a bajar. Se lo acompaña: la página crece y la vista baja con ella.
+      const doc   = document.documentElement;
+      const fondo = window.innerHeight + window.scrollY >= doc.scrollHeight - 4;
+      aviso.hidden = false;
+      document.body.classList.add('as-aviso-on');
+      if (fondo) window.scrollTo(0, doc.scrollHeight);
+    }
+  }
+  function ocultarAviso() {
+    aviso.hidden = true;
+    aviso.innerHTML = '';
+    document.body.classList.remove('as-aviso-on');
+  }
+
+  function evaluarAviso() {
+    if (!aviso || desdeAviso || retener) return;   // no se pisa un envío ni su resultado
+    const mostrar = AB.mostrarAviso({
+      pendientes:   host.querySelectorAll('.as-band:not(.dada)').length,
+      enPantalla:   host.getClientRects().length > 0,
+      visible,
+      firma:        firmaPintada,
+      firmaCerrada,
+    });
+    if (!mostrar) return ocultarAviso();
+    // Un error a la vista se deja hasta que el alumno haga algo: no se lo pisa el sondeo.
+    if (!aviso.hidden && aviso.querySelector('.as-aviso-txt small')) return;
+    if (aviso.hidden) mostrarEnAviso('dar');
+  }
+
+  function avisarResultado(ok, mensaje) {
+    if (!aviso) return;
+    if (!desdeAviso) { evaluarAviso(); return; }
+    desdeAviso = false;
+    if (ok) {
+      mostrarEnAviso('dada');
+      retener = setTimeout(() => { retener = null; ocultarAviso(); evaluarAviso(); }, 4000);
+    } else {
+      mostrarEnAviso('error', mensaje);
+    }
+  }
+
+  if (aviso) {
+    aviso.addEventListener('click', (ev) => {
+      if (ev.target.closest('.as-aviso-x')) {
+        firmaCerrada = firmaPintada;
+        if (retener) { clearTimeout(retener); retener = null; }
+        ocultarAviso();
+        return;
+      }
+      if (!ev.target.closest('.as-aviso-btn')) return;
+      const btnBanda = host.querySelector('.as-band:not(.dada) .as-band-btn:not([disabled])');
+      if (!btnBanda) { evaluarAviso(); return; }
+      desdeAviso = true;
+      mostrarEnAviso('enviando');
+      btnBanda.click();
+    });
+
+    if ('IntersectionObserver' in window) {
+      // Los 64 px de arriba los tapa el encabezado fijo: ahí el cartel "se ve" pero no se lee.
+      new IntersectionObserver((entradas) => {
+        visible = entradas[entradas.length - 1].isIntersecting;
+        evaluarAviso();
+      }, { rootMargin: '-64px 0px 0px 0px' }).observe(host);
+    }
+    // Cambiar de solapa en la materia (un click) muestra u oculta el cartel sin que el observer
+    // se entere si sigue fuera de la vista: se reevalúa después de cada click.
+    document.addEventListener('click', () => requestAnimationFrame(evaluarAviso), true);
+  }
 
   // Primera pintada: si el servidor ya la sirvió (el Inicio), NO se repinta — solo se adopta su
   // firma, para que el primer sondeo no reemplace por lo mismo. Donde no vino nada —la sala en

@@ -167,3 +167,104 @@ test('bandasHTML arma la lista entera, y es lo que usan los dos lados', () => {
   assert.equal(AB.bandasHTML([]), '');
   assert.equal(AB.bandasHTML(null), '');
 });
+
+// ── RN-22: el aviso fijo cuando el cartel quedó fuera de la vista (2026-09-24) ──────────────
+//
+// El reclamo: "a algunos alumnos se les demora en aparecer el botón". No se demoraba —el
+// primero de cada toma lo da a los 36 s—: en la sala el cartel va ARRIBA de todo y el alumno
+// está en el chat, 1.000 a 1.450 px más abajo en el celular. El aviso fijo lo trae a la vista.
+
+const estado = (o) => Object.assign({
+  pendientes: 1, enPantalla: true, visible: false, firma: 'a1', firmaCerrada: null,
+}, o);
+
+test('⭐⭐ CA-54: cartel pendiente y fuera de la vista → aparece el aviso (el caso del chat)', () => {
+  assert.equal(AB.mostrarAviso(estado()), true);
+});
+
+test('CA-54: con el cartel a la vista, el aviso sobra', () => {
+  assert.equal(AB.mostrarAviso(estado({ visible: true })), false);
+});
+
+test('CA-55: sin nada pendiente no hay aviso, aunque el cartel esté lejos', () => {
+  assert.equal(AB.mostrarAviso(estado({ pendientes: 0 })), false);
+  assert.equal(AB.mostrarAviso(estado({ pendientes: 0, firma: '' })), false);
+});
+
+test('CA-56: en una solapa oculta de la materia NO aparece (el arreglo B no se aprobó)', () => {
+  assert.equal(AB.mostrarAviso(estado({ enPantalla: false })), false);
+});
+
+test('⭐ CA-57: cerrado con una firma, no vuelve con esa firma; vuelve si se abre otra toma', () => {
+  assert.equal(AB.mostrarAviso(estado({ firmaCerrada: 'a1' })), false);
+  assert.equal(AB.mostrarAviso(estado({ firmaCerrada: 'a1', firma: 'a1,b2' })), true);
+});
+
+test('mostrarAviso sin datos no revienta: da false', () => {
+  assert.equal(AB.mostrarAviso(), false);
+  assert.equal(AB.mostrarAviso({}), false);
+});
+
+test('CA-58: el aviso trae el botón de ETIQUETAS y un cerrar con nombre accesible', () => {
+  const html = AB.avisoHTML('dar');
+  assert.ok(html.includes(AB.ETIQUETAS.dar.texto));
+  assert.match(html, /as-aviso-btn/);
+  assert.match(html, /as-aviso-x[^>]*aria-label="[^"]+"/);
+  assert.match(html, /role="status"/);
+});
+
+test('CA-58: el aviso muestra enviando, dado y el error (escapado)', () => {
+  assert.ok(AB.avisoHTML('enviando').includes(AB.ETIQUETAS.enviando.texto));
+  assert.match(AB.avisoHTML('dada'), /Listo/);
+  const err = AB.avisoHTML('error', '<b>La asistencia está cerrada</b>');
+  assert.ok(err.includes('&lt;b&gt;La asistencia está cerrada'), 'el mensaje del servidor va escapado');
+  assert.ok(err.includes(AB.ETIQUETAS.dar.texto), 'tras un error se puede volver a intentar');
+});
+
+test('⭐⭐ CA-58/59: el partial no trae el texto del aviso escrito a mano, ni un POST propio del aviso', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const emitido = fs.readFileSync(
+    path.join(__dirname, '../../views/partials/asistencia-banner.ejs'), 'utf8')
+    .replace(/<%#[\s\S]*?%>/g, '');
+  assert.ok(!emitido.includes('tomando asistencia'),
+    'el texto del aviso sale de avisoHTML(), como el del botón sale de ETIQUETAS');
+  assert.match(emitido, /id="asAviso"/, 'el contenedor del aviso existe');
+  assert.match(emitido, /avisoHTML\(/, 'y se pinta con el módulo');
+  // UN solo camino para dar el presente: el del botón de la banda.
+  assert.equal((emitido.match(/fetch\('\/asistencia\/' \+/g) || []).length, 1,
+    'el aviso no puede tener su propio POST: dispara el botón de la banda');
+  assert.match(emitido, /IntersectionObserver/);
+});
+
+// ── RN-23: el sondeo se corta a los 15 s ────────────────────────────────────
+
+test('⭐⭐ CA-60: un /asistencia/abierta que no contesta NUNCA se corta y da null', async () => {
+  // El caso de la red de celular que cuelga el pedido: antes, `enVuelo` quedaba en true y ningún
+  // ciclo volvía a preguntar hasta que ese fetch terminara de fallar.
+  let abortado = false;
+  const colgado = (url, opts) => new Promise((resolve, reject) => {
+    opts.signal.addEventListener('abort', () => {
+      abortado = true;
+      reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+    });
+  });
+  const t0 = Date.now();
+  const r = await AB.pedirTomas(colgado, 40);
+  assert.equal(r, null);
+  assert.equal(abortado, true, 'el pedido se cancela, no queda colgado de fondo');
+  assert.ok(Date.now() - t0 < 1000);
+});
+
+test('CA-60: el tope por defecto es 15 s', () => {
+  assert.equal(AB.TOPE_MS, 15000);
+});
+
+test('CA-61: con 200 devuelve las tomas; con error, no-OK o JSON raro, null', async () => {
+  const ok = async () => ({ ok: true, json: async () => ({ tomas: [toma()] }) });
+  assert.deepEqual((await AB.pedirTomas(ok, 1000)).map((t) => t.id), [toma().id]);
+
+  assert.equal(await AB.pedirTomas(async () => ({ ok: false, json: async () => ({}) }), 1000), null);
+  assert.equal(await AB.pedirTomas(async () => ({ ok: true, json: async () => ({}) }), 1000), null);
+  assert.equal(await AB.pedirTomas(async () => { throw new Error('sin red'); }, 1000), null);
+});

@@ -527,6 +527,30 @@ creadas, no.
 
 ## Historial de Cambios (Changelog)
 
+### 2026-09-24 — El botón "Dar presente" se ve aunque el alumno esté abajo, en el chat
+
+Reclamo del usuario: *"a algunos alumnos se les demora en aparecer el botón para dar el
+presente"*. Spec: `specs/asistencia-preceptoria.spec.md`, **RN-22 y RN-23**.
+
+**No se demoraba en aparecer.** Medido en el espejo (38 tomas y 612 presentes desde el 11/09):
+el primer alumno de cada toma da el presente a los **0,6 min** (mediana; p90 2,1). Lo que
+tardaba era que el alumno **lo viera**. En la sala en vivo el cartel va arriba de todo, y en el
+celular el que escribe en el chat lo tiene 1.000 px más arriba (1.450 con transmisión). El
+*scroll anchoring* hace que aparezca sin mover nada.
+
+- **RN-22 — aviso fijo abajo** ("Preceptoría está tomando asistencia · Dar presente · ×")
+  cuando hay un presente pendiente y el cartel está en la pantalla pero fuera de la vista
+  (`IntersectionObserver`; sin él, no aparece nunca). Su botón **aprieta el de la banda**: un
+  solo POST, los mismos errores y textos. Se va solo al quedar dado (con "Listo" 4 s), al
+  entrar el cartel en la vista o al cerrarse la toma. Cerrado con la ×, vuelve solo si se abre
+  otra toma. No se muestra en una solapa oculta de la materia (eso era el arreglo B, que no se
+  aprobó).
+- **RN-23 — el sondeo de `/asistencia/abierta` se corta a los 15 s.** Sin tope, un pedido
+  colgado por la red del celular dejaba `enVuelo` en true y ningún ciclo volvía a preguntar.
+
+Solo toca el cartel (`views/partials/asistencia-banner.ejs` + `public/js/asistenciaBanda.js`).
+Sin cambios en rutas, servidor ni base. Tests: 12 nuevos en `tests/unit/asistenciaBanda.test.js`.
+
 ### 2026-09-23 — "Hablar" en la sala en vivo: la voz del docente y, si quiere, la de los alumnos
 
 Pedido del usuario: que el docente pueda hablar por audio en la sala en vivo y elija si habla
