@@ -18,6 +18,7 @@ const { SYSTEM_OWNER_EMAIL } = require('../config/maintenance');
 const { INTERESTS, MAX_INTERESTS } = require('../config/interests');
 // Constantes de la sala en vivo (la solapa "En vivo" del detalle de materia).
 const live = require('../services/liveRoom');
+const { personasVisibles } = require('../services/personasVisibles');
 // Asistencia de preceptoría: de acá sale el cartel "Dar presente" del inicio del alumno.
 const asistencia = require('../services/attendance');
 // El renderizador del cartel "Dar presente". Es el MISMO archivo que el navegador carga
@@ -642,7 +643,8 @@ router.get('/:id', requireAuth, async (req, res) => {
     const course = await Course.findById(req.params.id)
       .populate('owner', 'name email')
       .populate('coTeachers', 'name email')
-      .populate('students', 'name email dni active avatar')
+      // Sin `dni`: se trae aparte y solo para el que gestiona (ver abajo).
+      .populate('students', 'name email active avatar')
       .populate('division', 'name');
     if (!course) return res.status(404).send('Curso no encontrado');
     // La regla vive en el modelo (canView) para que sea LA MISMA que usan /:id/data y las
@@ -653,6 +655,21 @@ router.get('/:id', requireAuth, async (req, res) => {
     // Orden alfabético por apellido para la solapa Personas — los nombres se cargan
     // como "APELLIDO, Nombre", así que ordenar por el string completo alcanza.
     course.students.sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+
+    // El DNI es la contraseña inicial de las cuentas: un alumno no puede recibir el de sus
+    // compañeros (specs/personas-privacidad-alumno.spec.md). Ni siquiera se lee de la base
+    // si quien mira no gestiona la materia; personasVisibles es la segunda red.
+    const esGestor = course.canManage(res.locals.user);
+    let alumnos = course.students;
+    if (esGestor && alumnos.length) {
+      const dnis = new Map((await User.find({ _id: { $in: alumnos.map(s => s._id) } })
+        .select('dni').lean()).map(u => [String(u._id), u.dni]));
+      alumnos = alumnos.map(s => ({
+        _id: s._id, name: s.name, email: s.email, active: s.active, avatar: s.avatar,
+        dni: dnis.get(String(s._id)),
+      }));
+    }
+    const personas = personasVisibles(alumnos, esGestor);
 
     // Docente destacado en la esquina superior derecha de la ficha: solo a modo de
     // figurar, NO cambia quién es el titular real (course.owner sigue intacto). Por
@@ -692,7 +709,7 @@ router.get('/:id', requireAuth, async (req, res) => {
 
     res.render('course', {
       course, featuredTeacher, joinByCode: JOIN_BY_CODE_ACTIVO,
-      manageTeachers, schoolTeachers,
+      manageTeachers, schoolTeachers, personas,
       // Constantes de la solapa "En vivo" (services/liveRoom.js). Son valores fijos, no
       // consultas: la sala se llena sola con su primer poll — ver el comentario en course.ejs.
       liveEmojis: live.EMOJIS, livePollMs: live.POLL_MS,

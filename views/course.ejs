@@ -230,7 +230,9 @@
         <div class="people-card-header">
           <span class="material-symbols-outlined">people</span>
           <h3>Estudiantes</h3>
-          <span class="people-count"><%= course.students.length %></span>
+          <%# `personas` sale de services/personasVisibles.js: al alumno le llega sin DNI y sin los
+              compañeros deshabilitados, así que el contador también los descuenta (RN-5). %>
+          <span class="people-count"><%= personas.length %></span>
           <%
             // Los docentes ya no pueden agregar/deshabilitar/quitar alumnos desde acá
             // (decisión del usuario 2026-07-25). Si el owner es un admin (Course.owner
@@ -250,13 +252,13 @@
           </button>
           <% } %>
         </div>
-        <% if (course.students.length === 0) { %>
+        <% if (personas.length === 0) { %>
           <div class="empty-state small">
             <div class="empty-icon"><span class="material-symbols-outlined">person_add</span></div>
             <p>Aún no hay estudiantes</p>
           </div>
         <% } %>
-        <% course.students.forEach(student => { %>
+        <% personas.forEach(student => { %>
           <%
             const isDisabled = student.active === false;
             // isOwnerView / teacherManagesPeople ya se calcularon arriba, en el header

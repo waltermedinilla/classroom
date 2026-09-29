@@ -71,7 +71,7 @@ El admin puede "ver como" cualquier otro usuario (excepto el admin protegido):
 - Header del curso con degradado, nombre, sección, código (badge)
 - Tab "Novedades": anuncios con imagen opcional + sidebar "Próximas entregas" (solo lo que **falta** hacer: lo ya entregado no figura)
 - Tab "Actividades" (alumno): chip de estado personal — Calificada / **Entregada** / Vencida / Tardía / Pendiente. La regla vive en `public/js/estadoActividad.js`; el dato de la entrega propia llega en `mySubmission` desde `GET /activities/course/:id`
-- Tab "Personas": lista de docente y alumnos
+- Tab "Personas": lista de docente y alumnos. El DNI y los deshabilitados solo los ve quien gestiona la materia; al alumno le llegan nombre, correo y foto (`services/personasVisibles.js`)
 - JS: `public/js/course.js`
 - Variables globales: `window.COURSE_ID`, `window.IS_OWNER`
 
@@ -527,6 +527,19 @@ creadas, no.
 ---
 
 ## Historial de Cambios (Changelog)
+
+### 2026-09-29 — El alumno ya no ve el DNI de sus compañeros en la solapa Personas
+
+**Pedido**: *"un alumno puede ver la información de los otros chicos... puede ingresar teniendo el correo y el dni"*. La solapa Personas de `/courses/:id` le mostraba a cualquier alumno matriculado el DNI de cada compañero junto a su correo, y **el DNI es la contraseña inicial de las cuentas** (importaciones y reseteo del admin en `routes/admin.js`).
+
+**Lo que se hizo** (spec `specs/personas-privacidad-alumno.spec.md`): el que gestiona la materia (`canManage`: docente, suplente, admin) ve la solapa igual que antes. Al alumno le llegan de cada compañero solo **nombre, correo y foto**, y los compañeros con la cuenta deshabilitada **no figuran** (el contador los descuenta).
+
+- **El arreglo es en el servidor**: `GET /courses/:id` ya no pide `dni` en el populate; se lee aparte y solo si quien mira gestiona la materia. La proyección vive en `services/personasVisibles.js`, una lista de **permitidos** (cada campo por su nombre, nunca `{...s}`).
+- `GET /courses/:id/data` ya estaba bien (`name email`); un smoke lo fija.
+- **Sin migración ni datos tocados.**
+- Tests: `tests/unit/personasVisibles.test.js` (17) y 7 smoke `personas-privacidad-*` con dos alumnos matriculados. CA-01 y CA-09 fallaban con el código anterior.
+
+**Quedó afuera, a propósito** (decisión del usuario, P3 = C): `GET /register/lookup?dni=` sigue devolviendo nombre y correo **sin iniciar sesión** (`routes/auth.js`). El arreglo de fondo sería forzar el cambio de contraseña en el primer ingreso; sin spec.
 
 ### 2026-09-24 — El Docente que es jefe de sección entra a Jefatura sin dejar de ser Docente
 

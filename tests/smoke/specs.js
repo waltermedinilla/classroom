@@ -715,6 +715,201 @@ const specs = [
       });
     },
   },
+
+  // ── specs/personas-privacidad-alumno.spec.md — el alumno no ve el DNI de sus compañeros ──
+  // Materia y actores PROPIOS (no se reutiliza state.courseId): esa materia sigue con un solo
+  // alumno matriculado y decenas de specs de más abajo dependen de esa forma. Acá hacen falta
+  // DOS alumnos matriculados — si A solo viera su propio DNI, el test no probaría la fuga
+  // entre compañeros que es justamente el caso reportado.
+  {
+    id: 'personas-privacidad-setup',
+    title: 'Se arma una materia propia con DOS alumnos matriculados para la solapa Personas',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      // Todos en minúscula a propósito: el modelo (`lowercase: true` en models/User.js)
+      // normaliza el email al guardarlo, y las aserciones de CA-02/CA-09 buscan el string
+      // TAL CUAL sale en el HTML — con una mayúscula acá, el test se rompería solo.
+      state.personasTeacherEmail = `personas.docente.${RUN_ID}@example.com`;
+      const docente = await client.post('admin', '/admin/users/create', {
+        body: {
+          name: `Smoke Personas Docente ${RUN_ID}`, email: state.personasTeacherEmail,
+          password: 'SmokeTest1234', role: 'teacher', dni: dniSmoke(27),
+        },
+        expectStatus: 201,
+      });
+      state.personasTeacherId = docente.json.user._id;
+      await client.post('personasTeacher', '/login', {
+        body: { email: state.personasTeacherEmail, password: 'SmokeTest1234' },
+        expectStatus: 200,
+      });
+
+      state.personasAlumnoAEmail = `personas.alumnoa.${RUN_ID}@example.com`;
+      const alumnoA = await client.post('admin', '/admin/users/create', {
+        body: {
+          name: `Smoke Personas Alumno A ${RUN_ID}`, email: state.personasAlumnoAEmail,
+          password: 'SmokeTest1234', role: 'student', dni: dniSmoke(28),
+        },
+        expectStatus: 201,
+      });
+      state.personasAlumnoAId = alumnoA.json.user._id;
+      await client.post('personasAlumnoA', '/login', {
+        body: { email: state.personasAlumnoAEmail, password: 'SmokeTest1234' },
+        expectStatus: 200,
+      });
+
+      state.personasAlumnoBEmail = `personas.alumnob.${RUN_ID}@example.com`;
+      state.personasAlumnoBName  = `Smoke Personas Alumno B ${RUN_ID}`;
+      state.personasAlumnoBDni   = dniSmoke(29);
+      const alumnoB = await client.post('admin', '/admin/users/create', {
+        body: {
+          name: state.personasAlumnoBName, email: state.personasAlumnoBEmail,
+          password: 'SmokeTest1234', role: 'student', dni: state.personasAlumnoBDni,
+        },
+        expectStatus: 201,
+      });
+      state.personasAlumnoBId = alumnoB.json.user._id;
+
+      const curso = await client.post('admin', '/admin/courses/create', {
+        body: {
+          name: `Materia Personas ${RUN_ID}`, divisionId: state.divisionId,
+          teacherId: state.personasTeacherId,
+        },
+        expectStatus: 201,
+      });
+      state.personasCourseId = curso.json.course._id;
+
+      await client.post('admin', `/courses/${state.personasCourseId}/add-student`, {
+        body: { email: state.personasAlumnoAEmail }, expectStatus: 200,
+      });
+      await client.post('admin', `/courses/${state.personasCourseId}/add-student`, {
+        body: { email: state.personasAlumnoBEmail }, expectStatus: 200,
+      });
+    },
+  },
+  {
+    // El caso real que reportó el usuario el 2026-09-29: "en el rol de alumno... un alumno
+    // puede ver la información de los otros chicos... puede ingresar teniendo el correo y el
+    // dni". Este test TIENE que fallar con el código actual (views/course.ejs:272 imprime el
+    // DNI de cada compañero para cualquier alumno matriculado).
+    id: 'personas-privacidad-ca01-sin-dni-de-companero',
+    title: 'CA-01: el alumno no ve el DNI de un compañero en la solapa Personas (caso real 2026-09-29)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('personasAlumnoA', `/courses/${state.personasCourseId}`, { expectStatus: 200 });
+      assert(!res.text.includes(state.personasAlumnoBDni),
+        `el HTML que recibe A no debería contener el DNI de B (${state.personasAlumnoBDni})`);
+      assert(!/DNI:/.test(res.text),
+        'el HTML que recibe un alumno que no gestiona la materia no debería contener el texto "DNI:"');
+    },
+  },
+  {
+    id: 'personas-privacidad-ca02-nombre-y-correo-si-figuran',
+    title: 'CA-02: el HTML del alumno SÍ contiene el nombre y el correo del compañero',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('personasAlumnoA', `/courses/${state.personasCourseId}`, { expectStatus: 200 });
+      assert(res.text.includes(state.personasAlumnoBName),
+        'el HTML debería mostrar el nombre del compañero (P1=A / P4 del problema: correo y nombre)');
+      assert(res.text.includes(state.personasAlumnoBEmail),
+        'el HTML debería mostrar el correo del compañero (fuera de alcance punto 4: el correo se sigue mostrando)');
+    },
+  },
+  {
+    id: 'personas-privacidad-ca03-docente-titular-ve-dni',
+    title: 'CA-03: el docente titular sigue viendo el DNI de cada alumno (RN-3)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('personasTeacher', `/courses/${state.personasCourseId}`, { expectStatus: 200 });
+      assert(res.text.includes(`DNI: ${state.personasAlumnoBDni}`),
+        'al docente titular no se le tiene que sacar nada: debería seguir viendo "DNI: <dni>"');
+    },
+  },
+  {
+    id: 'personas-privacidad-ca04-admin-ve-dni',
+    title: 'CA-04: el admin de la escuela también sigue viendo el DNI de cada alumno (RN-3)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('admin', `/courses/${state.personasCourseId}`, { expectStatus: 200 });
+      assert(res.text.includes(`DNI: ${state.personasAlumnoBDni}`),
+        'el admin de la escuela gestiona la materia igual que el docente: tiene que seguir viendo el DNI');
+    },
+  },
+  {
+    id: 'personas-privacidad-ca08-data-nunca-trae-dni',
+    title: 'CA-08: GET /courses/:id/data nunca trae el DNI de ningún alumno (RN-6)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // Este endpoint YA está bien hoy (populate('students', 'name email')); el test lo fija
+      // para que un cambio futuro no le sume el DNI sin que nadie lo note.
+      const res = await client.get('personasAlumnoA', `/courses/${state.personasCourseId}/data`, { expectStatus: 200 });
+      const estudiantes = res.json.course.students || [];
+      assert(estudiantes.length === 2, `esperaba 2 alumnos en /data, encontró ${estudiantes.length}`);
+      estudiantes.forEach(s => {
+        assert(!('dni' in s), `course.students no debería traer la clave "dni" (la trajo para ${s.email || s._id})`);
+      });
+    },
+  },
+  {
+    id: 'personas-privacidad-setup-alumno-b-deshabilitado',
+    title: 'Se deshabilita al alumno B para poder probar CA-09 y CA-09c',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.post('admin', `/admin/users/${state.personasAlumnoBId}/toggle-active`, { expectStatus: 200 });
+      assert(res.json.active === false, 'precondición: el alumno B debería quedar deshabilitado');
+    },
+  },
+  {
+    id: 'personas-privacidad-ca09-deshabilitado-no-figura-y-baja-el-contador',
+    title: 'CA-09: el compañero deshabilitado no figura para el alumno, y el contador baja (RN-5, P2=B)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('personasAlumnoA', `/courses/${state.personasCourseId}`, { expectStatus: 200 });
+      assert(!res.text.includes(state.personasAlumnoBName),
+        'el compañero deshabilitado no debería figurar con su nombre');
+      assert(!res.text.includes(state.personasAlumnoBEmail),
+        'el compañero deshabilitado no debería figurar con su correo');
+      assert(!res.text.includes(state.personasAlumnoBId),
+        'el compañero deshabilitado no debería figurar ni con su _id (ni en data-student-id)');
+      assert(!res.text.includes('DESHABILITADO'),
+        'al alumno que no gestiona no se le tiene que mostrar el cartel DESHABILITADO de un compañero que ni siquiera ve');
+
+      const contador = res.text.match(/people-count">(\d+)</);
+      assert(contador, 'no se encontró el contador people-count en el HTML');
+      // La materia tiene 2 alumnos matriculados (A y B). Con B deshabilitado y oculto para A,
+      // el contador que ve A tiene que mostrar 1: un alumno menos que course.students.length.
+      assert(contador[1] === '1',
+        `el contador debería mostrar 1 (2 matriculados menos el deshabilitado), mostró ${contador[1]}`);
+    },
+  },
+  {
+    id: 'personas-privacidad-ca09c-docente-ve-deshabilitado-y-cuenta-a-todos',
+    title: 'CA-09c: el docente titular ve el cartel DESHABILITADO y el contador cuenta a todos (RN-3)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const res = await client.get('personasTeacher', `/courses/${state.personasCourseId}`, { expectStatus: 200 });
+      assert(res.text.includes('DESHABILITADO'),
+        'al gestor no se le tiene que ocultar el estado del alumno deshabilitado');
+      assert(res.text.includes(state.personasAlumnoBName),
+        'al gestor el alumno deshabilitado tiene que seguir figurando en la lista');
+
+      const contador = res.text.match(/people-count">(\d+)</);
+      assert(contador, 'no se encontró el contador people-count en el HTML');
+      assert(contador[1] === '2',
+        `al gestor el contador tiene que seguir contando a los 2 matriculados, mostró ${contador[1]}`);
+    },
+  },
+  {
+    id: 'personas-privacidad-cleanup',
+    title: 'Limpieza: se borra la materia y los tres usuarios de prueba de personas-privacidad',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      if (state.personasCourseId)  await client.post('admin', `/admin/courses/${state.personasCourseId}/delete`, { expectStatus: 200 });
+      if (state.personasAlumnoAId) await client.post('admin', `/admin/users/${state.personasAlumnoAId}/delete`, { expectStatus: 200 });
+      if (state.personasAlumnoBId) await client.post('admin', `/admin/users/${state.personasAlumnoBId}/delete`, { expectStatus: 200 });
+      if (state.personasTeacherId) await client.post('admin', `/admin/users/${state.personasTeacherId}/delete`, { expectStatus: 200 });
+    },
+  },
+
   {
     // ── Automatrícula desde el panel del alumno (TEMPORAL, ver services/selfEnroll.js) ──
     // Cubre al alumno que YA tenía cuenta cuando se agregó la función: el admin lo dio de
