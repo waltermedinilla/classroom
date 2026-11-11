@@ -19,6 +19,7 @@
 | `teacher` | Docente | Puede ser dueño de cursos |
 | `preceptor` | Preceptor | Panel propio en `/preceptor`, acotado a las divisiones que un admin le asigna. Ve materias, docentes y alumnos de esos cursos, y administra a los alumnos (alta, edición, baja lógica). **No es auto-asignable** |
 | `soe` | SOE | Servicio de Orientación Escolar. Panel propio en `/soe`: legajo psicopedagógico por alumno (situación, seguimiento, derivaciones externas con sus devoluciones, **citaciones a la familia** y **el material de cada actuación** — certificados, recetas, informes y enlaces), una **agenda** con el calendario del gabinete, y un panel de indicadores de solo lectura. Ve toda su escuela salvo que un admin le asigne divisiones. **Es el único rol que escribe legajos**; quién más los lee lo decide `School.soeAccess` (default: nadie). Los archivos del legajo **no viven en `/public`**: salen por una ruta que revalida el permiso y audita cada apertura |
+| `secretaria` | Secretaria | Panel propio en `/secretaria` ("Docentes del día"): ve, día por día, el rastro que dejaron en la plataforma los docentes de los cursos que un admin le asigna (ingresó, sala en vivo, publicó, corrigió) y anota algo por docente y día. Mismo alcance y misma regla fail-closed que el preceptor. **No dice nunca que alguien faltó.** **No es auto-asignable**. Spec: `specs/secretaria-docentes-del-dia.spec.md` |
 | `student` | Alumno | Puede unirse a cursos |
 
 > Los valores internos en la BD son en inglés. La traducción al español se hace mediante `res.locals.roleNames` definido como middleware global en `server.js`. Nunca cambiar los valores internos del enum.
@@ -187,7 +188,7 @@ Agregar `data-analytics="nombre_del_evento"` al `<button>`/`<a>` — no hace fal
 | `name` | String | Requerido, trim |
 | `email` | String | Requerido, único, lowercase, trim |
 | `password` | String | Requerido, minlength **5**, hasheado con bcrypt en pre-save |
-| `role` | String | Enum: admin/directivo/teacher/preceptor/jefe/soe/student |
+| `role` | String | Enum: admin/directivo/teacher/preceptor/jefe/soe/secretaria/student |
 | `createdAt` | Date | Timestamps |
 
 - Métodos: `comparePassword()`, `toJSON()` (sin password)
@@ -6810,6 +6811,33 @@ entre ellos **el que prueba que un backup comprimido deja el estudio del legajo 
 igual** — verificado que falla si la carpeta se copia en vez de enlazarse. Las tres suites en
 verde: **735 unitarios · 386 smoke · matriz de roles sin hallazgos**.
 
+## Rol Secretaria — "Docentes del día" (2026-11-11)
+
+**Pedido**: una secretaria que vea qué docentes trabajaron en la plataforma cada día —si
+entraron, si estuvieron en la sala en vivo, si publicaron, si corrigieron—, con vista de lista y
+de calendario del día, y que pueda anotar algo por docente y día. Spec completa:
+`specs/secretaria-docentes-del-dia.spec.md`.
+
+- **Alcance:** los mismos `assignedDivisions` / `allDivisions` del preceptor, resueltos por
+  `loadPreceptorScope` sin tocarlo. Ve a los titulares y co-docentes de las materias de esos
+  cursos. Los roles con cursos a cargo viven en `User.ROLES_CON_CURSOS_A_CARGO`.
+- **Señales:** S1 `IngresoDiario` (colección nueva, la escribe `middleware/auth.js` dentro del
+  throttle de `lastSeen`, sin alumnos y sin suplantaciones) · S2 `RoomPresence` · S3/S4
+  `AuditLog` (`activity.create`, `announcement.create`, `submission.grade`, `submission.return`),
+  que tiene el actor real y no el titular.
+- **⭐ D2:** "Sin registro en la plataforma" no es "faltó". Hay un test que impide que un estado lo diga.
+- **Anotaciones:** `NotaDocenteDia`, una por docente y día. Escribe solo la secretaria; leen
+  ella, el directivo y el admin. **El docente no las ve.**
+- **Registro:** las cuatro listas de roles de `/register` e invitación usan ahora la lista
+  blanca `ROLES_AUTOREGISTRO` (`services/registroPublico.js`). Con la lista negra de antes, todo
+  rol nuevo aparecía solo en el formulario.
+- **Base de producción:** índice nuevo `{ user: 1, firstSeenAt: -1 }` en `roompresences`; lo crea
+  Mongoose al arrancar. Dos colecciones nuevas, en el backup con `optional: true`.
+- **Cobertura:** 28 unit en `secretariaDia.test.js`, 5 en `ingresoDiario.test.js`, 2 en
+  `registroPublico.test.js`; 10 smoke `secretaria-*`; `test:roles` con el rol nuevo.
+
+---
+
 ## Plan de Futuras Actualizaciones (Roadmap)
 
 > Backlog completo y detallado en la memoria del proyecto (`audit_backlog.md`).
@@ -6828,6 +6856,9 @@ verde: **735 unitarios · 386 smoke · matriz de roles sin hallazgos**.
 - **Reflejar en producción la consolidación de materias duplicadas**: las 62 fusiones se aplicaron solo contra el espejo local. La vía acordada es backup local → restore en producción, y exige auditar de nuevo antes (comparar un backup fresco de producción contra el local, colección por colección).
 
 ### Cambios que tocan la BD de producción — avisar antes
+- **Índice `{ user: 1, firstSeenAt: -1 }` en `roompresences`** (rol Secretaria, 2026-11-11). Lo
+  crea Mongoose solo al arrancar. Antes del deploy: `db.roompresences.countDocuments()`; si es
+  grande, crearlo a mano fuera del horario escolar.
 - **Índice parcial en `schools.inviteToken`**: `partialFilterExpression: { inviteToken: { $type: 'string' } }` en lugar de `sparse`. Es el arreglo de fondo del bug que impedía crear una segunda escuela (`sparse` saltea el campo ausente, no el que vale `null`). Necesita `dropIndex` + `createIndex`.
 - **Índice único en `subjects` `{school, name}`**: hoy la colección solo tiene `_id_`, así que el catch del 11000 de `POST /admin/subjects/create` es código muerto y los nombres repetidos entran. Engancha con la deuda de `Subject`↔`Course` por texto.
 - **Índice `{ course: 1, createdAt: -1 }` en `activities`**: no se agregó a propósito (el `{course:1, availableFrom:1}` cubre el prefijo). Es el candidato si el calendario del mes se nota lento con uso real.

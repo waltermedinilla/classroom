@@ -37,7 +37,7 @@
 
     <div class="profile-header">
       <div class="profile-avatar">
-        <div class="avatar-huge" style="width:80px;height:80px;font-size:36px;background:<%= target.role === 'superadmin' ? '#6200ea' : target.role === 'admin' ? '#ea4335' : target.role === 'teacher' ? '#1a73e8' : target.role === 'directivo' ? '#9334e6' : target.role === 'preceptor' ? '#ea8600' : target.role === 'jefe' ? '#3f51b5' : target.role === 'soe' ? '#0d7377' : '#5f6368' %>">
+        <div class="avatar-huge" style="width:80px;height:80px;font-size:36px;background:<%= target.role === 'superadmin' ? '#6200ea' : target.role === 'admin' ? '#ea4335' : target.role === 'teacher' ? '#1a73e8' : target.role === 'directivo' ? '#9334e6' : target.role === 'preceptor' ? '#ea8600' : target.role === 'jefe' ? '#3f51b5' : target.role === 'soe' ? '#0d7377' : target.role === 'secretaria' ? '#b06000' : '#5f6368' %>">
           <%= target.name.charAt(0).toUpperCase() %>
         </div>
       </div>
@@ -153,6 +153,7 @@
               <option value="preceptor" <%= target.role === 'preceptor' ? 'selected' : '' %>>Preceptor</option>
               <option value="jefe" <%= target.role === 'jefe' ? 'selected' : '' %>>Jefe de Sección</option>
               <option value="soe" <%= target.role === 'soe' ? 'selected' : '' %>>SOE</option>
+              <option value="secretaria" <%= target.role === 'secretaria' ? 'selected' : '' %>>Secretaria</option>
               <option value="student" <%= target.role === 'student' ? 'selected' : '' %>>Alumno</option>
             </select>
           </div>
@@ -168,7 +169,8 @@
         superadmin): este bloque es el único lugar donde el admin se entera de que el
         preceptor quedó sin nada asignado. El aviso ámbar es deliberado — un preceptor sin
         cursos no ve absolutamente nada y eso parece un error de la aplicación. %>
-    <% if (target.role === 'preceptor') { %>
+    <%# También la secretaria: mismo alcance, misma regla fail-closed (User.ROLES_CON_CURSOS_A_CARGO). %>
+    <% if (['preceptor', 'secretaria'].includes(target.role)) { %>
     <div class="profile-actions">
       <div class="profile-action-card">
         <h4>Cursos a cargo</h4>
@@ -176,7 +178,9 @@
         <% if (_sinAlcance) { %>
           <div style="background:#fef4e5;color:#e67e00;padding:10px 14px;border-radius:8px;font-size:13px;margin-top:12px;display:flex;gap:8px;align-items:flex-start">
             <span class="material-symbols-outlined" style="font-size:18px">warning</span>
-            <span>Este preceptor todavía no tiene cursos asignados: al entrar no ve ningún curso ni alumno.</span>
+            <span><%= target.role === 'secretaria'
+              ? 'Esta secretaria todavía no tiene cursos asignados: al entrar no ve a ningún docente.'
+              : 'Este preceptor todavía no tiene cursos asignados: al entrar no ve ningún curso ni alumno.' %></span>
           </div>
         <% } %>
 

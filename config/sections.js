@@ -149,9 +149,15 @@ const SECTIONS = [
   // nombra a un alumno con legajo y dice para qué se citó a su familia.
   { key: 'soe_agenda',       panel: 'soe', label: 'Agenda',       icon: 'calendar_month', path: '/soe/agenda',     roles: ['soe', 'directivo', 'superadmin'] },
 
+  // ── Panel Secretaría (base: middleware/secretaria.js ROLES_CON_ACCESO) ──────
+  // "Docentes del día": qué rastro dejaron en la plataforma los docentes de los cursos a cargo.
+  // Es la pantalla de entrada del panel (destino del redirect de "/"), por eso va locked, igual
+  // que preceptor_dashboard. Ver specs/secretaria-docentes-del-dia.spec.md.
+  { key: 'secretaria_dia', panel: 'secretaria', label: 'Docentes del día', icon: 'event_note', path: '/secretaria', roles: ['secretaria', 'directivo', 'admin', 'superadmin'], locked: true },
+
   // ── General: los accesos del menú lateral (header.ejs) ─────────────────────
-  { key: 'app_courses', panel: 'app', label: 'Mis clases',     icon: 'menu_book',       path: '/courses',               roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'student'], locked: true },
-  { key: 'app_profile', panel: 'app', label: 'Mi perfil',      icon: 'account_circle',  path: '/courses/profile',       roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'student'] },
+  { key: 'app_courses', panel: 'app', label: 'Mis clases',     icon: 'menu_book',       path: '/courses',               roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'secretaria', 'student'], locked: true },
+  { key: 'app_profile', panel: 'app', label: 'Mi perfil',      icon: 'account_circle',  path: '/courses/profile',       roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'secretaria', 'student'] },
   { key: 'app_pending', panel: 'app', label: 'Mis pendientes', icon: 'pending_actions', path: '/activities/my-pending', roles: ['student'] },
   // El calendario de reservas, del lado de quien las pide. Incluye a `preceptor` y
   // `directivo` a propósito: el que organiza un acto o una jornada no siempre es docente.
@@ -196,6 +202,7 @@ const PANELS = [
   { id: 'preceptor',  label: 'Preceptoría' },
   { id: 'jefatura',   label: 'Jefatura de Sección' },
   { id: 'soe',        label: 'Orientación Escolar' },
+  { id: 'secretaria', label: 'Secretaría' },
   { id: 'app',        label: 'General' },
   { id: 'superadmin', label: 'Superadministración' },
 ];

@@ -45,6 +45,7 @@
             <option value="preceptor" <%= currentRole === 'preceptor' ? 'selected' : '' %>>Preceptor</option>
             <option value="jefe" <%= currentRole === 'jefe' ? 'selected' : '' %>>Jefe de Sección</option>
             <option value="soe" <%= currentRole === 'soe' ? 'selected' : '' %>>SOE</option>
+            <option value="secretaria" <%= currentRole === 'secretaria' ? 'selected' : '' %>>Secretaria</option>
             <option value="student" <%= currentRole === 'student' ? 'selected' : '' %>>Alumno</option>
           </select>
         </div>
@@ -185,6 +186,7 @@
               <option value="preceptor">Preceptor</option>
               <option value="jefe">Jefe de Sección</option>
               <option value="soe">SOE</option>
+              <option value="secretaria">Secretaria</option>
               <option value="directivo">Directivo</option>
               <option value="admin">Administrador</option>
             </select>
@@ -274,9 +276,9 @@
       field.style.display = (role === 'student' && hasDivisions) ? '' : 'none';
       if (role !== 'student') document.getElementById('uDivisionId').value = '';
 
-      // El bloque de alcance es exclusivo del preceptor: es el único rol acotado a
-      // divisiones concretas.
-      document.getElementById('uScopeField').style.display = (role === 'preceptor') ? '' : 'none';
+      // El bloque de alcance es de los roles acotados a divisiones concretas: preceptor y
+      // secretaria (User.ROLES_CON_CURSOS_A_CARGO).
+      document.getElementById('uScopeField').style.display = ['preceptor', 'secretaria'].includes(role) ? '' : 'none';
     }
 
     // "Todos los cursos" y la lista son excluyentes: si se marca todos, elegir algunos

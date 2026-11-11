@@ -253,7 +253,7 @@ async function resolveScopeDivisions(divisionIds, school) {
 // módulo reusable — para un solo mensaje de error no vale la pena extraerlo).
 const ROLE_LABEL = {
   admin: 'Administrador', directivo: 'Directivo', teacher: 'Docente',
-  preceptor: 'Preceptor', jefe: 'Jefe de Sección', soe: 'SOE', student: 'Alumno', superadmin: 'Superadministrador',
+  preceptor: 'Preceptor', jefe: 'Jefe de Sección', soe: 'SOE', secretaria: 'Secretaria', student: 'Alumno', superadmin: 'Superadministrador',
 };
 
 router.post('/users/create', async (req, res) => {
@@ -292,10 +292,10 @@ router.post('/users/create', async (req, res) => {
 
     const userData = { name, email, password, role, school, dni: trimmedDni };
 
-    // Preceptor: además del alta hay que definir su alcance (qué cursos ve y administra).
+    // Preceptor y secretaria: además del alta hay que definir su alcance (qué cursos ve).
     // Se valida contra la escuela del admin — un id de otra escuela se descarta acá, no
     // se guarda para que después lo filtre el middleware.
-    if (role === 'preceptor') {
+    if (User.ROLES_CON_CURSOS_A_CARGO.includes(role)) {
       userData.allDivisions = allDivisions === true;
       userData.assignedDivisions = userData.allDivisions
         ? []
@@ -405,8 +405,8 @@ router.post('/users/:id/divisions', async (req, res) => {
     if (school && target.school?.toString() !== school.toString()) {
       return res.status(403).json({ error: 'Sin acceso' });
     }
-    if (target.role !== 'preceptor') {
-      return res.status(400).json({ error: 'Solo los preceptores tienen cursos a cargo' });
+    if (!User.ROLES_CON_CURSOS_A_CARGO.includes(target.role)) {
+      return res.status(400).json({ error: 'Solo los preceptores y las secretarias tienen cursos a cargo' });
     }
 
     const todos = req.body.allDivisions === true;

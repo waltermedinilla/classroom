@@ -1,0 +1,149 @@
+<%# Docentes del día — panel de la Secretaria. Ver specs/secretaria-docentes-del-dia.spec.md.
+    Dos vistas de los mismos datos: Lista (por defecto) y Línea del día (calendario de un día).
+    ⭐ Ningún texto de esta pantalla dice "faltó" (D2). %>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Docentes del día - Secretaría - Classroom</title>
+  <%- include('../partials/head-iconos') %>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/secretaria-nav', { activePage }) %>
+    <%- include('_estilos') %>
+
+    <%
+      const url = (cambios) => {
+        const q = new URLSearchParams({ fecha, ...(curso ? { curso } : {}), vista, ...cambios });
+        for (const [k, v] of [...q.entries()]) if (!v) q.delete(k);
+        return '/secretaria?' + q.toString();
+      };
+      const esFinde = (() => { const [y, m, d] = fecha.split('-').map(Number); const w = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); return w === 0 || w === 6; })();
+      const [yy, mm, dd] = fecha.split('-').map(Number);
+      const fechaTexto = fmt.fechaLarga(new Date(Date.UTC(yy, mm - 1, dd, 15)));   // 15 UTC = 12 hs Argentina: nunca cambia de día
+    %>
+
+    <div class="sd-barra">
+      <div class="sd-fecha">
+        <a class="sd-nav" href="<%= url({ fecha: anterior }) %>" aria-label="Día anterior">
+          <span class="material-symbols-outlined">chevron_left</span></a>
+        <b class="<%= esFinde ? 'finde' : '' %>"><%= fechaTexto %></b>
+        <a class="sd-nav <%= siguiente ? '' : 'off' %>" href="<%= siguiente ? url({ fecha: siguiente }) : '#' %>" aria-label="Día siguiente">
+          <span class="material-symbols-outlined">chevron_right</span></a>
+        <% if (fecha !== hoy) { %><a class="sd-btn" href="<%= url({ fecha: hoy }) %>">Hoy</a><% } %>
+        <form method="get" action="/secretaria" style="display:inline">
+          <input type="hidden" name="vista" value="<%= vista %>">
+          <% if (curso) { %><input type="hidden" name="curso" value="<%= curso %>"><% } %>
+          <input class="sd-input" type="date" name="fecha" value="<%= fecha %>" max="<%= hoy %>" onchange="this.form.submit()" aria-label="Elegir fecha">
+        </form>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <form method="get" action="/secretaria">
+          <input type="hidden" name="fecha" value="<%= fecha %>">
+          <input type="hidden" name="vista" value="<%= vista %>">
+          <select class="sd-select" name="curso" onchange="this.form.submit()" aria-label="Filtrar por curso">
+            <option value="">Todos mis cursos</option>
+            <% divisiones.forEach(d => { %>
+              <option value="<%= d._id %>" <%= String(d._id) === curso ? 'selected' : '' %>><%= d.name %></option>
+            <% }) %>
+          </select>
+        </form>
+        <div class="sd-vistas">
+          <a class="sd-btn <%= vista === 'lista' ? 'on' : '' %>" data-vista="lista" href="<%= url({ vista: 'lista' }) %>">Lista</a>
+          <a class="sd-btn <%= vista === 'linea' ? 'on' : '' %>" data-vista="linea" href="<%= url({ vista: 'linea' }) %>">Línea del día</a>
+        </div>
+      </div>
+    </div>
+
+    <% if (auditoriaApagada) { %>
+      <div class="sd-aviso">El registro de auditoría está desactivado en este servidor: lo publicado y lo corregido no se puede mostrar.</div>
+    <% } %>
+
+    <div class="sd-resumen">
+      <div class="sd-cont"><div class="n"><%= resumen.actividad %></div><div class="t"><span class="sd-est actividad"><%= ESTADOS.actividad %></span></div></div>
+      <div class="sd-cont"><div class="n"><%= resumen.ingreso %></div><div class="t"><span class="sd-est ingreso"><%= ESTADOS.ingreso %></span></div></div>
+      <div class="sd-cont"><div class="n"><%= resumen.sinRegistro %></div><div class="t"><span class="sd-est sinRegistro"><%= ESTADOS.sinRegistro %></span></div></div>
+    </div>
+
+    <div class="sd-card">
+      <% if (!filas.length) { %>
+        <p style="text-align:center;color:#5f6368;padding:20px">No hay docentes en las materias de <%= curso ? 'este curso' : 'tus cursos' %>.</p>
+      <% } else if (vista === 'linea') { %>
+        <%- include('_linea', { filas, linkFecha: fecha, hayDatoIngreso }) %>
+      <% } else { %>
+        <div style="overflow-x:auto">
+        <table class="sd-tabla">
+          <thead>
+            <tr>
+              <th>Docente</th>
+              <th class="opc">Materias</th>
+              <th>En la plataforma</th>
+              <th>Sala en vivo</th>
+              <th>Publicó</th>
+              <th>Corrigió</th>
+              <th class="opc">Anotación</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% filas.forEach(f => { const s = f.senales; %>
+              <tr>
+                <td>
+                  <a href="/secretaria/docentes/<%= f.id %>?fecha=<%= fecha %>"><%= f.name %></a>
+                  <% if (!f.active) { %><div class="sd-desh">Cuenta deshabilitada</div><% } %>
+                  <div style="margin-top:3px"><span class="sd-est <%= f.estado %>"><%= ESTADOS[f.estado] %></span></div>
+                </td>
+                <td class="opc sd-mats"><%= f.materias.map(m => m.name).join(' · ') %></td>
+                <td>
+                  <% if (!hayDatoIngreso) { %><span class="sd-off">sin dato</span>
+                  <% } else if (s.ingreso) { %><%= fmt.hora(s.ingreso.primeraVez) %> – <%= fmt.hora(s.ingreso.ultimaVez) %>
+                  <% } else { %><span class="sd-off">—</span><% } %>
+                </td>
+                <td><% if (s.sala.sesiones) { %><%= s.sala.sesiones %> <%= s.sala.sesiones === 1 ? 'sesión' : 'sesiones' %> · <%= s.sala.minutos %> min<% } else { %><span class="sd-off">—</span><% } %></td>
+                <td><% if (s.publico.cantidad) { %><%= s.publico.cantidad %><% } else { %><span class="sd-off">—</span><% } %></td>
+                <td><% if (s.corrigio.cantidad) { %><%= s.corrigio.cantidad %> <%= s.corrigio.cantidad === 1 ? 'entrega' : 'entregas' %><% } else { %><span class="sd-off">—</span><% } %></td>
+                <td class="opc" style="max-width:220px"><% if (f.nota) { %><%= f.nota.texto %><% } else { %><span class="sd-off">—</span><% } %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+        </div>
+      <% } %>
+    </div>
+
+    <p class="sd-ayuda">
+      Esta pantalla muestra lo que quedó registrado en la plataforma. <b>"Sin registro" no significa que el
+      docente no haya trabajado</b>: una clase presencial no deja rastro acá.
+      "En la plataforma" es la primera y la última vez que se lo vio ese día<% if (!hayDatoIngreso) { %>
+      (este dato se registra desde que se habilitó esta pantalla, por eso este día no lo tiene)<% } %>.
+      "Corrigió" cuenta entregas corregidas o devueltas, sin datos de los alumnos.
+    </p>
+  </main>
+
+  <script>
+    // La vista elegida se recuerda en este navegador. Envuelto en try/catch: en una ventana
+    // privada o con el almacenamiento bloqueado, la pantalla funciona igual.
+    (function () {
+      var KEY = 'secretaria.vista';
+      document.querySelectorAll('[data-vista]').forEach(function (a) {
+        a.addEventListener('click', function () { try { localStorage.setItem(KEY, a.dataset.vista); } catch (e) {} });
+      });
+      try {
+        var params = new URLSearchParams(location.search);
+        var guardada = localStorage.getItem(KEY);
+        if (!params.has('vista') && guardada === 'linea' && '<%= vista %>' !== 'linea') {
+          params.set('vista', 'linea');
+          location.replace('/secretaria?' + params.toString());
+        }
+      } catch (e) {}
+    })();
+  </script>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

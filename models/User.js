@@ -10,7 +10,15 @@ const { SONIDO_DE, SONIDO_DE_DEFAULT } = require('../public/js/salaSonido');
 // No es el único camino a la jefatura: un 'teacher' que figura en Section.heads también
 // entra, acotado a sus secciones y sin dejar de ser docente (el Docente jefe,
 // services/jefaturaAcceso.js). No hay campo acá para eso, a propósito.
-const ROLES = ['superadmin', 'admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'student'];
+// 'secretaria' = Secretaria: ve, día por día, qué rastro dejaron en la plataforma los docentes
+// de los cursos que tiene a cargo (specs/secretaria-docentes-del-dia.spec.md). Su alcance son
+// los mismos assignedDivisions/allDivisions del preceptor, con la misma regla fail-closed.
+const ROLES = ['superadmin', 'admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'secretaria', 'student'];
+
+// Roles cuyo alcance son cursos asignados por un admin (assignedDivisions/allDivisions).
+// La leen el alta y la reasignación de routes/admin.js y las vistas del panel de admin: un rol
+// nuevo con cursos a cargo se suma ACÁ, no en cada `if (role === 'preceptor')`.
+const ROLES_CON_CURSOS_A_CARGO = ['preceptor', 'secretaria'];
 
 const userSchema = new mongoose.Schema({
   name: {
@@ -130,8 +138,9 @@ const userSchema = new mongoose.Schema({
 
   // ── Alcance del preceptor ──────────────────────────────────────────────────
   // Qué divisiones (los "cursos" 1°1°, 2°3°… del lenguaje de la escuela) puede ver y
-  // administrar un preceptor. Solo se leen cuando role === 'preceptor'; en cualquier
-  // otro rol quedan en su default y se ignoran.
+  // administrar un preceptor. Los lee también la secretaria, para saber de qué cursos ve a
+  // los docentes (ROLES_CON_CURSOS_A_CARGO, más arriba); en los demás roles quedan en su
+  // default y se ignoran (salvo el SOE, que tiene su propia regla en services/soeAcceso.js).
   //
   // FAIL-CLOSED A PROPÓSITO: no existe la convención "array vacío = todas". El rol
   // 'preceptor' se puede asignar por varios caminos que no preguntan por divisiones
@@ -315,5 +324,6 @@ userSchema.methods.toJSON = function () {
 
 // Método estático: devuelve el array ROLES (usado en /register para mostrar opciones)
 userSchema.statics.getRoles = () => ROLES;
+userSchema.statics.ROLES_CON_CURSOS_A_CARGO = ROLES_CON_CURSOS_A_CARGO;
 
 module.exports = mongoose.model('User', userSchema);

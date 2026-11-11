@@ -50,21 +50,21 @@ const c = new SmokeClient(BASE);
 
 // El superadmin no se crea (no se puede desde el panel de admin, y es único): se usa el
 // del .env si está.
-const ROLES = ['admin', 'directivo', 'preceptor', 'jefe', 'soe', 'teacher', 'student'];
+const ROLES = ['admin', 'directivo', 'preceptor', 'jefe', 'soe', 'secretaria', 'teacher', 'student'];
 
 // `soe` pasó a tener panel propio el 2026-08-18 (specs/soe-orientacion.spec.md). Antes
 // aterrizaba en /courses con las solapas generales, como un docente sin materias.
 const LANDING = {
   superadmin: '/superadmin', admin: '/admin', directivo: '/directivo', preceptor: '/preceptor',
-  jefe: '/jefatura', soe: '/soe', teacher: '/courses', student: '/courses',
+  jefe: '/jefatura', soe: '/soe', secretaria: '/secretaria', teacher: '/courses', student: '/courses',
 };
 const PANEL_DE = {
   superadmin: 'superadmin', admin: 'admin', directivo: 'directivo', preceptor: 'preceptor',
-  jefe: 'jefatura', soe: 'soe', teacher: 'app', student: 'app',
+  jefe: 'jefatura', soe: 'soe', secretaria: 'secretaria', teacher: 'app', student: 'app',
 };
 const ROL_ES = {
   superadmin: 'Superadministrador', admin: 'Administrador', directivo: 'Directivo',
-  teacher: 'Docente', preceptor: 'Preceptor', jefe: 'Jefe de Sección', soe: 'SOE', student: 'Alumno',
+  teacher: 'Docente', preceptor: 'Preceptor', jefe: 'Jefe de Sección', soe: 'SOE', secretaria: 'Secretaria', student: 'Alumno',
 };
 
 const hallazgos = [];
@@ -138,6 +138,10 @@ async function main() {
     await c.post('admin0', `/admin/users/${actores.preceptor.id}/divisions`, {
       body: { divisionIds: [divisionId], allDivisions: false }, expectStatus: 200,
     });
+    // La secretaria, igual: sin cursos a cargo cae en `no-scope`, que no tiene nav.
+    await c.post('admin0', `/admin/users/${actores.secretaria.id}/divisions`, {
+      body: { divisionIds: [divisionId], allDivisions: false }, expectStatus: 200,
+    });
     // La materia la da de alta el ADMIN y le asigna el titular. Antes la creaba el propio
     // docente por POST /courses/create; desde el 2026-08-14 ese endpoint es lista blanca y
     // el docente quedó afuera (no crea materias ni cursos). El escenario no cambia: la
@@ -160,7 +164,7 @@ async function main() {
     seccionId = sec.json.seccion._id;
 
     for (const rol of Object.keys(actores)) {
-      const extra = { preceptor: '+ 1 división a cargo', jefe: '+ 1 sección a cargo',
+      const extra = { preceptor: '+ 1 división a cargo', secretaria: '+ 1 división a cargo', jefe: '+ 1 sección a cargo',
                       teacher: '+ 1 materia propia', student: '+ matriculado en la materia' }[rol] || '';
       linea(rol, `alta + login OK ${extra}`);
     }

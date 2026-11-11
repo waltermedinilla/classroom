@@ -1,0 +1,61 @@
+<%# La línea del día (D6 de specs/secretaria-docentes-del-dia.spec.md): un eje horario de UN día
+    con una fila por docente. Recibe `filas`, `linkFecha` y `hayDatoIngreso`.
+    Las horas salen de fmt.hora (zona de la escuela). Eje por defecto 07:00–23:00, y se estira
+    si hay eventos fuera de ese rango. Sin horario de materias: cuando exista, las franjas de
+    "le toca 3ª hora" van de fondo en .pista, sin cambiar nada más. %>
+<%
+  const minDelDia = (d) => { const p = String(fmt.hora(d) || '00:00').split(':').map(Number); return p[0] * 60 + p[1]; };
+  let desde = 7 * 60, hasta = 23 * 60;
+  for (const f of filas) {
+    const ts = [...f.eventos.map(e => e.desde)];
+    if (f.senales.ingreso) ts.push(f.senales.ingreso.primeraVez, f.senales.ingreso.ultimaVez);
+    for (const t of ts) { if (!t) continue; const m = minDelDia(t); desde = Math.min(desde, Math.floor(m / 60) * 60); hasta = Math.max(hasta, Math.ceil((m + 1) / 60) * 60); }
+  }
+  hasta = Math.min(hasta, 24 * 60);
+  const total = hasta - desde;
+  const pct = (m) => Math.max(0, Math.min(100, ((m - desde) / total) * 100));
+  const horas = []; for (let h = desde; h <= hasta; h += 60) horas.push(h);
+%>
+<div class="sl-wrap">
+  <div class="sl" style="--hora:<%= (6000 / total).toFixed(4) %>%">
+    <div class="sl-eje">
+      <div></div>
+      <div class="pista">
+        <% horas.forEach(h => { %>
+          <%# La primera y la última marca se alinean hacia adentro: centradas, quedaban cortadas en el borde. %>
+          <span class="tick" style="left:<%= pct(h).toFixed(2) %>%<%= h === desde ? ';transform:none' : h === hasta ? ';transform:translateX(-100%)' : '' %>"><%= String(Math.floor(h / 60)).padStart(2, '0') %></span>
+        <% }) %>
+      </div>
+    </div>
+    <% filas.forEach(f => { %>
+      <div class="sl-fila">
+        <div class="nom"><a href="/secretaria/docentes/<%= f.id %>?fecha=<%= linkFecha %>"><%= f.name %></a></div>
+        <div class="pista">
+          <% if (f.senales.ingreso) {
+               const a = minDelDia(f.senales.ingreso.primeraVez), b = minDelDia(f.senales.ingreso.ultimaVez); %>
+            <span class="sl-ev ingreso" style="left:<%= pct(a).toFixed(2) %>%;width:<%= Math.max(0.6, pct(b) - pct(a)).toFixed(2) %>%"
+                  title="En la plataforma: <%= fmt.hora(f.senales.ingreso.primeraVez) %> a <%= fmt.hora(f.senales.ingreso.ultimaVez) %>"></span>
+          <% } %>
+          <% f.eventos.forEach(e => {
+               const a = minDelDia(e.desde);
+               if (e.tipo === 'sala') {
+                 // Una sesión que cruza la medianoche se corta al final del eje.
+                 const b = fmt.fechaCorta(e.hasta) === fmt.fechaCorta(e.desde) ? minDelDia(e.hasta) : 24 * 60; %>
+              <span class="sl-ev sala" style="left:<%= pct(a).toFixed(2) %>%;width:<%= Math.max(0.4, pct(b) - pct(a)).toFixed(2) %>%"
+                    title="<%= fmt.hora(e.desde) %> · <%= e.texto %><%= e.materia ? ' · ' + e.materia : '' %>"></span>
+            <% } else { %>
+              <span class="sl-ev punto <%= e.tipo %>" style="left:<%= pct(a).toFixed(2) %>%"
+                    title="<%= fmt.hora(e.desde) %> · <%= e.texto %><%= e.materia ? ' · ' + e.materia : '' %>"></span>
+            <% } %>
+          <% }) %>
+        </div>
+      </div>
+    <% }) %>
+  </div>
+</div>
+<div class="sl-ley">
+  <span><i style="background:#c6dafc;border-radius:2px;height:4px;vertical-align:2px"></i>En la plataforma<% if (!hayDatoIngreso) { %> (sin dato este día)<% } %></span>
+  <span><i style="background:#1a73e8;border-radius:3px"></i>Sala en vivo</span>
+  <span><i style="background:#137333"></i>Publicó</span>
+  <span><i style="background:#e37400"></i>Corrigió</span>
+</div>

@@ -58,6 +58,8 @@ const Message             = require('../models/Message');
 const MessageRecipient    = require('../models/MessageRecipient');
 const ActivityView        = require('../models/ActivityView');
 const ActivityTemplate    = require('../models/ActivityTemplate');
+const IngresoDiario       = require('../models/IngresoDiario');
+const NotaDocenteDia      = require('../models/NotaDocenteDia');
 const TemplateAssignment  = require('../models/TemplateAssignment');
 const AuditLog            = require('../models/AuditLog');
 const { logDeRuta } = require('../middleware/route-log');
@@ -235,6 +237,12 @@ const COLLECTIONS = [
   { name: 'activityviews',      model: ActivityView,      optional: true },
   { name: 'activitytemplates',  model: ActivityTemplate,  optional: true },
   { name: 'templateassignments', model: TemplateAssignment, optional: true },
+
+  // Panel de la Secretaria (specs/secretaria-docentes-del-dia.spec.md, CA-22). Las dos
+  // `optional`: los backups anteriores al 2026-11-11 no las traen. Los ingresos diarios no se
+  // regeneran solos —son el único historial de "entró ese día"—, así que no son telemetría.
+  { name: 'ingresodiarios',  model: IngresoDiario,  optional: true },
+  { name: 'notadocentedias', model: NotaDocenteDia, optional: true },
 
   // Auditoría. Es un registro, no datos de la escuela, pero es el único lugar donde queda
   // asentado quién hizo qué — incluida la lectura de un legajo del SOE. Si se pierde, no

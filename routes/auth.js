@@ -13,7 +13,7 @@ const {
 // Las dos puertas de alta de este archivo (/register y /register/invite/:token) quedan
 // atadas a estos flags. Ver la cabecera de services/registroPublico.js.
 const {
-  REGISTRO_ABIERTO, INVITACION_ABIERTA, rechazarAlta,
+  REGISTRO_ABIERTO, INVITACION_ABIERTA, rechazarAlta, ROLES_AUTOREGISTRO,
 } = require('../services/registroPublico');
 // Ventana de mantenimiento: mientras el sistema está EN ESPERA se corta la puerta de
 // entrada, pero el que ya está adentro sigue trabajando sin enterarse de nada
@@ -79,7 +79,8 @@ router.get('/register', async (req, res) => {
   // viejo o de una URL a mano — mandarlo al formulario de entrada es la respuesta útil.
   if (!REGISTRO_ABIERTO) return res.redirect('/login');
   res.render('register', {
-    roles: User.getRoles().filter(r => r !== 'admin'),
+    // La misma lista blanca que acepta el POST (services/registroPublico.js).
+    roles: ROLES_AUTOREGISTRO,
     // Lista para el select de Curso que se despliega al elegir el rol Alumno. Con la
     // automatrícula apagada vuelve vacía y la vista no pinta el campo.
     cursos: await cursosDisponibles(),
@@ -109,8 +110,7 @@ router.post('/register', async (req, res) => {
     // de datos, baja de cuentas) dejó de ser un rol que uno pueda auto-asignarse, igual
     // que 'admin'. Lo crea un administrador desde /admin/users/create, que es donde además
     // se le define qué cursos tiene a cargo.
-    const allowedRoles = ['student', 'teacher', 'soe', 'directivo'];
-    const userRole = allowedRoles.includes(role) ? role : 'student';
+    const userRole = ROLES_AUTOREGISTRO.includes(role) ? role : 'student';
 
     // ── Curso elegido por el alumno (TEMPORAL, ver services/selfEnroll.js) ──────────
     // Se resuelve ANTES de crear la cuenta porque de él sale la escuela, y la escuela es
@@ -228,7 +228,9 @@ router.get('/register/invite/:token', async (req, res) => {
     const school = await School.findOne({ inviteToken: req.params.token });
     // Misma lista que valida el POST de abajo: 'preceptor' quedó fuera al pasar a ser un
     // rol con permisos de administración sobre alumnos.
-    const roles = User.getRoles().filter(r => !['superadmin', 'admin', 'preceptor'].includes(r));
+    // Lista BLANCA compartida con el POST: con la lista negra de antes, cada rol nuevo
+    // aparecía solo en el select (RN-02 de specs/secretaria-docentes-del-dia.spec.md).
+    const roles = ROLES_AUTOREGISTRO;
     // school=null indica enlace inválido; la vista maneja ambos casos
     res.render('invite-register', { school: school || null, token: req.params.token, roles, cerrado: false });
   } catch (err) {
@@ -254,8 +256,7 @@ router.post('/register/invite/:token', async (req, res) => {
     const { name, email, password, role, dni } = req.body;
     // Solo roles no privilegiados pueden auto-registrarse por invitación.
     // 'preceptor' salió de la lista: administra alumnos, así que lo crea un admin.
-    const allowed = ['student', 'teacher', 'soe', 'directivo'];
-    const userRole = allowed.includes(role) ? role : 'student';
+    const userRole = ROLES_AUTOREGISTRO.includes(role) ? role : 'student';
 
     const { value: dniValue, error: dniError } = normalizeDni(dni);
     if (dniError) return res.status(400).json({ error: dniError });

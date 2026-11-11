@@ -3,7 +3,7 @@
 // Correr con: npm run test:unit
 //
 // specs/docente-jefe-de-seccion.spec.md § Tests necesarios pide, para este archivo:
-//   - modoJefatura y decidirAccesoJefatura: CA-08, CA-14, y los 8 roles de User.getRoles()
+//   - modoJefatura y decidirAccesoJefatura: CA-08, CA-14, y los 9 roles de User.getRoles()
 //   - esElegibleComoJefe: cada combinación de rol, estado y escuela
 //   - resolverHeads: los siete pasos de RN-22, duplicados, headIds que no es array, orden
 //   - marcarDocenteJefe y pertenenciaJefatura, con un modelo Section falso: CA-25 a CA-29
@@ -43,7 +43,7 @@ const { SECTIONS } = require('../../config/sections');
 // ═════════════════════════════════════════════════════════════════════════
 
 describe('modoJefatura', () => {
-  test('clasifica los 8 roles de User.getRoles() sin dejar ninguno afuera', () => {
+  test('clasifica los 9 roles de User.getRoles() sin dejar ninguno afuera', () => {
     // Tabla espejo de la de RN-02. Si mañana se agrega un rol nuevo a models/User.js y
     // nadie lo suma acá, `esperado[rol]` da undefined y el test avisa ANTES de que el rol
     // nuevo quede sin clasificar en producción (fail-closed silencioso).
@@ -55,6 +55,9 @@ describe('modoJefatura', () => {
       teacher: 'por-seccion',
       preceptor: null,
       soe: null,
+      // La secretaria mira a los docentes de SUS cursos (specs/secretaria-docentes-del-dia.spec.md),
+      // pero la jefatura no es suya: no entra.
+      secretaria: null,
       student: null,
     };
     const roles = User.getRoles();

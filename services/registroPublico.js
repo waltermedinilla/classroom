@@ -36,6 +36,15 @@ const REGISTRO_ABIERTO = false;
 // Alta por enlace de invitación de escuela (`/register/invite/:token`).
 const INVITACION_ABIERTA = false;
 
+// Los ÚNICOS roles que una de estas puertas puede dar, si algún día se reabren. Lista BLANCA
+// compartida por los dos GET (qué se ofrece en el select) y los dos POST (qué se acepta): hasta
+// el 2026-11-11 los GET armaban la lista con una lista NEGRA sobre User.getRoles(), así que todo
+// rol nuevo aparecía solo en el formulario —'jefe' ya aparecía— y el POST lo convertía en alumno
+// sin avisar. Ver RN-02 de specs/secretaria-docentes-del-dia.spec.md.
+// Un rol con alcance o permisos sobre otros (admin, preceptor, jefe, secretaria) NO va acá:
+// lo crea un administrador, que es quien además le define qué ve.
+const ROLES_AUTOREGISTRO = Object.freeze(['student', 'teacher', 'soe', 'directivo']);
+
 // El mismo texto para las dos puertas: al que llega no le importa por cuál entró, le
 // importa saber a quién pedirle la cuenta.
 const MENSAJE_CERRADO = 'El registro está cerrado. Las cuentas las crea el administrador '
@@ -48,6 +57,7 @@ function rechazarAlta(res) {
 }
 
 module.exports = {
+  ROLES_AUTOREGISTRO,
   REGISTRO_ABIERTO,
   INVITACION_ABIERTA,
   MENSAJE_CERRADO,

@@ -7336,6 +7336,196 @@ const specs = [
     },
   },
 
+  // ── Secretaria: "Docentes del día" (specs/secretaria-docentes-del-dia.spec.md) ──
+  // Para cuando corren estos specs, el docente de `divisionId` ya publicó actividades HOY
+  // (las dejó 'teacher-creates-activity'), así que en el día de hoy tiene que figurar "Con
+  // actividad". `otherDivisionId` sigue existiendo (la borra 'cleanup-preceptor', más abajo).
+  {
+    id: 'secretaria-setup',
+    title: 'El admin da de alta una secretaria con un curso a cargo y otra sin cursos',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const conCurso = await client.post('admin', '/admin/users/create', {
+        body: {
+          name: `Secretaria Smoke ${RUN_ID}`, email: `secretaria.smoke.${RUN_ID}@example.com`,
+          password: 'SmokeTest1234', role: 'secretaria', dni: dniSmoke(60),
+          allDivisions: false, divisionIds: [state.divisionId],
+        },
+        expectStatus: 201,
+      });
+      state.secretariaId = conCurso.json.user._id;
+      assert(conCurso.json.user.assignedDivisions.length === 1, 'la secretaria debería quedar con 1 curso a cargo');
+
+      // Sin cursos: el alta por el selector de rol, sin marcar nada (fail-closed, D1).
+      const sinCurso = await client.post('admin', '/admin/users/create', {
+        body: {
+          name: `Secretaria Sin Cursos ${RUN_ID}`, email: `secretaria2.smoke.${RUN_ID}@example.com`,
+          password: 'SmokeTest1234', role: 'secretaria', dni: dniSmoke(61),
+        },
+        expectStatus: 201,
+      });
+      state.secretaria2Id = sinCurso.json.user._id;
+
+      await client.post('secretaria', '/login', {
+        body: { email: `secretaria.smoke.${RUN_ID}@example.com`, password: 'SmokeTest1234' }, expectStatus: 200,
+      });
+      await client.post('secretaria2', '/login', {
+        body: { email: `secretaria2.smoke.${RUN_ID}@example.com`, password: 'SmokeTest1234' }, expectStatus: 200,
+      });
+    },
+  },
+  {
+    id: 'secretaria-landing',
+    title: 'La secretaria cae en "Docentes del día" al entrar',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const r = await client.get('secretaria', '/');
+      assert(r.status === 302 && r.headers.get('location') === '/secretaria',
+        `GET / debería redirigir a /secretaria, dio ${r.status} ${r.headers.get('location')}`);
+    },
+  },
+  {
+    // CA-15 + D2
+    id: 'secretaria-ve-docente-con-actividad',
+    title: 'La secretaria ve al docente de su curso "Con actividad" hoy, en las dos vistas',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const lista = await client.get('secretaria', '/secretaria', { expectStatus: 200 });
+      assert(lista.text.includes(teacher.name), 'debería listar al docente de la materia de su curso');
+      assert(lista.text.includes('Con actividad'), 'el docente publicó hoy: debería figurar "Con actividad"');
+      assert(!/falt[óo]/i.test(lista.text), 'la pantalla no puede decir que alguien faltó (D2)');
+      const linea = await client.get('secretaria', '/secretaria?vista=linea', { expectStatus: 200 });
+      assert(linea.text.includes('sl-fila'), 'la vista Línea del día debería pintar una fila por docente');
+    },
+  },
+  {
+    // CA-13
+    id: 'secretaria-sin-cursos',
+    title: 'Una secretaria sin cursos asignados no ve a nadie (fail-closed)',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const r = await client.get('secretaria2', '/secretaria', { expectStatus: 200 });
+      assert(r.text.includes('Todavía no tenés cursos asignados'), 'debería avisar que no tiene cursos');
+      assert(!r.text.includes(teacher.name), 'no debería ver a ningún docente');
+    },
+  },
+  {
+    // CA-12
+    id: 'secretaria-otros-roles-bloqueados',
+    title: 'Docente, alumno y preceptor no entran al panel de la secretaria',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client }) {
+      await client.get('scopedTeacher', '/secretaria', { expectStatus: 403 });
+      await client.get('scopedStudent', '/secretaria', { expectStatus: 403 });
+      await client.get('preceptor',     '/secretaria', { expectStatus: 403 });
+    },
+  },
+  {
+    // CA-14 / RN-03
+    id: 'secretaria-ficha-y-alcance',
+    title: 'La ficha del docente abre dentro del alcance y da 403 fuera de él o con un id inexistente',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const r = await client.get('secretaria', `/secretaria/docentes/${state.scopedTeacherId}`, { expectStatus: 200 });
+      assert(r.text.includes('Lo que quedó registrado'), 'debería mostrar los eventos del día');
+      assert(r.text.includes('Anotación del día'), 'debería ofrecer la anotación');
+      // El preceptor no da ninguna materia del curso: está fuera del alcance.
+      await client.get('secretaria', `/secretaria/docentes/${state.preceptorId}`, { expectStatus: 403 });
+      await client.get('secretaria', '/secretaria/docentes/000000000000000000000000', { expectStatus: 403 });
+      // Y la que no tiene cursos, ni al docente de este.
+      await client.get('secretaria2', `/secretaria/docentes/${state.scopedTeacherId}`, { expectStatus: 200 })
+        .then(x => assert(x.text.includes('Todavía no tenés cursos asignados'), 'sin cursos no hay ficha'));
+    },
+  },
+  {
+    // CA-16 / RN-12 / RN-13
+    id: 'secretaria-nota',
+    title: 'La secretaria anota, edita y borra; las validaciones cortan con 400 y 403',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const url = `/secretaria/docentes/${state.scopedTeacherId}/nota`;
+      const hoy = diaEscolar();
+
+      const a = await client.post('secretaria', url, { body: { fecha: hoy, texto: `Avisó que llega tarde ${RUN_ID}` }, expectStatus: 200 });
+      assert(a.json.nota && a.json.nota.texto.includes(RUN_ID), 'debería devolver la nota guardada');
+      const ficha = await client.get('secretaria', `/secretaria/docentes/${state.scopedTeacherId}?fecha=${hoy}`, { expectStatus: 200 });
+      assert(ficha.text.includes(`Avisó que llega tarde ${RUN_ID}`), 'la ficha debería mostrar la nota');
+
+      await client.post('secretaria', url, { body: { fecha: hoy, texto: `Editada ${RUN_ID}` }, expectStatus: 200 });
+      await client.post('secretaria', url, { body: { fecha: hoy, texto: 'x'.repeat(501) }, expectStatus: 400 });
+      await client.post('secretaria', url, { body: { fecha: '2099-01-01', texto: 'futuro' }, expectStatus: 400 });
+      await client.post('secretaria', url, { body: { fecha: 'basura', texto: 'x' }, expectStatus: 400 });
+      await client.post('secretaria', `/secretaria/docentes/${state.preceptorId}/nota`, { body: { fecha: hoy, texto: 'ajeno' }, expectStatus: 403 });
+      await client.post('secretaria2', url, { body: { fecha: hoy, texto: 'sin cursos' }, expectStatus: 403 });
+      // RN-12: el admin entra al panel y lee, pero no anota.
+      await client.post('admin', url, { body: { fecha: hoy, texto: 'admin' }, expectStatus: 403 });
+
+      // El directivo/admin LEE la nota (RN-13).
+      const delAdmin = await client.get('admin', `/secretaria/docentes/${state.scopedTeacherId}?fecha=${hoy}`, { expectStatus: 200 });
+      assert(delAdmin.text.includes(`Editada ${RUN_ID}`), 'el admin debería leer la anotación');
+
+      const b = await client.post('secretaria', url, { body: { fecha: hoy, texto: '   ' }, expectStatus: 200 });
+      assert(b.json.nota === null, 'texto vacío debería borrar la nota');
+    },
+  },
+  {
+    // RN-09
+    id: 'secretaria-fecha-futura',
+    title: 'Pedir un día futuro lleva a hoy',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, assert }) {
+      const r = await client.get('secretaria', '/secretaria?fecha=2099-01-01');
+      assert(r.status === 302 && (r.headers.get('location') || '').includes(`fecha=${diaEscolar()}`),
+        `debería redirigir a hoy, dio ${r.status} ${r.headers.get('location')}`);
+    },
+  },
+  {
+    // CA-19 / RN-11
+    id: 'secretaria-sin-otros-permisos',
+    title: 'La secretaria no crea materias ni entra a los paneles de otros roles',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      await client.post('secretaria', '/courses/create', {
+        body: { name: `Materia trucha ${RUN_ID}`, divisionId: state.divisionId }, expectStatus: 403,
+      });
+      await client.get('secretaria', '/admin/users', { expectStatus: 403 });
+      await client.get('secretaria', '/directivo',   { expectStatus: 403 });
+      await client.get('secretaria', '/preceptor',   { expectStatus: 403 });
+    },
+  },
+  {
+    // CA-20 / D3. El ingreso se escribe fire-and-forget: se espera un momento antes de mirar.
+    id: 'secretaria-ingreso-diario-db',
+    title: 'El docente deja su ingreso del día; el alumno no',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD', 'MONGODB_URI'],
+    async run({ env, state, assert }) {
+      await new Promise(r => setTimeout(r, 500));
+      const { MongoClient, ObjectId } = require('mongodb');
+      const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+      try {
+        await mongo.connect();
+        const col = mongo.db().collection('ingresodiarios');
+        const doc = await col.findOne({ user: new ObjectId(state.scopedTeacherId), fecha: diaEscolar() });
+        assert(doc && doc.primeraVez && doc.ultimaVez, 'el docente debería tener su ingreso de hoy');
+        const cuantos = await col.countDocuments({ user: new ObjectId(state.scopedTeacherId), fecha: diaEscolar() });
+        assert(cuantos === 1, `debería haber UN ingreso por día, hay ${cuantos}`);
+        const alumno = await col.countDocuments({ user: new ObjectId(state.scopedStudentId) });
+        assert(alumno === 0, 'los alumnos no dejan ingreso (D3)');
+      } finally {
+        await mongo.close();
+      }
+    },
+  },
+  {
+    id: 'cleanup-secretaria',
+    title: 'Limpieza: el admin borra las dos secretarias',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state }) {
+      if (state.secretariaId)  await client.post('admin', `/admin/users/${state.secretariaId}/delete`, { expectStatus: 200 });
+      if (state.secretaria2Id) await client.post('admin', `/admin/users/${state.secretaria2Id}/delete`, { expectStatus: 200 });
+    },
+  },
+
   // ── Limpieza (Nivel 2): borra todo lo que creó esta corrida ───────────────
   {
     id: 'cleanup-preceptor',
@@ -12746,8 +12936,15 @@ const specs = [
           state.dupMailViejaId, state.dupMailNuevaId,
           state.soeId, state.soeDirId,
           state.soePrecId, state.soeDerivAlumnoId, state.soeDerivAlumno2Id, state.soeDerivCourseId,
+          state.secretariaId, state.secretaria2Id,
         ].filter(Boolean);
         const ids = idStrings.map(s => new ObjectId(s));
+
+        // Panel de la Secretaria: los ingresos del día de los usuarios de prueba y las notas
+        // sobre sus días. No se borran en cascada con el usuario (son registros que se
+        // conservan), pero los del smoke son basura.
+        await client.db().collection('ingresodiarios').deleteMany({ user: { $in: ids } });
+        await client.db().collection('notadocentedias').deleteMany({ docente: { $in: ids } });
 
         // Los recursos de este bloque se dan de baja por la ruta (activo:false), que es lo
         // correcto para un recurso real —su historial de reservas tiene que sobrevivir— pero

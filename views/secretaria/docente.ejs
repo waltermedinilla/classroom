@@ -1,0 +1,134 @@
+<%# El día de UN docente — panel de la Secretaria. Ver specs/secretaria-docentes-del-dia.spec.md.
+    Eventos en orden, la línea del día de esa persona y la anotación (RN-12). %>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= fila.name %> - Docentes del día - Classroom</title>
+  <%- include('../partials/head-iconos') %>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/secretaria-nav', { activePage }) %>
+    <%- include('_estilos') %>
+
+    <%
+      const s = fila.senales;
+      const [yy, mm, dd] = fecha.split('-').map(Number);
+      const fechaTexto = fmt.fechaLarga(new Date(Date.UTC(yy, mm - 1, dd, 15)));   // 12 hs Argentina
+      const base = '/secretaria/docentes/' + fila.id + '?fecha=';
+    %>
+
+    <p style="margin:0 0 10px"><a href="/secretaria?fecha=<%= fecha %>" style="color:#1a73e8;text-decoration:none;font-size:13px">
+      <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px">arrow_back</span> Docentes del día</a></p>
+
+    <div class="sd-barra">
+      <div>
+        <h2 style="margin:0;font-size:20px"><%= fila.name %></h2>
+        <div class="sd-mats" style="margin-top:4px"><%= fila.materias.map(m => m.name).join(' · ') %></div>
+        <% if (!fila.active) { %><div class="sd-desh">Cuenta deshabilitada</div><% } %>
+      </div>
+      <div class="sd-fecha">
+        <a class="sd-nav" href="<%= base + anterior %>" aria-label="Día anterior"><span class="material-symbols-outlined">chevron_left</span></a>
+        <b><%= fechaTexto %></b>
+        <a class="sd-nav <%= siguiente ? '' : 'off' %>" href="<%= siguiente ? base + siguiente : '#' %>" aria-label="Día siguiente"><span class="material-symbols-outlined">chevron_right</span></a>
+        <% if (fecha !== hoy) { %><a class="sd-btn" href="<%= base + hoy %>">Hoy</a><% } %>
+      </div>
+    </div>
+
+    <% if (auditoriaApagada) { %>
+      <div class="sd-aviso">El registro de auditoría está desactivado en este servidor: lo publicado y lo corregido no se puede mostrar.</div>
+    <% } %>
+
+    <div class="sd-resumen">
+      <div class="sd-cont"><div class="t">Estado del día</div><div style="margin-top:4px"><span class="sd-est <%= fila.estado %>"><%= ESTADOS[fila.estado] %></span></div></div>
+      <div class="sd-cont"><div class="t">En la plataforma</div><div class="n" style="font-size:16px">
+        <% if (!hayDatoIngreso) { %><span class="sd-off">sin dato</span><% } else if (s.ingreso) { %><%= fmt.hora(s.ingreso.primeraVez) %> – <%= fmt.hora(s.ingreso.ultimaVez) %><% } else { %><span class="sd-off">—</span><% } %></div></div>
+      <div class="sd-cont"><div class="t">Sala en vivo</div><div class="n" style="font-size:16px"><%= s.sala.minutos %> min</div></div>
+      <div class="sd-cont"><div class="t">Publicó · Corrigió</div><div class="n" style="font-size:16px"><%= s.publico.cantidad %> · <%= s.corrigio.cantidad %></div></div>
+    </div>
+
+    <div class="sd-card" style="margin-bottom:14px">
+      <%- include('_linea', { filas: [fila], linkFecha: fecha, hayDatoIngreso }) %>
+    </div>
+
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,360px);gap:14px;align-items:start" class="sd-dos">
+      <div class="sd-card">
+        <h3 style="margin:0 0 10px;font-size:15px">Lo que quedó registrado</h3>
+        <% if (!fila.eventos.length) { %>
+          <p style="color:#5f6368;font-size:13px;margin:0">No hay registro en la plataforma este día. Eso no significa que no haya trabajado.</p>
+        <% } else { %>
+          <table class="sd-tabla">
+            <tbody>
+              <% fila.eventos.forEach(e => { %>
+                <tr>
+                  <td style="white-space:nowrap;width:1%"><%= fmt.hora(e.desde) %><% if (e.hasta) { %>–<%= fmt.hora(e.hasta) %><% } %></td>
+                  <td><span class="sl-ev punto <%= e.tipo %>" style="position:static;display:inline-block;transform:none;margin:0 6px 0 0;<%= e.tipo === 'sala' ? 'background:#1a73e8' : '' %>"></span><%= e.texto %></td>
+                  <td class="sd-mats"><%= e.materia %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+      </div>
+
+      <div class="sd-card">
+        <h3 style="margin:0 0 10px;font-size:15px">Anotación del día</h3>
+        <% if (puedeAnotar) { %>
+          <textarea id="nota" maxlength="<%= NOTA_MAX %>" rows="5" class="sd-input" style="width:100%;box-sizing:border-box;resize:vertical"
+                    placeholder="Por ejemplo: avisó que llega tarde, clase presencial en el taller…"><%= fila.nota ? fila.nota.texto : '' %></textarea>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px">
+            <span id="notaEstado" style="font-size:12px;color:#5f6368"><% if (fila.nota) { %>Última edición: <%= fila.nota.autorNombre %>, <%= fmt.diaMesHora(fila.nota.updatedAt) %><% } %></span>
+            <button id="notaGuardar" class="sd-btn on" type="button">Guardar</button>
+          </div>
+          <p class="sd-ayuda" style="margin-top:8px">El docente no ve esta anotación. Dejala vacía y guardá para borrarla.</p>
+        <% } else { %>
+          <% if (fila.nota) { %>
+            <p style="font-size:14px;margin:0;white-space:pre-wrap"><%= fila.nota.texto %></p>
+            <p class="sd-ayuda">Anotó <%= fila.nota.autorNombre %>, <%= fmt.diaMesHora(fila.nota.updatedAt) %>.</p>
+          <% } else { %>
+            <p style="color:#5f6368;font-size:13px;margin:0">Sin anotación.</p>
+          <% } %>
+        <% } %>
+      </div>
+    </div>
+    <style>@media (max-width: 800px) { .sd-dos { grid-template-columns:minmax(0,1fr) !important; } }</style>
+  </main>
+
+  <% if (puedeAnotar) { %>
+  <script>
+    (function () {
+      var btn = document.getElementById('notaGuardar');
+      var txt = document.getElementById('nota');
+      var est = document.getElementById('notaEstado');
+      btn.addEventListener('click', async function () {
+        btn.disabled = true;
+        est.textContent = 'Guardando…';
+        try {
+          var res = await fetch('/secretaria/docentes/<%= fila.id %>/nota', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fecha: '<%= fecha %>', texto: txt.value }),
+          });
+          var data = await res.json().catch(function () { return {}; });
+          if (!res.ok) { est.textContent = data.error || 'No se pudo guardar.'; return; }
+          est.textContent = data.nota ? 'Guardada.' : 'Anotación borrada.';
+          if (!data.nota) txt.value = '';
+        } catch (e) {
+          est.textContent = 'No se pudo guardar. Revisá la conexión.';
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    })();
+  </script>
+  <% } %>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

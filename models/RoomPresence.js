@@ -87,4 +87,10 @@ roomPresenceSchema.index({ session: 1, user: 1 }, { unique: true });
 // Listado de conectados de una sala, ordenado por actividad reciente.
 roomPresenceSchema.index({ session: 1, lastPingAt: -1 });
 
+// "Las salas a las que entró ESTA persona ESTE día": el panel de la Secretaria
+// (specs/secretaria-docentes-del-dia.spec.md, D5). Sin este índice la consulta recorre la
+// colección entera, que tiene un documento por alumno y por clase.
+// ⚠️ Mongoose lo crea al arrancar, también en producción: ver el plan de migración de la spec.
+roomPresenceSchema.index({ user: 1, firstSeenAt: -1 });
+
 module.exports = mongoose.model('RoomPresence', roomPresenceSchema);

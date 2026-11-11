@@ -59,7 +59,7 @@
               blanca ROLES_QUE_CREAN_MATERIAS de routes/courses.js rechaza el POST directo
               de todos los que no aparecen acá. Si se agrega un rol a este `if`, hay que
               agregarlo también allá o el botón va a dar 403. */ %>
-        <% if (rol && rol !== 'student' && rol !== 'teacher' && rol !== 'preceptor' && rol !== 'jefe') { %>
+        <% if (rol && rol !== 'student' && rol !== 'teacher' && rol !== 'preceptor' && rol !== 'jefe' && rol !== 'secretaria') { %>
         <button class="btn btn-primary" data-analytics="create_course_open" onclick="showCreateModal()">
           <span class="material-symbols-outlined">add</span>
           Crear clase

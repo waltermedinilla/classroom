@@ -149,7 +149,7 @@ const ACTIONS = {
   'user.create':          { label: 'creó un usuario',          icon: 'person_add',           color: '#137333', category: 'user' },
   'user.edit':            { label: 'editó los datos de',       icon: 'edit',                 color: '#1a73e8', category: 'user' },
   'user.delete':          { label: 'eliminó un usuario',       icon: 'person_remove',        color: '#ea4335', category: 'user' },
-  // Alcance del preceptor: qué divisiones puede ver y administrar (ver models/User.js)
+  // Alcance del preceptor y de la secretaria: qué divisiones ve (ver models/User.js)
   'user.assign_divisions': { label: 'asignó cursos a',          icon: 'checklist',           color: '#1a73e8', category: 'user' },
   // Matrícula del docente en varias materias desde su perfil (POST /admin/users/:id/courses)
   'user.assign_courses':  { label: 'asignó materias a',         icon: 'library_add',          color: '#1a73e8', category: 'user' },
@@ -244,6 +244,11 @@ const ACTIONS = {
   'system.maintenance_cancelled': { label: 'canceló el mantenimiento en espera',  icon: 'event_busy',  color: '#5f6368', category: 'system' },
   // Arreglos directos a la base desde /superadmin/otros (ver services/dbFixes.js)
   'system.db_fix':           { label: 'aplicó un arreglo a la base', icon: 'healing',       color: '#9334e6', category: 'system' },
+  // Anotaciones de la secretaria sobre el día de un docente
+  // (specs/secretaria-docentes-del-dia.spec.md, RN-12). El texto NO va en la meta: solo la
+  // fecha y el largo. La auditoría la lee más gente que la nota.
+  'secretaria.nota_guardar': { label: 'anotó sobre el día de',       icon: 'edit_note',     color: '#1a73e8', category: 'secretaria' },
+  'secretaria.nota_borrar':  { label: 'borró la anotación del día de', icon: 'delete',      color: '#5f6368', category: 'secretaria' },
 };
 
 const CATEGORIES = {
@@ -260,6 +265,7 @@ const CATEGORIES = {
   suggestion:   'Sugerencias',
   message:      'Mensajes',
   soe:          'Orientación Escolar',
+  secretaria:   'Secretaría',
   import:       'Importación',
   system:       'Sistema',
   auth:         'Sesiones',

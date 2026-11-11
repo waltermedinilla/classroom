@@ -1,6 +1,9 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { userCache } = require('./cache');
+// "Entró a la plataforma ese día" para el panel de la Secretaria (ver el uso, más abajo).
+const { debeRegistrarIngreso, registrarIngreso } = require('../services/ingresoDiario');
+const logger = require('../config/logger');
 
 // Busca un usuario en cache (TTL 5 min); si no está, consulta MongoDB y lo guarda.
 // .lean() + copia superficial en el caller: evita compartir un documento Mongoose
@@ -86,11 +89,24 @@ const checkUser = async (req, res, next) => {
     // Throttle corto a propósito: el monitor de superadmin usa lastSeen para "conectados
     // ahora" (ventana de 2 min) — con un throttle de 5 min ese número quedaba desactualizado.
     // Sin guarda de null: la rama de arriba ya salió con `return` si el usuario no existe.
+    //
+    // Esa MISMA escritura decide cuándo se registra el ingreso del día (IngresoDiario, D3 de
+    // specs/secretaria-docentes-del-dia.spec.md): solo si modificó el documento, es decir como
+    // mucho una vez por minuto por persona. Sigue sin bloquear nada: todo va en el .then().
     const oneMinAgo = new Date(Date.now() - 60 * 1000);
+    const ahora = new Date();
+    const usuarioIngreso = res.locals.user;
+    const suplantando = !!adminToken;
     User.updateOne(
       { _id: decoded.userId, $or: [{ lastSeen: { $lt: oneMinAgo } }, { lastSeen: null }] },
-      { $set: { lastSeen: new Date() } }
-    ).catch(() => {});
+      { $set: { lastSeen: ahora } }
+    ).then(r => {
+      if (r && r.modifiedCount === 1 && debeRegistrarIngreso({
+        role: usuarioIngreso.role, active: usuarioIngreso.active, suplantando,
+      })) {
+        registrarIngreso(usuarioIngreso, ahora, logger);
+      }
+    }).catch(() => {});
 
     // Si la cuenta está deshabilitada: borra ambas cookies y marca req.userDisabled
     // requireAuth revisa este flag antes de verificar el JWT

@@ -1,0 +1,72 @@
+<%# Estilos compartidos de "Docentes del día" y de la ficha del docente. %>
+<style>
+  .sd-card { background:#fff; border:1px solid #dadce0; border-radius:12px; padding:16px; }
+  .sd-barra { display:flex; justify-content:space-between; align-items:center; gap:12px;
+              flex-wrap:wrap; margin-bottom:14px; }
+  .sd-fecha { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .sd-fecha b { font-size:15px; min-width:220px; text-align:center; }
+  .sd-fecha b.finde { color:#80868b; }
+  .sd-nav { display:flex; align-items:center; justify-content:center; width:34px; height:34px;
+            border:1px solid #dadce0; border-radius:50%; color:#5f6368; text-decoration:none; }
+  .sd-nav:hover { background:#f8f9fa; }
+  .sd-nav.off { opacity:.35; pointer-events:none; }
+  .sd-btn { font-size:13px; padding:7px 12px; border:1px solid #dadce0; border-radius:8px;
+            background:#fff; color:#3c4043; text-decoration:none; font-family:inherit; cursor:pointer; }
+  .sd-btn:hover { background:#f8f9fa; }
+  .sd-btn.on { background:#e8f0fe; border-color:#1a73e8; color:#174ea6; font-weight:500; }
+  .sd-input, .sd-select { font-size:14px; padding:7px 10px; border:1px solid #dadce0; border-radius:8px;
+                          font-family:inherit; background:#fff; }
+  .sd-vistas { display:flex; gap:6px; }
+
+  .sd-resumen { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+  .sd-cont { flex:1 1 150px; border:1px solid #dadce0; border-radius:10px; padding:10px 12px; background:#fff; }
+  .sd-cont .n { font-size:22px; font-weight:600; }
+  .sd-cont .t { font-size:12px; color:#5f6368; }
+
+  .sd-est { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:10px; white-space:nowrap; }
+  .sd-est.actividad   { background:#e6f4ea; color:#137333; }
+  .sd-est.ingreso     { background:#e8f0fe; color:#174ea6; }
+  .sd-est.sinRegistro { background:#f1f3f4; color:#5f6368; }
+
+  .sd-aviso { font-size:13px; padding:10px 12px; border-radius:8px; background:#fef7e0; color:#8a5300;
+              border:1px solid #fbe3a1; margin-bottom:12px; }
+  .sd-ayuda { font-size:12px; color:#5f6368; margin-top:12px; line-height:1.5; }
+
+  .sd-tabla { width:100%; border-collapse:collapse; font-size:13px; }
+  .sd-tabla th { text-align:left; font-size:11px; font-weight:600; letter-spacing:.3px; color:#5f6368;
+                 text-transform:uppercase; padding:8px; border-bottom:1px solid #dadce0; white-space:nowrap; }
+  .sd-tabla td { padding:9px 8px; border-bottom:1px solid #f1f3f4; vertical-align:top; }
+  .sd-tabla tr:hover td { background:#f8f9fa; }
+  .sd-tabla a { color:#1a73e8; text-decoration:none; font-weight:500; }
+  .sd-mats { font-size:12px; color:#5f6368; }
+  .sd-off { color:#bdc1c6; }
+  .sd-desh { font-size:11px; color:#c5221f; }
+
+  <%# La línea del día: una fila por docente y el eje horario de la vista. Las posiciones son
+      porcentajes que calcula la vista con la hora de la escuela (fmt.hora), nunca con UTC. %>
+  .sl-wrap { overflow-x:auto; }
+  .sl { min-width:640px; }
+  .sl-eje, .sl-fila { display:grid; grid-template-columns:180px minmax(0,1fr); align-items:center; }
+  .sl-eje .pista { position:relative; height:22px; border-bottom:1px solid #dadce0; }
+  .sl-eje .tick { position:absolute; top:0; font-size:10px; color:#80868b; transform:translateX(-50%); }
+  .sl-fila { border-bottom:1px solid #f1f3f4; min-height:38px; }
+  .sl-fila .nom { font-size:13px; padding:6px 8px 6px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sl-fila .nom a { color:#202124; text-decoration:none; }
+  .sl-fila .nom a:hover { color:#1a73e8; }
+  .sl-fila .pista { position:relative; height:38px;
+                    background-image:repeating-linear-gradient(to right, #f1f3f4 0 1px, transparent 1px 100%);
+                    background-size:var(--hora) 100%; }
+  .sl-ev { position:absolute; top:50%; transform:translateY(-50%); }
+  .sl-ev.sala { height:16px; border-radius:4px; background:#1a73e8; opacity:.85; min-width:4px; }
+  .sl-ev.punto { width:11px; height:11px; border-radius:50%; margin-left:-5px; border:2px solid #fff; box-shadow:0 0 0 1px #dadce0; }
+  .sl-ev.publico  { background:#137333; }
+  .sl-ev.corrigio { background:#e37400; }
+  .sl-ev.ingreso  { height:4px; background:#c6dafc; border-radius:2px; }
+  .sl-ley { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:#5f6368; margin-top:10px; }
+  .sl-ley i { display:inline-block; width:11px; height:11px; border-radius:50%; vertical-align:-1px; margin-right:4px; }
+
+  @media (max-width: 700px) {
+    .sd-fecha b { min-width:0; }
+    .sd-tabla .opc { display:none; }
+  }
+</style>

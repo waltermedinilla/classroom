@@ -19,8 +19,9 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 
 const {
-  REGISTRO_ABIERTO, INVITACION_ABIERTA, MENSAJE_CERRADO, rechazarAlta,
+  REGISTRO_ABIERTO, INVITACION_ABIERTA, MENSAJE_CERRADO, rechazarAlta, ROLES_AUTOREGISTRO,
 } = require('../../services/registroPublico');
+const User = require('../../models/User');
 
 // JWT_SECRET: routes/auth.js lo lee al firmar, pero ninguna de las rutas de acá llega a
 // firmar nada. Se setea igual para que el require no dependa del .env de la máquina.
@@ -33,6 +34,23 @@ describe('services/registroPublico — los flags', () => {
       'el auto-registro de /register debe estar cerrado (pedido del usuario, 2026-08-23)');
     assert.strictEqual(INVITACION_ABIERTA, false,
       'el alta por enlace de invitación debe estar cerrada: dejaba elegir rol, incluido soe');
+  });
+
+  test('RN-02 (secretaria) · la lista de roles auto-asignables es BLANCA y cerrada', () => {
+    // Si un rol nuevo aparece acá sin que nadie lo decida, este test lo dice. Los roles con
+    // alcance o permisos sobre otras personas los crea un administrador.
+    assert.deepStrictEqual([...ROLES_AUTOREGISTRO].sort(), ['directivo', 'soe', 'student', 'teacher']);
+    for (const r of ['superadmin', 'admin', 'preceptor', 'jefe', 'secretaria']) {
+      assert.ok(!ROLES_AUTOREGISTRO.includes(r), `'${r}' no puede ser auto-asignable`);
+    }
+    assert.ok(Object.isFrozen(ROLES_AUTOREGISTRO), 'nadie puede sumarle un rol en tiempo de ejecución');
+  });
+
+  test('RN-02 (secretaria) · un rol nuevo en el enum no entra solo a la lista', () => {
+    // Era el bug: los GET usaban User.getRoles() menos una lista negra.
+    const nuevos = User.getRoles().filter(r => !['superadmin', 'admin', 'preceptor'].includes(r));
+    assert.ok(nuevos.includes('secretaria'), 'precondición: secretaria está en el enum');
+    assert.ok(!ROLES_AUTOREGISTRO.includes('secretaria'));
   });
 
   test('el mensaje dice a quién pedirle la cuenta', () => {
