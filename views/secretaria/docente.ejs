@@ -46,7 +46,13 @@
     <% } %>
 
     <div class="sd-resumen">
-      <div class="sd-cont"><div class="t">Estado del día</div><div style="margin-top:4px"><span class="sd-est <%= fila.estado %>"><%= ESTADOS[fila.estado] %></span></div></div>
+      <div class="sd-cont <%= ['aTiempo', 'tarde'].includes(fila.puntualidad.estado) ? 'pt-' + fila.puntualidad.estado : '' %>"
+           style="<%= ['aTiempo', 'tarde'].includes(fila.puntualidad.estado) ? 'border:2px solid var(--pt);background:var(--pt-bg)' : '' %>">
+        <div class="t">Estado del día</div><div style="margin-top:4px"><span class="sd-est <%= fila.estado %>"><%= ESTADOS[fila.estado] %></span></div>
+        <% if (fila.textoPuntualidad) { const partes = fila.textoPuntualidad.split(' · '); %>
+          <div class="sd-pt <%= 'pt-' + fila.puntualidad.estado %>"><b><%= partes.slice(0, -1).join(' · ') %></b><br><%= partes[partes.length - 1] %></div>
+        <% } %>
+      </div>
       <div class="sd-cont"><div class="t">En la plataforma</div><div class="n" style="font-size:16px">
         <% if (!hayDatoIngreso) { %><span class="sd-off">sin dato</span><% } else if (s.ingreso) { %><%= fmt.hora(s.ingreso.primeraVez) %> – <%= fmt.hora(s.ingreso.ultimaVez) %><% } else { %><span class="sd-off">—</span><% } %></div></div>
       <div class="sd-cont"><div class="t">Sala en vivo</div><div class="n" style="font-size:16px"><%= s.sala.minutos %> min</div></div>

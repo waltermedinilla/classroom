@@ -154,6 +154,10 @@ const SECTIONS = [
   // Es la pantalla de entrada del panel (destino del redirect de "/"), por eso va locked, igual
   // que preceptor_dashboard. Ver specs/secretaria-docentes-del-dia.spec.md.
   { key: 'secretaria_dia', panel: 'secretaria', label: 'Docentes del día', icon: 'event_note', path: '/secretaria', roles: ['secretaria', 'directivo', 'admin', 'superadmin'], locked: true },
+  // El horario de clases de cada materia: contra él se mide la puntualidad
+  // (specs/secretaria-puntualidad.spec.md). El directivo lo ve; editan secretaria y admin
+  // (middleware/secretaria.js ROLES_QUE_CARGAN_HORARIO).
+  { key: 'secretaria_horario', panel: 'secretaria', label: 'Horario de materias', icon: 'calendar_view_week', path: '/secretaria/horario', roles: ['secretaria', 'directivo', 'admin', 'superadmin'] },
 
   // ── General: los accesos del menú lateral (header.ejs) ─────────────────────
   { key: 'app_courses', panel: 'app', label: 'Mis clases',     icon: 'menu_book',       path: '/courses',               roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'secretaria', 'student'], locked: true },

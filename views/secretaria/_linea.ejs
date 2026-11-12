@@ -10,6 +10,8 @@
     const ts = [...f.eventos.map(e => e.desde)];
     if (f.senales.ingreso) ts.push(f.senales.ingreso.primeraVez, f.senales.ingreso.ultimaVez);
     for (const t of ts) { if (!t) continue; const m = minDelDia(t); desde = Math.min(desde, Math.floor(m / 60) * 60); hasta = Math.max(hasta, Math.ceil((m + 1) / 60) * 60); }
+    // Las clases del día también estiran el eje: una 1ª hora a las 06:40 tiene que verse.
+    for (const c of (f.puntualidad && f.puntualidad.clases) || []) { desde = Math.min(desde, Math.floor(c.inicio / 60) * 60); }
   }
   hasta = Math.min(hasta, 24 * 60);
   const total = hasta - desde;
@@ -27,10 +29,14 @@
         <% }) %>
       </div>
     </div>
-    <% filas.forEach(f => { %>
-      <div class="sl-fila">
+    <% filas.forEach(f => { const pt = f.puntualidad ? f.puntualidad.estado : ''; %>
+      <div class="sl-fila <%= (pt === 'aTiempo' || pt === 'tarde') ? 'pt-' + pt : '' %>" title="<%= f.textoPuntualidad || '' %>">
         <div class="nom"><a href="/secretaria/docentes/<%= f.id %>?fecha=<%= linkFecha %>"><%= f.name %></a></div>
         <div class="pista">
+          <%# El inicio de cada clase del docente ese día (specs/secretaria-puntualidad.spec.md). %>
+          <% ((f.puntualidad && f.puntualidad.clases) || []).forEach(c => { %>
+            <span class="sl-clase" style="left:<%= pct(c.inicio).toFixed(2) %>%" title="<%= c.label %> <%= c.desde %> · <%= c.materia %>"><span><%= c.desde %></span></span>
+          <% }) %>
           <% if (f.senales.ingreso) {
                const a = minDelDia(f.senales.ingreso.primeraVez), b = minDelDia(f.senales.ingreso.ultimaVez); %>
             <span class="sl-ev ingreso" style="left:<%= pct(a).toFixed(2) %>%;width:<%= Math.max(0.6, pct(b) - pct(a)).toFixed(2) %>%"

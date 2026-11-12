@@ -1,0 +1,155 @@
+<%# Horario de materias — panel de la Secretaria. Ver specs/secretaria-puntualidad.spec.md.
+    Una grilla de días × módulos por materia, armada con la grilla de la escuela
+    (models/Horario.js). Se guarda materia por materia (POST /secretaria/horario/:courseId).
+    Contra este horario se mide la puntualidad en "Docentes del día". %>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Horario de materias - Secretaría - Classroom</title>
+  <%- include('../partials/head-iconos') %>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/secretaria-nav', { activePage }) %>
+    <%- include('_estilos') %>
+    <style>
+      .hm-curso { margin-bottom:18px; }
+      .hm-curso h3 { font-size:15px; margin:0 0 8px; }
+      .hm-mat { border:1px solid #dadce0; border-radius:10px; background:#fff; margin-bottom:8px; }
+      .hm-mat > summary { list-style:none; cursor:pointer; padding:10px 14px; display:flex; justify-content:space-between; gap:10px; align-items:center; }
+      .hm-mat > summary::-webkit-details-marker { display:none; }
+      .hm-mat > summary .res { font-size:12px; color:#5f6368; text-align:right; }
+      .hm-mat[open] > summary { border-bottom:1px solid #f1f3f4; }
+      .hm-cuerpo { padding:10px 14px 14px; overflow-x:auto; }
+      .hm-grilla { border-collapse:collapse; font-size:12px; }
+      .hm-grilla th { font-weight:600; color:#5f6368; padding:4px 6px; text-align:center; white-space:nowrap; }
+      .hm-grilla th.mod { text-align:left; }
+      .hm-grilla td { padding:2px 6px; text-align:center; }
+      .hm-grilla td.mod { text-align:left; white-space:nowrap; color:#3c4043; }
+      .hm-grilla .turno th { text-align:left; padding-top:10px; color:#202124; }
+      .hm-grilla input { width:18px; height:18px; cursor:pointer; }
+      .hm-acc { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:10px; flex-wrap:wrap; }
+      .hm-est { font-size:12px; color:#5f6368; }
+      .hm-viejo { font-size:12px; color:#b45309; margin-top:6px; }
+    </style>
+
+    <div class="sd-barra">
+      <div>
+        <h2 style="margin:0;font-size:20px">Horario de materias</h2>
+        <p class="sd-ayuda" style="margin-top:4px">Qué días y en qué módulos se dicta cada materia. Contra este horario se marca si el docente llegó a tiempo en "Docentes del día".</p>
+      </div>
+      <form method="get" action="/secretaria/horario">
+        <select class="sd-select" name="curso" onchange="this.form.submit()" aria-label="Filtrar por curso">
+          <option value="">Todos mis cursos</option>
+          <% divisiones.forEach(d => { %>
+            <option value="<%= d._id %>" <%= String(d._id) === curso ? 'selected' : '' %>><%= d.name %></option>
+          <% }) %>
+        </select>
+      </form>
+    </div>
+
+    <% if (!hayGrilla) { %>
+      <div class="sd-aviso">
+        La escuela todavía no tiene cargada la grilla de módulos (qué turnos hay y a qué hora empieza cada hora).
+        La carga un administrador en <b>Recursos → Horario</b><% if (['admin', 'superadmin'].includes(user.role)) { %>: <a href="/admin/recursos/horario">ir a cargarla</a><% } %>.
+      </div>
+    <% } else if (!porCurso.length) { %>
+      <div class="sd-card"><p style="text-align:center;color:#5f6368;margin:10px">No hay materias en <%= curso ? 'este curso' : 'tus cursos' %>.</p></div>
+    <% } else { %>
+      <% if (!puedeEditar) { %><div class="sd-aviso">Podés ver el horario, pero lo cargan la secretaria o un administrador.</div><% } %>
+
+      <% const nombreModulo = (turno, orden) => { const t = grilla.turnos.find(x => x.id === turno); const m = t && t.modulos.find(x => x.orden === orden); return m ? m.label : `módulo ${orden}`; }; %>
+      <% porCurso.forEach(c => { %>
+        <section class="hm-curso">
+          <h3><%= c.name %></h3>
+          <% c.materias.forEach(m => {
+               const marcado = new Set(m.horarioClases.filter(e => e.existe).map(e => `${e.dia}|${e.turno}|${e.orden}`));
+               const viejas = m.horarioClases.filter(e => !e.existe);
+               const resumenTxt = grilla.dias
+                 .map(d => { const ms = m.horarioClases.filter(e => e.existe && e.dia === d); return ms.length ? `${NOMBRE_DIA[d].slice(0, 3)} ${ms.map(e => nombreModulo(e.turno, e.orden).replace(' hora', '')).join(', ')}` : null; })
+                 .filter(Boolean).join(' · '); %>
+            <details class="hm-mat" data-materia="<%= m.id %>">
+              <summary>
+                <span><b><%= m.name %></b></span>
+                <span class="res"><%= resumenTxt || 'Sin horario cargado' %></span>
+              </summary>
+              <div class="hm-cuerpo">
+                <table class="hm-grilla">
+                  <thead>
+                    <tr><th class="mod">Módulo</th><% grilla.dias.forEach(d => { %><th><%= NOMBRE_DIA[d] %></th><% }) %></tr>
+                  </thead>
+                  <tbody>
+                    <% grilla.turnos.forEach(t => { %>
+                      <tr class="turno"><th colspan="<%= grilla.dias.length + 1 %>"><%= t.label %></th></tr>
+                      <% t.modulos.forEach(mod => { %>
+                        <tr>
+                          <td class="mod"><%= mod.label %> <span style="color:#80868b"><%= mod.desde %>–<%= mod.hasta %></span></td>
+                          <% grilla.dias.forEach(d => { const k = `${d}|${t.id}|${mod.orden}`; %>
+                            <td><input type="checkbox" data-dia="<%= d %>" data-turno="<%= t.id %>" data-orden="<%= mod.orden %>"
+                                       <%= marcado.has(k) ? 'checked' : '' %> <%= puedeEditar ? '' : 'disabled' %>
+                                       aria-label="<%= NOMBRE_DIA[d] %> <%= mod.label %>"></td>
+                          <% }) %>
+                        </tr>
+                      <% }) %>
+                    <% }) %>
+                  </tbody>
+                </table>
+                <% if (viejas.length) { %>
+                  <div class="hm-viejo"><%= viejas.length %> módulo(s) de este horario ya no existen en la grilla de la escuela y no se tienen en cuenta. Al guardar se quitan.</div>
+                <% } %>
+                <% if (puedeEditar) { %>
+                  <div class="hm-acc">
+                    <span class="hm-est"></span>
+                    <button type="button" class="sd-btn on hm-guardar">Guardar <%= m.name %></button>
+                  </div>
+                <% } %>
+              </div>
+            </details>
+          <% }) %>
+        </section>
+      <% }) %>
+    <% } %>
+  </main>
+
+  <% if (puedeEditar && hayGrilla) { %>
+  <script>
+    document.querySelectorAll('.hm-mat').forEach(function (box) {
+      var btn = box.querySelector('.hm-guardar');
+      var est = box.querySelector('.hm-est');
+      if (!btn) return;
+      btn.addEventListener('click', async function () {
+        var entradas = [];
+        box.querySelectorAll('input[type=checkbox]:checked').forEach(function (i) {
+          entradas.push({ dia: Number(i.dataset.dia), turno: i.dataset.turno, orden: Number(i.dataset.orden) });
+        });
+        btn.disabled = true;
+        est.textContent = 'Guardando…';
+        try {
+          var res = await fetch('/secretaria/horario/' + box.dataset.materia, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entradas: entradas }),
+          });
+          var data = await res.json().catch(function () { return {}; });
+          if (!res.ok) { est.textContent = data.error || 'No se pudo guardar.'; return; }
+          est.textContent = data.entradas.length ? 'Guardado (' + data.entradas.length + ' módulos).' : 'Guardado: sin horario.';
+          var viejo = box.querySelector('.hm-viejo'); if (viejo) viejo.remove();
+        } catch (e) {
+          est.textContent = 'No se pudo guardar. Revisá la conexión.';
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  </script>
+  <% } %>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

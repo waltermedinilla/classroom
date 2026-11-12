@@ -25,17 +25,20 @@ const RoomPresence   = require('../models/RoomPresence');
 const AuditLog       = require('../models/AuditLog');
 const IngresoDiario  = require('../models/IngresoDiario');
 const NotaDocenteDia = require('../models/NotaDocenteDia');
+const Horario        = require('../models/Horario');
 
 const { requireAuth }  = require('../middleware/auth');
 const { sectionGuard } = require('../middleware/sections');
 // El alcance es el de preceptoría, reutilizado tal cual (D1).
 const { loadPreceptorScope, inScope } = require('../middleware/preceptor');
-const { requireSecretaria, puedeAnotar } = require('../middleware/secretaria');
+const { requireSecretaria, puedeAnotar, puedeCargarHorario } = require('../middleware/secretaria');
 const { logAudit }  = require('../middleware/audit');
 const { logDeRuta } = require('../middleware/route-log');
 const { idMalo }    = require('../middleware/objectId');
 
 const S = require('../services/secretariaDia');
+const P = require('../services/secretariaPuntualidad');
+const grillaSvc = require('../services/recursos/horario');
 
 const router = express.Router();
 // sectionGuard antes del alcance, para no pagar la query de divisiones en un 403 (mismo orden
@@ -53,7 +56,7 @@ async function docentesVisibles(req, curso = null) {
   const divisionIds = curso && inScope(req, curso) ? [String(curso)] : req.scopeDivisionIds;
   if (!divisionIds.length) return { divisionIds, docentes: new Map() };
   const courses = await Course.find({ division: { $in: divisionIds.map(oid) } })
-    .select('name division owner coTeachers').lean();
+    .select('name division owner coTeachers horarioClases').lean();
   return { divisionIds, docentes: S.docentesDelAlcance(courses, divisionIds) };
 }
 
@@ -61,12 +64,12 @@ async function docentesVisibles(req, curso = null) {
 // ventana HOLGADA y el recorte fino lo hace services/secretariaDia.js (RN-05).
 async function filasDelDia({ school, fecha, docentes }) {
   const ids = [...docentes.keys()];
-  if (!ids.length) return { filas: [], hayDatoIngreso: false };
+  if (!ids.length) return { filas: [], hayDatoIngreso: false, hayGrilla: false };
   const idsOid = ids.map(oid);
   const cursosIds = [...new Set([...docentes.values()].flat().map(m => m.id))];
   const ventana = S.ventanaDelDia(fecha);
 
-  const [usuarios, ingresos, hayDato, presencias, auditorias, notas] = await Promise.all([
+  const [usuarios, ingresos, hayDato, presencias, auditorias, notas, grilla] = await Promise.all([
     User.find({ _id: { $in: idsOid } }).select('name role active').lean(),
     IngresoDiario.find({ user: { $in: idsOid }, fecha }).lean(),
     // RN-07: ¿la escuela ya registraba ingresos ese día? Basta con un documento de esa fecha o
@@ -77,6 +80,8 @@ async function filasDelDia({ school, fecha, docentes }) {
     AuditLog.find({ 'actor.userId': { $in: idsOid }, timestamp: ventana, action: { $in: S.ACCIONES_SENAL } })
       .select('action timestamp targets actor.userId').lean(),
     NotaDocenteDia.find({ school, docente: { $in: idsOid }, fecha }).lean(),
+    // La grilla de módulos: contra ella se mide la puntualidad (specs/secretaria-puntualidad.spec.md).
+    Horario.findOne({ school }).lean(),
   ]);
 
   const nombres = {};
@@ -111,6 +116,7 @@ async function filasDelDia({ school, fecha, docentes }) {
         nombres,
       });
       const u = usuarioDe.get(id);
+      const puntualidad = P.puntualidad({ fecha, materias, grilla, senales, hayDatoIngreso });
       return {
         id, name: u.name, active: u.active !== false,
         materias,
@@ -118,11 +124,13 @@ async function filasDelDia({ school, fecha, docentes }) {
         estado: S.estadoDelDia(senales, { hayDatoIngreso }),
         eventos: S.eventosDeLaLinea(senales),
         nota: notaDe.get(id) || null,
+        puntualidad,
+        textoPuntualidad: P.textoPuntualidad(puntualidad),
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name, 'es'));
 
-  return { filas, hayDatoIngreso };
+  return { filas, hayDatoIngreso, hayGrilla: grillaSvc.horarioCargado(grilla) };
 }
 
 function noScope(req, res) {
@@ -154,7 +162,7 @@ router.get(['/', '/dia'], async (req, res) => {
       docentesVisibles(req, curso),
       Division.find({ _id: { $in: req.scopeDivisionIds.map(oid) } }).select('name').sort({ name: 1 }).lean(),
     ]);
-    const { filas, hayDatoIngreso } = await filasDelDia({ school, fecha, docentes });
+    const { filas, hayDatoIngreso, hayGrilla } = await filasDelDia({ school, fecha, docentes });
 
     res.render('secretaria/dia', {
       fecha, hoy: S.fechaDe(ahora),
@@ -163,8 +171,10 @@ router.get(['/', '/dia'], async (req, res) => {
       curso, vista, divisiones,
       filas,
       resumen: S.resumen(filas.map(f => f.estado)),
+      tardes: filas.filter(f => f.puntualidad.estado === 'tarde').length,
+      conHorario: filas.filter(f => f.puntualidad.estado !== 'sinClase').length,
       ESTADOS: S.ESTADOS,
-      hayDatoIngreso,
+      hayDatoIngreso, hayGrilla,
       auditoriaApagada: auditoriaApagada(),
       puedeAnotar: puedeAnotar(res.locals.user),
       activePage: 'dia',
@@ -254,6 +264,87 @@ router.post('/docentes/:id/nota', async (req, res) => {
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ── Horario de clases de las materias (specs/secretaria-puntualidad.spec.md) ──────────────────
+
+// GET /secretaria/horario?curso=<divisionId> — las materias del alcance con su grilla de
+// días × módulos. La ve todo el que entra al panel; editan solo ROLES_QUE_CARGAN_HORARIO.
+router.get('/horario', async (req, res) => {
+  if (noScope(req, res)) return;
+  try {
+    const school = res.locals.user.school;
+    const curso = inScope(req, req.query.curso) ? String(req.query.curso) : '';
+    const divisionIds = curso ? [curso] : req.scopeDivisionIds;
+    const [grilla, divisiones, materias] = await Promise.all([
+      Horario.findOne({ school }).lean(),
+      Division.find({ _id: { $in: req.scopeDivisionIds.map(oid) } }).select('name').sort({ name: 1 }).lean(),
+      Course.find({ division: { $in: divisionIds.map(oid) } })
+        .select('name division horarioClases').sort({ name: 1 }).lean(),
+    ]);
+    const nombreDiv = new Map(divisiones.map(d => [String(d._id), d.name]));
+    const porCurso = [];
+    for (const d of divisiones) {
+      if (curso && String(d._id) !== curso) continue;
+      const lista = materias.filter(m => String(m.division) === String(d._id)).map(m => ({
+        id: String(m._id), name: m.name,
+        // RP-03: las entradas cuya franja ya no existe se marcan, no se esconden.
+        horarioClases: (m.horarioClases || []).map(e => ({
+          dia: e.dia, turno: e.turno, orden: e.orden,
+          existe: !!grillaSvc.moduloDe(grilla, e.turno, e.orden),
+        })),
+      }));
+      if (lista.length) porCurso.push({ id: String(d._id), name: nombreDiv.get(String(d._id)) || '', materias: lista });
+    }
+
+    const hayGrilla = grillaSvc.horarioCargado(grilla);
+    res.render('secretaria/horario', {
+      porCurso, divisiones, curso,
+      hayGrilla,
+      // Solo lo que la pantalla necesita para dibujar la grilla: días y franjas de clase.
+      grilla: hayGrilla ? {
+        dias: (grilla.dias || []).map(Number).sort((a, b) => a - b),
+        turnos: grilla.turnos.map(t => ({
+          id: t.id, label: t.label,
+          modulos: grillaSvc.modulosDeClase(t).map(f => ({ orden: f.orden, label: f.label, desde: f.desde, hasta: f.hasta })),
+        })).filter(t => t.modulos.length),
+      } : null,
+      NOMBRE_DIA: grillaSvc.NOMBRE_DIA,
+      puedeEditar: puedeCargarHorario(res.locals.user),
+      activePage: 'horario',
+    });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+// POST /secretaria/horario/:courseId — reemplaza el horario de UNA materia.
+// Body JSON: { entradas: [{ dia, turno, orden }, …] }. Lista vacía = sin horario.
+router.post('/horario/:courseId', async (req, res) => {
+  if (idMalo(req, res, 'Acceso denegado', { como: 'json', param: 'courseId' })) return;
+  if (!puedeCargarHorario(res.locals.user)) {
+    return res.status(403).json({ error: 'No tenés permiso para cargar horarios.' });
+  }
+  const school = res.locals.user.school;
+  if (!school || !req.scopeDivisionIds.length) return res.status(403).json({ error: 'Acceso denegado' });
+  try {
+    const course = await Course.findById(req.params.courseId).select('name division').lean();
+    // Fuera de alcance e inexistente contestan lo mismo (como RN-03 de la fase 1).
+    if (!course || !inScope(req, course.division)) return res.status(403).json({ error: 'Acceso denegado' });
+
+    const grilla = await Horario.findOne({ school }).lean();
+    const v = P.validarHorarioClases((req.body || {}).entradas, grilla);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+
+    await Course.updateOne({ _id: course._id }, { $set: { horarioClases: v.entradas } });
+    logAudit(req, 'course.horario_clases', [{ type: 'course', id: course._id, name: course.name }],
+      { modulos: v.entradas.length });
+    res.json({ ok: true, entradas: v.entradas });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'No se pudo guardar el horario' });
   }
 });
 

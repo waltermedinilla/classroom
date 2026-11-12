@@ -7469,6 +7469,41 @@ const specs = [
     },
   },
   {
+    // specs/secretaria-puntualidad.spec.md — carga del horario de una materia (RP-01, RP-02).
+    // El espejo local puede no tener la grilla de módulos cargada: en ese caso se verifica que
+    // la carga se rechace con un motivo, y el resto se saltea sin fallar.
+    id: 'secretaria-horario-de-materia',
+    title: 'La secretaria carga el horario de una materia; un módulo inexistente da 400',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const url = `/secretaria/horario/${state.courseId}`;
+      const pagina = await client.get('secretaria', '/secretaria/horario', { expectStatus: 200 });
+
+      const malo = await client.post('secretaria', url, { body: { entradas: [{ dia: 1, turno: 'no-existe', orden: 1 }] } });
+      assert(malo.status === 400, `un módulo inexistente debería dar 400, dio ${malo.status}`);
+
+      // Quien no carga horarios (preceptor: ni siquiera entra al panel).
+      await client.post('preceptor', url, { body: { entradas: [] }, expectStatus: 403 });
+
+      const casilla = pagina.text.match(/data-dia="(\d)" data-turno="([^"]+)" data-orden="(\d+)"/);
+      if (!casilla) {
+        assert(/todavía no tiene cargada la grilla/.test(pagina.text),
+          'sin casillas, la pantalla debería avisar que falta la grilla');
+        return;
+      }
+      const entrada = { dia: Number(casilla[1]), turno: casilla[2], orden: Number(casilla[3]) };
+      const ok = await client.post('secretaria', url, { body: { entradas: [entrada, entrada] }, expectStatus: 200 });
+      assert(ok.json.entradas.length === 1, 'el duplicado debería descartarse (RP-02)');
+
+      // La lista del día sigue andando con el horario cargado.
+      await client.get('secretaria', '/secretaria', { expectStatus: 200 });
+
+      // Y se puede vaciar.
+      const vacio = await client.post('secretaria', url, { body: { entradas: [] }, expectStatus: 200 });
+      assert(vacio.json.entradas.length === 0, 'una lista vacía debería borrar el horario');
+    },
+  },
+  {
     // RN-09
     id: 'secretaria-fecha-futura',
     title: 'Pedir un día futuro lleva a hoy',

@@ -249,6 +249,8 @@ const ACTIONS = {
   // fecha y el largo. La auditoría la lee más gente que la nota.
   'secretaria.nota_guardar': { label: 'anotó sobre el día de',       icon: 'edit_note',     color: '#1a73e8', category: 'secretaria' },
   'secretaria.nota_borrar':  { label: 'borró la anotación del día de', icon: 'delete',      color: '#5f6368', category: 'secretaria' },
+  // Horario de clases de una materia (specs/secretaria-puntualidad.spec.md).
+  'course.horario_clases':   { label: 'cargó el horario de clases de', icon: 'calendar_view_week', color: '#1a73e8', category: 'secretaria' },
 };
 
 const CATEGORIES = {

@@ -75,6 +75,22 @@ const courseSchema = new mongoose.Schema({
     color2: { type: String, default: null },
     image:  { type: String, default: null },
   },
+  // Horario de clases: en qué días y en qué módulos de la grilla de la escuela se dicta.
+  // Lo carga la secretaria (o el admin) en /secretaria/horario, y lo usa la puntualidad del
+  // panel de la secretaria (specs/secretaria-puntualidad.spec.md).
+  // `turno` + `orden` apuntan a una franja de clase de models/Horario.js, igual que Reserva.
+  // La HORA no se copia acá: se lee de la grilla al evaluar, así que si se corre la 1ª hora,
+  // todas las materias se actualizan solas. Una entrada cuya franja ya no existe se ignora.
+  // Vacío (el default) = sin horario cargado = la materia no cuenta para la puntualidad.
+  horarioClases: {
+    type: [{
+      dia:   { type: Number, min: 1, max: 6, required: true },   // 1 = lunes … 6 = sábado
+      turno: { type: String, required: true },
+      orden: { type: Number, required: true },
+      _id: false,
+    }],
+    default: [],
+  },
 }, { timestamps: true });
 
 // Único punto de verdad para "¿es docente de esta materia?" — owner O cualquiera de

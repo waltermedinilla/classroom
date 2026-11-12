@@ -90,7 +90,11 @@ function docentesDelAlcance(courses, scopeDivisionIds) {
   const docentes = new Map();
   for (const c of courses || []) {
     if (!c || !alcance.has(str(c.division && (c.division._id || c.division)))) continue;
-    const materia = { id: str(c._id), name: c.name || '', division: str(c.division && (c.division._id || c.division)) };
+    const materia = {
+      id: str(c._id), name: c.name || '', division: str(c.division && (c.division._id || c.division)),
+      // Para la puntualidad (services/secretariaPuntualidad.js). Vacío = sin horario cargado.
+      horarioClases: c.horarioClases || [],
+    };
     const ids = [c.owner, ...(c.coTeachers || [])]
       .filter(Boolean)
       .map(u => str(u._id || u));

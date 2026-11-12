@@ -6835,6 +6835,13 @@ de calendario del día, y que pueda anotar algo por docente y día. Spec complet
   Mongoose al arrancar. Dos colecciones nuevas, en el backup con `optional: true`.
 - **Cobertura:** 28 unit en `secretariaDia.test.js`, 5 en `ingresoDiario.test.js`, 2 en
   `registroPublico.test.js`; 10 smoke `secretaria-*`; `test:roles` con el rol nuevo.
+- **Fase 2 — puntualidad** (`specs/secretaria-puntualidad.spec.md`): `Course.horarioClases`
+  (`[{ dia, turno, orden }]` sobre la grilla de `Horario`, sin copiar la hora), cargado en
+  `/secretaria/horario` por secretaria, admin y superadmin. La fila de "Docentes del día" lleva
+  un contorno **verde** si la llegada del día (lo primero entre `IngresoDiario` y la sala) fue
+  hasta 10 min después de su **primera** clase, y **naranja** si fue más tarde. Sin registro o
+  sin clase: sin color. Se compara en minutos del día con `live.hora`, nunca armando un Date.
+  23 unit en `secretariaPuntualidad.test.js` y 1 smoke `secretaria-horario-de-materia`.
 
 ---
 

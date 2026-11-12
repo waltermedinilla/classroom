@@ -13,6 +13,10 @@ const ROLES_CON_ACCESO = ['secretaria', 'directivo', 'admin', 'superadmin'];
 // Quién ESCRIBE anotaciones (RN-12). Solo la secretaria: el resto mira.
 const ROLES_QUE_ANOTAN = ['secretaria'];
 
+// Quién CARGA el horario de clases de las materias (specs/secretaria-puntualidad.spec.md).
+// El directivo entra a la pantalla y lo ve, pero no lo edita.
+const ROLES_QUE_CARGAN_HORARIO = ['secretaria', 'admin', 'superadmin'];
+
 const requireSecretaria = (req, res, next) => {
   if (!res.locals.user || !ROLES_CON_ACCESO.includes(res.locals.user.role)) {
     return res.status(403).send('Acceso denegado');
@@ -21,5 +25,9 @@ const requireSecretaria = (req, res, next) => {
 };
 
 const puedeAnotar = (user) => !!user && ROLES_QUE_ANOTAN.includes(user.role);
+const puedeCargarHorario = (user) => !!user && ROLES_QUE_CARGAN_HORARIO.includes(user.role);
 
-module.exports = { requireSecretaria, puedeAnotar, ROLES_CON_ACCESO, ROLES_QUE_ANOTAN };
+module.exports = {
+  requireSecretaria, puedeAnotar, puedeCargarHorario,
+  ROLES_CON_ACCESO, ROLES_QUE_ANOTAN, ROLES_QUE_CARGAN_HORARIO,
+};
