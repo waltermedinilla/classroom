@@ -101,12 +101,27 @@
                 <td class="opc sd-mats"><%= f.materias.map(m => m.name).join(' · ') %></td>
                 <td>
                   <% if (!hayDatoIngreso) { %><span class="sd-off">sin dato</span>
-                  <% } else if (s.ingreso) { %><%= fmt.hora(s.ingreso.primeraVez) %> – <%= fmt.hora(s.ingreso.ultimaVez) %>
+                  <% } else if (s.ingreso) { %>Sí
+                    <div class="sd-hora">Ingresó <%= fmt.hora(s.ingreso.primeraVez) %></div>
+                    <div class="sd-hora">Última vez <%= fmt.hora(s.ingreso.ultimaVez) %></div>
                   <% } else { %><span class="sd-off">—</span><% } %>
                 </td>
-                <td><% if (s.sala.sesiones) { %><%= s.sala.sesiones %> <%= s.sala.sesiones === 1 ? 'sesión' : 'sesiones' %> · <%= s.sala.minutos %> min<% } else { %><span class="sd-off">—</span><% } %></td>
-                <td><% if (s.publico.cantidad) { %><%= s.publico.cantidad %><% } else { %><span class="sd-off">—</span><% } %></td>
-                <td><% if (s.corrigio.cantidad) { %><%= s.corrigio.cantidad %> <%= s.corrigio.cantidad === 1 ? 'entrega' : 'entregas' %><% } else { %><span class="sd-off">—</span><% } %></td>
+                <%# Debajo de cada dato, la hora de la PRIMERA vez del día. Sale de los mismos campos
+                    que muestra el resto de la plataforma y se formatea con fmt.hora (zona de la
+                    escuela, 24 h), así coincide con lo que se ve en la sala y en el chat:
+                      sala      → RoomPresence.firstSeenAt (el "desde" de la asistencia de la sala)
+                      publicó   → la hora de la auditoría de la publicación
+                      corrigió  → la hora de la auditoría de la corrección %>
+                <% const masDe = (n) => n > 1 ? ` <span class="sd-mas">(y ${n - 1} más)</span>` : ''; %>
+                <td><% if (s.sala.sesiones) { %><%= s.sala.sesiones %> <%= s.sala.sesiones === 1 ? 'sesión' : 'sesiones' %> · <%= s.sala.minutos %> min
+                    <div class="sd-hora">Ingresó <%= fmt.hora(s.sala.items[0].desde) %><%- masDe(s.sala.sesiones) %></div>
+                  <% } else { %><span class="sd-off">—</span><% } %></td>
+                <td><% if (s.publico.cantidad) { %><%= s.publico.cantidad %>
+                    <div class="sd-hora">Publicó <%= fmt.hora(s.publico.items[0].ts) %><%- masDe(s.publico.cantidad) %></div>
+                  <% } else { %><span class="sd-off">—</span><% } %></td>
+                <td><% if (s.corrigio.cantidad) { %><%= s.corrigio.cantidad %> <%= s.corrigio.cantidad === 1 ? 'entrega' : 'entregas' %>
+                    <div class="sd-hora">Corrigió <%= fmt.hora(s.corrigio.items[0].ts) %><%- masDe(s.corrigio.cantidad) %></div>
+                  <% } else { %><span class="sd-off">—</span><% } %></td>
                 <td class="opc" style="max-width:220px"><% if (f.nota) { %><%= f.nota.texto %><% } else { %><span class="sd-off">—</span><% } %></td>
               </tr>
             <% }) %>
@@ -119,6 +134,8 @@
     <p class="sd-ayuda">
       Esta pantalla muestra lo que quedó registrado en la plataforma. <b>"Sin registro" no significa que el
       docente no haya trabajado</b>: una clase presencial no deja rastro acá.
+      Las horas están en hora de la escuela y son las mismas que muestran la sala y el chat; cuando hay
+      varias, se muestra la primera del día y el detalle está en la ficha del docente.
       "En la plataforma" es la primera y la última vez que se lo vio ese día<% if (!hayDatoIngreso) { %>
       (este dato se registra desde que se habilitó esta pantalla, por eso este día no lo tiene)<% } %>.
       "Corrigió" cuenta entregas corregidas o devueltas, sin datos de los alumnos.
