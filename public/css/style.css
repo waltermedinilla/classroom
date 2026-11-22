@@ -519,6 +519,12 @@ input, textarea, button { font-family: inherit; font-size: inherit; }
   display: flex; justify-content: space-between; align-items: flex-start;
   margin-bottom: 24px; position: relative; overflow: hidden;
 }
+/* La portada se pliega al entrar a "En vivo" (pedido del 2026-11-22: en la sala sobra) y vuelve
+   al ir a cualquier otra solapa. La altura la anima public/js/course.js (plegarPortada), que la
+   fija en píxeles antes de llevarla a 0: `height:auto` no se puede animar. */
+.course-header { transition: height .22s ease, opacity .18s ease, padding .22s ease, margin .22s ease; }
+.course-header.plegada { opacity: 0; padding-top: 0; padding-bottom: 0; margin-bottom: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .course-header { transition: none; } }
 .course-header::after {
   content: ''; position: absolute; top: -30%; right: -10%;
   width: 300px; height: 300px; border-radius: 50%; background: rgba(255,255,255,0.06);

@@ -622,10 +622,37 @@ function attachmentCountChip(attachments) {
 }
 
 /* ─── Tabs ─── */
+// La portada grande de la materia se pliega en "En vivo" (ahí sobra: la sala tiene su propia
+// cabecera) y se despliega al volver a cualquier otra solapa. Pedido del usuario, 2026-11-22.
+// Se anima la altura: primero se fija en píxeles (height:auto no se anima) y después va a 0 o
+// vuelve a su alto real; al terminar, se suelta para que la portada siga siendo flexible.
+function plegarPortada(plegar) {
+  const p = document.querySelector('.course-header');
+  if (!p || p.classList.contains('plegada') === plegar) return;
+  p.style.height = p.scrollHeight + 'px';
+  if (plegar) {
+    void p.offsetHeight;                       // que el navegador registre el alto de partida
+    p.classList.add('plegada');
+    p.style.height = '0px';
+  } else {
+    p.classList.remove('plegada');
+    const alto = p.scrollHeight;
+    p.style.height = '0px';
+    void p.offsetHeight;
+    p.style.height = alto + 'px';
+    p.addEventListener('transitionend', function soltar(e) {
+      if (e.propertyName !== 'height') return;
+      p.style.height = '';
+      p.removeEventListener('transitionend', soltar);
+    });
+  }
+}
+
 // Maneja el cambio de pestaña (Novedades / Actividades / Personas / Calificaciones / Mis notas)
 // La carga de datos es lazy: solo se ejecuta la primera vez que se visita el tab
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', function () {
+    plegarPortada(this.dataset.tab === 'envivo');
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     this.classList.add('active');
     document.querySelectorAll('.tab-content').forEach(tc => tc.classList.add('hidden'));
