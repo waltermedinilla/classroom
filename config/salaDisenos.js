@@ -20,6 +20,11 @@ const DISENOS = [
     rotulo: 'Ordenada',      ayuda: 'Lo mismo, con los controles agrupados y su estado a la vista.',     listo: false },
   { id: 'panel',    letra: 'B', clase: 'lr-diseno-b',  icono: 'view_sidebar',
     rotulo: 'Panel lateral', ayuda: 'Chat grande y los controles a un costado. Para clases de charla.', listo: true },
+  // D "Aula virtual" (specs/sala-diseno-d.spec.md): la base de B, el botón Abrir/Cerrar en la
+  // cabecera, la barra de abajo de C y el alumno entra viendo la transmisión. Se arma de a poco
+  // con el usuario.
+  { id: 'mixto',    letra: 'D', clase: 'lr-diseno-d',  icono: 'view_quilt',
+    rotulo: 'Aula virtual',  ayuda: 'Para clases a distancia: el alumno entra viendo la transmisión.',   listo: true },
   { id: 'aula',     letra: 'C', clase: 'lr-diseno-c',  icono: 'co_present',
     rotulo: 'Modo aula',     ayuda: 'Oscuro, el video grande y los botones abajo. Para exponer.',        listo: true },
 ];

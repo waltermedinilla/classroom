@@ -36,6 +36,8 @@ const IDS_NUEVOS = new Set([
   // C
   'lrCReloj', 'lrCCuenta', 'lrCCuentaTxt', 'lrCBarra', 'lrCBarraTx', 'lrCBarraClase', 'lrCEscribir',
   'lrCFotos', 'lrCBarraFin',
+  // D
+  'lrDBarraChat', 'lrDChat', 'lrDChatTxt', 'txSonido',
   // id agregados a elementos que YA existían (para poder mudarlos o ubicarlos en la grilla)
   'lrAviso', 'lrClasesAnt', 'lrPresencia', 'txBarra', 'txManoCaja', 'txTurnosTit',
 ]);
@@ -172,7 +174,7 @@ test('las mudanzas del script apuntan a id que existen (en el render del docente
   const todos = new Set([...ids(render('docente', 'clasico')), ...ids(render('alumno', 'clasico'))]);
   const bloque = fs.readFileSync(PARCIAL, 'utf8').match(/const MUDANZAS = \{([\s\S]*?)\n  \};/)[1];
   const disenos = [...bloque.matchAll(/^\s{4}(\w+): \[/gm)].map(m => m[1]);
-  assert.deepStrictEqual(disenos, ['panel', 'aula'], 'una lista de mudanzas por diseño en uso');
+  assert.deepStrictEqual(disenos, ['panel', 'aula', 'mixto'], 'una lista de mudanzas por diseño en uso');
   const pares = [...bloque.matchAll(/\['(\w+)',\s*'(\w+)'\]/g)];
   assert.ok(pares.length > 30);
   // Un nodo puede faltar en un render (el de otro rol, o un módulo apagado: acomodarDiseno lo
@@ -208,9 +210,9 @@ test('CA-14 · ⭐ ninguna regla del CSS de los diseños sin prefijo de diseño'
   }
   assert.ok(selectores.length > 20);
   const permitido = (sel) =>
-    /^(\[data-theme="dark"\]\s*)?(:is\(\.lr-diseno-[abc][^)]*\)|\.lr-diseno-[abc]\b)/.test(sel) ||
-    /^\.lr-wrap:not\(\.lr-diseno-[abc]\)/.test(sel) ||
-    /^\.lr-wrap\.lr-diseno-[abc]\b/.test(sel);
+    /^(\[data-theme="dark"\]\s*)?(:is\(\.lr-diseno-[abcd][^)]*\)|\.lr-diseno-[abcd]\b)/.test(sel) ||
+    /^\.lr-wrap:not\(\.lr-diseno-[abcd]\)/.test(sel) ||
+    /^\.lr-wrap\.lr-diseno-[abcd]\b/.test(sel);
   assert.deepStrictEqual(selectores.filter(s => s && !permitido(s)), []);
 });
 

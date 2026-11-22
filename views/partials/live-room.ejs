@@ -640,6 +640,13 @@
       los botones de siempre; los dos de "la clase" son botones redondos que delegan en
       #lrModo y #lrFotos, igual que los interruptores de A y B. %>
   <div class="lr-dis lrC-barra" id="lrCBarra">
+    <%# Solo D, con el celular de costado y la transmisión a pantalla completa (D5): muestra u
+        oculta el chat de la derecha. %>
+    <div class="lrC-grupo lrD-grupo-chat" id="lrDBarraChat">
+      <button type="button" class="lrC-bot" id="lrDChat" aria-pressed="true">
+        <span class="material-symbols-outlined">chat</span><span id="lrDChatTxt">Ocultar chat</span>
+      </button>
+    </div>
     <div class="lrC-grupo" id="lrCBarraTx"></div>
     <% if (esGestor) { %>
       <div class="lrC-grupo" id="lrCBarraClase">
@@ -1212,6 +1219,29 @@
       ['lrActividad',   'lrCBarraFin'],
       ['lrCerrar',      'lrCBarraFin'],
     ],
+    // D (specs/sala-diseno-d.spec.md): el panel de B; Abrir/Cerrar sala en la cabecera (D1); la
+    // transmisión y "Crear actividad" en la barra de abajo de C (D3).
+    mixto: [
+      ['lrAviso',       'lrACabAviso'],
+      ['lrAbrir',       'lrACabAcc'],
+      ['lrCerrar',      'lrACabAcc'],
+      ['lrCampana',     'lrChatAcc'],
+      ['lrCampanaMenu', 'lrChatAcc'],
+      ['lrClasesAnt',   'lrChatAcc'],
+      ['lrSonidoClase', 'lrAClaseSonido'],
+      ['lrSonidoMenu',  'lrAClaseSonido'],
+      ['lrDiseno',      'lrBDisenoSlot'],
+      ['lrDisenoMenu',  'lrBDisenoSlot'],
+      ['lrAClase',      'lrBSlotClase'],
+      ['lrPresencia',   'lrBSlotQuien'],
+      ['txManos',       'lrBManosSlot'],
+      ['txControles',   'lrCBarraTx'],
+      ['txCerrar',      'lrCBarraTx'],
+      ['txVer',         'lrCBarraTx'],
+      ['txNoVer',       'lrCBarraTx'],
+      ['txManoCaja',    'lrCBarraTx'],
+      ['lrActividad',   'lrCBarraFin'],
+    ],
   };
 
   const MARCAS = new Map();   // id del nodo → el comentario que marca su lugar de Clásico
@@ -1251,7 +1281,7 @@
     if (d.id === disenoActual) return;
     DISENOS.forEach(x => { if (x.clase) WRAP.classList.toggle(x.clase, x.id === d.id); });
     WRAP.dataset.diseno = d.id;
-    if (d.id !== 'panel') delete WRAP.dataset.solapa;
+    if (d.id !== 'panel' && d.id !== 'mixto') delete WRAP.dataset.solapa;
     else if (!WRAP.dataset.solapa) WRAP.dataset.solapa = 'chat';
     disenoActual = d.id;
     acomodarDiseno(d.id);
@@ -1264,6 +1294,9 @@
   let ultimaPresencia = null;
   function pintarDiseno(s) {
     aplicarDiseno(s.settings && s.settings.diseno);
+    // D2 y D3: con la sala cerrada D no muestra la transmisión ni la barra. Lo decide el CSS con
+    // este atributo, así que el estado y lo que se ve no se pueden desincronizar.
+    WRAP.dataset.estado = s.estado === 'abierta' ? 'abierta' : 'cerrada';
     if (disenoActual === 'clasico') return;
 
     const abierta = s.estado === 'abierta';
@@ -1275,13 +1308,13 @@
     // A dice la fecha ("Clase del jueves 24/09"); B, "Clase de hoy" cuando es de hoy (maquetas).
     const titulo = !abierta ? 'La sala no está abierta'
       : !ap ? 'Clase en vivo'
-      : (disenoActual === 'panel' && ap.hoy) ? 'Clase de hoy · desde las ' + ap.desde
+      : ((disenoActual === 'panel' || disenoActual === 'mixto') && ap.hoy) ? 'Clase de hoy · desde las ' + ap.desde
       : 'Clase del ' + ap.dia;
     $('lrATitulo').textContent = titulo;
     const p = s.presencia || {};
     const partes = [];
     if (abierta && ap && disenoActual === 'aula') partes.push('desde ' + ap.desde);
-    else if (abierta && ap && disenoActual !== 'panel') partes.push('desde las ' + ap.desde);
+    else if (abierta && ap && disenoActual !== 'panel' && disenoActual !== 'mixto') partes.push('desde las ' + ap.desde);
     // En C la cuenta va en su pastilla de la derecha; acá queda solo la hora y el reloj.
     if (abierta && disenoActual !== 'aula') partes.push(SalaPresencia.lineaCabecera(p));
     $('lrASub').textContent = partes.join(' · ');
@@ -1346,7 +1379,7 @@
   // acomodo. Los rótulos de los grupos también vienen del módulo.
   function pintarQuien(listas) {
     const cont = $('lrBQuien');
-    if (!cont || disenoActual !== 'panel') return;
+    if (!cont || (disenoActual !== 'panel' && disenoActual !== 'mixto')) return;
     if (!listas || estado !== 'abierta') { cont.innerHTML = ''; return; }
     const G = SalaPresencia.GRUPOS;
     const bola = (per, clase) => '<div class="lr-bola ' + clase + '" title="' + esc(per.nombre) + '" style="background:'
@@ -1374,6 +1407,14 @@
     }
     cont.innerHTML = h;
   }
+
+  // D5: con el celular de costado, el chat de la derecha se muestra u oculta desde la barra.
+  if ($('lrDChat')) $('lrDChat').addEventListener('click', () => {
+    const oculto = WRAP.dataset.chat !== 'oculto';
+    if (oculto) WRAP.dataset.chat = 'oculto'; else delete WRAP.dataset.chat;
+    $('lrDChat').setAttribute('aria-pressed', oculto ? 'false' : 'true');
+    $('lrDChatTxt').textContent = oculto ? 'Mostrar chat' : 'Ocultar chat';
+  });
 
   // Las solapas de B en el celular. Cambiar de solapa es mostrar u ocultar (lo decide el CSS
   // con data-solapa); no se le pide nada al servidor.
@@ -2198,6 +2239,26 @@
   // es null. Ver config/modulos.js.
   const HAY_TX = !!$('txCard');
 
+  // D4: en el diseño D el alumno se conecta solo a la transmisión. Lo mismo que el botón "Ver la
+  // clase", sin el botón. Si el navegador no deja sonar (no hubo un toque en la página), aparece
+  // "Tocá para escuchar" sobre el video.
+  let cortoAMano = false, conectandoSolo = false;
+  function mirarSolo(tx, puedeMirar, mirando) {
+    if (!tx.activa) { cortoAMano = false; $('txSonido').style.display = 'none'; }
+    if (disenoActual !== 'mixto' || !puedeMirar || mirando || cortoAMano || conectandoSolo) return;
+    conectandoSolo = true;
+    window.Transmision.empezarAMirar()
+      .then(() => {
+        pintarTransmision(ultimoEstado.transmision || tx);
+        setTimeout(() => {
+          const mudo = [...document.querySelectorAll('#txAudios audio')].some(a => a.paused);
+          if (mudo && disenoActual === 'mixto') $('txSonido').style.display = '';
+        }, 1500);
+      })
+      .catch(() => { /* queda el botón "Ver la clase" para intentarlo a mano */ })
+      .finally(() => { conectandoSolo = false; });
+  }
+
   function pintarTransmision(tx) {
     if (!HAY_TX || !tx) return;
 
@@ -2237,9 +2298,11 @@
       $('txVozTodos').setAttribute('aria-pressed', String(!!tx.vozAbierta));
     }
 
-    // Botones del que mira. El alumno tiene que TOCAR para empezar a recibir (D12).
+    // Botones del que mira. El alumno tiene que TOCAR para empezar a recibir (D12)… salvo en el
+    // diseño D, donde entra viendo (D4 de specs/sala-diseno-d.spec.md).
     const mirando = window.Transmision && window.Transmision.estoyMirando();
     const puedeMirar = tx.activa && tx.puedoVer && !tx.puedoEmitir;
+    mirarSolo(tx, puedeMirar, mirando);
     $('txVer').style.display   = (puedeMirar && !mirando) ? '' : 'none';
     $('txNoVer').style.display = (puedeMirar && mirando)  ? '' : 'none';
     $('txVerIcono').textContent  = soloVoz ? 'volume_up' : 'play_arrow';
@@ -2412,8 +2475,18 @@
       catch (e) { alert('No se pudo ver la clase: ' + e.message); }
     });
     $('txNoVer').addEventListener('click', () => {
+      // En D el alumno entra viendo solo; si corta a mano, no se lo vuelve a conectar hasta que
+      // esta transmisión termine (o hasta que toque "Ver la clase").
+      cortoAMano = true;
       window.Transmision.dejarDeMirar();
+      $('txSonido').style.display = 'none';
       pollear();
+    });
+
+    // "Tocá para escuchar" (D4): un toque en la página es lo que el navegador pide para sonar.
+    $('txSonido').addEventListener('click', () => {
+      document.querySelectorAll('#txCard audio, #txCard video').forEach(el => { el.play().catch(() => {}); });
+      $('txSonido').style.display = 'none';
     });
 
     // Los tres interruptores del emisor.

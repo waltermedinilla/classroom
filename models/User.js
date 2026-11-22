@@ -211,7 +211,7 @@ const userSchema = new mongoose.Schema({
   // S2). La próxima sala que abra arranca con éste. Default 'clasico': nadie ve un cambio que no
   // pidió. Los ids tienen que ser los de config/salaDisenos.js (lo controla un test).
   // Nadie la escribe salvo POST /courses/:id/sala/diseno.
-  salaDiseno: { type: String, enum: ['clasico', 'ordenada', 'panel', 'aula'], default: 'clasico' },
+  salaDiseno: { type: String, enum: ['clasico', 'ordenada', 'panel', 'aula', 'mixto'], default: 'clasico' },
 }, { timestamps: true }); // Agrega createdAt y updatedAt automáticamente
 
 // Índice único compuesto school+dni: evita DNI duplicados dentro de la misma escuela

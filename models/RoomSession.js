@@ -79,7 +79,7 @@ const roomSessionSchema = new mongoose.Schema({
     // El diseño de ESTA clase (specs/sala-disenos.spec.md, S2). Lo pone quien gestiona y lo
     // ven todos. Se copia de User.salaDiseno al abrir. Una sesión vieja lee undefined, y
     // disenoEfectivo() lo pinta como Clásico. Solo es visual: ningún permiso lo mira.
-    diseno: { type: String, enum: ['clasico', 'ordenada', 'panel', 'aula'], default: 'clasico' },
+    diseno: { type: String, enum: ['clasico', 'ordenada', 'panel', 'aula', 'mixto'], default: 'clasico' },
   },
 
   // La transmisión en vivo de ESTA clase. Ver specs/transmision-en-vivo.spec.md.
