@@ -35,15 +35,26 @@ const DISENOS = [
 // revertir el deploy.
 const DISENOS_SALA_VISIBLES = true;
 
+// ⭐ EL DISEÑO FIJO (pedido del 2026-11-22: "cada vez que un docente haga click en 'en vivo'
+// quiero que le aparezca la versión D, quiero que elimines el botón de diseño").
+//
+// Con un id acá, TODAS las salas se ven en ese diseño —abiertas o cerradas, docente o alumno—
+// sin importar lo que cada docente tenga guardado, y el botón "Diseño" no se dibuja (la lista
+// que llega a la vista trae solo este). Lo guardado no se borra: con null vuelve el selector y
+// cada uno queda como estaba. El freno de mano de arriba sigue mandando: en false, Clásico.
+const DISENO_FIJO = 'mixto';
+
 const DISENO_DEFAULT = 'clasico';
 
 // Lo que necesita la vista: solo los diseños listos, y nada si el freno está puesto.
-function paraVista() {
-  if (!DISENOS_SALA_VISIBLES) return { visibles: false, lista: [] };
+function paraVista({ visibles = DISENOS_SALA_VISIBLES, fijo = DISENO_FIJO } = {}) {
+  if (!visibles) return { visibles: false, lista: [] };
   return {
     visibles: true,
-    lista: DISENOS.filter(d => d.listo).map(({ id, clase, icono, rotulo, ayuda }) => ({ id, clase, icono, rotulo, ayuda })),
+    // Con un diseño fijo la lista trae solo ese: con uno solo, la vista no dibuja el botón.
+    lista: DISENOS.filter(d => d.listo && (!fijo || d.id === fijo))
+      .map(({ id, clase, icono, rotulo, ayuda }) => ({ id, clase, icono, rotulo, ayuda })),
   };
 }
 
-module.exports = { DISENOS, DISENOS_SALA_VISIBLES, DISENO_DEFAULT, paraVista };
+module.exports = { DISENOS, DISENOS_SALA_VISIBLES, DISENO_DEFAULT, DISENO_FIJO, paraVista };

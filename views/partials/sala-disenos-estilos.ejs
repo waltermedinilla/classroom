@@ -191,7 +191,10 @@
   @media (min-width: 900px) {
     :is(.lr-diseno-b, .lr-diseno-d).lr-wrap { display:grid; grid-template-columns:minmax(0, 1fr) 340px; column-gap:16px; align-items:start; }
     :is(.lr-diseno-b, .lr-diseno-d).lr-wrap > * { grid-column:1; min-width:0; }
-    :is(.lr-diseno-b, .lr-diseno-d).lr-wrap > #lrACab { grid-column:1 / -1; }
+    /* grid-row:1 explícito: sin él, el aviso de asistencia del alumno (#asBanda, que va ANTES en
+       el HTML aunque esté vacío) se quedaba con la fila 1 y la cabecera caía debajo del panel o
+       del video. Se vio al fijar D para todos (2026-11-22): antes los alumnos casi no lo veían. */
+    :is(.lr-diseno-b, .lr-diseno-d).lr-wrap > #lrACab { grid-column:1 / -1; grid-row:1; }
     :is(.lr-diseno-b, .lr-diseno-d).lr-wrap > #lrBPanel { grid-column:2; grid-row:2 / span 40; position:sticky; top:12px; }
     :is(.lr-diseno-b, .lr-diseno-d) .lrB-solapas { display:none !important; }
     /* El chat ocupa el alto de la ventana y tiene su propio scroll: el cuadro de escribir no se
@@ -379,6 +382,9 @@
   .lr-diseno-d[data-tx="no"] #txCard { display:none !important; }
   .lr-diseno-d[data-tx="no"] #lrCBarraTx { display:none !important; }
   .lr-diseno-d[data-estado="cerrada"] .lrD-cab-tx { display:none !important; }
+  /* Con la sala cerrada la tarjeta de controles queda vacía (sus interruptores son de la clase
+     abierta), y desde que no hay botón "Diseño" no le queda nada adentro: no se muestra. */
+  .lr-diseno-d[data-estado="cerrada"] #lrAClase { display:none !important; }
 
   /* D7: al transmitir, la sala se reacomoda — el video a la izquierda y el chat a la derecha.
      Los controles, las manos y quién está quedan detrás de "Más opciones", arriba de la columna

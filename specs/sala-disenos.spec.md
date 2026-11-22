@@ -443,3 +443,28 @@ servidor: la sala no parpadea de Clásico al diseño elegido en el primer poll.
   en el comentario de `sala-disenos-estilos.ejs` para que el barrido de la fuente los incluya.
 - La cuenta "15 en la sala · 20/25" y el "20 de 25" de B los arma `SalaPresencia`
   (`cuentaCorta`, `deTotal`), por la misma regla que la cabecera.
+
+---
+
+## Diseño fijo: D "Aula virtual" para todos (2026-11-22)
+
+> "quiero quedarme con esa versión, así que cada vez que un docente haga click en 'en vivo'
+> quiero que le aparezca la versión D, quiero que elimines el botón de diseño, que ya no nos
+> hace falta."
+
+- `config/salaDisenos.js` tiene `DISENO_FIJO = 'mixto'`. Con un valor ahí:
+  - **Todas las salas se ven en D**, abiertas o cerradas, para el docente y para el alumno,
+    sin importar lo que cada uno tenga guardado (`disenoEfectivo` devuelve el fijo).
+  - **El botón "Diseño" no se dibuja**: `paraVista()` trae solo el diseño fijo, y con uno
+    solo la vista no muestra el selector.
+  - `disenoValido` solo acepta el fijo, así que la ruta del selector no puede elegir otro.
+- **Es reversible**: lo guardado en `User.salaDiseno` y en `settings.diseno` no se borra. Con
+  `DISENO_FIJO = null` vuelve el selector y cada uno queda como estaba.
+- **El freno de mano sigue mandando**: con `DISENOS_SALA_VISIBLES = false`, todo vuelve a
+  Clásico aunque haya un diseño fijo.
+- **Dos arreglos que salieron al fijarlo**, porque antes el alumno casi nunca veía D:
+  - **La cabecera del alumno.** El aviso de asistencia (`#asBanda`) va antes en el HTML, y aun
+    vacío se quedaba con la fila 1 de la grilla, así que la cabecera caía debajo del panel o
+    del video. Ahora `#lrACab` tiene `grid-row: 1`.
+  - **La tarjeta vacía del docente.** Con la sala cerrada, la tarjeta de controles quedaba
+    vacía (antes solo mostraba el botón "Diseño"). Ahora no se muestra.

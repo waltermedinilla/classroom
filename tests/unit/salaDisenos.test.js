@@ -20,7 +20,16 @@ const antes = require(path.join(raiz, 'tests', 'fixtures', 'sala-clasico-antes.j
 const PARCIAL = path.join(raiz, 'views', 'partials', 'live-room.ejs');
 const ESTILOS = path.join(raiz, 'views', 'partials', 'sala-disenos-estilos.ejs');
 
-const render = (rol, diseno, salaDisenos = SD.paraVista()) =>
+// ⭐ DISEÑO FIJO (2026-11-22): producción usa solo D (config/salaDisenos.js, DISENO_FIJO). Estos
+// tests siguen probando el MECANISMO de los diseños con el selector abierto —volver a abrirlo
+// es cambiar una línea—, así que renderizan con `fijo: null` y apagan el fijo mientras corren
+// los que leen la configuración (sinFijo). Lo que pasa CON el fijo está al final del archivo.
+const sinFijo = (fn) => async () => {
+  const antes = SD.DISENO_FIJO;
+  SD.DISENO_FIJO = null;
+  try { await fn(); } finally { SD.DISENO_FIJO = antes; }
+};
+const render = (rol, diseno, salaDisenos = SD.paraVista({ fijo: null })) =>
   ejs.render(fs.readFileSync(PARCIAL, 'utf8'), datos.locals(rol, diseno, salaDisenos), { filename: PARCIAL });
 const ids = (html) => [...html.matchAll(/\sid="([^"]+)"/g)].map(m => m[1]);
 
@@ -46,36 +55,36 @@ const IDS_NUEVOS = new Set([
 
 // ── CA-1 · disenoEfectivo ────────────────────────────────────────────────────
 
-test('CA-1 · un diseño listo pasa; lo desconocido o vacío es Clásico', () => {
+test('CA-1 · un diseño listo pasa; lo desconocido o vacío es Clásico', sinFijo(() => {
   assert.strictEqual(live.disenoEfectivo({ guardado: 'panel' }), 'panel');
   assert.strictEqual(live.disenoEfectivo({ guardado: 'aula' }), 'aula');
   for (const malo of [undefined, null, '', 'A', 'otro', 'Ordenada']) {
     assert.strictEqual(live.disenoEfectivo({ guardado: malo }), 'clasico', String(malo));
   }
-});
+}));
 
-test('CA-1 · un diseño que todavía no está listo se pinta en Clásico', () => {
+test('CA-1 · un diseño que todavía no está listo se pinta en Clásico', sinFijo(() => {
   const disenos = [{ id: 'clasico', listo: true }, { id: 'panel', listo: false }];
   assert.strictEqual(live.disenoEfectivo({ guardado: 'panel', visibles: true, disenos }), 'clasico');
-});
+}));
 
-test('CA-1 · con el freno de mano puesto, siempre Clásico', () => {
+test('CA-1 · con el freno de mano puesto, siempre Clásico', sinFijo(() => {
   assert.strictEqual(live.disenoEfectivo({ guardado: 'panel', visibles: false }), 'clasico');
-});
+}));
 
-test('A "Ordenada" está retirado: no se ofrece, no se elige y lo guardado se ve en Clásico', () => {
+test('A "Ordenada" está retirado: no se ofrece, no se elige y lo guardado se ve en Clásico', sinFijo(() => {
   assert.strictEqual(live.disenoValido('ordenada'), false);
   assert.strictEqual(live.disenoEfectivo({ guardado: 'ordenada' }), 'clasico');
   assert.match(render('docente', 'ordenada'), /<div class="lr-wrap" data-diseno="clasico">/);
   assert.ok(!render('docente', 'clasico').includes('data-diseno="ordenada"'), 'el menú no lo ofrece');
-});
+}));
 
-test('disenoValido: solo los listos se pueden elegir', () => {
+test('disenoValido: solo los listos se pueden elegir', sinFijo(() => {
   assert.strictEqual(live.disenoValido('panel'), true);
   assert.strictEqual(live.disenoValido('clasico'), true);
   for (const d of SD.DISENOS.filter(x => !x.listo)) assert.strictEqual(live.disenoValido(d.id), false, d.id);
   assert.strictEqual(live.disenoValido('cualquiera'), false);
-});
+}));
 
 test('los enums de los modelos tienen los mismos ids que config/salaDisenos.js', () => {
   const User = require(path.join(raiz, 'models', 'User'));
@@ -87,12 +96,12 @@ test('los enums de los modelos tienen los mismos ids que config/salaDisenos.js',
   assert.strictEqual(RoomSession.schema.path('settings.diseno').defaultValue, 'clasico');
 });
 
-test('leerPreferenciaDiseno: si la lectura falla, la sala abre en Clásico', async () => {
+test('leerPreferenciaDiseno: si la lectura falla, la sala abre en Clásico', sinFijo(async () => {
   const roto = { findById: () => { throw new Error('sin base'); } };
   assert.strictEqual(await live.leerPreferenciaDiseno(roto, 'u1'), 'clasico');
   const ok = { findById: () => ({ select: () => ({ lean: async () => ({ salaDiseno: 'aula' }) }) }) };
   assert.strictEqual(await live.leerPreferenciaDiseno(ok, 'u1'), 'aula');
-});
+}));
 
 // ── CA-7 · Clásico como estaba ───────────────────────────────────────────────
 
@@ -237,11 +246,11 @@ test('CA-14 · cada fondo fijo del CSS de los diseños declara su color de texto
 
 // ── La ruta y el poll ────────────────────────────────────────────────────────
 
-test('con la sala cerrada, el docente ve su diseño preferido y el resto Clásico', () => {
+test('con la sala cerrada, el docente ve su diseño preferido y el resto Clásico (sin diseño fijo)', () => {
   const src = fs.readFileSync(path.join(raiz, 'routes', 'rooms.js'), 'utf8');
   const i = src.indexOf("estado: 'cerrada'");
   const rama = src.slice(i, src.indexOf('apertura: null', i));
-  assert.match(rama, /diseno: req\.esGestor\s*\?\s*live\.disenoEfectivo\(\{ guardado: req\.res && req\.res\.locals\.user && req\.res\.locals\.user\.salaDiseno \}\)\s*:\s*'clasico'/);
+  assert.match(rama, /diseno: \(req\.esGestor \|\| SALA_DISENOS_FIJO\)\s*\?\s*live\.disenoEfectivo\(\{ guardado: req\.res && req\.res\.locals\.user && req\.res\.locals\.user\.salaDiseno \}\)\s*:\s*'clasico'/);
 });
 
 test('la ruta del selector existe, exige gestor y valida contra la lista', () => {
@@ -262,4 +271,36 @@ test('room.diseno está en el catálogo de auditoría', () => {
   const acciones = require(path.join(raiz, 'config', 'audit-actions'));
   const catalogo = acciones.AUDIT_ACTIONS || acciones.ACTIONS || acciones;
   assert.ok(catalogo['room.diseno'], 'falta room.diseno');
+});
+
+// ── El diseño fijo (pedido del 2026-11-22: siempre D, sin botón de diseño) ───
+
+test('FIJO · la configuración fija D "Aula virtual"', () => {
+  assert.strictEqual(SD.DISENO_FIJO, 'mixto');
+  assert.ok(SD.DISENOS.find(d => d.id === 'mixto').listo);
+});
+
+test('FIJO · todos ven D, tengan guardado lo que tengan, y nada más se puede elegir', () => {
+  for (const g of [undefined, null, '', 'clasico', 'panel', 'aula', 'ordenada', 'otro']) {
+    assert.strictEqual(live.disenoEfectivo({ guardado: g }), 'mixto', String(g));
+  }
+  assert.strictEqual(live.disenoValido('mixto'), true);
+  for (const d of ['clasico', 'panel', 'aula', 'ordenada']) assert.strictEqual(live.disenoValido(d), false, d);
+  // El freno de mano sigue mandando: en false, Clásico aunque haya fijo.
+  assert.strictEqual(live.disenoEfectivo({ guardado: 'panel', visibles: false }), 'clasico');
+});
+
+test('FIJO · leerPreferenciaDiseno da D aunque la lectura falle', async () => {
+  const roto = { findById: () => { throw new Error('sin base'); } };
+  assert.strictEqual(await live.leerPreferenciaDiseno(roto, 'u1'), 'mixto');
+});
+
+test('FIJO · la vista sale en D y sin el botón "Diseño", para el docente y el alumno', () => {
+  assert.deepStrictEqual(SD.paraVista().lista.map(d => d.id), ['mixto']);
+  for (const rol of ['docente', 'alumno']) {
+    const html = render(rol, 'mixto', SD.paraVista());
+    assert.match(html, /<div class="lr-wrap lr-diseno-d" data-diseno="mixto">/);
+    assert.ok(!html.includes('id="lrDiseno"'), rol + ': sin botón de diseño');
+    assert.ok(!html.includes('id="lrDisenoMenu"'), rol + ': sin menú de diseño');
+  }
 });

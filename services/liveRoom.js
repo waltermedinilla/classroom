@@ -720,8 +720,11 @@ async function leerPreferenciaSonido(UserModel, userId) {
 // clase CSS que no existe. `visibles` y `disenos` llegan por parámetro para poder probarla.
 function disenoEfectivo({ guardado,
   visibles = SALA_DISENOS.DISENOS_SALA_VISIBLES,
-  disenos  = SALA_DISENOS.DISENOS } = {}) {
+  disenos  = SALA_DISENOS.DISENOS,
+  fijo     = SALA_DISENOS.DISENO_FIJO } = {}) {
   if (!visibles) return SALA_DISENOS.DISENO_DEFAULT;
+  // Diseño fijo: gana sobre lo guardado (config/salaDisenos.js).
+  if (fijo && disenos.some(x => x.id === fijo && x.listo)) return fijo;
   const d = disenos.find(x => x.id === guardado && x.listo);
   return d ? d.id : SALA_DISENOS.DISENO_DEFAULT;
 }
@@ -729,6 +732,7 @@ function disenoEfectivo({ guardado,
 // ¿Es un id que se puede elegir? (la validación de la ruta). Un diseño que no está listo no se
 // puede elegir aunque exista en el enum.
 function disenoValido(id) {
+  if (SALA_DISENOS.DISENO_FIJO && id !== SALA_DISENOS.DISENO_FIJO) return false;
   return SALA_DISENOS.DISENOS_SALA_VISIBLES
       && SALA_DISENOS.DISENOS.some(x => x.id === id && x.listo);
 }

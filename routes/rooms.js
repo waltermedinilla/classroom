@@ -20,6 +20,7 @@ const crypto   = require('crypto');
 
 const Course       = require('../models/Course');
 const RoomSession  = require('../models/RoomSession');
+const SALA_DISENOS_FIJO = require('../config/salaDisenos').DISENO_FIJO;
 const RoomMessage  = require('../models/RoomMessage');
 const RoomPresence = require('../models/RoomPresence');
 // Solo para la preferencia de sonido de quien gestiona: se lee al ABRIR la sala y se escribe
@@ -326,8 +327,9 @@ async function estadoDeSala(req, session, since = 0, presenciaVista = null) {
         studentsCanWrite: true, reactionsOn: true, studentsCanShareImages: true,
         sonido: false, sonidoDe: SONIDO_DE_DEFAULT,
         // Sala cerrada: el docente ve el diseño con el que va a abrir (su preferencia), así lo
-        // puede elegir antes de empezar. El resto, Clásico: no hay clase que seguir.
-        diseno: req.esGestor
+        // puede elegir antes de empezar. El resto, Clásico: no hay clase que seguir — salvo
+        // con un diseño fijo (config/salaDisenos.js), que vale para todos y en todo momento.
+        diseno: (req.esGestor || SALA_DISENOS_FIJO)
           ? live.disenoEfectivo({ guardado: req.res && req.res.locals.user && req.res.locals.user.salaDiseno })
           : 'clasico',
       },
