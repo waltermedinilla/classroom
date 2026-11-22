@@ -6,7 +6,7 @@
 > entre las opciones B y C."*
 
 Estado: **en construcción con el usuario** ("Hazlo y lo voy corrigiendo en el camino",
-2026-11-22). D1 a D6 implementados; se sigue ajustando.
+2026-11-22). D1 a D7 implementados; se sigue ajustando.
 
 Se monta sobre lo que ya existe en `specs/sala-disenos.spec.md` (mismo selector, misma mudanza de
 botones, mismo freno de mano, mismas reglas). D se agrega como un diseño más en
@@ -145,6 +145,26 @@ pantalla completa real del navegador pide un toque y se puede sumar después si 
 - La tarjeta de la transmisión (el video, quién tiene la palabra, "Solo yo hablo / Todos pueden
   hablar") aparece recién **mientras se transmite**; sin transmisión no queda un recuadro vacío.
 - En el celular, la pastilla baja a su propio renglón dentro de la cabecera.
+
+### D7 — Al transmitir, la sala se reacomoda: video a la izquierda, chat a la derecha
+
+> Pedido del usuario, 2026-11-22 (con captura): *"al darle click en el botón de transmitir, se
+> auto acomode la sala, abriendo del lado izquierdo como está la pantalla a transmitir (ya sea web
+> o pantalla o las dos) y del lado derecho pase el chat, acomodando los botones de configuración,
+> como un botón arriba más o menos a la derecha a la misma altura que diga más opciones, y
+> despliegue opciones y luego se oculten los chats, para poder transicionar de uno a otro."*
+
+En la computadora, **mientras hay transmisión** (para el que transmite y para el que mira):
+
+- **Izquierda**: la transmisión — la cámara, la pantalla o las dos (pantalla grande y cámara chica).
+- **Derecha**: el **chat**, en lugar del panel de B.
+- Arriba de la columna derecha, un botón **"Más opciones"** (con el número de manos levantadas en
+  rojo si hay). Al tocarlo, la columna derecha muestra **las opciones** — Controles de la clase,
+  Manos levantadas y Quién está — y el chat se oculta; el botón pasa a **"Volver al chat"**.
+- Al terminar la transmisión, la sala vuelve a como estaba (chat a la izquierda, panel a la
+  derecha).
+
+En el celular no cambia: parado siguen las solapas, de costado la pantalla completa (D5).
 
 ### Decisiones
 

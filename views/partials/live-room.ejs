@@ -445,6 +445,15 @@
       <button type="button" role="tab" data-solapa="controles" aria-selected="false"><span class="material-symbols-outlined">tune</span> Controles</button>
     <% } %>
   </div>
+  <%# Solo D, mientras se transmite (D7): arriba de la columna derecha, el botón que alterna entre
+      el chat y las opciones de la clase (controles, manos, quién está). %>
+  <div class="lr-dis lrD-lado" id="lrDLadoCaja">
+    <button type="button" class="btn btn-outline" id="lrDLado" aria-pressed="false">
+      <span class="material-symbols-outlined" id="lrDLadoIco">tune</span>
+      <span id="lrDLadoTxt">Más opciones</span>
+      <span class="lrD-lado-n" id="lrDLadoN"></span>
+    </button>
+  </div>
   <div class="lr-dis lrB-panel" id="lrBPanel">
     <div id="lrBSlotClase" data-parte="controles"></div>
     <div class="lr-card lrB-manos" id="lrBManos" data-parte="manos">
@@ -1414,6 +1423,16 @@
     cont.innerHTML = h;
   }
 
+  // D7: mientras se transmite en D, la columna derecha alterna entre el chat y las opciones.
+  function ponerLado(lado) {
+    if (lado) WRAP.dataset.lado = lado; else delete WRAP.dataset.lado;
+    const enOpciones = lado === 'opciones';
+    $('lrDLado').setAttribute('aria-pressed', enOpciones ? 'true' : 'false');
+    $('lrDLadoTxt').textContent = enOpciones ? 'Volver al chat' : 'Más opciones';
+    $('lrDLadoIco').textContent = enOpciones ? 'forum' : 'tune';
+  }
+  $('lrDLado').addEventListener('click', () => ponerLado(WRAP.dataset.lado === 'opciones' ? '' : 'opciones'));
+
   // D5: con el celular de costado, el chat de la derecha se muestra u oculta desde la barra.
   if ($('lrDChat')) $('lrDChat').addEventListener('click', () => {
     const oculto = WRAP.dataset.chat !== 'oculto';
@@ -2276,6 +2295,10 @@
     // D6: con la barra de la transmisión en la cabecera, la tarjeta solo tiene sentido mientras
     // se transmite. El CSS de D la esconde con esto.
     WRAP.dataset.tx = tx.activa ? 'activa' : 'no';
+    // D7: al terminar la transmisión, la columna derecha vuelve a ser la de siempre.
+    if (!tx.activa && WRAP.dataset.lado) ponerLado('');
+    const nManos = (tx.activa && tx.manos) ? tx.manos.length : 0;
+    $('lrDLadoN').textContent = nManos ? String(nManos) : '';
     $('txCard').classList.toggle('tx-solovoz', !!soloVoz);
     $('txPunto').className = 'tx-punto' + (tx.activa ? '' : ' off');
     $('txEstadoTexto').textContent = !tx.activa

@@ -351,6 +351,24 @@
   .lr-diseno-d[data-tx="no"] #lrCBarraTx { display:none !important; }
   .lr-diseno-d[data-estado="cerrada"] .lrD-cab-tx { display:none !important; }
 
+  /* D7: al transmitir, la sala se reacomoda — el video a la izquierda y el chat a la derecha.
+     Los controles, las manos y quién está quedan detrás de "Más opciones", arriba de la columna
+     derecha, que alterna con el chat. Solo en pantallas anchas: en el celular siguen las solapas
+     (parado) o la pantalla completa (de costado, D5). */
+  .lr-diseno-d .lrD-lado { display:none; }
+  .lr-diseno-d .lrD-lado-n:empty { display:none; }
+  .lr-diseno-d .lrD-lado-n { background:#d93025; color:#ffffff; border-radius:10px; padding:0 7px; font-size:12px; margin-left:2px; }
+  @media (min-width: 900px) {
+    .lr-diseno-d[data-tx="activa"] .lrD-lado { display:flex; justify-content:flex-end; margin-bottom:10px; }
+    .lr-diseno-d[data-tx="activa"].lr-wrap > #lrDLadoCaja { grid-column:2; grid-row:2; }
+    .lr-diseno-d[data-tx="activa"].lr-wrap > .lr-card-chat,
+    .lr-diseno-d[data-tx="activa"].lr-wrap > #lrBPanel { grid-column:2; grid-row:3 / span 40; position:sticky; top:12px; }
+    .lr-diseno-d[data-tx="activa"]:not([data-lado="opciones"]) #lrBPanel { display:none !important; }
+    .lr-diseno-d[data-tx="activa"][data-lado="opciones"].lr-wrap > .lr-card-chat { display:none !important; }
+    .lr-diseno-d[data-tx="activa"] .lr-card-chat #lrChat { max-height:calc(100vh - 330px); }
+    .lr-diseno-d[data-tx="activa"].lr-wrap > #txCard { grid-row:2 / span 6; }
+  }
+
   /* D2 y D3: con la sala cerrada no hay transmisión ni barra */
   .lr-diseno-d[data-estado="cerrada"] #txCard,
   .lr-diseno-d[data-estado="cerrada"] .lrC-barra { display:none !important; }
