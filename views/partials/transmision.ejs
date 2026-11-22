@@ -226,4 +226,9 @@
   <% } %>
 </div>
 
+<%# public/js/transmision.js arma TODAS sus rutas con window.LR_BASE (ticket, modo, ...) y la
+    lee UNA vez, al cargar. Tiene que existir antes del <script src>: sin esto el ticket iba a
+    POST /transmision/ticket, Express respondía 404 en HTML y el docente veía "no se pudo
+    entrar a la transmisión" (prueba real en producción, 2026-11-22). %>
+<script>window.LR_BASE = '/courses/<%= course._id %>/sala';</script>
 <script src="/js/transmision.js"></script>
