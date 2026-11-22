@@ -5,7 +5,11 @@
 > con el que tiene"*, y enseguida: *"la A también incluila"*.
 
 Estado: **aprobada el 2026-11-22** ("Comienza"), con las seis decisiones en su recomendación.
-**Los tres diseños implementados** (ver *Notas de implementación* al final).
+**B y C en uso. A "Ordenada" se retiró el 2026-11-22** a pedido del usuario ("no me gusta"): ya
+no se ofrece, no se puede elegir y quien lo tenga guardado ve Clásico. Su id sigue en los enums de
+los modelos (sacarlo haría fallar el guardado de quien lo hubiera elegido) y en
+`config/salaDisenos.js` con `listo: false`; su CSS y sus mudanzas se borraron. Lo que sigue de S5
+queda como registro.
 
 **Las maquetas son parte de esta spec** y están al lado, en `specs/maquetas-sala/`:
 

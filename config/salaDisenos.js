@@ -12,8 +12,12 @@
 const DISENOS = [
   { id: 'clasico',  letra: '',  clase: '',             icono: 'view_agenda',
     rotulo: 'Clásico',       ayuda: 'Como siempre.',                                                      listo: true },
+  // A "Ordenada" se RETIRÓ el 2026-11-22 ("no me gusta"). Queda en la lista, apagado, porque el
+  // id está en los enums de User y RoomSession: sacarlo de ahí haría fallar el .save() de
+  // cualquier usuario que lo hubiera elegido. Con listo: false no se ofrece, no se puede elegir y
+  // quien lo tenga guardado ve Clásico (disenoEfectivo). Su CSS y sus mudanzas ya no existen.
   { id: 'ordenada', letra: 'A', clase: 'lr-diseno-a',  icono: 'dashboard',
-    rotulo: 'Ordenada',      ayuda: 'Lo mismo, con los controles agrupados y su estado a la vista.',     listo: true },
+    rotulo: 'Ordenada',      ayuda: 'Lo mismo, con los controles agrupados y su estado a la vista.',     listo: false },
   { id: 'panel',    letra: 'B', clase: 'lr-diseno-b',  icono: 'view_sidebar',
     rotulo: 'Panel lateral', ayuda: 'Chat grande y los controles a un costado. Para clases de charla.', listo: true },
   { id: 'aula',     letra: 'C', clase: 'lr-diseno-c',  icono: 'co_present',

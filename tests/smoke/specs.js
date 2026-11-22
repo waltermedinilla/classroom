@@ -9905,18 +9905,20 @@ const specs = [
       const poll = () => client.get('scopedStudent', `${base}/poll`,
         { expectStatus: 200, headers: { Accept: 'application/json' } });
       try {
-        const ok = await client.post('scopedTeacher', `${base}/diseno`, { body: { diseno: 'ordenada' }, expectStatus: 200 });
-        assert(ok.json.diseno === 'ordenada', 'la respuesta debería confirmar el diseño');
+        const ok = await client.post('scopedTeacher', `${base}/diseno`, { body: { diseno: 'panel' }, expectStatus: 200 });
+        assert(ok.json.diseno === 'panel', 'la respuesta debería confirmar el diseño');
         const p = await poll();
-        assert(p.json.settings.diseno === 'ordenada', 'CA-2: el poll del alumno debería traer el diseño elegido');
+        assert(p.json.settings.diseno === 'panel', 'CA-2: el poll del alumno debería traer el diseño elegido');
         assert(p.json.apertura && p.json.apertura.desde, 'el poll debería traer la hora de apertura para la cabecera');
 
         // CA-3: el alumno no lo cambia, y su intento no toca la sesión.
         await client.post('scopedStudent', `${base}/diseno`, { body: { diseno: 'clasico' }, expectStatus: 403 });
-        assert((await poll()).json.settings.diseno === 'ordenada', 'CA-3: el 403 no puede haber cambiado el diseño');
+        assert((await poll()).json.settings.diseno === 'panel', 'CA-3: el 403 no puede haber cambiado el diseño');
 
         // CA-4: un valor que no existe es 400.
         await client.post('scopedTeacher', `${base}/diseno`, { body: { diseno: 'inventado' }, expectStatus: 400 });
+        // A "Ordenada" está retirado: elegirlo también es 400.
+        await client.post('scopedTeacher', `${base}/diseno`, { body: { diseno: 'ordenada' }, expectStatus: 400 });
       } finally {
         // Las specs siguientes miran la sala Clásica: se deja como estaba.
         await client.post('scopedTeacher', `${base}/diseno`, { body: { diseno: 'clasico' }, expectStatus: 200 });

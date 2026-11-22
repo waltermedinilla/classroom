@@ -414,15 +414,15 @@
   <% if (esGestor) { %>
     <div class="lr-card lr-dis lrA-clase" id="lrAClase">
       <div class="lrA-clase-fila" id="lrAClaseFila">
-        <span class="lrA-rotulo"><span class="t-a">La clase</span><span class="t-b"><span class="material-symbols-outlined">tune</span> Controles de la clase</span></span>
+        <span class="lrA-rotulo"><span class="t-b"><span class="material-symbols-outlined">tune</span> Controles de la clase</span></span>
         <button type="button" class="lrA-tog" id="lrATogEscribir" data-delega="lrModo" role="switch" aria-checked="true">
           <span class="material-symbols-outlined">edit</span>
-          <span class="lrA-tog-txt"><span class="t-a">Alumnos escriben</span><span class="t-b">Los alumnos pueden escribir<small>Si lo apagás, solo escribís vos</small></span></span>
+          <span class="lrA-tog-txt"><span class="t-b">Los alumnos pueden escribir<small>Si lo apagás, solo escribís vos</small></span></span>
           <i class="lrA-switch"></i>
         </button>
         <button type="button" class="lrA-tog" id="lrATogFotos" data-delega="lrFotos" role="switch" aria-checked="true">
           <span class="material-symbols-outlined">image</span>
-          <span class="lrA-tog-txt"><span class="t-a">Fotos de alumnos</span><span class="t-b">Fotos de los alumnos</span></span>
+          <span class="lrA-tog-txt"><span class="t-b">Fotos de los alumnos</span></span>
           <i class="lrA-switch"></i>
         </button>
         <div class="lr-acciones lrA-slot" id="lrAClaseSonido"></div>
@@ -1172,21 +1172,6 @@
 
   // [nodo, lugar] por diseño. Se mudan en este orden y vuelven en el inverso.
   const MUDANZAS = {
-    ordenada: [
-      ['lrAviso',       'lrACabAviso'],
-      ['lrCampana',     'lrACabAcc'],
-      ['lrCampanaMenu', 'lrACabAcc'],
-      ['lrClasesAnt',   'lrACabAcc'],
-      ['lrDiseno',      'lrACabAcc'],
-      ['lrDisenoMenu',  'lrACabAcc'],
-      ['lrSonidoClase', 'lrAClaseSonido'],
-      ['lrSonidoMenu',  'lrAClaseSonido'],
-      ['lrAbrir',       'lrAClaseBtns'],
-      ['lrActividad',   'lrAClaseBtns'],
-      ['lrCerrar',      'lrAClaseBtns'],
-      ['txControles',   'txBarra'],
-      ['txCerrar',      'txControles'],
-    ],
     // B (S6): la campana y "Clases anteriores" a la cabecera del chat; los controles, las manos
     // y la presencia al panel de la derecha; los botones de la transmisión debajo del video.
     panel: [
