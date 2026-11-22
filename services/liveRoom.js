@@ -800,6 +800,11 @@ async function closeSession(session, user = null, { auto = false, now = new Date
   if (session.transmision?.activa) {
     const tx = require('./transmision');
     await tx.cerrar(cerrada, { cerradaPor: 'cierre-sala' });
+    // Y se le avisa al proceso de video, igual que cuando el docente toca "Terminar": así suelta
+    // en el acto a los que estaban mirando y al que transmitía. Antes solo se marcaba en la base
+    // y el video seguía corriendo hasta que cada navegador se enteraba por su cuenta.
+    // Mejor esfuerzo: si el proceso de medios no contesta, la sala se cierra igual.
+    try { await require('./mediaClient').cerrarSala(cerrada._id); } catch (e) { /* ver arriba */ }
   }
 
   await systemMessage(

@@ -2287,6 +2287,15 @@
   function pintarTransmision(tx) {
     if (!HAY_TX || !tx) return;
 
+    // Cerrar la SALA corta la transmisión (RN-1 de transmision-en-vivo); cerrar la transmisión
+    // NO cierra la sala. Si la transmisión terminó —por "Terminar" o porque se cerró la sala, desde
+    // esta pestaña o desde otra— este navegador suelta la cámara, el micrófono y el video en el
+    // acto, en vez de quedar transmitiendo o mirando algo que ya no existe.
+    if (!tx.activa && window.Transmision) {
+      if (window.Transmision.estoyEmitiendo()) window.Transmision.dejarDeEmitir();
+      if (window.Transmision.estoyMirando())   window.Transmision.dejarDeMirar();
+    }
+
     const soloVoz = tx.activa && tx.soloVoz;
     // Al alumno no se le muestra un recuadro vacío mientras nadie habla ni transmite: aparece
     // cuando hay algo para escuchar o mirar. El docente lo ve siempre, porque ahí están sus
