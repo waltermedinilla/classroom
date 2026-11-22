@@ -68,6 +68,7 @@ const attendanceRoutes   = require('./routes/attendance');
 const jefaturaRoutes     = require('./routes/jefatura');
 const soeRoutes          = require('./routes/soe');
 const secretariaRoutes   = require('./routes/secretaria');
+const { BOTON_SUGERENCIAS_VISIBLE } = require('./config/sugerencias');
 const backupRoutes       = require('./routes/backup');
 const dbFixesRoutes      = require('./routes/dbFixes');
 const suggestionRoutes   = require('./routes/suggestions');
@@ -435,6 +436,8 @@ app.use((req, res, next) => {
     student:    'Alumno',
   };
   res.locals.appVersion = APP_VERSION;
+  // El botón flotante de sugerencias (config/sugerencias.js). Solo el botón: la bandeja sigue.
+  res.locals.botonSugerencias = BOTON_SUGERENCIAS_VISIBLE;
   // Formateador de fechas con la zona de la escuela, disponible en TODAS las vistas.
   // El servidor de produccion corre en UTC: sin esto, cada .ejs que llamaba a
   // toLocaleDateString por su cuenta imprimia tres horas de mas en vencimientos,

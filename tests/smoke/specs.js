@@ -3671,12 +3671,17 @@ const specs = [
 
   // ── Regresión: sugerencias abiertas a docente/alumno (arreglo de esta sesión) ──
   {
+    // specs/sugerencias-boton-oculto.spec.md: el botón flotante sigue config/sugerencias.js
+    // (apagado desde el 2026-11-22). La bandeja del sobre sigue estando, prendido o apagado.
     id: 'suggestions-teacher-sees-fab',
-    title: 'El docente ve el botón de sugerencias en el dashboard',
+    title: 'El botón de sugerencias respeta config/sugerencias.js y el sobre sigue estando',
     requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
     async run({ client, assert }) {
+      const { BOTON_SUGERENCIAS_VISIBLE } = require('../../config/sugerencias');
       const res = await client.get('scopedTeacher', '/courses', { expectStatus: 200 });
-      assert(res.text.includes('fabSuggest'), 'el FAB de sugerencias debería estar en el HTML');
+      assert(res.text.includes('id="fabSuggest"') === BOTON_SUGERENCIAS_VISIBLE,
+        `el botón debería ${BOTON_SUGERENCIAS_VISIBLE ? 'estar' : 'NO estar'} en el HTML`);
+      assert(res.text.includes('id="inboxBtn"'), 'el sobre del encabezado debería seguir estando');
     },
   },
   {
