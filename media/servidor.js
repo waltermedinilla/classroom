@@ -190,7 +190,7 @@ function cerrarVoces(sala, uid = null) {
 // exactamente lo que tiene que pasar — el puerto es uno solo.
 async function revisarAforo() {
   const e = sfu.estado();
-  const d = aforo.decidir(e.espectadores, { clases: e.clases });
+  const d = aforo.decidir(e.espectadores, { clases: e.clases, conPantallaYCamara: e.conPantallaYCamara });
   if (!d.capa) return d;
 
   for (const sala of sfu.salas.values()) {
@@ -296,7 +296,7 @@ wss.on('connection', (ws) => {
           capa:   d.capa || '180p',
           // Los productores que YA están al aire, para que un alumno que llega tarde vea la
           // clase que empezó hace veinte minutos sin esperar a que el docente vuelva a publicar.
-          productores: [...cx.sala.productores.values()].map(p => ({ id: p.id, kind: p.kind })),
+          productores: sfu.describirProductores(cx.sala),
         });
       }
 
@@ -356,11 +356,29 @@ wss.on('connection', (ws) => {
           cx.sala.vocesAlumnos.set(ws, cx);
         }
 
-        p.on('transportclose', () => {
+        const alSalir = () => {
+          if (!cx.sala.productores.has(p.id)) return;
           cx.sala.productores.delete(p.id);
           if (cx.voz === p) { cx.voz = null; cx.sala.vocesAlumnos.delete(ws); }
           for (const e of todosEn(cx.sala)) if (e !== ws) enviar(e, 'productorSeFue', { id: p.id });
-        });
+          // Se fue la pantalla: la cámara chica vuelve a ser la grande, y el gobernador deja de
+          // contarla. Se fue la cámara: lo mismo para la cuenta.
+          if (p.kind === 'video') {
+            sfu.aplicarCapa(cx.sala).catch(() => {});
+            revisarAforo().catch(() => {});
+          }
+        };
+        p.on('transportclose', alSalir);
+        // El docente apaga la pantalla o la cámara SIN cortar la transmisión: el navegador
+        // cierra el productor y avisa con 'cerrarProductor'.
+        p.observer.on('close', alSalir);
+
+        // Llegó una pantalla o una cámara: cambia quién es la grande y la chica, y lo que cuenta
+        // el gobernador.
+        if (p.kind === 'video') {
+          await sfu.aplicarCapa(cx.sala);
+          await revisarAforo().catch(() => {});
+        }
 
         // Se le avisa a todos los demás. También a quien da la clase: con "Todos pueden hablar"
         // el docente tiene que escuchar a los alumnos.
@@ -419,8 +437,18 @@ wss.on('connection', (ws) => {
 
       if (m.t === 'reanudar') {
         const c = cx.sala.consumidores.get(m.consumerId);
-        if (c) await c.resume();
+        // El video se reanuda con la capa que le toca (la cámara chica en la baja, nada en solo
+        // audio). Antes se reanudaba siempre en la más alta, aunque la sala estuviera degradada.
+        if (c && c.kind === 'video') await sfu.aplicarCapaA(cx.sala, c);
+        else if (c) await c.resume();
         return enviar(ws, 'reanudado', { consumerId: m.consumerId });
+      }
+
+      // ── cerrarProductor: el docente apaga la pantalla o la cámara ───────
+      if (m.t === 'cerrarProductor') {
+        const p = cx.sala.productores.get(m.producerId);
+        if (p && p.appData?.uid === cx.ticket.uid) p.close();
+        return enviar(ws, 'productorCerrado', { producerId: m.producerId });
       }
 
       return enviar(ws, 'error', { error: 'mensaje desconocido' });

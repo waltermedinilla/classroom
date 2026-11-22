@@ -37,6 +37,13 @@ const CAPAS = [
 // es la plataforma para todos. Agregarlo acá sería deshacer la feature.
 const CAPA_MAXIMA_EMISOR = '360p';
 
+// La cámara chica de "pantalla grande, cámara chica" (C3 de specs/transmision-camara-primero).
+// Mientras el docente comparte pantalla, cada alumno recibe ADEMÁS su cámara en la capa baja del
+// simulcast (125 kbps, ~180p): en una esquina de un cuarto del ancho no se distingue de la
+// media, y cuesta un tercio. Solo se manda cuando la sala está en la mejor capa; con el
+// gobernador en 180p o en solo audio la esquina queda vacía y se ve solo la pantalla.
+const CAMARA_CHICA_MBPS = 0.125;
+
 // Red de seguridad, NO el gobernador. El gobernador raciona ancho de banda (ver media/aforo.js);
 // esto solo ataja un desborde raro —un bucle que abre salas, un script suelto— antes de que se
 // coma el puerto. Con la escuela entera transmitiendo no se llega ni cerca.
@@ -227,7 +234,7 @@ const mbpsDeCapa = (capa) => (capa === 'voz' ? MBPS_VOZ : (CAPAS_BY_ID[capa]?.mb
 
 module.exports = {
   detectarIp, ipsCandidatas,
-  PRESUPUESTO_MBPS, CAPAS, CAPAS_BY_ID, CAPA_MAXIMA_EMISOR, MAX_CLASES,
+  PRESUPUESTO_MBPS, CAPAS, CAPAS_BY_ID, CAPA_MAXIMA_EMISOR, CAMARA_CHICA_MBPS, MAX_CLASES,
   TICKET_TTL_S, PALABRA_INACTIVA_MS,
   MAX_VOCES, MAX_PULSACION_MS, VOZ_MAX_BITRATE, VOZ_PTIME, VOZ_KBPS_POR_VOZ, VOZ_KBPS_TIPICO,
   MEDIA_PORT, WS_PATH, RTC_MIN_PORT, RTC_MAX_PORT,

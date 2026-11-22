@@ -241,13 +241,14 @@ async function abrir(session, course, docente, { espectadores = 0, clases = 0, m
     $set: {
       'transmision.activa':       true,
       'transmision.iniciadaAt':   new Date(),
-      // El micrófono y la pantalla arrancan prendidos y la cámara apagada (D6): el modo por
-      // defecto de una clase es lo que el docente muestra, no su cara.
+      // El micrófono y la CÁMARA arrancan prendidos y la pantalla apagada (C1 de
+      // specs/transmision-camara-primero.spec.md, que reemplazó a D6 tras la prueba real del
+      // 2026-11-22): el docente espera verse, como en Meet. La pantalla se comparte después.
       // "Hablar" (soloVoz) abre SOLO el micrófono, y arranca en "Solo yo hablo": abrirles la
       // voz a los alumnos es un segundo toque, consciente (H2 de specs/sala-hablar.spec.md).
       'transmision.micro':        soloVoz ? true  : modo.micro    !== false,
-      'transmision.pantalla':     soloVoz ? false : modo.pantalla !== false,
-      'transmision.camara':       soloVoz ? false : modo.camara   === true,
+      'transmision.pantalla':     soloVoz ? false : modo.pantalla === true,
+      'transmision.camara':       soloVoz ? false : modo.camara   !== false,
       'transmision.soloVoz':      soloVoz,
       'transmision.vozAbierta':   false,
       'transmision.vozAbiertaAt': null,

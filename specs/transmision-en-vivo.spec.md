@@ -226,6 +226,11 @@ El techo también **protege la subida del docente**, que en Argentina es lo esca
 
 ### D6 — Arranca sin cámara: el modo por defecto es **audio + pantalla**
 
+> ⚠️ **Reemplazada el 2026-11-22** por C1 de `specs/transmision-camara-primero.spec.md`: después
+> de la primera prueba real, la transmisión arranca con **micrófono + cámara** y la pantalla se
+> comparte desde un botón chico dentro del cuadro. El argumento de ancho de banda de abajo sigue
+> valiendo y lo cubre el gobernador (D5).
+
 El modo por defecto de una clase no es la cara del docente: es **lo que está mostrando**. Una
 pantalla compartida con un texto quieto se codifica en 200–400 kbps a 5 fps (contenido estático,
 casi sin movimiento) contra los 400 kbps *sostenidos* de una cámara a 360p.

@@ -26,6 +26,8 @@
     productores: new Map(),   // 'micro'|'pantalla'|'camara' → producer
     consumidores: new Map(),  // producerId → consumer
     pistas: new Map(),        // producerId → MediaStreamTrack
+    fuentes: new Map(),       // producerId → 'camara' | 'pantalla' | 'micro' | ... (C2)
+    locales: new Map(),       // 'camara' | 'pantalla' → pista PROPIA, para la vista previa (C5)
     audios: new Map(),        // producerId → <audio> (uno por voz, ver montarPista)
     conectando: null,        // la promesa de la conexión en curso
     bienvenida: null,
@@ -168,7 +170,7 @@
     const esperando = enEspera.get(m.t);
     if (esperando) { enEspera.delete(m.t); return esperando(m); }
 
-    if (m.t === 'productorNuevo') return consumir(m.id).catch(() => {});
+    if (m.t === 'productorNuevo') return consumir(m.id, m.fuente).catch(() => {});
     if (m.t === 'productorSeFue') return sacarPista(m.id);
 
     if (m.t === 'capaCambiada') {
@@ -285,7 +287,15 @@
 
     if (modo.micro !== false) await publicarMicrofono();
     if (modo.pantalla)        await publicarPantalla();
-    if (modo.camara)          await publicarCamara();
+    if (modo.camara) {
+      // C1: sin cámara (no hay, o no dio permiso) la transmisión NO se cae. Sigue con la voz y
+      // el docente puede compartir pantalla igual desde el botón chico.
+      try { await publicarCamara(); }
+      catch (e) {
+        aviso('No se pudo prender la cámara. Seguís transmitiendo con el micrófono.', 'atencion');
+        post(BASE + '/transmision/modo', { camara: false }).catch(() => {});
+      }
+    }
 
     // Con "Todos pueden hablar" el docente tiene que ESCUCHAR a los alumnos: se consumen las
     // voces que ya estén en la sala; las que lleguen después vienen por 'productorNuevo'.
@@ -332,6 +342,8 @@
       appData: { fuente: 'pantalla' },
     });
     S.productores.set('pantalla', t);
+    S.locales.set('pantalla', video);
+    repintarVideos();
 
     const audio = stream.getAudioTracks()[0];
     if (audio) {
@@ -358,15 +370,26 @@
       appData: { fuente: 'camara' },
     });
     S.productores.set('camara', t);
+    S.locales.set('camara', t.track);
+    repintarVideos();
   }
 
   function despublicar(cual) {
     const p = S.productores.get(cual);
     if (!p) return;
+    // ⚠️ Cerrar el productor en el navegador NO le avisa al servidor: sin este mensaje el SFU lo
+    // daba por vivo, el alumno se quedaba con el último cuadro congelado y la cámara no volvía
+    // a ser la grande. Se avisa ANTES de cerrar, mientras el id todavía existe.
+    mandar({ t: 'cerrarProductor', producerId: p.id });
     try { p.track?.stop(); } catch (e) { /* ya estaba parado */ }
     try { p.close(); } catch (e) { /* ya estaba cerrado */ }
     S.productores.delete(cual);
+    S.locales.delete(cual);
+    // El audio de la pestaña compartida se va con la pantalla.
+    if (cual === 'pantalla') despublicar('pantalla-audio');
+    if (cual === 'pantalla-audio') return;
     post(BASE + '/transmision/modo', { [cual]: false }).catch(() => {});
+    repintarVideos();
     pintar();
   }
 
@@ -379,11 +402,11 @@
 
     // Los que YA están al aire: es lo que permite que alguien que entra a los veinte minutos
     // vea la clase sin esperar a que el docente vuelva a publicar nada.
-    for (const p of bienvenida.productores || []) await consumir(p.id).catch(() => {});
+    for (const p of bienvenida.productores || []) await consumir(p.id, p.fuente).catch(() => {});
     pintar();
   }
 
-  async function consumir(producerId) {
+  async function consumir(producerId, fuente) {
     // El docente también consume (las voces de los alumnos con "Todos pueden hablar").
     if ((!S.mirando && !S.emitiendo) || S.consumidores.has(producerId)) return;
     if (S.voz && S.voz.id === producerId) return;   // la voz propia no se escucha de vuelta
@@ -399,6 +422,7 @@
     const c = await t.consume(parametros);
     S.consumidores.set(producerId, c);
     S.pistas.set(producerId, c.track);
+    S.fuentes.set(producerId, fuente || '');
 
     // El consumidor nace pausado del lado del servidor y se reanuda recién ahora, con el
     // <video> ya preparado. Al revés, los primeros paquetes llegan antes de que haya dónde
@@ -423,17 +447,55 @@
       return;
     }
 
-    const destino = $('txVideo');
-    if (!destino) return;
-    const stream = destino.srcObject instanceof MediaStream ? destino.srcObject : new MediaStream();
-    stream.addTrack(c.track);
-    destino.srcObject = stream;
-    destino.play().catch(() => {
-      // Los navegadores no dejan reproducir sin un gesto del usuario. Como todo esto arranca
-      // desde el botón "Ver la clase" (D12) esto casi nunca pasa, pero si pasa hay que decirlo
-      // en vez de dejar un cuadro mudo.
-      aviso('Tocá el video para que empiece a sonar.', 'atencion');
-    });
+    repintarVideos();
+  }
+
+  // ── Los dos cuadros: pantalla grande, cámara chica (C2 y C5) ───────────────
+  //
+  // Antes todas las pistas de video iban a UN <video> con un solo MediaStream, y con cámara y
+  // pantalla a la vez el navegador mostraba una sola, no siempre la misma. Ahora cada pista va
+  // a su cuadro según su FUENTE, y la decide una función pura (public/js/transmision-pistas.js).
+  //
+  // Quien mira ve las pistas que le llegan del servidor. Quien emite no consume video: se ve
+  // con sus PROPIAS pistas, sin ida y vuelta al servidor (cero datos, cero retraso).
+  function pistasDeVideo() {
+    if (S.mirando) {
+      return [...S.pistas.entries()]
+        .filter(([, t]) => t.kind === 'video')
+        .map(([id, track]) => ({ fuente: S.fuentes.get(id) || '', track, local: false }));
+    }
+    if (S.emitiendo) {
+      return [...S.locales.entries()].map(([fuente, track]) => ({ fuente, track, local: true }));
+    }
+    return [];
+  }
+
+  function ponerEn(el, item) {
+    if (!el) return;
+    const track = item ? item.track : null;
+    const actual = el.srcObject instanceof MediaStream ? el.srcObject.getVideoTracks()[0] : null;
+    if (actual !== track) {
+      el.srcObject = track ? new MediaStream([track]) : null;
+      if (track) {
+        el.play().catch(() => {
+          // Los navegadores no dejan reproducir sin un gesto del usuario. Como todo esto arranca
+          // desde "Ver la clase" (D12) casi nunca pasa, pero si pasa hay que decirlo.
+          aviso('Tocá el video para que empiece a verse.', 'atencion');
+        });
+      }
+    }
+    // La propia cámara se ve en espejo, como en Meet: si no, al levantar la mano derecha uno se
+    // ve levantar la izquierda. Lo que ven los alumnos NO va en espejo.
+    el.classList.toggle('tx-espejo', !!(item && item.local && item.fuente === 'camara'));
+  }
+
+  function repintarVideos() {
+    const ubicar = window.TransmisionPistas?.ubicarPistas;
+    const { grande, chica } = ubicar ? ubicar(pistasDeVideo()) : { grande: pistasDeVideo()[0] || null, chica: null };
+    ponerEn($('txVideo'), grande);
+    const chico = $('txVideoChico');
+    ponerEn(chico, chica);
+    if (chico) chico.style.display = chica ? '' : 'none';
   }
 
   function sacarPista(producerId) {
@@ -443,12 +505,9 @@
     const el = S.audios.get(producerId);
     if (el) { el.srcObject = null; el.remove(); S.audios.delete(producerId); }
 
-    const pista = S.pistas.get(producerId);
-    if (pista) {
-      const v = $('txVideo');
-      if (v?.srcObject instanceof MediaStream) { try { v.srcObject.removeTrack(pista); } catch (e) {} }
-      S.pistas.delete(producerId);
-    }
+    S.pistas.delete(producerId);
+    S.fuentes.delete(producerId);
+    repintarVideos();
     pintar();
   }
 
@@ -576,9 +635,10 @@
     for (const c of S.consumidores.values()) { try { c.close(); } catch (e) {} }
     for (const el of S.audios.values()) { el.srcObject = null; el.remove(); }
     S.productores.clear(); S.consumidores.clear(); S.pistas.clear(); S.audios.clear();
+    S.fuentes.clear(); S.locales.clear();
 
-    const v = $('txVideo');
-    if (v) v.srcObject = null;
+    for (const id of ['txVideo', 'txVideoChico']) { const v = $(id); if (v) v.srcObject = null; }
+    const chico = $('txVideoChico'); if (chico) chico.style.display = 'none';
 
     try { S.txEnvio?.close(); } catch (e) {}
     try { S.txRecibo?.close(); } catch (e) {}
@@ -598,7 +658,7 @@
   // el partial con los datos del poll, que es la fuente de verdad.
 
   function pintar() {
-    const hayVideo = [...S.pistas.values()].some(t => t.kind === 'video');
+    const hayVideo = pistasDeVideo().length > 0;
     const cuadro = $('txCuadro');
     if (cuadro) cuadro.style.display = (S.mirando || S.emitiendo) ? '' : 'none';
 
@@ -616,6 +676,20 @@
     for (const [cual, id] of [['micro', 'txBtnMicro'], ['pantalla', 'txBtnPantalla'], ['camara', 'txBtnCamara']]) {
       const b = $(id);
       if (b) b.classList.toggle('activo', S.productores.has(cual));
+    }
+
+    // El botón chico de compartir pantalla, adentro del cuadro (C4). Solo mientras se emite: el
+    // partial lo esconde además en "Hablar" (solo voz), con la clase .tx-solovoz.
+    const chicoBtn = $('txPantallaChico');
+    if (chicoBtn) {
+      const comparte = S.productores.has('pantalla');
+      chicoBtn.style.display = S.emitiendo ? '' : 'none';
+      chicoBtn.classList.toggle('activo', comparte);
+      chicoBtn.setAttribute('aria-pressed', comparte ? 'true' : 'false');
+      const ico = chicoBtn.querySelector('.material-symbols-outlined');
+      if (ico) ico.textContent = comparte ? 'stop_screen_share' : 'screen_share';
+      const txt = chicoBtn.querySelector('.tx-chico-texto');
+      if (txt) txt.textContent = comparte ? 'Dejar de compartir' : 'Compartir pantalla';
     }
 
     // El botón de pulsar para hablar.

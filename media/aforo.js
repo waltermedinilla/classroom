@@ -10,13 +10,22 @@
 // habría rechazado la clase 13 mientras sobraba el 65 % del puerto.
 
 const {
-  PRESUPUESTO_MBPS, CAPAS, MAX_CLASES, mbpsDeCapa, MAX_VOCES, VOZ_KBPS_TIPICO,
+  PRESUPUESTO_MBPS, CAPAS, MAX_CLASES, mbpsDeCapa, MAX_VOCES, VOZ_KBPS_TIPICO, CAMARA_CHICA_MBPS,
 } = require('../config/transmision');
 
-// Consumo total, en Mbit/s, de N espectadores recibiendo esta capa.
-function consumoMbps(espectadores, capa) {
-  const n = Math.max(0, Number(espectadores) || 0);
-  return n * mbpsDeCapa(capa);
+// Un conteo que llega roto (undefined, negativo, NaN) se lee como cero.
+const contar = (x) => Math.max(0, Number(x) || 0);
+
+// Lo que suma la cámara chica (C3 de specs/transmision-camara-primero.spec.md): solo en la
+// MEJOR capa. En 180p o en solo audio la esquina no se manda, así que no cuesta nada.
+const extraCamaraChica = (capa, conPantallaYCamara) =>
+  (capa === CAPAS[0].id ? contar(conPantallaYCamara) * CAMARA_CHICA_MBPS : 0);
+
+// Consumo total, en Mbit/s, de N espectadores recibiendo esta capa. `conPantallaYCamara` es
+// cuántos de esos N están en una sala donde el docente comparte pantalla CON la cámara prendida:
+// esos reciben además la cámara chica.
+function consumoMbps(espectadores, capa, conPantallaYCamara = 0) {
+  return contar(espectadores) * mbpsDeCapa(capa) + extraCamaraChica(capa, conPantallaYCamara);
 }
 
 // Qué porcentaje del presupuesto ocupa ese consumo (0..∞, no se recorta a 100 a propósito:
@@ -34,10 +43,14 @@ function ocupacion(espectadores, capa) {
 // sobre la ocupación ACTUAL sería el bug clásico: bajar la calidad baja la ocupación, que
 // volvería a habilitar la calidad alta, que vuelve a subir la ocupación… y la escuela entera
 // parpadeando entre 360p y 180p cada cuatro segundos.
-function capaPermitida(espectadores) {
-  const n = Math.max(0, Number(espectadores) || 0);
+//
+// La cámara chica entra en la cuenta de la mejor capa y en ninguna otra, así que la función
+// sigue siendo monótona: más espectadores (o más con pantalla) nunca dan mejor calidad.
+function capaPermitida(espectadores, conPantallaYCamara = 0) {
+  const n = contar(espectadores);
   for (const c of CAPAS) {
-    if (n * c.mbps <= PRESUPUESTO_MBPS * c.umbral) return c.id;
+    const total = n * c.mbps + extraCamaraChica(c.id, conPantallaYCamara);
+    if (total <= PRESUPUESTO_MBPS * c.umbral) return c.id;
   }
   return null;
 }
@@ -46,7 +59,7 @@ function capaPermitida(espectadores) {
 // implica, y POR QUÉ se degradó. El motivo no es adorno — es lo que le permite al docente leer
 // "estás en calidad baja porque hay 9 clases al aire" en vez de sospechar que su internet anda
 // mal. Un sistema que se degrada en silencio produce el mismo reclamo, pero sin el dato.
-function decidir(espectadores, { clases = 0 } = {}) {
+function decidir(espectadores, { clases = 0, conPantallaYCamara = 0 } = {}) {
   // Red de seguridad, ANTES que el presupuesto: si esto se dispara no es que la escuela creció,
   // es que algo se desbocó, y conviene que el registro los distinga.
   if (clases > MAX_CLASES) {
@@ -57,7 +70,7 @@ function decidir(espectadores, { clases = 0 } = {}) {
     };
   }
 
-  const capa = capaPermitida(espectadores);
+  const capa = capaPermitida(espectadores, conPantallaYCamara);
   if (!capa) {
     return {
       capa: null, mbps: 0, ocupacion: 100,
@@ -66,7 +79,7 @@ function decidir(espectadores, { clases = 0 } = {}) {
     };
   }
 
-  const mbps = consumoMbps(espectadores, capa);
+  const mbps = consumoMbps(espectadores, capa, conPantallaYCamara);
   return {
     capa,
     mbps,
@@ -111,7 +124,24 @@ function hayLugar(alumnosHablando, esDocente) {
   return n < MAX_VOCES - 1;
 }
 
+// Qué recibe UN consumidor de video según la capa de la sala (C2 y C3 de
+// specs/transmision-camara-primero.spec.md). Devuelve { pausar, capa } donde `capa` es el índice
+// de simulcast: 0 = baja (180p), 1 = media (360p).
+//
+//   · solo audio                       → todo el video en pausa
+//   · cámara con pantalla al lado      → es la cámara CHICA: capa baja, y solo en la mejor capa
+//   · el resto (cámara sola, pantalla) → la capa que diga el gobernador
+//
+// La pantalla tiene una sola capa: pedirle la 1 o la 0 da lo mismo, mediasoup manda la que hay.
+function planDeVideo({ fuente = '', hayPantalla = false, capa = CAPAS[0].id } = {}) {
+  if (capa === 'audio' || !capa) return { pausar: true, capa: 0 };
+  if (fuente === 'camara' && hayPantalla) {
+    return capa === CAPAS[0].id ? { pausar: false, capa: 0 } : { pausar: true, capa: 0 };
+  }
+  return { pausar: false, capa: capa === '360p' ? 1 : 0 };
+}
+
 module.exports = {
-  consumoMbps, ocupacion, capaPermitida, decidir, estimarMB, hayLugar,
+  consumoMbps, ocupacion, capaPermitida, decidir, estimarMB, hayLugar, planDeVideo,
   PRESUPUESTO_MBPS, MAX_CLASES,
 };

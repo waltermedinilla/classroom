@@ -15,6 +15,7 @@ const {
   CODECS, MEDIA_WORKERS, RTC_MIN_PORT, RTC_MAX_PORT,
   RTC_LISTEN_IP, RTC_ANNOUNCED_IP,
 } = require('../config/transmision');
+const { planDeVideo } = require('./aforo');
 
 // Los workers C++. Se reparten las salas por turno rotativo (round robin): un SFU no
 // transcodifica, así que la carga de una sala es casi lineal en la cantidad de consumidores y
@@ -133,10 +134,14 @@ async function crearTransporte(sala) {
 async function crearConsumidor(sala, transporte, producerId, rtpCapabilities) {
   if (!sala.router.canConsume({ producerId, rtpCapabilities })) return null;
 
+  // La fuente ('camara', 'pantalla', ...) viaja pegada al consumidor: es lo que decide si una
+  // cámara es la grande o la chica (C3 de specs/transmision-camara-primero.spec.md).
+  const fuente = sala.productores.get(producerId)?.appData?.fuente || '';
   const c = await transporte.consume({
     producerId,
     rtpCapabilities,
     paused: true,
+    appData: { fuente },
   });
   sala.consumidores.set(c.id, c);
   c.on('transportclose', () => sala.consumidores.delete(c.id));
@@ -155,15 +160,42 @@ async function crearConsumidor(sala, transporte, producerId, rtpCapabilities) {
 //
 // `spatialLayer` es el índice de la capa de simulcast: 0 = la más chica (180p), 1 = 360p.
 // Un consumidor de audio no tiene capas y se ignora en silencio.
+//
+// La decisión por consumidor la toma planDeVideo (media/aforo.js, pura y testeada): acá solo se
+// ejecuta. Una cámara con pantalla al lado es la cámara CHICA y va en la capa baja.
+async function aplicarCapaA(sala, c, capa) {
+  if (c.kind !== 'video' || c.closed) return;
+  const plan = planDeVideo({
+    fuente: c.appData?.fuente || '',
+    hayPantalla: hayFuente(sala, 'pantalla'),
+    capa: capa || sala.capaVigente || '360p',
+  });
+  try {
+    if (plan.pausar) { await c.pause(); return; }
+    await c.resume();
+    await c.setPreferredLayers({ spatialLayer: plan.capa });
+  } catch (e) { /* un consumidor que se cerró en el medio no es un error */ }
+}
+
 async function aplicarCapa(sala, capa) {
-  const spatial = capa === '360p' ? 1 : 0;
-  for (const c of sala.consumidores.values()) {
-    if (c.kind !== 'video') continue;
-    try {
-      if (capa === 'audio') await c.pause();
-      else { await c.resume(); await c.setPreferredLayers({ spatialLayer: spatial }); }
-    } catch (e) { /* un consumidor que se cerró en el medio no es un error */ }
+  for (const c of sala.consumidores.values()) await aplicarCapaA(sala, c, capa);
+}
+
+// Los productores al aire como los ve el navegador, CON su fuente: es lo que viaja en el
+// 'bienvenido'. Sin la fuente, quien entra tarde no sabe cuál pista es la pantalla y cuál la
+// cámara (C2 de specs/transmision-camara-primero.spec.md).
+function describirProductores(sala) {
+  return [...sala.productores.values()]
+    .filter(p => !p.closed)
+    .map(p => ({ id: p.id, kind: p.kind, fuente: p.appData?.fuente || '' }));
+}
+
+// ¿Hay al aire un productor de esta fuente en la sala?
+function hayFuente(sala, fuente) {
+  for (const p of sala.productores.values()) {
+    if (!p.closed && p.appData?.fuente === fuente) return true;
   }
+  return false;
 }
 
 // Cierra una sala entera y libera sus puertos.
@@ -183,13 +215,19 @@ function estado() {
 
   let oyentesVoz = 0;
   let clasesVideo = 0;
+  // Espectadores que reciben además la cámara chica (pantalla + cámara al aire). El gobernador
+  // la suma a su cuenta: ver CAMARA_CHICA_MBPS en config/transmision.js.
+  let conPantallaYCamara = 0;
 
   for (const [id, s] of salas) {
     const n = s.espectadores.size;
     // Los oyentes de "Hablar" van en su propio contador: el gobernador raciona VIDEO, y la voz
     // no entra en su escalera (ver MBPS_VOZ en config/transmision.js).
     if (s.soloVoz) oyentesVoz += n;
-    else { espectadores += n; clasesVideo += 1; }
+    else {
+      espectadores += n; clasesVideo += 1;
+      if (hayFuente(s, 'pantalla') && hayFuente(s, 'camara')) conPantallaYCamara += n;
+    }
     porSala[id] = {
       espectadores: n,
       pico:         s.picoEspectadores,
@@ -203,6 +241,7 @@ function estado() {
 
   return {
     espectadores,
+    conPantallaYCamara,
     oyentesVoz,
     clasesVideo,
     clases:  salas.size,
@@ -212,6 +251,6 @@ function estado() {
 }
 
 module.exports = {
-  iniciar, salaDe, crearTransporte, crearConsumidor, aplicarCapa,
+  iniciar, salaDe, crearTransporte, crearConsumidor, aplicarCapa, aplicarCapaA, hayFuente, describirProductores,
   cerrarSala, estado, salas,
 };

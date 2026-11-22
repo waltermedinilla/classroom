@@ -36,6 +36,25 @@
                  text-align:center; padding:16px; }
   .tx-sinvideo .material-symbols-outlined { font-size:38px; opacity:.8; }
 
+  <%# Pantalla grande, cámara chica (C2 de specs/transmision-camara-primero.spec.md). La chica
+      va abajo a la IZQUIERDA para no taparse con el botón chico del docente, que va a la
+      derecha. `.tx-cuadro video` le pone 100 % de ancho: acá se pisa. %>
+  .tx-cuadro video.tx-chico { position:absolute; left:10px; bottom:10px; width:25%; height:auto;
+                              aspect-ratio:16/9; object-fit:cover; border-radius:8px;
+                              border:2px solid rgba(255,255,255,.85); box-shadow:0 2px 8px rgba(0,0,0,.4); }
+  .tx-espejo { transform:scaleX(-1); }
+
+  <%# El botón chico de compartir pantalla, adentro del cuadro del docente (C4). Oscuro y
+      translúcido para que se lea sobre cualquier imagen; el estado "compartiendo" lleva fondo
+      azul Y otro icono, no solo color. %>
+  .tx-chico-btn { position:absolute; right:10px; bottom:10px; display:inline-flex; align-items:center;
+                  gap:5px; padding:6px 10px; border-radius:18px; border:1px solid rgba(255,255,255,.35);
+                  background:rgba(32,33,36,.75); color:#fff; font-size:12.5px; cursor:pointer; }
+  .tx-chico-btn .material-symbols-outlined { font-size:18px; }
+  .tx-chico-btn:hover { background:rgba(32,33,36,.92); }
+  .tx-chico-btn.activo { background:#1a73e8; border-color:#1a73e8; }
+  @media (max-width:480px) { .tx-chico-btn .tx-chico-texto { display:none; } }
+
   <%# Los botones de micrófono, pantalla y cámara. El estado "prendido" NO se marca solo con
       color: lleva también el borde y el icono relleno, porque distinguir "prendido" de
       "apagado" por el color es justo lo que no puede hacer alguien con daltonismo. %>
@@ -67,7 +86,8 @@
 
   <%# ── Hablar (specs/sala-hablar.spec.md) ── %>
   <%# Solo voz: no hay cuadro de video que mostrar ni pantalla/cámara que prender. %>
-  .tx-solovoz .tx-cuadro, .tx-solovoz #txBtnPantalla, .tx-solovoz #txBtnCamara { display:none !important; }
+  .tx-solovoz .tx-cuadro, .tx-solovoz #txBtnPantalla, .tx-solovoz #txBtnCamara,
+  .tx-solovoz #txPantallaChico { display:none !important; }
 
   <%# El interruptor "Solo yo hablo / Todos pueden hablar". Mismo criterio que los toggles: el
       elegido lleva borde e icono, no solo color. %>
@@ -153,7 +173,8 @@
     </div>
   <% } %>
 
-  <%# Los tres interruptores del emisor. La cámara arranca APAGADA (D6). %>
+  <%# Los tres interruptores del emisor. Arranca con micrófono y CÁMARA; la pantalla se prende
+      acá o con el botón chico del cuadro (C1 y C4 de specs/transmision-camara-primero.spec.md). %>
   <% if (esGestor) { %>
     <div class="tx-acciones" id="txControles" style="display:none;margin-top:12px">
       <button class="tx-toggle" id="txBtnMicro" type="button">
@@ -169,7 +190,17 @@
   <% } %>
 
   <div class="tx-cuadro" id="txCuadro" style="display:none">
-    <video id="txVideo" playsinline autoplay></video>
+    <video id="txVideo" playsinline autoplay muted></video>
+    <%# muted: el sonido va siempre por los <audio> de #txAudios (ver abajo). Sin esto, la vista
+        previa del docente lo haría escucharse a sí mismo si alguna pista trajera audio. %>
+    <video id="txVideoChico" class="tx-chico" playsinline autoplay muted style="display:none"></video>
+    <% if (esGestor) { %>
+      <button type="button" class="tx-chico-btn" id="txPantallaChico" style="display:none"
+              aria-pressed="false" title="Compartir pantalla">
+        <span class="material-symbols-outlined">screen_share</span>
+        <span class="tx-chico-texto">Compartir pantalla</span>
+      </button>
+    <% } %>
     <div class="tx-sinvideo" id="txSinVideo" style="display:none">
       <span class="material-symbols-outlined">graphic_eq</span>
       <span>Estás escuchando la clase. La cámara y la pantalla están apagadas.</span>
@@ -231,4 +262,5 @@
     POST /transmision/ticket, Express respondía 404 en HTML y el docente veía "no se pudo
     entrar a la transmisión" (prueba real en producción, 2026-11-22). %>
 <script>window.LR_BASE = '/courses/<%= course._id %>/sala';</script>
+<script src="/js/transmision-pistas.js"></script>
 <script src="/js/transmision.js"></script>
