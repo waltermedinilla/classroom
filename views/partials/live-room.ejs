@@ -1427,9 +1427,22 @@
   function ponerLado(lado) {
     if (lado) WRAP.dataset.lado = lado; else delete WRAP.dataset.lado;
     const enOpciones = lado === 'opciones';
-    $('lrDLado').setAttribute('aria-pressed', enOpciones ? 'true' : 'false');
+    const btn = $('lrDLado');
+    btn.setAttribute('aria-pressed', enOpciones ? 'true' : 'false');
     $('lrDLadoTxt').textContent = enOpciones ? 'Volver al chat' : 'Más opciones';
     $('lrDLadoIco').textContent = enOpciones ? 'forum' : 'tune';
+    // El botón va ADENTRO de lo que se está mirando (pedido del 2026-11-22): en la cabecera del
+    // chat, o en el título de la primera tarjeta de las opciones. Sin transmisión vuelve a su
+    // caja, que está escondida.
+    let destino = $('lrDLadoCaja');
+    if (WRAP.dataset.tx === 'activa' && disenoActual === 'mixto') {
+      destino = enOpciones
+        ? ($('lrAClase') && $('lrBPanel').contains($('lrAClase'))
+            ? $('lrAClase').querySelector('.lrA-rotulo')
+            : $('lrBManos').querySelector('.lrB-tit'))
+        : document.querySelector('.lr-card-chat .lrA-chat-cab');
+    }
+    if (destino && btn.parentNode !== destino) destino.appendChild(btn);
   }
   $('lrDLado').addEventListener('click', () => ponerLado(WRAP.dataset.lado === 'opciones' ? '' : 'opciones'));
 
@@ -2304,8 +2317,10 @@
     // D6: con la barra de la transmisión en la cabecera, la tarjeta solo tiene sentido mientras
     // se transmite. El CSS de D la esconde con esto.
     WRAP.dataset.tx = tx.activa ? 'activa' : 'no';
-    // D7: al terminar la transmisión, la columna derecha vuelve a ser la de siempre.
-    if (!tx.activa && WRAP.dataset.lado) ponerLado('');
+    // D7: al terminar la transmisión, la columna derecha vuelve a ser la de siempre; mientras
+    // dura, el botón "Más opciones" se ubica adentro de lo que se está mirando.
+    if (!tx.activa) { if (WRAP.dataset.lado || $('lrDLado').parentNode !== $('lrDLadoCaja')) ponerLado(''); }
+    else ponerLado(WRAP.dataset.lado || '');
     const nManos = (tx.activa && tx.manos) ? tx.manos.length : 0;
     $('lrDLadoN').textContent = nManos ? String(nManos) : '';
     $('txCard').classList.toggle('tx-solovoz', !!soloVoz);

@@ -163,6 +163,11 @@ En la computadora, **mientras hay transmisión** (para el que transmite y para e
   Manos levantadas y Quién está — y el chat se oculta; el botón pasa a **"Volver al chat"**.
 - Al terminar la transmisión, la sala vuelve a como estaba (chat a la izquierda, panel a la
   derecha).
+- *Ajuste del 2026-11-22 (con captura): "bajes ese botón que quede un poco más dentro de esas
+  opciones" y "extiendas el chat […] un poco más ancho".* El botón va **adentro** de lo que se
+  está mirando: en la cabecera del chat ("Más opciones"), o en el título de la primera tarjeta de
+  las opciones ("Volver al chat"). Mientras se transmite, la columna derecha pasa de 340 a
+  **440 px** de ancho.
 
 En el celular no cambia: parado siguen las solapas, de costado la pantalla completa (D5).
 

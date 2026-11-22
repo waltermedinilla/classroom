@@ -359,14 +359,26 @@
   .lr-diseno-d .lrD-lado-n:empty { display:none; }
   .lr-diseno-d .lrD-lado-n { background:#d93025; color:#ffffff; border-radius:10px; padding:0 7px; font-size:12px; margin-left:2px; }
   @media (min-width: 900px) {
-    .lr-diseno-d[data-tx="activa"] .lrD-lado { display:flex; justify-content:flex-end; margin-bottom:10px; }
-    .lr-diseno-d[data-tx="activa"].lr-wrap > #lrDLadoCaja { grid-column:2; grid-row:2; }
+    /* El chat, un poco más ancho mientras se transmite (pedido del 2026-11-22). */
+    .lr-diseno-d[data-tx="activa"].lr-wrap { grid-template-columns:minmax(0, 1fr) 440px; }
     .lr-diseno-d[data-tx="activa"].lr-wrap > .lr-card-chat,
-    .lr-diseno-d[data-tx="activa"].lr-wrap > #lrBPanel { grid-column:2; grid-row:3 / span 40; position:sticky; top:12px; }
+    .lr-diseno-d[data-tx="activa"].lr-wrap > #lrBPanel { grid-column:2; grid-row:2 / span 40; position:sticky; top:12px; }
+    /* El botón vive adentro de la cabecera del chat o del título de las opciones (lo muda el
+       script); ahí va a la derecha y más chico. */
+    .lr-diseno-d .lrA-chat-cab #lrDLado,
+    .lr-diseno-d .lrA-rotulo #lrDLado,
+    .lr-diseno-d .lrB-tit #lrDLado { margin-left:auto; padding:5px 12px; font-size:13px; text-transform:none;
+                                     letter-spacing:0; font-weight:500; }
+    /* Cabecera del chat con el botón: arriba "Conversación" y el botón; abajo, el estado de la
+       escritura a la izquierda y la campana y "Clases anteriores" a la derecha. */
+    .lr-diseno-d .lrA-chat-cab:has(#lrDLado) #lrDLado { order:2; }
+    .lr-diseno-d .lrA-chat-cab:has(#lrDLado) .lrA-chat-estado { margin-left:0; order:4; }
+    .lr-diseno-d .lrA-chat-cab:has(#lrDLado) .lrB-chat-acc { margin-left:auto; order:5; }
     .lr-diseno-d[data-tx="activa"]:not([data-lado="opciones"]) #lrBPanel { display:none !important; }
     .lr-diseno-d[data-tx="activa"][data-lado="opciones"].lr-wrap > .lr-card-chat { display:none !important; }
     .lr-diseno-d[data-tx="activa"] .lr-card-chat #lrChat { max-height:calc(100vh - 330px); }
     .lr-diseno-d[data-tx="activa"].lr-wrap > #txCard { grid-row:2 / span 6; }
+    .lr-diseno-d[data-tx="activa"] .lrA-rotulo { display:flex; width:100%; }
   }
 
   /* D2 y D3: con la sala cerrada no hay transmisión ni barra */
