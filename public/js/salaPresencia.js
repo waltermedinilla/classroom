@@ -35,6 +35,40 @@
     noEntro:     'no entró a la clase',
   };
 
+  // Los rótulos de los grupos de "Quién está" del diseño B (specs/sala-disenos.spec.md, S6).
+  var GRUPOS = {
+    enSala:      'En la sala',
+    enActividad: 'Haciendo la actividad',
+    estuvieron:  'Estuvieron',
+    noEntraron:  'No entraron',
+  };
+
+  // La cuenta corta de la barra de arriba del diseño C: "15 en la sala · 20/25".
+  function cuentaCorta(p) {
+    var presentes  = (p && p.presentes) || 0;
+    var total      = (p && p.total) || 0;
+    var asistieron = p && typeof p.asistieron === 'number' ? p.asistieron : presentes;
+    return presentes + ' en la sala · ' + Math.max(asistieron, presentes) + '/' + total;
+  }
+
+  // "20 de 25": los que se conectaron sobre el total, para el título de "Quién está" de B.
+  function deTotal(p) {
+    var presentes  = (p && p.presentes) || 0;
+    var asistieron = p && typeof p.asistieron === 'number' ? p.asistieron : presentes;
+    return Math.max(asistieron, presentes) + ' de ' + ((p && p.total) || 0);
+  }
+
+  // La línea de la cabecera de los diseños nuevos (specs/sala-disenos.spec.md, S4):
+  // "15 en la sala · 20 de 25 se conectaron". Mismos números que cartel(), con el texto de las
+  // maquetas. Vive acá por la misma regla que cartel(): los textos de la presencia no se
+  // escriben sueltos en el partial.
+  function lineaCabecera(p) {
+    var presentes  = (p && p.presentes) || 0;
+    var total      = (p && p.total) || 0;
+    var asistieron = p && typeof p.asistieron === 'number' ? p.asistieron : presentes;
+    return presentes + ' en la sala · ' + Math.max(asistieron, presentes) + ' de ' + total + ' se conectaron';
+  }
+
   // El cartel de arriba de la sala.
   //
   // `presentes` sigue siendo "en la sala ahora" (D3): es el número que se mira segundo a
@@ -76,6 +110,10 @@
     LATIDO_ALUMNO_MS: LATIDO_ALUMNO_MS,
     ETIQUETAS: ETIQUETAS,
     cartel: cartel,
+    lineaCabecera: lineaCabecera,
+    cuentaCorta: cuentaCorta,
+    deTotal: deTotal,
+    GRUPOS: GRUPOS,
     titulo: titulo,
     debeLatir: debeLatir,
   };

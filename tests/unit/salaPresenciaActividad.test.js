@@ -371,3 +371,17 @@ test('Fase 3: la grilla muestra el detalle y no solo la materia', () => {
   assert.match(vista, /estuvieron hoy en una clase en vivo/,
     'si alguno no está ahora, el título no puede decir "están en clase ahora"');
 });
+
+test('lineaCabecera (specs/sala-disenos.spec.md): en la sala y conectados, con el texto de las maquetas', () => {
+  assert.equal(SalaPresencia.lineaCabecera({ presentes: 15, total: 25, asistieron: 20 }),
+    '15 en la sala · 20 de 25 se conectaron');
+  assert.equal(SalaPresencia.lineaCabecera({ presentes: 3, total: 25 }), '3 en la sala · 3 de 25 se conectaron');
+  assert.equal(SalaPresencia.lineaCabecera(null), '0 en la sala · 0 de 0 se conectaron');
+});
+
+test('cuentaCorta y deTotal (diseños B y C): mismos números que el cartel', () => {
+  assert.equal(SalaPresencia.cuentaCorta({ presentes: 15, total: 25, asistieron: 20 }), '15 en la sala · 20/25');
+  assert.equal(SalaPresencia.deTotal({ presentes: 15, total: 25, asistieron: 20 }), '20 de 25');
+  assert.equal(SalaPresencia.deTotal({ presentes: 4, total: 25 }), '4 de 25');
+  assert.deepStrictEqual(Object.keys(SalaPresencia.GRUPOS), ['enSala', 'enActividad', 'estuvieron', 'noEntraron']);
+});

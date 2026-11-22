@@ -120,7 +120,7 @@
 </style>
 
 <div class="tx-card" id="txCard" style="display:none">
-  <div class="tx-barra">
+  <div class="tx-barra" id="txBarra">
     <div class="tx-titulo">
       <span class="tx-punto off" id="txPunto"></span>
       <span id="txEstadoTexto">La clase no se está transmitiendo</span>
@@ -206,6 +206,9 @@
       <span>Estás escuchando la clase. La cámara y la pantalla están apagadas.</span>
     </div>
   </div>
+  <%# Solo B: el lugar de los botones redondos, DEBAJO del video (specs/sala-disenos.spec.md, S6).
+      Recibe #txControles por mudanza; en Clásico está vacío y no ocupa lugar. %>
+  <div class="tx-bajo-cuadro" id="txBajoCuadro"></div>
   <%# El audio va en sus propios elementos y no pegado al <video>: si el docente apaga la cámara,
       el <video> se queda sin pista de video y algunos navegadores dejan de reproducir también
       el audio. Y va UN <audio> POR VOZ (los crea public/js/transmision.js acá adentro): con el
@@ -224,6 +227,9 @@
 
   <%# Quién está hablando ahora y quién espera turno. Se pinta con los datos del POLL, no del
       WebSocket (D3): la cola aguanta perfectamente 4 segundos de retraso. %>
+  <%# El título de la columna de turnos de los diseños nuevos (specs/sala-disenos.spec.md, S4).
+      Inerte en Clásico; lo muestra el CSS del diseño cuando hay palabra o manos. %>
+  <div class="tx-turnos-tit" id="txTurnosTit">Turnos para hablar</div>
   <div class="tx-hablando" id="txHablando" style="display:none">
     <span id="txHablandoTexto"></span>
     <% if (esGestor) { %>
@@ -248,7 +254,7 @@
       </div>
     </div>
 
-    <div style="margin-top:12px">
+    <div id="txManoCaja" style="margin-top:12px">
       <button class="btn btn-outline" id="txMano" style="display:none">
         <span class="material-symbols-outlined">front_hand</span>
         <span id="txManoTexto">Levantar la mano</span>

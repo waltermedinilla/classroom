@@ -348,11 +348,20 @@
   }
 </style>
 
-<div class="lr-wrap">
+<%# Los diseños de la sala (specs/sala-disenos.spec.md). La clase sale del servidor para que la
+    sala no parpadee de Clásico al diseño elegido en el primer poll. `salaDisenos` lo pone
+    server.js en res.locals; con el freno de mano puesto la lista viene vacía y todo es Clásico. %>
+<%
+  const _disLista  = (locals.salaDisenos && locals.salaDisenos.visibles) ? locals.salaDisenos.lista : [];
+  const _disActual = _disLista.find(d => d.id === ((sala.settings && sala.settings.diseno) || 'clasico'));
+  const _disClase  = _disActual ? _disActual.clase : '';
+%>
+<%- include('sala-disenos-estilos') %>
+<div class="lr-wrap<%= _disClase ? ' ' + _disClase : '' %>" data-diseno="<%= _disActual ? _disActual.id : 'clasico' %>">
 
   <%# RN-15 — aviso permanente. No dice quién ni cuándo mira (no rompe el modo observación),
       pero hace que nadie escriba creyendo que está en un espacio privado. %>
-  <div class="lr-aviso">
+  <div class="lr-aviso" id="lrAviso">
     Esta sala queda registrada y el equipo directivo puede supervisarla.
     <small>El registro de conexión no reemplaza la asistencia oficial.</small>
   </div>
@@ -381,8 +390,70 @@
     </div>
   <% } %>
 
+  <%# ── Bloques de los diseños nuevos (specs/sala-disenos.spec.md, S4 a S7) ──
+      Bloques INERTES en Clásico (los esconde .lr-dis). No tienen lógica propia: la
+      cabecera se llena con los datos del poll, los interruptores delegan el clic en los botones
+      de siempre (#lrModo, #lrFotos) y los slots reciben a los botones de verdad, que se mudan
+      con sus manejadores y sus id (ver acomodarDiseno() en el script). %>
+  <div class="lr-card lr-dis lrA-cab" id="lrACab">
+    <div class="lrA-cab-fila">
+      <%# Solo C: la flecha para volver a la materia y el nombre de la materia (S7). %>
+      <a class="lrC-volver" href="/courses/<%= course._id %>" aria-label="Volver a la materia"><span class="material-symbols-outlined">arrow_back</span></a>
+      <div class="lrC-curso"><b><%= course.name %></b><small>Clase en vivo</small></div>
+      <span class="lrA-pill" id="lrAPill"><i></i><span id="lrAPillTxt">EN VIVO</span></span>
+      <div class="lrA-cab-txt">
+        <div class="lrA-titulo" id="lrATitulo">Sala en vivo</div>
+        <div class="lrA-sub" id="lrASub"></div>
+      </div>
+      <span class="lrC-reloj" id="lrCReloj"></span>
+      <span class="lrC-cuenta" id="lrCCuenta"><span class="material-symbols-outlined">group</span><span id="lrCCuentaTxt"></span></span>
+      <div class="lr-acciones lrA-cab-acc" id="lrACabAcc"></div>
+    </div>
+    <div class="lrA-cab-aviso" id="lrACabAviso"></div>
+  </div>
+  <% if (esGestor) { %>
+    <div class="lr-card lr-dis lrA-clase" id="lrAClase">
+      <div class="lrA-clase-fila" id="lrAClaseFila">
+        <span class="lrA-rotulo"><span class="t-a">La clase</span><span class="t-b"><span class="material-symbols-outlined">tune</span> Controles de la clase</span></span>
+        <button type="button" class="lrA-tog" id="lrATogEscribir" data-delega="lrModo" role="switch" aria-checked="true">
+          <span class="material-symbols-outlined">edit</span>
+          <span class="lrA-tog-txt"><span class="t-a">Alumnos escriben</span><span class="t-b">Los alumnos pueden escribir<small>Si lo apagás, solo escribís vos</small></span></span>
+          <i class="lrA-switch"></i>
+        </button>
+        <button type="button" class="lrA-tog" id="lrATogFotos" data-delega="lrFotos" role="switch" aria-checked="true">
+          <span class="material-symbols-outlined">image</span>
+          <span class="lrA-tog-txt"><span class="t-a">Fotos de alumnos</span><span class="t-b">Fotos de los alumnos</span></span>
+          <i class="lrA-switch"></i>
+        </button>
+        <div class="lr-acciones lrA-slot" id="lrAClaseSonido"></div>
+      </div>
+      <div class="lr-acciones lrA-clase-btns" id="lrAClaseBtns"></div>
+      <div class="lr-acciones lrB-diseno" id="lrBDisenoSlot"></div>
+    </div>
+  <% } %>
+
+  <%# Solo B (S6): las solapas del celular y el panel de la derecha de la computadora. El panel
+      recibe por mudanza la tarjeta de controles, las manos y la presencia. %>
+  <div class="lr-dis lrB-solapas" id="lrBSolapas" role="tablist" aria-label="Partes de la sala">
+    <button type="button" role="tab" data-solapa="chat" aria-selected="true"><span class="material-symbols-outlined">forum</span> Chat</button>
+    <button type="button" role="tab" data-solapa="personas" aria-selected="false"><span class="material-symbols-outlined">group</span> Presentes <span class="lrB-n" id="lrBNPresentes"></span></button>
+    <button type="button" role="tab" data-solapa="manos" aria-selected="false"><span class="material-symbols-outlined">back_hand</span> Manos <span class="lrB-n lrB-n-rojo" id="lrBNManos"></span></button>
+    <% if (esGestor) { %>
+      <button type="button" role="tab" data-solapa="controles" aria-selected="false"><span class="material-symbols-outlined">tune</span> Controles</button>
+    <% } %>
+  </div>
+  <div class="lr-dis lrB-panel" id="lrBPanel">
+    <div id="lrBSlotClase" data-parte="controles"></div>
+    <div class="lr-card lrB-manos" id="lrBManos" data-parte="manos">
+      <div class="lrB-tit"><span class="material-symbols-outlined">back_hand</span> Manos levantadas <span class="lrB-tit-n" id="lrBManosN"></span></div>
+      <div id="lrBManosSlot"></div>
+      <div class="lrB-vacio" id="lrBManosVacio">Nadie levantó la mano.</div>
+    </div>
+    <div id="lrBSlotQuien" data-parte="personas"></div>
+  </div>
+
   <!-- Estado + presencia -->
-  <div class="lr-card">
+  <div class="lr-card lr-card-presencia" id="lrPresencia">
     <div class="lr-barra">
       <div class="lr-estado">
         <span class="lr-punto" id="lrPunto"></span>
@@ -456,10 +527,37 @@
             <p class="lr-menu-ayuda" id="lrCampanaAyuda">Suena si la sala está abierta detrás de otra ventana. Si cambiás de pestaña, la sala se pausa y te ponés al día al volver.</p>
           <% } %>
         </div>
-        <a class="btn btn-outline" href="/courses/<%= course._id %>/sala/clases">Clases anteriores</a>
+        <a class="btn btn-outline" id="lrClasesAnt" href="/courses/<%= course._id %>/sala/clases">Clases anteriores</a>
+        <%# El selector de diseño (specs/sala-disenos.spec.md, S3). Solo quien gestiona, y solo si
+            hay más de un diseño listo: un menú con una sola opción no elige nada. Mismo patrón
+            que el menú del sonido. %>
+        <% if (esGestor && _disLista.length > 1) { %>
+          <button type="button" class="btn btn-outline lr-diseno-btn" id="lrDiseno"
+                  aria-haspopup="menu" aria-expanded="false" aria-controls="lrDisenoMenu" title="Cambiar el diseño de la sala">
+            <span class="material-symbols-outlined" style="font-size:18px;vertical-align:-4px">dashboard_customize</span>
+            Diseño
+          </button>
+          <div class="lr-menu" id="lrDisenoMenu">
+            <div role="menu" aria-label="Diseño de la sala para toda la clase">
+              <% _disLista.forEach(function (d) { %>
+                <button type="button" role="menuitemradio" data-diseno="<%= d.id %>"
+                        aria-checked="<%= (_disActual ? _disActual.id : 'clasico') === d.id ? 'true' : 'false' %>">
+                  <span class="material-symbols-outlined" style="font-size:18px;vertical-align:-4px"><%= d.icono %></span>
+                  <%= d.rotulo %>
+                  <small class="lr-diseno-ayuda"><%= d.ayuda %></small>
+                </button>
+              <% }); %>
+            </div>
+            <p class="lr-menu-ayuda">Lo ven igual todos los de la clase.</p>
+          </div>
+        <% } %>
       </div>
     </div>
+    <div class="lr-dis lrB-tit lrB-quien-tit"><span class="material-symbols-outlined">group</span> Quién está <span class="lrB-tit-n" id="lrBQuienN"></span></div>
+    <div class="lr-dis lrA-chips" id="lrAChips"></div>
     <div class="lr-circulos" id="lrCirculos"></div>
+    <%# Solo B: la presencia agrupada (S6). La arma pintarQuien() con las mismas listas. %>
+    <div class="lr-dis lrB-quien" id="lrBQuien"></div>
   </div>
 
   <%# Transmisión en vivo. Va ENTRE la presencia y el chat porque ése es el orden en que se
@@ -473,7 +571,13 @@
   <% } %>
 
   <!-- Chat -->
-  <div class="lr-card">
+  <div class="lr-card lr-card-chat">
+    <div class="lr-dis lrA-chat-cab">
+      <span class="material-symbols-outlined">forum</span>
+      <span class="lrA-chat-tit">Conversación</span>
+      <span class="lrA-chat-estado" id="lrAChatEstado"></span>
+      <span class="lr-acciones lrB-chat-acc" id="lrChatAcc"></span>
+    </div>
     <div class="lr-chat" id="lrChat">
       <div class="lr-vacio">Cargando…</div>
     </div>
@@ -532,6 +636,24 @@
 
   <%# Lightbox de imágenes. Vive fuera del chat (que tiene overflow) para poder ocupar la
       pantalla entera. Arranca vacío: el src se carga recién al abrirlo. %>
+  <%# Solo C (S7): la barra de botones de abajo, en tres grupos. Los grupos reciben por mudanza
+      los botones de siempre; los dos de "la clase" son botones redondos que delegan en
+      #lrModo y #lrFotos, igual que los interruptores de A y B. %>
+  <div class="lr-dis lrC-barra" id="lrCBarra">
+    <div class="lrC-grupo" id="lrCBarraTx"></div>
+    <% if (esGestor) { %>
+      <div class="lrC-grupo" id="lrCBarraClase">
+        <button type="button" class="lrC-bot" id="lrCEscribir" data-delega="lrModo" aria-pressed="true">
+          <span class="material-symbols-outlined">edit</span><span>Alumnos escriben</span>
+        </button>
+        <button type="button" class="lrC-bot" id="lrCFotos" data-delega="lrFotos" aria-pressed="true">
+          <span class="material-symbols-outlined">image</span><span>Fotos de alumnos</span>
+        </button>
+      </div>
+      <div class="lrC-grupo" id="lrCBarraFin"></div>
+    <% } %>
+  </div>
+
   <div class="lr-lupa" id="lrLupa" role="dialog" aria-modal="true" aria-label="Imagen ampliada">
     <button class="lr-lupa-x" id="lrLupaX" aria-label="Cerrar">&times;</button>
     <img id="lrLupaImg" src="" alt="">
@@ -647,6 +769,7 @@
   // ── Presencia ──────────────────────────────────────────────────────────────
   function pintarPresencia(p) {
     const cont = $('lrCirculos');
+    if (p && p.conectados) { ultimaPresencia = p; pintarChips(p, null); pintarQuien(p); }
     if (!p) { cont.innerHTML = ''; return; }
     const bolas = [];
     p.conectados.forEach(c => {
@@ -960,7 +1083,9 @@
   }
 
   // ── Estado general ─────────────────────────────────────────────────────────
+  let ultimoEstado = SALA;
   function pintarEstado(s) {
+    ultimoEstado = s;
     estado = s.estado;
     const abierta = s.estado === 'abierta';
     $('lrPunto').className = 'lr-punto' + (abierta ? '' : ' off');
@@ -1028,6 +1153,307 @@
     } else {
       mudo.style.display = 'none';
     }
+
+    pintarDiseno(s);
+  }
+
+  // ── Diseños de la sala (specs/sala-disenos.spec.md) ─────────────────────────
+  //
+  // Lo que cambia entre diseños es DÓNDE están las cosas, nunca qué hacen. Tres mecanismos, y
+  // ninguno duplica lógica:
+  //   1. Una clase en el contenedor (lr-diseno-a, …) que lee el CSS de sala-disenos-estilos.ejs.
+  //   2. La MUDANZA: los botones de siempre se llevan a los lugares del diseño (con sus id y sus
+  //      manejadores, porque se mueve el nodo) y se devuelven a su lugar exacto al volver a
+  //      Clásico, marcado con un comentario la primera vez que se mueven.
+  //   3. Los interruptores del diseño DELEGAN el clic en el botón original (data-delega) y leen
+  //      su estado de lo que manda el servidor. No hay un segundo camino al servidor.
+  const DISENOS = <%- JSON.stringify(_disLista.map(d => ({ id: d.id, clase: d.clase }))) %>;
+  const WRAP = $('lrChat').closest('.lr-wrap');
+
+  // [nodo, lugar] por diseño. Se mudan en este orden y vuelven en el inverso.
+  const MUDANZAS = {
+    ordenada: [
+      ['lrAviso',       'lrACabAviso'],
+      ['lrCampana',     'lrACabAcc'],
+      ['lrCampanaMenu', 'lrACabAcc'],
+      ['lrClasesAnt',   'lrACabAcc'],
+      ['lrDiseno',      'lrACabAcc'],
+      ['lrDisenoMenu',  'lrACabAcc'],
+      ['lrSonidoClase', 'lrAClaseSonido'],
+      ['lrSonidoMenu',  'lrAClaseSonido'],
+      ['lrAbrir',       'lrAClaseBtns'],
+      ['lrActividad',   'lrAClaseBtns'],
+      ['lrCerrar',      'lrAClaseBtns'],
+      ['txControles',   'txBarra'],
+      ['txCerrar',      'txControles'],
+    ],
+    // B (S6): la campana y "Clases anteriores" a la cabecera del chat; los controles, las manos
+    // y la presencia al panel de la derecha; los botones de la transmisión debajo del video.
+    panel: [
+      ['lrAviso',       'lrACabAviso'],
+      ['lrCampana',     'lrChatAcc'],
+      ['lrCampanaMenu', 'lrChatAcc'],
+      ['lrClasesAnt',   'lrChatAcc'],
+      ['lrSonidoClase', 'lrAClaseSonido'],
+      ['lrSonidoMenu',  'lrAClaseSonido'],
+      ['lrAbrir',       'lrAClaseBtns'],
+      ['lrActividad',   'lrAClaseBtns'],
+      ['lrCerrar',      'lrAClaseBtns'],
+      ['lrDiseno',      'lrBDisenoSlot'],
+      ['lrDisenoMenu',  'lrBDisenoSlot'],
+      ['lrAClase',      'lrBSlotClase'],
+      ['lrPresencia',   'lrBSlotQuien'],
+      ['txManos',       'lrBManosSlot'],
+      ['txControles',   'txBajoCuadro'],
+      ['txCerrar',      'txControles'],
+    ],
+    // C (S7): la campana, "Clases anteriores" y el selector a la barra de arriba; todo lo que se
+    // aprieta durante la clase, a la barra de abajo.
+    aula: [
+      ['lrAviso',       'lrACabAviso'],
+      ['lrCampana',     'lrACabAcc'],
+      ['lrCampanaMenu', 'lrACabAcc'],
+      ['lrClasesAnt',   'lrACabAcc'],
+      ['lrDiseno',      'lrACabAcc'],
+      ['lrDisenoMenu',  'lrACabAcc'],
+      ['txControles',   'lrCBarraTx'],
+      ['txCerrar',      'lrCBarraTx'],
+      ['txVer',         'lrCBarraTx'],
+      ['txNoVer',       'lrCBarraTx'],
+      ['txManoCaja',    'lrCBarraTx'],
+      ['lrSonidoClase', 'lrCBarraClase'],
+      ['lrSonidoMenu',  'lrCBarraClase'],
+      ['lrAbrir',       'lrCBarraFin'],
+      ['lrActividad',   'lrCBarraFin'],
+      ['lrCerrar',      'lrCBarraFin'],
+    ],
+  };
+
+  const MARCAS = new Map();   // id del nodo → el comentario que marca su lugar de Clásico
+  let disenoActual = 'clasico';
+  let mudados = [];           // lo que está fuera de su lugar ahora, en orden de mudanza
+
+  function devolverTodo() {
+    for (let i = mudados.length - 1; i >= 0; i--) {
+      const id = mudados[i];
+      const nodo = $(id), marca = MARCAS.get(id);
+      if (nodo && marca && marca.parentNode) marca.parentNode.insertBefore(nodo, marca);
+    }
+    mudados = [];
+  }
+
+  function acomodarDiseno(id) {
+    devolverTodo();
+    for (const [nodoId, lugarId] of (MUDANZAS[id] || [])) {
+      const nodo = $(nodoId), lugar = $(lugarId);
+      if (!nodo || !lugar) continue;   // no es de este rol, o el módulo está apagado
+      if (!MARCAS.has(nodoId)) {
+        const marca = document.createComment('lr-lugar:' + nodoId);
+        nodo.parentNode.insertBefore(marca, nodo);
+        MARCAS.set(nodoId, marca);
+      }
+      lugar.appendChild(nodo);
+      mudados.push(nodoId);
+    }
+  }
+
+  // Aplica un diseño a esta pantalla. Un id que no está en la lista (no listo, freno de mano)
+  // es Clásico: lo mismo que decide disenoEfectivo() en el servidor.
+  function aplicarDiseno(id) {
+    const d = DISENOS.find(x => x.id === id) || { id: 'clasico', clase: '' };
+    // `disenoActual` arranca en 'clasico' aunque el servidor haya pintado otra clase: es lo que
+    // dice dónde están los NODOS, y al cargar todavía están todos en su lugar de Clásico.
+    if (d.id === disenoActual) return;
+    DISENOS.forEach(x => { if (x.clase) WRAP.classList.toggle(x.clase, x.id === d.id); });
+    WRAP.dataset.diseno = d.id;
+    if (d.id !== 'panel') delete WRAP.dataset.solapa;
+    else if (!WRAP.dataset.solapa) WRAP.dataset.solapa = 'chat';
+    disenoActual = d.id;
+    acomodarDiseno(d.id);
+    document.querySelectorAll('#lrDisenoMenu [data-diseno]').forEach(b =>
+      b.setAttribute('aria-checked', b.dataset.diseno === d.id ? 'true' : 'false'));
+  }
+
+  // Lo que muestra el diseño con los datos del poll. Solo texto y estados: los botones de verdad
+  // los sigue pintando el resto de pintarEstado().
+  let ultimaPresencia = null;
+  function pintarDiseno(s) {
+    aplicarDiseno(s.settings && s.settings.diseno);
+    if (disenoActual === 'clasico') return;
+
+    const abierta = s.estado === 'abierta';
+    const pill = $('lrAPill');
+    pill.classList.toggle('off', !abierta);
+    $('lrAPillTxt').textContent = abierta ? 'EN VIVO' : 'CERRADA';
+
+    const ap = s.apertura;
+    // A dice la fecha ("Clase del jueves 24/09"); B, "Clase de hoy" cuando es de hoy (maquetas).
+    const titulo = !abierta ? 'La sala no está abierta'
+      : !ap ? 'Clase en vivo'
+      : (disenoActual === 'panel' && ap.hoy) ? 'Clase de hoy · desde las ' + ap.desde
+      : 'Clase del ' + ap.dia;
+    $('lrATitulo').textContent = titulo;
+    const p = s.presencia || {};
+    const partes = [];
+    if (abierta && ap && disenoActual === 'aula') partes.push('desde ' + ap.desde);
+    else if (abierta && ap && disenoActual !== 'panel') partes.push('desde las ' + ap.desde);
+    // En C la cuenta va en su pastilla de la derecha; acá queda solo la hora y el reloj.
+    if (abierta && disenoActual !== 'aula') partes.push(SalaPresencia.lineaCabecera(p));
+    $('lrASub').textContent = partes.join(' · ');
+
+    // C: "desde 08:02" y el reloj de la clase, y la cuenta "15 en la sala · 20/25" (S7).
+    inicioClase = abierta && ap && ap.inicio ? new Date(ap.inicio) : null;
+    pintarReloj();
+    $('lrCCuentaTxt').textContent = abierta ? SalaPresencia.cuentaCorta(p) : '';
+    $('lrCCuenta').style.display = abierta ? '' : 'none';
+
+    if (GESTOR && $('lrAClase')) {
+      const st = s.settings || {};
+      const tEsc = $('lrATogEscribir'), tFot = $('lrATogFotos');
+      tEsc.setAttribute('aria-checked', st.studentsCanWrite !== false ? 'true' : 'false');
+      tFot.setAttribute('aria-checked', st.studentsCanShareImages !== false ? 'true' : 'false');
+      $('lrAClaseFila').style.display = abierta ? '' : 'none';
+      // Los botones redondos de C: mismo estado, como aria-pressed.
+      $('lrCEscribir').setAttribute('aria-pressed', st.studentsCanWrite !== false ? 'true' : 'false');
+      $('lrCFotos').setAttribute('aria-pressed', st.studentsCanShareImages !== false ? 'true' : 'false');
+      $('lrCEscribir').style.display = $('lrCFotos').style.display = abierta ? '' : 'none';
+    }
+
+    // B: los números de las solapas y de las tarjetas del panel, y el punto de "mensaje nuevo".
+    const manos = (s.transmision && s.transmision.manos) || [];
+    $('lrBNPresentes').textContent = abierta ? String(p.presentes || 0) : '';
+    $('lrBNManos').textContent = manos.length ? String(manos.length) : '';
+    $('lrBManosN').textContent = manos.length ? manos.length + ' en espera' : '';
+    $('lrBManosVacio').style.display = manos.length ? 'none' : '';
+    $('lrBQuienN').textContent = abierta ? SalaPresencia.deTotal(p) : '';
+    if (typeof s.seq === 'number') {
+      if (ultimoSeqVisto !== null && s.seq > ultimoSeqVisto && WRAP.dataset.solapa && WRAP.dataset.solapa !== 'chat') {
+        const t = document.querySelector('#lrBSolapas [data-solapa="chat"]');
+        if (t) t.classList.add('nuevo');
+      }
+      ultimoSeqVisto = s.seq;
+    }
+
+    $('lrAChatEstado').innerHTML = abierta
+      ? '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px">'
+        + ((s.settings && s.settings.studentsCanWrite === false) ? 'lock' : 'lock_open')
+        + '</span> ' + ((s.settings && s.settings.studentsCanWrite === false) ? 'Solo escribe el docente' : 'Todos pueden escribir')
+      : '';
+    pintarChips(p.conectados ? p : ultimaPresencia, p);
+    pintarQuien(p.conectados ? p : ultimaPresencia);
+  }
+
+  // El reloj de C ("desde 08:02 · 00:24:13"). Se calcula en el navegador con la hora de apertura
+  // que manda el servidor: no agrega nada al poll y corre aunque el poll se atrase.
+  let inicioClase = null, ultimoSeqVisto = null;
+  function pintarReloj() {
+    const el = $('lrCReloj');
+    if (!el) return;
+    if (disenoActual !== 'aula' || !inicioClase || estado !== 'abierta') { el.textContent = ''; return; }
+    const seg = Math.max(0, Math.floor((Date.now() - inicioClase.getTime()) / 1000));
+    const dos = n => String(n).padStart(2, '0');
+    el.textContent = dos(Math.floor(seg / 3600)) + ':' + dos(Math.floor(seg / 60) % 60) + ':' + dos(seg % 60);
+  }
+  setInterval(pintarReloj, 1000);
+
+  // La presencia agrupada de B (S6): en la sala, haciendo la actividad, estuvieron, no entraron.
+  // Mismas listas que los círculos de siempre y mismos títulos (SalaPresencia); solo cambia el
+  // acomodo. Los rótulos de los grupos también vienen del módulo.
+  function pintarQuien(listas) {
+    const cont = $('lrBQuien');
+    if (!cont || disenoActual !== 'panel') return;
+    if (!listas || estado !== 'abierta') { cont.innerHTML = ''; return; }
+    const G = SalaPresencia.GRUPOS;
+    const bola = (per, clase) => '<div class="lr-bola ' + clase + '" title="' + esc(per.nombre) + '" style="background:'
+      + (clase === 'lr-off' ? '#9aa0a6' : color(per.nombre)) + '">'
+      + (per.avatar ? '<img src="' + esc(per.avatar) + '" alt="">' : esc(per.inicial)) + '</div>';
+    const est = listas.estuvieron || [];
+    const enAct = est.filter(e => e.enActividad), seFueron = est.filter(e => !e.enActividad);
+    const alumnosEnSala = (listas.conectados || []).filter(c => c.rol === 'student');
+    const staff = (listas.conectados || []).length - alumnosEnSala.length;
+    let h = '<div class="lrB-grupo"><span class="lrB-g-tit"><i class="c-on"></i>' + G.enSala + ' · ' + alumnosEnSala.length
+      + (staff ? ' (+ ' + staff + ')' : '') + '</span><div class="lrB-bolas">'
+      + (listas.conectados || []).map(c => bola(c, c.rol === 'student' ? 'lr-on' : 'lr-staff')).join('') + '</div></div>';
+    if (enAct.length) {
+      h += '<div class="lrB-grupo"><span class="lrB-g-tit"><i class="c-act"></i>' + G.enActividad + ' · ' + enAct.length + '</span>'
+        + enAct.map(e => '<div class="lrB-fila">' + bola(e, 'lr-actividad') + '<span>' + esc(e.nombre) + '</span></div>').join('') + '</div>';
+    }
+    if (seFueron.length) {
+      h += '<div class="lrB-grupo"><span class="lrB-g-tit"><i class="c-est"></i>' + G.estuvieron + ' · ' + seFueron.length + '</span>'
+        + seFueron.map(e => '<div class="lrB-fila">' + bola(e, 'lr-estuvo') + '<span>' + esc(e.nombre) + '</span>'
+          + (e.seRetiro ? '<small>' + esc(SalaPresencia.ETIQUETAS.seRetiro + e.seRetiro) + '</small>' : '') + '</div>').join('') + '</div>';
+    }
+    if ((listas.ausentes || []).length) {
+      h += '<div class="lrB-grupo"><span class="lrB-g-tit"><i class="c-off"></i>' + G.noEntraron + ' · ' + listas.ausentes.length + '</span><div class="lrB-bolas">'
+        + listas.ausentes.map(a => bola(a, 'lr-off')).join('') + '</div></div>';
+    }
+    cont.innerHTML = h;
+  }
+
+  // Las solapas de B en el celular. Cambiar de solapa es mostrar u ocultar (lo decide el CSS
+  // con data-solapa); no se le pide nada al servidor.
+  document.querySelectorAll('#lrBSolapas [data-solapa]').forEach(t => t.addEventListener('click', () => {
+    WRAP.dataset.solapa = t.dataset.solapa;
+    document.querySelectorAll('#lrBSolapas [data-solapa]').forEach(x =>
+      x.setAttribute('aria-selected', x === t ? 'true' : 'false'));
+    if (t.dataset.solapa === 'chat') t.classList.remove('nuevo');
+  }));
+
+  // Los contadores de la presencia (S4). Las listas no viajan en cada poll (RN-2 de la escala):
+  // se cuentan con la última que llegó, y `presentes` sale del poll de ahora, que viaja siempre.
+  function pintarChips(listas, ahora) {
+    const cont = $('lrAChips');
+    if (!cont || disenoActual === 'clasico') return;
+    if (!listas || estado !== 'abierta') { cont.innerHTML = ''; return; }
+    const est = listas.estuvieron || [];
+    const enAct = est.filter(e => e.enActividad).length;
+    const chip = (cls, n, txt) => '<span class="lrA-chip"><i class="' + cls + '"></i><b>' + n + '</b> ' + txt + '</span>';
+    cont.innerHTML =
+      chip('c-on', (ahora && ahora.presentes) || listas.presentes || 0, 'en la sala') +
+      (enAct ? chip('c-act', enAct, 'en la actividad') : '') +
+      (est.length - enAct ? chip('c-est', est.length - enAct, 'estuvieron') : '') +
+      ((listas.ausentes || []).length ? chip('c-off', listas.ausentes.length, 'ausentes') : '');
+  }
+
+  // Los interruptores del diseño: el clic va al botón de siempre, que es el que sabe qué
+  // mandarle al servidor y qué anunciar en el chat. El estado nuevo llega con su respuesta.
+  document.querySelectorAll('[data-delega]').forEach(t => t.addEventListener('click', () => {
+    const original = $(t.dataset.delega);
+    if (original) original.click();
+  }));
+
+  // El selector (S3). Se aplica en el acto en esta pantalla y se manda al servidor; a los
+  // alumnos les llega en el poll siguiente. Si el servidor dice que no, se vuelve al anterior.
+  if ($('lrDiseno')) {
+    $('lrDiseno').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const menu = $('lrDisenoMenu');
+      const abrir = !menu.classList.contains('abierto');
+      cerrarMenusSonido();
+      menu.classList.toggle('abierto', abrir);
+      $('lrDiseno').setAttribute('aria-expanded', abrir ? 'true' : 'false');
+    });
+    $('lrDisenoMenu').addEventListener('click', async (e) => {
+      const op = e.target.closest('[data-diseno]');
+      if (!op) return;
+      const anterior = disenoActual;
+      $('lrDisenoMenu').classList.remove('abierto');
+      $('lrDiseno').setAttribute('aria-expanded', 'false');
+      aplicarDiseno(op.dataset.diseno);
+      pintarDiseno({ ...ultimoEstado, settings: { ...(ultimoEstado.settings || {}), diseno: op.dataset.diseno } });
+      try {
+        const r = await post(BASE + '/diseno', { diseno: op.dataset.diseno });
+        if (!r.ok) throw new Error('no');
+      } catch (err) {
+        aplicarDiseno(anterior);
+        alert('No se pudo cambiar el diseño. Probá de nuevo.');
+      }
+    });
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('#lrDisenoMenu') || e.target.closest('#lrDiseno')) return;
+      $('lrDisenoMenu').classList.remove('abierto');
+      $('lrDiseno').setAttribute('aria-expanded', 'false');
+    });
   }
 
   // ── Sonido de aviso del chat ───────────────────────────────────────────────

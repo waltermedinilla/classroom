@@ -57,6 +57,7 @@ const ACTIONS = {
   // queda constancia. Silencioso para la clase, visible para la institución.
   'room.open':           { label: 'abrió la sala en vivo',           icon: 'sensors',     color: '#137333', category: 'course' },
   'room.close':          { label: 'cerró la sala en vivo',           icon: 'sensors_off', color: '#ea8600', category: 'course' },
+  'room.diseno':         { label: 'cambió el diseño de la sala en vivo', icon: 'dashboard', color: '#1a73e8', category: 'course' },
   'room.observe':        { label: 'observó una sala en vivo',        icon: 'visibility',  color: '#9334e6', category: 'course' },
   'room.join_staff':     { label: 'ingresó a una sala en vivo',      icon: 'login',       color: '#0d7377', category: 'course' },
   // Compartir un archivo se audita aunque solo lo pueda hacer quien da la clase: es la única

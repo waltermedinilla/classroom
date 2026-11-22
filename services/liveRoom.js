@@ -14,6 +14,7 @@ const RoomSession  = require('../models/RoomSession');
 const RoomMessage  = require('../models/RoomMessage');
 const RoomPresence = require('../models/RoomPresence');
 const { SONIDO_DE, SONIDO_DE_DEFAULT } = require('../public/js/salaSonido');
+const SALA_DISENOS = require('../config/salaDisenos');
 // Solo por LATIDO_ALUMNO_MS: la ventana de escritura del latido se mide contra el intervalo del
 // navegador, y los dos números tienen que salir del mismo lado.
 const { LATIDO_ALUMNO_MS } = require('../public/js/salaPresencia');
@@ -712,6 +713,36 @@ async function leerPreferenciaSonido(UserModel, userId) {
   return sonidoInicial(pref);
 }
 
+// ── Diseño de la sala (specs/sala-disenos.spec.md) ──────────────────────────
+
+// Qué diseño se pinta. Pura. Un valor desconocido, un diseño que todavía no está listo o el
+// freno de mano puesto (DISENOS_SALA_VISIBLES = false) dan Clásico: la sala nunca queda con una
+// clase CSS que no existe. `visibles` y `disenos` llegan por parámetro para poder probarla.
+function disenoEfectivo({ guardado,
+  visibles = SALA_DISENOS.DISENOS_SALA_VISIBLES,
+  disenos  = SALA_DISENOS.DISENOS } = {}) {
+  if (!visibles) return SALA_DISENOS.DISENO_DEFAULT;
+  const d = disenos.find(x => x.id === guardado && x.listo);
+  return d ? d.id : SALA_DISENOS.DISENO_DEFAULT;
+}
+
+// ¿Es un id que se puede elegir? (la validación de la ruta). Un diseño que no está listo no se
+// puede elegir aunque exista en el enum.
+function disenoValido(id) {
+  return SALA_DISENOS.DISENOS_SALA_VISIBLES
+      && SALA_DISENOS.DISENOS.some(x => x.id === id && x.listo);
+}
+
+// El diseño con el que arranca la sala que abre este usuario. Mismo criterio que
+// leerPreferenciaSonido: si la lectura falla, la sala se abre igual, en Clásico.
+async function leerPreferenciaDiseno(UserModel, userId) {
+  let pref = null;
+  try {
+    pref = await UserModel.findById(userId).select('salaDiseno').lean();
+  } catch (err) { /* queda en null */ }
+  return disenoEfectivo({ guardado: pref && pref.salaDiseno });
+}
+
 // ── Funciones con base de datos ──────────────────────────────────────────────
 
 const oid = (id) => new mongoose.Types.ObjectId(id.toString());
@@ -1195,6 +1226,7 @@ module.exports = {
   puedeEscribir, puedeCompartirImagen, puedeBorrarMensaje, citaDeMensaje,
   // sonido de aviso del chat (puras, y la lectura al abrir con el modelo inyectado)
   configDeSonido, sonidoInicial, leerPreferenciaSonido,
+  disenoEfectivo, disenoValido, leerPreferenciaDiseno,
   // con base
   openSession, closeSession, closeStaleSessions, postMessage, postAttachment, systemMessage,
   resolverCita, apagarCitasDe,

@@ -75,6 +75,11 @@ const roomSessionSchema = new mongoose.Schema({
     // Qué mensajes suenan: 'todos' | 'docente' (autor con rol en STAFF_ROLES). Separado del
     // interruptor para que apagar y volver a prender no le borre la elección a la docente.
     sonidoDe: { type: String, enum: SONIDO_DE, default: SONIDO_DE_DEFAULT },
+
+    // El diseño de ESTA clase (specs/sala-disenos.spec.md, S2). Lo pone quien gestiona y lo
+    // ven todos. Se copia de User.salaDiseno al abrir. Una sesión vieja lee undefined, y
+    // disenoEfectivo() lo pinta como Clásico. Solo es visual: ningún permiso lo mira.
+    diseno: { type: String, enum: ['clasico', 'ordenada', 'panel', 'aula'], default: 'clasico' },
   },
 
   // La transmisión en vivo de ESTA clase. Ver specs/transmision-en-vivo.spec.md.

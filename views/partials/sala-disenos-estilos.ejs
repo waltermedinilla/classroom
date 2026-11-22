@@ -1,0 +1,391 @@
+<%# Estilos de los diseños nuevos de la sala en vivo (specs/sala-disenos.spec.md).
+
+    REGLA DE ESTE ARCHIVO (CA-14): toda regla va prefijada con la clase de su diseño
+    (.lr-diseno-a, -b, -c, o :is(...) de varios), o es la que ESCONDE los bloques de los diseños
+    fuera de ellos (.lr-wrap:not(.lr-diseno-X) …). Una regla sin prefijo pisaría la sala Clásica,
+    que es la que usan todas las clases y la que no se puede romper. Lo controla
+    tests/unit/salaDisenos.test.js.
+
+    Vive en su propio archivo y no en el <style> de live-room.ejs para que ese bloque —que tiene
+    sus propios tests de contraste— quede exactamente como estaba. Igual se respetan sus dos
+    reglas: un fondo fijo declara su color de texto, y cada color fijo tiene su variante oscura.
+
+    Los tres diseños siguen el botón de tema claro/oscuro del sitio: lo fijo de acá tiene su
+    par en el bloque [data-theme="dark"] de abajo. También C, aunque su maqueta sea oscura.
+
+    Iconos que se dibujan solo desde CSS (content: de los botones redondos de C). La fuente se
+    pide recortada a los iconos que usa la app (tools/iconos.js), que los encuentra por su
+    <span>; como estos no tienen uno, quedan listados acá para el barrido:
+    <span class="material-symbols-outlined">play_arrow</span>
+    <span class="material-symbols-outlined">call_end</span>
+    <span class="material-symbols-outlined">campaign</span> %>
+<style>
+  /* ── Fuera de los diseños nuevos, sus bloques no existen ──────────────── */
+  .lr-wrap:not(.lr-diseno-a):not(.lr-diseno-b):not(.lr-diseno-c) .lr-dis,
+  .lr-wrap:not(.lr-diseno-a):not(.lr-diseno-c) .tx-turnos-tit,
+  .lr-wrap:not(.lr-diseno-b) .tx-bajo-cuadro,
+  .lr-wrap:not(.lr-diseno-c) .lrC-volver,
+  .lr-wrap:not(.lr-diseno-c) .lrC-curso,
+  .lr-wrap:not(.lr-diseno-c) .lrC-reloj,
+  .lr-wrap:not(.lr-diseno-c) .lrC-cuenta { display:none !important; }
+
+  /* Qué bloque es de qué diseño */
+  .lr-diseno-a .lrB-solapas, .lr-diseno-a .lrB-panel, .lr-diseno-a .lrB-quien, .lr-diseno-a .lrB-quien-tit,
+  .lr-diseno-a .lrB-chat-acc, .lr-diseno-a .lrB-diseno, .lr-diseno-a .lrC-barra { display:none !important; }
+  .lr-diseno-b .lrA-chips, .lr-diseno-b .lrC-barra, .lr-diseno-b .lr-card-presencia .lr-circulos,
+  .lr-diseno-b .lr-card-presencia .lr-leyenda, .lr-diseno-b .tx-turnos-tit { display:none !important; }
+  .lr-diseno-c .lrB-solapas, .lr-diseno-c .lrB-panel, .lr-diseno-c .lrB-quien, .lr-diseno-c .lrB-chat-acc,
+  .lr-diseno-c .lrB-diseno, .lr-diseno-c .lrA-clase { display:none !important; }
+  .lr-diseno-a .t-b, .lr-diseno-b .t-a { display:none; }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     Lo común a A, B y C (S4)
+     ════════════════════════════════════════════════════════════════════════ */
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c).lr-wrap { max-width:1180px; }
+
+  /* La barra vieja de la presencia (el punto, el texto, #lrModo y #lrFotos, que siguen
+     existiendo para que los interruptores les deleguen el clic) no se ve. */
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lr-card-presencia > .lr-barra { display:none; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lr-card-presencia .lr-circulos { margin-top:0; }
+
+  /* Cabecera */
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-cab { padding:0; overflow:visible; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-cab-fila { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:14px 16px; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-cab-txt { min-width:0; flex:1 1 220px; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-titulo { font-size:18px; font-weight:500; line-height:1.25; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-sub { font-size:13px; color:var(--lr-tenue); margin-top:2px; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-cab-acc { margin-left:auto; align-items:center; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px;
+                           border-radius:14px; font-size:12.5px; font-weight:700; letter-spacing:.02em;
+                           background:#fce8e6; color:#a50e0e; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-pill i { width:8px; height:8px; border-radius:50%; background:#d93025; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-pill.off { background:#f1f3f4; color:#3c4043; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-pill.off i { background:#80868b; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-cab-aviso:empty { display:none; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-cab-aviso { border-top:1px solid var(--border); }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-cab-aviso .lr-aviso { margin:0; border:0; border-radius:0 0 12px 12px;
+                           padding:9px 16px; background:#fffaf0; color:#5f4b00; font-size:12.5px; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-cab-aviso .lr-aviso small { display:inline; margin:0 0 0 4px; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) #lrCampana { border-radius:50%; }
+
+  /* Los interruptores (A y B) */
+  :is(.lr-diseno-a, .lr-diseno-b) .lrA-clase-fila { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  :is(.lr-diseno-a, .lr-diseno-b) .lrA-rotulo { font-size:11.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+                             color:var(--lr-tenue); margin-right:4px; }
+  :is(.lr-diseno-a, .lr-diseno-b) .lrA-tog { display:inline-flex; align-items:center; gap:8px; padding:7px 12px; border-radius:10px;
+                          border:1px solid var(--border); background:var(--surface); color:var(--text);
+                          font-size:13.5px; font-family:inherit; cursor:pointer; text-align:left; }
+  :is(.lr-diseno-a, .lr-diseno-b) .lrA-tog .material-symbols-outlined { font-size:18px; color:var(--lr-tenue); }
+  :is(.lr-diseno-a, .lr-diseno-b) .lrA-switch { position:relative; width:34px; height:18px; border-radius:9px; background:#bdc1c6; flex:none; }
+  :is(.lr-diseno-a, .lr-diseno-b) .lrA-switch::after { content:''; position:absolute; top:2px; left:2px; width:14px; height:14px;
+                                    border-radius:50%; background:#ffffff; transition:left .15s; }
+  :is(.lr-diseno-a, .lr-diseno-b) .lrA-tog[aria-checked="true"] .lrA-switch { background:#1a73e8; }
+  :is(.lr-diseno-a, .lr-diseno-b) .lrA-tog[aria-checked="true"] .lrA-switch::after { left:18px; }
+  :is(.lr-diseno-a, .lr-diseno-b) .lrA-tog:focus-visible { outline:2px solid #1a73e8; outline-offset:2px; }
+  :is(.lr-diseno-a, .lr-diseno-b) .lrA-slot { display:inline-flex; }
+  :is(.lr-diseno-a, .lr-diseno-b) .lrA-clase-btns { margin-top:10px; }
+  :is(.lr-diseno-a, .lr-diseno-b) .lrA-clase-btns:empty { display:none; }
+  :is(.lr-diseno-a, .lr-diseno-b) #lrActividad { background:#1a73e8; border-color:#1a73e8; color:#ffffff; font-weight:600; }
+  :is(.lr-diseno-a, .lr-diseno-b) #lrCerrar { border-color:#f3b8b4; color:#c5221f; }
+
+  /* Contadores de la presencia (A y C) */
+  :is(.lr-diseno-a, .lr-diseno-c) .lrA-chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-chip { display:inline-flex; align-items:center; gap:6px; padding:4px 11px; border-radius:14px;
+                           font-size:13px; background:var(--bg); color:var(--text); }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-chip b { font-weight:600; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) :is(.lrA-chip, .lrB-g-tit) i { width:9px; height:9px; border-radius:50%; flex:none; display:inline-block; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) :is(.lrA-chip, .lrB-g-tit) .c-on  { background:#34a853; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) :is(.lrA-chip, .lrB-g-tit) .c-act { background:#f9ab00; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) :is(.lrA-chip, .lrB-g-tit) .c-est { width:7px; height:7px; border:2px dashed #34a853; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) :is(.lrA-chip, .lrB-g-tit) .c-off { background:#9aa0a6; }
+
+  /* Transmisión */
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .tx-toggle.activo { background:#e6f4ea; border-color:#34a853; color:#0d652d; }
+  :is(.lr-diseno-a, .lr-diseno-b) #txCerrar { border-color:#f3b8b4; color:#c5221f; }
+  :is(.lr-diseno-a, .lr-diseno-c) .tx-turnos-tit { display:none; font-size:11.5px; font-weight:700; letter-spacing:.06em;
+                                text-transform:uppercase; color:var(--lr-tenue); margin:14px 0 8px; }
+  .lr-diseno-a .tx-card:has(#txHablando:not([style*="none"])) .tx-turnos-tit,
+  .lr-diseno-a .tx-card:has(#txManos:not([style*="none"])) .tx-turnos-tit,
+  .lr-diseno-a .tx-card:has(#txMano:not([style*="none"])) .tx-turnos-tit { display:block; }
+
+  /* Chat */
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-chat-cab { display:flex; align-items:center; gap:8px; margin:-14px -16px 12px;
+                               padding:12px 16px; border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-chat-cab > .material-symbols-outlined { color:#1a73e8; font-size:20px; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-chat-tit { font-weight:500; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-chat-estado { margin-left:auto; font-size:12.5px; color:var(--lr-tenue);
+                                  white-space:nowrap; display:inline-flex; align-items:center; gap:4px; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lr-msg.mio { flex-direction:row-reverse; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lr-msg.mio > div:last-child { display:flex; flex-direction:column; align-items:flex-end; }
+  .lr-diseno-a .lr-msg.mio .lr-burbuja { background:#1a73e8; color:#ffffff; border-top-left-radius:12px; border-top-right-radius:2px; }
+  .lr-diseno-a .lr-msg.mio .lr-burbuja a { color:#ffffff; }
+  :is(.lr-diseno-b, .lr-diseno-c) .lr-msg.mio .lr-burbuja { background:#d3e3fd; color:#041e49; border-top-left-radius:12px; border-top-right-radius:2px; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lr-sistema { display:table; margin:10px auto; padding:4px 12px; border-radius:14px; background:var(--bg); }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) #lrComposerBox { flex-direction:column; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) #lrComposerBox:not([style*="none"]) { display:flex; }
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) #lrRespondiendo { order:1; }
+  :is(.lr-diseno-a, .lr-diseno-c) #lrComposerBox .lr-emojis { order:2; margin:0 0 8px; }
+  :is(.lr-diseno-a, .lr-diseno-c) #lrComposerBox .lr-composer { order:3; border-radius:24px; padding:6px 6px 6px 14px; }
+  :is(.lr-diseno-a, .lr-diseno-c) #lrEnviar { width:40px; height:40px; border-radius:50%; background:#1a73e8; color:#ffffff;
+                           display:flex; align-items:center; justify-content:center; }
+  :is(.lr-diseno-a, .lr-diseno-c) #lrEnviar .material-symbols-outlined { color:#ffffff; }
+
+  /* El selector de diseño */
+  :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) #lrDisenoMenu [role="menuitemradio"] small { display:block; }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     A "Ordenada" — specs/maquetas-sala/A-ordenada-*.png
+     El orden de Clásico, agrupado: cabecera · la clase · presencia · transmisión · chat.
+     ════════════════════════════════════════════════════════════════════════ */
+  .lr-diseno-a #txBarra { flex-wrap:wrap; }
+  .lr-diseno-a #txBarra #txControles { margin-top:0 !important; margin-left:auto; }
+  @media (min-width: 760px) {
+    .lr-diseno-a .tx-card { display:grid; grid-template-columns:minmax(0, 1fr) 280px; column-gap:16px;
+                            grid-auto-flow:row dense; align-items:start; }
+    .lr-diseno-a .tx-card > * { grid-column:1 / -1; }
+    .lr-diseno-a .tx-card > #txCuadro { grid-column:1; grid-row:span 5; }
+    .lr-diseno-a .tx-card > #txTurnosTit,
+    .lr-diseno-a .tx-card > #txHablando,
+    .lr-diseno-a .tx-card > #txManos,
+    .lr-diseno-a .tx-card > #txPttCaja,
+    .lr-diseno-a .tx-card > #txManoCaja { grid-column:2; }
+    .lr-diseno-a .tx-card > #txManoCaja .btn { width:100%; justify-content:center; }
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     B "Panel lateral" — specs/maquetas-sala/B-panel-lateral-*.png
+     Computadora: cabecera arriba, y debajo dos columnas: la clase (video y chat) a la izquierda
+     y un panel fijo a la derecha (controles, manos, quién está). Celular: solapas.
+     ════════════════════════════════════════════════════════════════════════ */
+  .lr-diseno-b .lrA-cab-fila { padding:12px 16px; }
+  .lr-diseno-b .lrB-tit { display:flex; align-items:center; gap:8px; font-size:11.5px; font-weight:700; letter-spacing:.06em;
+                          text-transform:uppercase; color:var(--lr-tenue); margin-bottom:10px; }
+  .lr-diseno-b .lrB-tit .material-symbols-outlined { font-size:18px; }
+  .lr-diseno-b .lrB-tit-n { margin-left:auto; text-transform:none; letter-spacing:0; font-weight:500; color:var(--text); font-size:13px; }
+  .lr-diseno-b .lrB-vacio { font-size:13px; color:var(--lr-tenue); }
+
+  /* Controles de la clase: lista vertical con explicación */
+  .lr-diseno-b .lrA-clase-fila { flex-direction:column; align-items:stretch; gap:0; }
+  .lr-diseno-b .lrA-rotulo { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .lr-diseno-b .lrA-rotulo .t-b { display:inline-flex; align-items:center; gap:8px; }
+  .lr-diseno-b .lrA-rotulo .material-symbols-outlined { font-size:18px; }
+  .lr-diseno-b .lrA-tog { border:0; border-bottom:1px solid var(--border); border-radius:0; padding:10px 2px; background:transparent; width:100%; }
+  .lr-diseno-b .lrA-tog-txt { flex:1; min-width:0; }
+  .lr-diseno-b .lrA-tog-txt small { display:block; font-size:12px; color:var(--lr-tenue); }
+  .lr-diseno-b .lrA-tog .lrA-switch { margin-left:auto; }
+  .lr-diseno-b .lrA-slot { display:flex; padding:10px 0 2px; }
+  .lr-diseno-b .lrA-slot #lrSonidoClase { width:100%; justify-content:space-between; }
+  .lr-diseno-b .lrA-clase-btns { flex-direction:column; align-items:stretch; display:flex; gap:8px; }
+  .lr-diseno-b .lrA-clase-btns .btn { width:100%; justify-content:center; }
+  .lr-diseno-b .lrB-diseno:empty { display:none; }
+  .lr-diseno-b .lrB-diseno { margin-top:8px; }
+  .lr-diseno-b .lrB-diseno #lrDiseno { width:100%; justify-content:center; }
+
+  /* Manos levantadas y quién está, en el panel */
+  .lr-diseno-b #lrBManosSlot .tx-manos { margin-top:0; display:block !important; }
+  .lr-diseno-b #lrBManosSlot .tx-mano:first-child { border-top:0; }
+  .lr-diseno-b .lrB-quien-tit { display:flex; }
+  .lr-diseno-b .lrB-grupo { margin-bottom:12px; }
+  .lr-diseno-b .lrB-g-tit { display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--lr-tenue); margin-bottom:6px; }
+  .lr-diseno-b .lrB-bolas { display:flex; flex-wrap:wrap; gap:6px; }
+  .lr-diseno-b .lrB-bolas .lr-bola, .lr-diseno-b .lrB-fila .lr-bola { width:38px; height:38px; font-size:14px; margin:3px; flex:none; }
+  .lr-diseno-b .lrB-fila { display:flex; align-items:center; gap:10px; font-size:13.5px; padding:3px 0; }
+  .lr-diseno-b .lrB-fila span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lr-diseno-b .lrB-fila small { color:var(--lr-tenue); font-size:12px; white-space:nowrap; }
+
+  /* La transmisión: botones redondos debajo del video, quién habla como pastilla */
+  .lr-diseno-b .tx-bajo-cuadro:empty { display:none; }
+  .lr-diseno-b .tx-bajo-cuadro #txControles { margin-top:12px !important; justify-content:center; gap:18px; }
+  .lr-diseno-b .tx-bajo-cuadro :is(.tx-toggle, #txCerrar) { flex-direction:column; gap:6px; border:0; background:transparent;
+                          padding:0; font-size:12.5px; color:var(--text); min-width:64px; }
+  .lr-diseno-b .tx-bajo-cuadro :is(.tx-toggle, #txCerrar) .material-symbols-outlined { width:48px; height:48px; border-radius:50%;
+                          display:flex; align-items:center; justify-content:center; background:var(--bg); font-size:22px; }
+  .lr-diseno-b .tx-bajo-cuadro .tx-toggle.activo { background:transparent; color:var(--text); }
+  .lr-diseno-b .tx-bajo-cuadro .tx-toggle.activo .material-symbols-outlined { background:#d3e3fd; color:#0b57d0; }
+  .lr-diseno-b .tx-bajo-cuadro #txCerrar .material-symbols-outlined { background:#fce8e6; color:#c5221f; }
+  .lr-diseno-b .tx-hablando { display:inline-flex; background:#3c4043; border-color:#3c4043; color:#ffffff; border-radius:20px; }
+  .lr-diseno-b .tx-hablando .btn { background:#ffffff; color:#c5221f; border-color:#ffffff; }
+
+  /* El chat: la campana y "Clases anteriores" en su cabecera; la etiqueta DOCENTE */
+  .lr-diseno-b .lrB-chat-acc { margin-left:auto; display:inline-flex; gap:8px; align-items:center; }
+  .lr-diseno-b .lrA-chat-estado { margin-left:0; }
+
+  @media (min-width: 900px) {
+    .lr-diseno-b.lr-wrap { display:grid; grid-template-columns:minmax(0, 1fr) 340px; column-gap:16px; align-items:start; }
+    .lr-diseno-b.lr-wrap > * { grid-column:1; min-width:0; }
+    .lr-diseno-b.lr-wrap > #lrACab { grid-column:1 / -1; }
+    .lr-diseno-b.lr-wrap > #lrBPanel { grid-column:2; grid-row:2 / span 40; position:sticky; top:12px; }
+    .lr-diseno-b .lrB-solapas { display:none !important; }
+    /* El chat ocupa el alto de la ventana y tiene su propio scroll: el cuadro de escribir no se
+       va nunca de la pantalla (CA-16). */
+    .lr-diseno-b .lr-card-chat #lrChat { max-height:calc(100vh - 290px); min-height:260px; }
+  }
+  @media (max-width: 899px) {
+    .lr-diseno-b.lr-wrap { display:flex; flex-direction:column; }
+    .lr-diseno-b.lr-wrap > * { order:5; }
+    .lr-diseno-b.lr-wrap > #asBanda, .lr-diseno-b.lr-wrap > #asAviso { order:0; }
+    .lr-diseno-b.lr-wrap > #lrACab { order:1; }
+    .lr-diseno-b.lr-wrap > #lrBSolapas { order:2; }
+    .lr-diseno-b.lr-wrap > #txCard { order:3; }
+    .lr-diseno-b .lrB-solapas { display:flex; gap:4px; padding:6px; margin-bottom:12px; background:var(--surface);
+                                border:1px solid var(--border); border-radius:12px; }
+    .lr-diseno-b .lrB-solapas button { flex:1; display:inline-flex; align-items:center; justify-content:center; gap:6px;
+                                       padding:9px 6px; border:0; border-radius:8px; background:transparent; color:var(--text);
+                                       font:inherit; font-size:13.5px; cursor:pointer; position:relative; }
+    .lr-diseno-b .lrB-solapas button[aria-selected="true"] { background:#e8f0fe; color:#0b57d0; font-weight:500; }
+    .lr-diseno-b .lrB-solapas button.nuevo::after { content:''; position:absolute; top:6px; right:10px; width:8px; height:8px;
+                                                    border-radius:50%; background:#d93025; }
+    .lr-diseno-b .lrB-n:empty { display:none; }
+    .lr-diseno-b .lrB-n-rojo { background:#d93025; color:#ffffff; border-radius:10px; padding:0 7px; font-size:12px; }
+    /* Una solapa a la vista; la transmisión, siempre (el alumno no deja de ver la clase por
+       mirar quién está). */
+    .lr-diseno-b:not([data-solapa="chat"]) .lr-card-chat { display:none; }
+    .lr-diseno-b[data-solapa="chat"] .lrB-panel { display:none; }
+    .lr-diseno-b .lrB-panel > [data-parte] { display:none; }
+    .lr-diseno-b[data-solapa="personas"]  .lrB-panel > [data-parte="personas"],
+    .lr-diseno-b[data-solapa="manos"]     .lrB-panel > [data-parte="manos"],
+    .lr-diseno-b[data-solapa="controles"] .lrB-panel > [data-parte="controles"] { display:block; }
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     C "Modo aula" — specs/maquetas-sala/C-modo-aula-*.png
+     Barra de arriba, escenario a la izquierda, chat a la derecha y la barra de botones fija
+     abajo. La maqueta es oscura, pero C SIGUE EL TEMA DEL SITIO (pedido del 2026-11-22: "que se
+     acople a la situación"): en claro se ve claro y con el botón de tema pasa a oscuro, igual que
+     el resto de la plataforma. Por eso acá todo va con las variables del sitio, y cada color fijo
+     tiene su par en el bloque del tema oscuro de más abajo.
+     ════════════════════════════════════════════════════════════════════════ */
+  .lr-diseno-c.lr-wrap { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:14px; padding:0 0 4px; }
+
+  /* Barra de arriba */
+  .lr-diseno-c .lrA-cab { background:var(--surface); color:var(--text); border:0; border-bottom:1px solid var(--border);
+                          border-radius:14px 14px 0 0; margin-bottom:12px; }
+  .lr-diseno-c .lrA-cab-fila { padding:10px 14px; gap:10px; }
+  .lr-diseno-c .lrC-volver { color:var(--text); display:flex; text-decoration:none; }
+  .lr-diseno-c .lrC-curso { display:flex; flex-direction:column; line-height:1.2; }
+  .lr-diseno-c .lrC-curso b { font-size:16px; font-weight:500; }
+  .lr-diseno-c .lrC-curso small { font-size:12.5px; color:var(--lr-tenue); }
+  .lr-diseno-c .lrA-pill { background:#d93025; color:#ffffff; }
+  .lr-diseno-c .lrA-pill i { background:#ffffff; }
+  .lr-diseno-c .lrA-cab-txt { flex:0 1 auto; }
+  .lr-diseno-c .lrA-titulo { display:none; }
+  .lr-diseno-c .lrC-reloj { font-variant-numeric:tabular-nums; color:var(--lr-tenue); font-size:13px; }
+  .lr-diseno-c .lrC-cuenta { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:18px;
+                             background:var(--bg); color:var(--text); font-size:13.5px; margin-left:auto; }
+  .lr-diseno-c .lrC-cuenta .material-symbols-outlined { font-size:18px; color:#188038; }
+  .lr-diseno-c .lrA-cab-acc { margin-left:0; }
+  .lr-diseno-c .lrA-cab-aviso { border-top:0; }
+  .lr-diseno-c .lrA-cab-aviso .lr-aviso { border-radius:0; }
+
+  /* Escenario, presencia y chat */
+  .lr-diseno-c .tx-card { position:relative; }
+  .lr-diseno-c .lr-card-presencia .lrA-chips { margin-bottom:10px; }
+  .lr-diseno-c .lrB-quien-tit { display:flex; align-items:center; gap:8px; font-weight:500; margin-bottom:8px; }
+  .lr-diseno-c .lrB-quien-tit .lrB-tit-n { color:var(--lr-tenue); font-weight:400; font-size:13px; }
+  /* Sobre el video las manos y la palabra flotan (como en Meet); el cuadro flotante es oscuro y
+     translúcido en los dos temas porque va encima de una imagen, no del fondo de la página. */
+  .lr-diseno-c .tx-card > #txManos::before { content:'Manos levantadas'; display:block; font-size:11.5px; font-weight:700;
+                          letter-spacing:.06em; text-transform:uppercase; color:var(--lr-tenue); margin-bottom:4px; }
+  .lr-diseno-c .tx-card:has(#txCuadro:not([style*="none"])) > #txManos { position:absolute; right:24px; bottom:24px; z-index:2;
+                          width:340px; max-width:calc(100% - 48px); margin:0; padding:10px 14px; border-radius:12px;
+                          background:rgba(32,33,36,.94); color:#e8eaed; }
+  .lr-diseno-c .tx-card:has(#txCuadro:not([style*="none"])) > #txManos::before { color:#fdd663; }
+  .lr-diseno-c .tx-card:has(#txCuadro:not([style*="none"])) > #txManos .tx-mano { border-top-color:#3c4043; }
+  .lr-diseno-c .tx-card:has(#txCuadro:not([style*="none"])) > #txHablando { position:absolute; left:24px; bottom:24px; z-index:2; margin:0;
+                          border-radius:22px; background:#188038; border-color:#188038; color:#ffffff; }
+  .lr-diseno-c .tx-card:has(#txCuadro:not([style*="none"])) > #txHablando .btn { background:#ffffff; color:#c5221f; border-color:#ffffff; }
+
+  /* El escenario primero y "Quién está" debajo (maqueta), aunque en el HTML vayan al revés.
+     Vale en la grilla de la computadora y en la columna del celular. */
+  .lr-diseno-c.lr-wrap > * { order:3; }
+  .lr-diseno-c.lr-wrap > :is(#asBanda, #asAviso) { order:-1; }
+  .lr-diseno-c.lr-wrap > #lrACab { order:0; }
+  .lr-diseno-c.lr-wrap > #txCard { order:1; }
+  .lr-diseno-c.lr-wrap > #lrPresencia { order:2; }
+  .lr-diseno-c.lr-wrap > #lrCBarra { order:9; }
+
+  /* La barra de abajo: fija al pie de la ventana mientras se ve la sala */
+  .lr-diseno-c .lrC-barra { position:sticky; bottom:0; z-index:5; display:flex; align-items:flex-start; justify-content:center;
+                            gap:0; padding:12px 10px 10px; background:var(--surface); color:var(--text); border-top:1px solid var(--border);
+                            overflow-x:auto; border-radius:0 0 14px 14px; }
+  .lr-diseno-c .lrC-grupo { display:flex; align-items:flex-start; gap:14px; padding:0 14px; }
+  .lr-diseno-c .lrC-grupo:empty { display:none; }
+  .lr-diseno-c .lrC-grupo + .lrC-grupo { border-left:1px solid var(--border); }
+  .lr-diseno-c #lrCBarraTx #txControles { margin:0 !important; gap:14px; flex-wrap:nowrap; }
+  .lr-diseno-c #lrCBarraTx #txManoCaja { margin:0 !important; }
+  /* Todo botón de la barra: un círculo con el icono y el rótulo debajo */
+  .lr-diseno-c .lrC-barra :is(.btn, .tx-toggle, .lrC-bot) { display:inline-flex; flex-direction:column; align-items:center; gap:6px;
+                          border:0; background:transparent; color:var(--text); padding:0; min-width:64px; max-width:84px;
+                          font:inherit; font-size:12px; line-height:1.2; text-align:center; cursor:pointer; white-space:normal; }
+  .lr-diseno-c .lrC-barra :is(.btn, .tx-toggle, .lrC-bot) > .material-symbols-outlined:first-child,
+  .lr-diseno-c .lrC-barra :is(#lrAbrir, #lrCerrar, #lrSonidoClase)::before {
+                          width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+                          background:var(--bg); color:var(--text); font-size:24px; }
+  .lr-diseno-c .lrC-barra :is(#lrAbrir, #lrCerrar, #lrSonidoClase)::before {
+                          font-family:'Material Symbols Outlined'; font-weight:normal; font-style:normal; line-height:1;
+                          -webkit-font-feature-settings:'liga'; font-feature-settings:'liga'; }
+  .lr-diseno-c .lrC-barra #lrAbrir::before { content:'play_arrow'; background:#1a73e8; color:#ffffff; }
+  .lr-diseno-c .lrC-barra #lrCerrar::before { content:'call_end'; background:#d93025; color:#ffffff; }
+  .lr-diseno-c .lrC-barra #lrSonidoClase::before { content:'campaign'; }
+  .lr-diseno-c .lrC-barra .tx-toggle.activo { background:transparent; color:var(--text); }
+  .lr-diseno-c .lrC-barra :is(.tx-toggle.activo, .lrC-bot[aria-pressed="true"]) > .material-symbols-outlined:first-child { background:#d3e3fd; color:#0b57d0; }
+  .lr-diseno-c .lrC-barra .tx-toggle:not(.activo) > .material-symbols-outlined:first-child { background:#fce8e6; color:#c5221f; }
+  .lr-diseno-c .lrC-barra #lrActividad > .material-symbols-outlined:first-child { background:#1a73e8; color:#ffffff; width:60px; border-radius:26px; }
+  .lr-diseno-c .lrC-barra #txVer > .material-symbols-outlined:first-child { background:#1a73e8; color:#ffffff; }
+  .lr-diseno-c .lrC-barra #txNoVer > .material-symbols-outlined:first-child { border:2px solid #1a73e8; }
+  /* Los menús que cuelgan de la barra se abren hacia arriba */
+  .lr-diseno-c .lrC-barra .lr-menu { top:auto; bottom:calc(100% + 8px); }
+  .lr-diseno-c .lrC-barra #lrCBarraClase { position:relative; }
+
+  @media (min-width: 900px) {
+    .lr-diseno-c.lr-wrap { display:grid; grid-template-columns:minmax(0, 1fr) 380px; column-gap:16px; align-items:start; }
+    .lr-diseno-c.lr-wrap > * { grid-column:1; min-width:0; margin-left:14px; }
+    .lr-diseno-c.lr-wrap > #lrACab, .lr-diseno-c.lr-wrap > #lrCBarra { grid-column:1 / -1; margin-left:0; }
+    .lr-diseno-c.lr-wrap > .lr-card-chat { grid-column:2; grid-row:2 / span 40; margin-left:0; margin-right:14px; position:sticky; top:12px; }
+    .lr-diseno-c .lr-card-chat #lrChat { max-height:calc(100vh - 330px); min-height:280px; }
+  }
+  @media (max-width: 899px) {
+    .lr-diseno-c.lr-wrap { padding:0 8px 0; display:flex; flex-direction:column; }
+    .lr-diseno-c .lrC-barra { justify-content:flex-start; margin:0 -8px; }
+    .lr-diseno-c .lrA-cab { margin:0 -8px 12px; }
+  }
+
+  /* ── Tema oscuro (los tres diseños siguen el botón de tema del sitio) ──── */
+  [data-theme="dark"] :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-pill { background:#5c1a16; color:#f6aea9; }
+  [data-theme="dark"] :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-pill.off { background:#3c4043; color:#e8eaed; }
+  [data-theme="dark"] :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-cab-aviso .lr-aviso { background:#3a2c10; color:#f5d68a; }
+  [data-theme="dark"] :is(.lr-diseno-a, .lr-diseno-b) .lrA-switch { background:#5f6368; }
+  [data-theme="dark"] :is(.lr-diseno-a, .lr-diseno-b) .lrA-tog[aria-checked="true"] .lrA-switch { background:#8ab4f8; }
+  [data-theme="dark"] :is(.lr-diseno-a, .lr-diseno-b) .lrA-switch::after { background:#202124; }
+  [data-theme="dark"] :is(.lr-diseno-a, .lr-diseno-b) #lrActividad { background:#8ab4f8; border-color:#8ab4f8; color:#0b1e3d; }
+  [data-theme="dark"] :is(.lr-diseno-a, .lr-diseno-b) #lrCerrar { border-color:#8c2b25; color:#f28b82; }
+  [data-theme="dark"] :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .tx-toggle.activo { background:#0d3b1e; border-color:#81c995; color:#ceead6; }
+  [data-theme="dark"] :is(.lr-diseno-a, .lr-diseno-b) #txCerrar { border-color:#8c2b25; color:#f28b82; }
+  [data-theme="dark"] :is(.lr-diseno-a, .lr-diseno-b, .lr-diseno-c) .lrA-chat-cab > .material-symbols-outlined { color:#8ab4f8; }
+  [data-theme="dark"] .lr-diseno-a .lr-msg.mio .lr-burbuja { background:#1f4d8f; color:#e8f0fe; }
+  [data-theme="dark"] .lr-diseno-a .lr-msg.mio .lr-burbuja a { color:#e8f0fe; }
+  [data-theme="dark"] .lr-diseno-b .lr-msg.mio .lr-burbuja { background:#1f3a5f; color:#e8f0fe; }
+  [data-theme="dark"] :is(.lr-diseno-a, .lr-diseno-c) #lrEnviar { background:#8ab4f8; color:#0b1e3d; }
+  [data-theme="dark"] :is(.lr-diseno-a, .lr-diseno-c) #lrEnviar .material-symbols-outlined { color:#0b1e3d; }
+  [data-theme="dark"] .lr-diseno-b .tx-bajo-cuadro .tx-toggle.activo .material-symbols-outlined { background:#394457; color:#8ab4f8; }
+  [data-theme="dark"] .lr-diseno-b .tx-bajo-cuadro #txCerrar .material-symbols-outlined { background:#5c2b29; color:#f28b82; }
+  [data-theme="dark"] .lr-diseno-b .lrB-solapas button[aria-selected="true"] { background:#394457; color:#d2e3fc; }
+  [data-theme="dark"] .lr-diseno-c .lrA-pill { background:#d93025; color:#ffffff; }
+  [data-theme="dark"] .lr-diseno-c .lrC-cuenta .material-symbols-outlined { color:#81c995; }
+  [data-theme="dark"] .lr-diseno-c .lrC-barra :is(.tx-toggle.activo, .lrC-bot[aria-pressed="true"]) > .material-symbols-outlined:first-child { background:#394457; color:#8ab4f8; }
+  [data-theme="dark"] .lr-diseno-c .lrC-barra .tx-toggle:not(.activo) > .material-symbols-outlined:first-child { background:#5c2b29; color:#f28b82; }
+  [data-theme="dark"] .lr-diseno-c .lrC-barra #lrActividad > .material-symbols-outlined:first-child { background:#8ab4f8; color:#0b1e3d; }
+  [data-theme="dark"] .lr-diseno-c .lrC-barra #txNoVer > .material-symbols-outlined:first-child { border-color:#8ab4f8; }
+  [data-theme="dark"] .lr-diseno-c .lr-msg.mio .lr-burbuja { background:#1f3a5f; color:#e8f0fe; }
+
+  /* ── Celular ───────────────────────────────────────────────────────────── */
+  @media (max-width: 600px) {
+    :is(.lr-diseno-a, .lr-diseno-b) .lrA-cab-acc { margin-left:0; width:100%; }
+    .lr-diseno-a .lrA-clase-fila { flex-direction:column; align-items:stretch; }
+    .lr-diseno-a .lrA-tog { justify-content:space-between; }
+    .lr-diseno-a .lrA-tog .lrA-switch { margin-left:auto; }
+    .lr-diseno-a .lrA-slot { display:flex; }
+    .lr-diseno-a #txBarra #txControles { margin-left:0; }
+    .lr-diseno-c .lrC-cuenta { margin-left:0; }
+  }
+</style>

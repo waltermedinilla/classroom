@@ -69,6 +69,7 @@ const jefaturaRoutes     = require('./routes/jefatura');
 const soeRoutes          = require('./routes/soe');
 const secretariaRoutes   = require('./routes/secretaria');
 const { BOTON_SUGERENCIAS_VISIBLE } = require('./config/sugerencias');
+const SALA_DISENOS_VISTA = require('./config/salaDisenos').paraVista();
 const backupRoutes       = require('./routes/backup');
 const dbFixesRoutes      = require('./routes/dbFixes');
 const suggestionRoutes   = require('./routes/suggestions');
@@ -438,6 +439,9 @@ app.use((req, res, next) => {
   res.locals.appVersion = APP_VERSION;
   // El botón flotante de sugerencias (config/sugerencias.js). Solo el botón: la bandeja sigue.
   res.locals.botonSugerencias = BOTON_SUGERENCIAS_VISIBLE;
+  // El selector de diseño de la sala en vivo y su lista (specs/sala-disenos.spec.md). Es un
+  // objeto fijo armado una vez al arrancar: no cuesta nada por request.
+  res.locals.salaDisenos = SALA_DISENOS_VISTA;
   // Formateador de fechas con la zona de la escuela, disponible en TODAS las vistas.
   // El servidor de produccion corre en UTC: sin esto, cada .ejs que llamaba a
   // toLocaleDateString por su cuenta imprimia tres horas de mas en vencimientos,

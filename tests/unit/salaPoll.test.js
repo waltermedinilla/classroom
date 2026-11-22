@@ -291,7 +291,9 @@ test('el <script> del módulo no se mete entre la sala y su script inline', () =
   const marcado = sala.replace(/<%#[\s\S]*?%>/g, '');
 
   const modulo = marcado.indexOf('<script src="/js/salaPoll.js">');
-  const wrap   = marcado.indexOf('<div class="lr-wrap">');
+  // Con prefijo y no la etiqueta entera: desde specs/sala-disenos.spec.md el contenedor lleva
+  // la clase del diseño elegido (`lr-wrap lr-diseno-a`), que sale del servidor.
+  const wrap   = marcado.indexOf('<div class="lr-wrap');
   const inline = marcado.search(/<script>\s*\(function \(\)/);
   assert.ok(modulo >= 0 && wrap > modulo, 'el módulo se carga ANTES del contenedor de la sala');
   assert.ok(inline > wrap, 'y el script inline va después de la sala');

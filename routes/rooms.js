@@ -324,8 +324,9 @@ async function estadoDeSala(req, session, since = 0, presenciaVista = null) {
       mensajes: [],
       settings: {
         studentsCanWrite: true, reactionsOn: true, studentsCanShareImages: true,
-        sonido: false, sonidoDe: SONIDO_DE_DEFAULT,
+        sonido: false, sonidoDe: SONIDO_DE_DEFAULT, diseno: 'clasico',
       },
+      apertura: null,
       ...presenciaParaCliente({
         presentes: 0, total: course.students.length, asistieron: 0,
         conectados: [], estuvieron: [], ausentes: [],
@@ -390,9 +391,38 @@ async function estadoDeSala(req, session, since = 0, presenciaVista = null) {
     // que nadie recargue (RN-A6). Y es el MISMO cálculo que autoriza el POST, así que el botón
     // no puede quedar prometiendo algo que el servidor va a rechazar.
     puedoCompartirImagen: live.puedeCompartirImagen(session, ctx),
-    settings:  session.settings,
+    // El diseño viaja YA filtrado (specs/sala-disenos.spec.md): un diseño que no está listo o el
+    // freno de mano puesto llegan como Clásico, y el navegador nunca pinta una clase que no existe.
+    settings:  settingsParaCliente(session.settings),
+    // Para la cabecera de los diseños nuevos ("Clase del jueves 24/09 · desde las 08:02"). Son
+    // dos strings formateados en la zona de la escuela, igual que la hora de los mensajes.
+    apertura:  aperturaParaCliente(session.openedAt),
     ...presenciaParaCliente(presencia, presenciaVista),
     mensajes:  mensajes.map(m => serializarMensaje(m, { ...ctx, courseId: course._id, salaAbierta: true })),
+  };
+}
+
+// Los settings de la sesión como salen al cliente: los mismos de siempre, con el diseño ya
+// pasado por disenoEfectivo(). Se copia el objeto en vez de tocar el subdocumento de mongoose:
+// esto corre en el poll y no puede marcar la sesión como modificada.
+function settingsParaCliente(settings) {
+  const s = settings && typeof settings.toObject === 'function' ? settings.toObject() : { ...(settings || {}) };
+  s.diseno = live.disenoEfectivo({ guardado: s.diseno });
+  return s;
+}
+
+function aperturaParaCliente(openedAt) {
+  if (!openedAt) return null;
+  const d = new Date(openedAt);
+  if (Number.isNaN(d.getTime())) return null;
+  const dia = String(live.fechaDia(d)).split(',')[0];          // "jueves"
+  const fecha = String(live.fechaCorta(d)).slice(0, 5);        // "24/09"
+  return {
+    dia:   `${dia} ${fecha}`,
+    desde: live.hora(d),
+    hoy:   live.diaEscolar(d) === live.diaEscolar(),
+    // Para el reloj de la clase del diseño C: el navegador cuenta desde acá.
+    inicio: d.toISOString(),
   };
 }
 
@@ -682,8 +712,12 @@ router.post('/:id/sala/abrir', async (req, res, next) => {
     // /config. La docente que cambia el sonido, cierra y reabre en menos de 45 s —y le toca el
     // otro worker— heredaría el valor viejo. Una query por apertura de clase no pesa nada.
     // Si falla, leerPreferenciaSonido devuelve el sonido apagado y la sala se abre igual.
-    const { session, creada } = await live.openSession(req.course, usuario(req), req.body.title,
-      await live.leerPreferenciaSonido(User, req.userId));
+    // El diseño de la sala sale del mismo lugar y con el mismo criterio que el sonido
+    // (specs/sala-disenos.spec.md, RN-4): si la lectura falla, la sala se abre en Clásico.
+    const { session, creada } = await live.openSession(req.course, usuario(req), req.body.title, {
+      ...await live.leerPreferenciaSonido(User, req.userId),
+      diseno: await live.leerPreferenciaDiseno(User, req.userId),
+    });
     if (creada) {
       logAudit(req, 'room.open',
         [{ type: 'course', id: req.course._id, name: req.course.name }],
@@ -1208,6 +1242,39 @@ router.post('/:id/sala/config', async (req, res, next) => {
     }
 
     res.json({ ok: true, settings: session.settings });
+  } catch (err) { next(err); }
+});
+
+// POST /courses/:id/sala/diseno — el docente elige cómo se ve la sala (specs/sala-disenos.spec.md).
+//
+// Solo visual: no toca ningún permiso ni anuncia nada en el chat (cambiar el diseño no es un
+// evento de la clase). Queda en la sesión, que es lo que ven los alumnos en el poll siguiente,
+// y en el usuario, que es con lo que arranca su próxima clase (RN-4).
+router.post('/:id/sala/diseno', async (req, res, next) => {
+  try {
+    if (!req.esGestor) return fallar(req, res, 403, 'Solo la o el docente puede hacer esto');
+    const diseno = String(req.body?.diseno || '');
+    if (!live.disenoValido(diseno)) return fallar(req, res, 400, 'Diseño no válido');
+
+    const session = await sesionAbierta(req.course._id);
+    if (!session) return fallar(req, res, 409, 'La sala está cerrada');
+
+    await RoomSession.updateOne({ _id: session._id }, { $set: { 'settings.diseno': diseno } });
+
+    // FALLA ABIERTO, igual que la preferencia de sonido: la clase ya cambió, que es lo que el
+    // docente está mirando. Si guardar la preferencia falla, se loguea y se responde 200.
+    try {
+      await User.updateOne({ _id: req.userId }, { $set: { salaDiseno: diseno } });
+      invalidateUser(req.userId);
+    } catch (err) {
+      logDeRuta(err, res, { codigo: 'DESIGN_PREF_NOT_SAVED', courseId: String(req.course._id) });
+    }
+
+    logAudit(req, 'room.diseno',
+      [{ type: 'course', id: req.course._id, name: req.course.name }],
+      { sessionId: String(session._id), diseno });
+
+    res.json({ ok: true, diseno });
   } catch (err) { next(err); }
 });
 

@@ -206,6 +206,12 @@ const userSchema = new mongoose.Schema({
   // Nadie la escribe salvo POST /courses/:id/sala/config con un campo de sonido en el cuerpo.
   salaSonido:   { type: Boolean, default: false },
   salaSonidoDe: { type: String, enum: SONIDO_DE, default: SONIDO_DE_DEFAULT },
+
+  // Diseño de la sala en vivo que eligió por última vez COMO DOCENTE (specs/sala-disenos.spec.md,
+  // S2). La próxima sala que abra arranca con éste. Default 'clasico': nadie ve un cambio que no
+  // pidió. Los ids tienen que ser los de config/salaDisenos.js (lo controla un test).
+  // Nadie la escribe salvo POST /courses/:id/sala/diseno.
+  salaDiseno: { type: String, enum: ['clasico', 'ordenada', 'panel', 'aula'], default: 'clasico' },
 }, { timestamps: true }); // Agrega createdAt y updatedAt automáticamente
 
 // Índice único compuesto school+dni: evita DNI duplicados dentro de la misma escuela
