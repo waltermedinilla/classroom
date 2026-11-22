@@ -267,6 +267,19 @@ async function abrir(session, course, docente, { espectadores = 0, clases = 0, m
   return { ok: true, transmision: registro, capa, aviso: decision.mensaje };
 }
 
+// Traduce lo que devuelve el proceso de video (mediaClient.datosDeSala) a los campos del
+// registro histórico. UNA sola traducción para los dos caminos que cierran una transmisión
+// ("Terminar" y cerrar la sala): antes solo la tenía "Terminar", y cerrar la sala transmitiendo
+// guardaba 0 espectadores. Sin datos (proceso caído o sin respuesta), no pisa nada.
+function metricasDeMedios(datos) {
+  if (!datos) return {};
+  return {
+    picoEspectadores:             datos.pico || 0,
+    alumnosQueHablaron:           datos.alumnosQueHablaron || 0,
+    pulsacionesRechazadasPorTope: datos.rechazadasPorTope || 0,
+  };
+}
+
 // Apaga la transmisión y cierra su registro histórico.
 async function cerrar(session, { cerradaPor = 'docente', metricas = {} } = {}) {
   // Si se cierra con "Todos pueden hablar" prendido, ese rato también cuenta.
@@ -381,7 +394,7 @@ module.exports = {
   // puras
   puedeEmitir, puedeVer, puedeLevantarMano, estaSilenciado, puedeHablar, datosDelTicket,
   levantarMano, bajarMano, siguienteEnLaCola, tieneLaMano,
-  porQueNoLaPalabra, palabraVencida, estadoParaCliente, APAGADA,
+  porQueNoLaPalabra, palabraVencida, estadoParaCliente, metricasDeMedios, APAGADA,
   // mongo
   abrir, cerrar, cambiarModo, cambiarVoz, aplicarCapa, guardarManos,
   darLaPalabra, quitarLaPalabra,

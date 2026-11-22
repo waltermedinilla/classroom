@@ -14,7 +14,7 @@ const leer = (...p) => fs.readFileSync(path.join(raiz, ...p), 'utf8');
 
 test('cerrar la sala corta la transmisión y le avisa al proceso de video', () => {
   const src = leer('services', 'liveRoom.js');
-  const i = src.indexOf("await tx.cerrar(cerrada, { cerradaPor: 'cierre-sala' });");
+  const i = src.indexOf("await tx.cerrar(cerrada, { cerradaPor: 'cierre-sala', metricas: tx.metricasDeMedios(datos) });");
   assert.ok(i > -1, 'cerrar la sala tiene que cerrar la transmisión');
   const despues = src.slice(i, i + 900);
   assert.match(despues, /require\('\.\/mediaClient'\)\.cerrarSala\(cerrada\._id\)/,

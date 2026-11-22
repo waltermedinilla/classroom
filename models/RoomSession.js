@@ -152,6 +152,12 @@ const roomSessionSchema = new mongoose.Schema({
 // de los dos paneles (se repite cada 15 s por cada supervisor conectado).
 roomSessionSchema.index({ school: 1, closedAt: 1 });
 
+// "La sala abierta de esta materia", en el camino más caliente (cada poll). Va ordenada por _id
+// porque si alguna vez hubo dos abiertas, todos tienen que elegir LA MISMA: la primera creada
+// (ver primeraAbierta y la carrera de openSession en services/liveRoom.js). No es único a
+// propósito: construir uno único sobre una base que ya tenga duplicados falla al arrancar.
+roomSessionSchema.index({ course: 1, closedAt: 1, _id: 1 });
+
 // "Clases anteriores" de una materia, de la más reciente a la más vieja.
 roomSessionSchema.index({ course: 1, openedAt: -1 });
 

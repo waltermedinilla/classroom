@@ -588,7 +588,7 @@ router.post('/create', requireAuth, uploadLimiter, subirAdjuntosDeActividad, asy
     let avisadaEnSala = false;
     if (req.body.fromRoom) {
       try {
-        const session = await RoomSession.findOne({ course: course._id, closedAt: null });
+        const session = await RoomSession.findOne({ course: course._id, closedAt: null }).sort({ _id: 1 });
         if (session) {
           const titulo = activity.title.length > 80 ? activity.title.slice(0, 79) + '…' : activity.title;
           // El id va aparte del texto: es lo que le permite a la sala pintar el botón

@@ -227,7 +227,7 @@ async function aplicarModo(req, session) {
 // workers, así que un timer se ejecutaría dos veces y sería otra forma de que la app se pise
 // a sí misma en cluster. Cada poll ya pasa por acá, que es todo el disparador que hace falta.
 async function sesionAbierta(courseId) {
-  const session = await RoomSession.findOne({ course: courseId, closedAt: null });
+  const session = await live.primeraAbierta(courseId);
   if (!session) return null;
   if (live.shouldAutoClose(session)) {
     await live.closeSession(session, null, { auto: true });
@@ -1428,11 +1428,7 @@ router.post('/:id/sala/transmision/cerrar', async (req, res, next) => {
     const datos = await medios.datosDeSala(session._id);
     await tx.cerrar(session, {
       cerradaPor: 'docente',
-      metricas: datos ? {
-        picoEspectadores:             datos.pico || 0,
-        alumnosQueHablaron:           datos.alumnosQueHablaron || 0,
-        pulsacionesRechazadasPorTope: datos.rechazadasPorTope || 0,
-      } : {},
+      metricas:   tx.metricasDeMedios(datos),
     });
     await medios.cerrarSala(session._id);
     await live.systemMessage(session, soloVoz

@@ -753,8 +753,13 @@ const oid = (id) => new mongoose.Types.ObjectId(id.toString());
 // `settings` va solo al `create`: una sesión que ya estaba abierta NO los cambia aunque quien
 // toca "Abrir" tenga otra preferencia de sonido. Y se recibe ya resuelto —esto no consulta
 // User—: la ruta lo lee de la base y no del cache de sesión (RN-05 de sonido-chat-sala).
+// La sesión abierta más vieja de una materia (ver la carrera en openSession).
+function primeraAbierta(courseId) {
+  return RoomSession.findOne({ course: courseId, closedAt: null }).sort({ _id: 1 });
+}
+
 async function openSession(course, user, title = '', settings = undefined) {
-  const abierta = await RoomSession.findOne({ course: course._id, closedAt: null });
+  const abierta = await primeraAbierta(course._id);
   if (abierta) return { session: abierta, creada: false };
 
   const session = await RoomSession.create({
@@ -765,6 +770,21 @@ async function openSession(course, user, title = '', settings = undefined) {
     title:    String(title || '').trim().slice(0, 80),
     settings,
   });
+
+  // ⚠️ Carrera de "Abrir sala": el findOne de arriba y el create no son atómicos, y con los dos
+  // workers de PM2 un doble toque (o la docente y la co-docente a la vez) creaba DOS sesiones
+  // abiertas de la misma materia. Cada poll agarraba cualquiera de las dos, el chat quedaba
+  // partido en dos y una de ellas no la cerraba nadie. Un índice único parcial lo impediría de
+  // raíz, pero construirlo sobre una base que ya tuviera duplicados falla al arrancar.
+  //
+  // Así que se resuelve después: entre las abiertas de la materia gana la PRIMERA creada (orden
+  // por _id, que es creciente). Si no es la mía, borro la mía —todavía no tiene ni un mensaje,
+  // por eso el aviso de apertura va DESPUÉS de esto— y devuelvo la ganadora.
+  const ganadora = await primeraAbierta(course._id);
+  if (ganadora && String(ganadora._id) !== String(session._id)) {
+    await RoomSession.deleteOne({ _id: session._id, lastSeq: 0 });
+    return { session: ganadora, creada: false };
+  }
 
   await systemMessage(session, `${user.name} abrió la sala.`);
   return { session, creada: true };
@@ -797,9 +817,17 @@ async function closeSession(session, user = null, { auto = false, now = new Date
   //
   // El require va adentro de la función a propósito: services/transmision.js requiere a este
   // archivo, y en el tope sería una dependencia circular.
-  if (session.transmision?.activa) {
+  // Se mira `cerrada` (lo que hay en la base AHORA) y no `session`, que puede ser una lectura
+  // vieja: si la transmisión empezó después de esa lectura, la sala se cerraba y la
+  // transmisión seguía viva, consumiendo puerto, con su registro abierto para siempre.
+  if (cerrada.transmision?.activa) {
     const tx = require('./transmision');
-    await tx.cerrar(cerrada, { cerradaPor: 'cierre-sala' });
+    // Lo que sabe el proceso de video de esta clase, para el registro histórico — igual que
+    // cuando la docente toca "Terminar". Sin esto, la clase que se cerraba transmitiendo (el
+    // caso más común) quedaba registrada con 0 espectadores. Mejor esfuerzo, con timeout corto.
+    let datos = null;
+    try { datos = await require('./mediaClient').datosDeSala(cerrada._id); } catch (e) { datos = null; }
+    await tx.cerrar(cerrada, { cerradaPor: 'cierre-sala', metricas: tx.metricasDeMedios(datos) });
     // Y se le avisa al proceso de video, igual que cuando el docente toca "Terminar": así suelta
     // en el acto a los que estaban mirando y al que transmitía. Antes solo se marcaba en la base
     // y el video seguía corriendo hasta que cada navegador se enteraba por su cuenta.
@@ -1233,7 +1261,7 @@ module.exports = {
   configDeSonido, sonidoInicial, leerPreferenciaSonido,
   disenoEfectivo, disenoValido, leerPreferenciaDiseno,
   // con base
-  openSession, closeSession, closeStaleSessions, postMessage, postAttachment, systemMessage,
+  openSession, primeraAbierta, closeSession, closeStaleSessions, postMessage, postAttachment, systemMessage,
   resolverCita, apagarCitasDe,
   touchPresence, registrarLatido, getOpenSessions, getTodayClosed,
   // export
