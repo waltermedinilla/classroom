@@ -6,7 +6,7 @@
 > entre las opciones B y C."*
 
 Estado: **en construcción con el usuario** ("Hazlo y lo voy corrigiendo en el camino",
-2026-11-22). D1 a D5 implementados; se sigue ajustando.
+2026-11-22). D1 a D6 implementados; se sigue ajustando.
 
 Se monta sobre lo que ya existe en `specs/sala-disenos.spec.md` (mismo selector, misma mudanza de
 botones, mismo freno de mano, mismas reglas). D se agrega como un diseño más en
@@ -129,6 +129,22 @@ y viéndose en su vista previa):
 
 Es "pantalla completa" dentro de la página: la barra del navegador puede seguir visible (la
 pantalla completa real del navegador pide un toque y se puede sumar después si hace falta).
+
+### D6 — El estado de la transmisión y "Transmitir", en el medio de la cabecera
+
+> Pedido del usuario, 2026-11-22 (con captura): *"Quiero mover ese rectángulo al centro […]
+> Acórtalo para que solo quede el botón Transmitir, y la descripción de 'la clase no se está
+> transmitiendo' o si…"* (el mensaje llegó cortado; se entendió "o si se está transmitiendo").
+
+- El rectángulo de la transmisión (el punto, el texto y el botón) pasa a una **pastilla en el
+  medio de la cabecera**, entre el título de la clase y el botón Abrir/Cerrar sala.
+- Dice **"La clase no se está transmitiendo"** con el botón **Transmitir**, o **"Laura Gómez está
+  transmitiendo · 9 mirando"** mientras transmite (los botones de la transmisión están en la
+  barra de abajo, D3).
+- **"Hablar" (solo la voz) no se ofrece en D.**
+- La tarjeta de la transmisión (el video, quién tiene la palabra, "Solo yo hablo / Todos pueden
+  hablar") aparece recién **mientras se transmite**; sin transmisión no queda un recuadro vacío.
+- En el celular, la pastilla baja a su propio renglón dentro de la cabecera.
 
 ### Decisiones
 

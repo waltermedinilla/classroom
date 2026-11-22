@@ -25,6 +25,7 @@
   .lr-wrap:not(.lr-diseno-c) .tx-turnos-tit,
   .lr-wrap:not(.lr-diseno-b) .tx-bajo-cuadro,
   .lr-wrap:not(.lr-diseno-d) .tx-sonido,
+  .lr-wrap:not(.lr-diseno-d) .lrD-cab-tx,
   .lr-wrap:not(.lr-diseno-d) .lrD-grupo-chat,
   .lr-wrap:not(.lr-diseno-c) .lrC-volver,
   .lr-wrap:not(.lr-diseno-c) .lrC-curso,
@@ -337,6 +338,19 @@
   .lr-diseno-d .lrA-cab-acc { margin-left:auto; }
   .lr-diseno-d .lrA-cab-acc #lrCerrar { border-color:#f3b8b4; color:#c5221f; }
 
+  /* D6: el estado de la transmisión y "Transmitir" en el medio de la cabecera. "Hablar" (solo
+     voz) no se ofrece en D. La tarjeta de la transmisión aparece recién mientras se transmite. */
+  .lr-diseno-d .lrA-cab-txt { flex:0 1 auto; }
+  .lr-diseno-d .lrD-cab-tx { flex:1 1 260px; display:flex; justify-content:center; min-width:0; }
+  .lr-diseno-d .lrD-cab-tx #txBarra { margin:0; padding:6px 8px 6px 14px; gap:12px; flex-wrap:nowrap;
+                                      border:1px solid var(--border); border-radius:24px; background:var(--bg); }
+  .lr-diseno-d .lrD-cab-tx #txBarra .tx-acciones { flex-wrap:nowrap; }
+  .lr-diseno-d .lrD-cab-tx #txEstadoTexto { font-size:13.5px; }
+  .lr-diseno-d #txHablar { display:none !important; }
+  .lr-diseno-d[data-tx="no"] #txCard { display:none !important; }
+  .lr-diseno-d[data-tx="no"] #lrCBarraTx { display:none !important; }
+  .lr-diseno-d[data-estado="cerrada"] .lrD-cab-tx { display:none !important; }
+
   /* D2 y D3: con la sala cerrada no hay transmisión ni barra */
   .lr-diseno-d[data-estado="cerrada"] #txCard,
   .lr-diseno-d[data-estado="cerrada"] .lrC-barra { display:none !important; }
@@ -362,6 +376,7 @@
   /* D4: en el celular parado, el video ocupa la mitad de arriba y queda fijo; el chat, abajo */
   @media (max-width: 899px) and (orientation: portrait) {
     .lr-diseno-d.lr-wrap > #txCard { position:sticky; top:0; z-index:4; }
+    .lr-diseno-d .lrD-cab-tx { flex-basis:100%; justify-content:flex-start; order:5; }
     .lr-diseno-d .tx-cuadro video { max-height:45vh; object-fit:contain; background:#000000; color:#ffffff; }
     .lr-diseno-d:has(#txCuadro:not([style*="none"])) .lr-card-chat #lrChat { max-height:calc(50vh - 150px); min-height:160px; }
   }
