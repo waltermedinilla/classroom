@@ -328,6 +328,24 @@
     .lr-diseno-c .lrA-cab { margin:0 -8px 12px; }
   }
 
+  /* ── Archivos de la clase en miniatura (B, C y D) — specs/sala-dibujo-y-archivos.spec.md, AR ──
+     Solo variables del tema: sigue el botón claro/oscuro sin un par [data-theme="dark"]. */
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-archivos { margin-top:10px; padding-top:8px; border-top:1px solid var(--border); }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-archivos[data-n="0"] { display:none; }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-archivos-tit { display:flex; align-items:center; gap:6px;
+    font-size:12.5px; font-weight:600; color:var(--text-secondary); margin-bottom:6px; }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-archivos-tit .material-symbols-outlined { font-size:17px; }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-archivos-n { font-weight:400; }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-archivos-tira { display:flex; gap:8px; overflow-x:auto;
+    padding-bottom:4px; scrollbar-width:thin; }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-arch { flex:0 0 56px; width:56px; height:56px; border-radius:8px;
+    overflow:hidden; border:1px solid var(--border); background:var(--bg); color:var(--text);
+    display:flex; align-items:center; justify-content:center; text-decoration:none; }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-arch:hover,
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-arch:focus-visible { outline:2px solid var(--primary, #1a73e8); outline-offset:1px; }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-arch-img img { width:100%; height:100%; object-fit:cover; display:block; }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-arch-file .lr-ext { width:44px; height:44px; }
+
   /* ════════════════════════════════════════════════════════════════════════
      D "Aula virtual" — specs/sala-diseno-d.spec.md
      La base es B (todas las reglas de B de arriba valen también para D). Acá va solo lo que
@@ -449,6 +467,8 @@
     .lr-diseno-d:has(#txCuadro:not([style*="none"])) .lr-card-chat #lrChat { flex:1; max-height:none; min-height:0; overflow:auto; }
     .lr-diseno-d:has(#txCuadro:not([style*="none"])) .lr-card-chat .lrA-chat-cab { margin:-10px -12px 8px; padding:8px 12px; }
     .lr-diseno-d:has(#txCuadro:not([style*="none"])) .lr-card-chat .lrB-chat-acc { display:none; }
+    /* AR3.5: en el chat angosto de costado, la tira de archivos le quitaría lugar a la conversación. */
+    .lr-diseno-d:has(#txCuadro:not([style*="none"])) .lr-card-chat .lrB-archivos { display:none; }
 
     .lr-diseno-d:has(#txCuadro:not([style*="none"])) .lrC-barra {
       position:fixed; left:0; right:38%; bottom:0; z-index:1002; margin:0; border:0; border-radius:0;

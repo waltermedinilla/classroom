@@ -594,6 +594,17 @@
       <div class="lr-vacio">Cargando…</div>
     </div>
 
+    <%# Solo B, C y D: las imágenes y archivos de la clase en miniatura, del más nuevo al más
+        viejo (specs/sala-dibujo-y-archivos.spec.md, AR). Sale de los mensajes que ya están en
+        el chat (anotarArchivos); sin archivos, data-n="0" y no ocupa lugar. %>
+    <div class="lr-dis lrB-archivos" id="lrArchivos" data-n="0">
+      <div class="lrB-archivos-tit">
+        <span class="material-symbols-outlined">perm_media</span>
+        Archivos de la clase <span class="lrB-archivos-n" id="lrArchivosN"></span>
+      </div>
+      <div class="lrB-archivos-tira" id="lrArchivosTira"></div>
+    </div>
+
     <div id="lrComposerBox" style="display:none;margin-top:12px">
       <%# "Le estás contestando a…". Va ARRIBA del cuadro de escribir y no adentro: en un
           celular, el cuadro ya comparte los 360 px con dos botones de adjuntar y el de enviar
@@ -852,8 +863,48 @@
     cont.innerHTML = bolas.join('');
   }
 
+  // ── Archivos de la clase en miniatura (AR) ─────────────────────────────────
+  //
+  // Se anota con los MISMOS mensajes que se pintan, sin pedir nada al servidor: si un adjunto
+  // está en el chat, está en la tira; si se borró, sale. En Clásico la caja existe pero la
+  // esconde .lr-dis, y anotar igual no cuesta nada.
+  const ARCHIVOS = new Map();   // id del mensaje → mensaje con adjunto, en orden de llegada
+
+  function anotarArchivos(msgs, reemplazar) {
+    if (reemplazar) ARCHIVOS.clear();
+    msgs.forEach(m => {
+      if (m.kind !== 'image' && m.kind !== 'file') return;
+      if (m.borrado || !m.adjunto) ARCHIVOS.delete(m.id);
+      else ARCHIVOS.set(m.id, m);
+    });
+    pintarArchivos();
+  }
+
+  function pintarArchivos() {
+    const caja = $('lrArchivos');
+    if (!caja) return;
+    const lista = [...ARCHIVOS.values()].reverse();
+    caja.dataset.n = String(lista.length);
+    $('lrArchivosN').textContent = lista.length ? '(' + lista.length + ')' : '';
+    // Todo lo que escribió una persona (el nombre del archivo, el autor) va por esc().
+    $('lrArchivosTira').innerHTML = lista.map(m => {
+      const a = m.adjunto;
+      const tit = esc((a.nombre || '') + (m.autor ? ' · ' + m.autor : ''));
+      if (m.kind === 'image') {
+        return '<a class="lrB-arch lrB-arch-img" href="' + esc(a.url) + '" target="_blank" rel="noopener"' +
+                 ' data-lupa="' + esc(a.url) + '" title="' + tit + '">' +
+                 '<img src="' + esc(a.url) + '" alt="' + esc(a.nombre) + '" decoding="async">' +
+               '</a>';
+      }
+      return '<a class="lrB-arch lrB-arch-file" href="' + esc(a.url) + '" target="_blank" rel="noopener" title="' + tit + '">' +
+               '<span class="lr-ext">' + esc(a.ext) + '</span>' +
+             '</a>';
+    }).join('');
+  }
+
   // ── Mensajes ───────────────────────────────────────────────────────────────
   function pintarMensajes(msgs, reemplazar) {
+    anotarArchivos(msgs, reemplazar);
     const chat = $('lrChat');
     if (reemplazar) { chat.innerHTML = ''; vistos.clear(); }
 
@@ -2176,6 +2227,14 @@
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && lupa.classList.contains('abierta')) cerrarLupa();
+  });
+
+  // Las miniaturas de imagen abren la misma lupa que el chat (AR2).
+  $('lrArchivosTira').addEventListener('click', (e) => {
+    const lente = e.target.closest('[data-lupa]');
+    if (!lente || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+    abrirLupa(lente.dataset.lupa, lente.querySelector('img')?.alt || '');
   });
 
   // Delegación: los mensajes se crean dinámicamente, no se les puede colgar el listener al pintar.

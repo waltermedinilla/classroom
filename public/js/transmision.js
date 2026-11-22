@@ -340,6 +340,10 @@
       encodings: [{ maxBitrate: 400000 }],
       codecOptions: { videoGoogleStartBitrate: 300 },
       appData: { fuente: 'pantalla' },
+      // ⚠️ false: el modo dibujo (public/js/transmision-dibujo.js) cambia esta pista por un
+      // lienzo con replaceTrack, y con stopTracks en true mediasoup PARA la pista que sale —
+      // la captura de la pantalla— y el compartir se corta. Las pistas las para despublicar().
+      stopTracks: false,
     });
     S.productores.set('pantalla', t);
     S.locales.set('pantalla', video);
@@ -382,6 +386,10 @@
     // a ser la grande. Se avisa ANTES de cerrar, mientras el id todavía existe.
     mandar({ t: 'cerrarProductor', producerId: p.id });
     try { p.track?.stop(); } catch (e) { /* ya estaba parado */ }
+    // La captura original también: con el modo dibujo prendido, la pista del productor es el
+    // lienzo y la pantalla quedaba capturada (con el aviso del navegador) después de "Dejar de
+    // compartir". Parar dos veces la misma pista no hace nada.
+    try { S.locales.get(cual)?.stop(); } catch (e) { /* ya estaba parada */ }
     try { p.close(); } catch (e) { /* ya estaba cerrado */ }
     S.productores.delete(cual);
     S.locales.delete(cual);
@@ -704,6 +712,11 @@
           : 'Mantené apretado para hablar';
       }
     }
+
+    // El modo dibujo se entera acá de que se dejó de compartir o de emitir (DB4.5).
+    if (typeof window.Transmision?.alPintar === 'function') {
+      try { window.Transmision.alPintar(); } catch (e) { /* el dibujo no rompe la transmisión */ }
+    }
   }
 
   // ── Se expone lo mínimo, para que el partial lo enganche ───────────────────
@@ -719,6 +732,16 @@
     estoyHablando:  () => S.hablando,
     tengoMicrofono: () => !!S.voz,
     tieneProductor: (c) => S.productores.has(c),
+    // Para el modo dibujo (DB3): la captura original de la pantalla, y cambiar lo que viaja
+    // (el lienzo con las marcas, o de vuelta la captura). La vista previa del docente sigue
+    // mostrando la captura: las marcas las ve en su capa, sin esperar la vuelta del video.
+    pistaPantalla: () => S.locales.get('pantalla') || null,
+    reemplazarPantalla: (track) => {
+      const p = S.productores.get('pantalla');
+      if (!p) return Promise.reject(new Error('no se está compartiendo pantalla'));
+      return p.replaceTrack({ track });
+    },
+    alPintar: null,
     // El partial lo reemplaza para pintar "Hablando: …".
     alCambiarVoces: null,
   };

@@ -29,6 +29,8 @@ const IDS_NUEVOS = new Set([
   'lrACab', 'lrAPill', 'lrAPillTxt', 'lrATitulo', 'lrASub', 'lrACabAcc', 'lrACabAviso',
   'lrAClase', 'lrAClaseFila', 'lrATogEscribir', 'lrATogFotos', 'lrAClaseSonido', 'lrAClaseBtns',
   'lrAChips', 'lrAChatEstado', 'lrDiseno', 'lrDisenoMenu',
+  // Archivos de la clase en miniatura (B, C y D; specs/sala-dibujo-y-archivos.spec.md)
+  'lrArchivos', 'lrArchivosN', 'lrArchivosTira',
   // B
   'lrBDisenoSlot', 'lrBSolapas', 'lrBNPresentes', 'lrBNManos', 'lrBPanel', 'lrBSlotClase', 'lrBManos',
   'lrBManosN', 'lrBManosSlot', 'lrBManosVacio', 'lrBSlotQuien', 'lrBQuienN', 'lrBQuien', 'lrChatAcc',
