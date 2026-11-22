@@ -85,10 +85,14 @@
           <a class="sd-nav <%= siguiente ? '' : 'off' %>" href="<%= siguiente ? url({ fecha: siguiente }) : '#' %>" aria-label="Día siguiente"><span class="material-symbols-outlined">chevron_right</span></a>
           <% if (fecha !== hoy) { %><a class="sd-btn" href="<%= url({ fecha: hoy }) %>">Hoy</a><% } %>
         </div>
-        <% if (puedeEditar && grillaCurso) { %>
+        <% if (grillaCurso) { %>
           <div class="sd-vistas">
             <a class="sd-btn <%= modo === 'ver' ? 'on' : '' %>" href="<%= url({ modo: 'ver' }) %>">Ver</a>
-            <a class="sd-btn <%= modo === 'cargar' ? 'on' : '' %>" href="<%= url({ modo: 'cargar' }) %>">Cargar</a>
+            <%# Comparar con el horario oficial (specs/secretaria-horario-oficial.spec.md): lo ve todo el que ve la pantalla. %>
+            <a class="sd-btn <%= modo === 'comparar' ? 'on' : '' %>" href="<%= url({ modo: 'comparar' }) %>">Comparar</a>
+            <% if (puedeEditar) { %>
+              <a class="sd-btn <%= modo === 'cargar' ? 'on' : '' %>" href="<%= url({ modo: 'cargar' }) %>">Cargar</a>
+            <% } %>
           </div>
         <% } %>
       </div>
@@ -102,6 +106,9 @@
     <% } else if (grillaCurso) {
          const t = grillaCurso.turnos.find(x => x.id === turno);
          const enControl = grillaCurso.dias.includes(diaControl); %>
+      <% if (modo === 'comparar') { %>
+        <%- include('_comparacion', { comparacion, NOMBRE_DIA, ETIQUETA_ESTADO }) %>
+      <% } else { %>
       <% if (modo === 'cargar') { %>
         <div class="sd-aviso" style="background:#e8f0fe;color:#174ea6;border-color:#c6dafc">Tocá una celda para elegir qué materia va en ese módulo. Elegir una materia reemplaza la que había.</div>
       <% } else if (!enControl) { %>
@@ -164,6 +171,7 @@
         o a la sala; las siguientes, <b>solo si entró a la sala en vivo de esa materia</b> (desde 30 minutos antes del inicio
         hasta el fin del módulo). Si no hay ese dato, la celda queda sin color: <b>no significa que no haya dado la clase</b>.
       </p>
+      <% } %>
 
       <% if (modo === 'cargar') { %>
         <div class="hc-sel" id="hcSel" role="menu"></div>

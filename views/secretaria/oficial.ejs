@@ -1,0 +1,153 @@
+<%# Horario oficial — panel de la Secretaria. Ver specs/secretaria-horario-oficial.spec.md.
+    Importar el horario de la plataforma oficial (quien carga horarios) y ver, curso por curso,
+    cuánto coincide con lo cargado acá. ⭐ Solo compara: no carga nada. %>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Horario oficial - Secretaría - Classroom</title>
+  <%- include('../partials/head-iconos') %>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/secretaria-nav', { activePage }) %>
+    <%- include('_estilos') %>
+    <style>
+      .ho-caja { background:#fff; border:1px solid #dadce0; border-radius:12px; padding:14px 16px; margin-bottom:16px; }
+      .ho-caja h2 { font-size:16px; margin:0 0 6px; }
+      .ho-tabla { border-collapse:collapse; width:100%; font-size:13px; background:#fff; }
+      .ho-tabla th { text-align:left; font-weight:600; color:#3c4043; padding:8px; border-bottom:1px solid #dadce0; }
+      .ho-tabla td { padding:8px; border-bottom:1px solid #f1f3f4; vertical-align:top; }
+      .ho-tabla td.num { text-align:right; white-space:nowrap; }
+      .ho-ok { color:#137333; font-weight:600; }
+      .ho-dif { color:#b45309; font-weight:600; }
+      .ho-gris { color:#80868b; }
+      .ho-errores { margin:8px 0 0; padding-left:18px; color:#b3261e; font-size:13px; }
+      .ho-dos { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; }
+      .ho-lista { margin:6px 0 0; padding-left:18px; font-size:13px; columns:2 220px; }
+      .ho-lista li { break-inside:avoid; margin-bottom:3px; }
+    </style>
+
+    <div class="sd-barra">
+      <div style="display:flex;gap:8px;align-items:center">
+        <a class="sd-btn" href="/secretaria/curso"><span class="material-symbols-outlined" style="font-size:18px;vertical-align:-4px">arrow_back</span> Horario del curso</a>
+        <h1 style="font-size:20px;margin:0">Horario oficial</h1>
+      </div>
+    </div>
+
+    <% if (puedeImportar) { %>
+      <section class="ho-caja">
+        <h2>Importar el horario oficial</h2>
+        <p class="sd-ayuda" style="margin-top:0">
+          Elegí el archivo <b>horario-oficial.json</b>. Reemplaza el horario oficial importado antes; no cambia nada de lo
+          cargado en la plataforma: solo sirve para comparar.
+        </p>
+        <form id="hoForm" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input type="file" id="hoArchivo" accept="application/json,.json" class="sd-input" required>
+          <button type="submit" class="btn btn-primary" id="hoBtn">Importar</button>
+          <span id="hoEstado" class="sd-ayuda" role="status" style="margin:0"></span>
+        </form>
+        <ul class="ho-errores" id="hoErrores" hidden></ul>
+      </section>
+    <% } %>
+
+    <% if (!filas.length) { %>
+      <div class="sd-aviso">
+        Todavía no hay un horario oficial importado<%= puedeImportar ? '' : '. Lo importa la secretaría o un administrador' %>.
+      </div>
+    <% } else { %>
+      <% if (!hayGrilla) { %>
+        <div class="sd-aviso">La escuela no tiene cargada la grilla de módulos, así que no se puede comparar todavía.</div>
+      <% } %>
+      <section class="ho-caja" style="padding:0;overflow-x:auto">
+        <table class="ho-tabla">
+          <thead>
+            <tr>
+              <th>Curso oficial</th><th>Turno</th><th>Carrera</th><th>En la plataforma</th>
+              <th class="num">Renglones</th><th class="num">Coinciden</th><th class="num">Diferencias</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <% filas.forEach(f => { const o = f.oficial; %>
+              <tr>
+                <td><b><%= o.curso %>° <%= String(o.division).padStart(2, '0') %>°</b></td>
+                <td><%= o.turno %></td>
+                <td><%= o.carrera %></td>
+                <td><%= f.division ? f.division : '' %><% if (!f.division) { %><span class="ho-gris">Sin división en la plataforma</span><% } %></td>
+                <td class="num"><%= o.entradas.length %></td>
+                <td class="num"><%= f.resumen ? f.resumen.coincide : '—' %></td>
+                <td class="num">
+                  <% if (f.resumen) { %>
+                    <span class="<%= f.resumen.diferencias ? 'ho-dif' : 'ho-ok' %>"><%= f.resumen.diferencias %></span>
+                    <% if (f.resumen.parecidos) { %><span class="ho-gris"> · <%= f.resumen.parecidos %> a confirmar</span><% } %>
+                  <% } else { %>—<% } %>
+                </td>
+                <td><% if (f.divisionId) { %><a href="/secretaria/curso?curso=<%= f.divisionId %>&modo=comparar">Comparar</a><% } %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </section>
+      <% if (importado) { %>
+        <p class="sd-ayuda">Importado el <%= fmt.fechaLarga(importado) %>.</p>
+      <% } %>
+
+      <div class="ho-dos">
+        <section class="ho-caja">
+          <h2>Docentes del oficial que no están en la plataforma (<%= docentes.faltan.length %>)</h2>
+          <p class="sd-ayuda" style="margin-top:0">No se encontró ningún usuario de la escuela con ese apellido y nombre.</p>
+          <% if (docentes.faltan.length) { %>
+            <ul class="ho-lista"><% docentes.faltan.forEach(n => { %><li><%= n %></li><% }) %></ul>
+          <% } else { %><p class="ho-ok">Todos están.</p><% } %>
+        </section>
+        <section class="ho-caja">
+          <h2>Nombres parecidos, a confirmar (<%= docentes.parecidos.length %>)</h2>
+          <p class="sd-ayuda" style="margin-top:0">Mismo apellido y parte del nombre. Revisá que sea la misma persona.</p>
+          <% if (docentes.parecidos.length) { %>
+            <ul class="ho-lista"><% docentes.parecidos.forEach(p => { %><li><%= p.oficial %> → <b><%= p.plataforma %></b></li><% }) %></ul>
+          <% } else { %><p class="ho-gris">Ninguno.</p><% } %>
+        </section>
+      </div>
+    <% } %>
+
+    <% if (puedeImportar) { %>
+      <script>
+        (function () {
+          var form = document.getElementById('hoForm'), btn = document.getElementById('hoBtn');
+          var estado = document.getElementById('hoEstado'), lista = document.getElementById('hoErrores');
+          form.addEventListener('submit', async function (e) {
+            e.preventDefault();
+            var f = document.getElementById('hoArchivo').files[0];
+            if (!f) return;
+            lista.hidden = true; lista.textContent = '';
+            var doc;
+            try { doc = JSON.parse(await f.text()); }
+            catch (err) { estado.textContent = 'El archivo no es un JSON válido.'; return; }
+            btn.disabled = true; estado.textContent = 'Importando…';
+            try {
+              var res = await fetch('/secretaria/oficial', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(doc) });
+              var data = await res.json().catch(function () { return {}; });
+              if (!res.ok) {
+                estado.textContent = data.error || 'No se pudo importar.';
+                (data.errores || []).forEach(function (m) { var li = document.createElement('li'); li.textContent = m; lista.appendChild(li); });
+                lista.hidden = !(data.errores || []).length;
+                return;
+              }
+              estado.textContent = 'Listo: ' + data.cursos + ' cursos, ' + data.renglones + ' renglones.';
+              location.reload();
+            } catch (err) {
+              estado.textContent = 'No se pudo importar. Revisá la conexión.';
+            } finally { btn.disabled = false; }
+          });
+        })();
+      </script>
+    <% } %>
+  </main>
+  <%- include('../partials/footer') %>
+</body>
+</html>

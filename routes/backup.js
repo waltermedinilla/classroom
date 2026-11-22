@@ -60,6 +60,7 @@ const ActivityView        = require('../models/ActivityView');
 const ActivityTemplate    = require('../models/ActivityTemplate');
 const IngresoDiario       = require('../models/IngresoDiario');
 const NotaDocenteDia      = require('../models/NotaDocenteDia');
+const HorarioOficial      = require('../models/HorarioOficial');
 const TemplateAssignment  = require('../models/TemplateAssignment');
 const AuditLog            = require('../models/AuditLog');
 const { logDeRuta } = require('../middleware/route-log');
@@ -243,6 +244,9 @@ const COLLECTIONS = [
   // regeneran solos —son el único historial de "entró ese día"—, así que no son telemetría.
   { name: 'ingresodiarios',  model: IngresoDiario,  optional: true },
   { name: 'notadocentedias', model: NotaDocenteDia, optional: true },
+  // Horario oficial importado para comparar (specs/secretaria-horario-oficial.spec.md).
+  // Se puede volver a importar del JSON, pero respaldarlo es barato y evita perderlo.
+  { name: 'horariooficials', model: HorarioOficial, optional: true },
 
   // Auditoría. Es un registro, no datos de la escuela, pero es el único lugar donde queda
   // asentado quién hizo qué — incluida la lectura de un legajo del SOE. Si se pierde, no

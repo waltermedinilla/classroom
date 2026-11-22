@@ -7509,6 +7509,27 @@ const specs = [
     },
   },
   {
+    // specs/secretaria-horario-oficial.spec.md — permisos, validación y pantallas. No importa
+    // nada válido (ver abajo).
+    id: 'secretaria-horario-oficial',
+    title: 'Horario oficial: solo quien carga horarios importa, los errores se informan y las pantallas abren',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      // HO-08: preceptor y docente no entran; validaciones antes de tocar nada.
+      await client.get('preceptor', '/secretaria/oficial', { expectStatus: 403 });
+      await client.post('scopedTeacher', '/secretaria/oficial', { body: { tipo: 'horario-oficial', cursos: [] }, expectStatus: 403 });
+      const malo = await client.post('secretaria', '/secretaria/oficial', {
+        body: { tipo: 'horario-oficial', cursos: [{ curso: 1, division: 1, entradas: [{ dia: 9, desde: '08:00', hasta: '09:00' }] }] },
+        expectStatus: 400,
+      });
+      assert(malo.json.errores && malo.json.errores.length, 'un documento con errores tiene que decir cuáles');
+      // Una importación válida REEMPLAZA el horario oficial de la escuela: no se hace acá, para
+      // no pisar el real si alguien corre la suite contra producción. Solo se miran las pantallas.
+      await client.get('secretaria', '/secretaria/oficial', { expectStatus: 200 });
+      await client.get('secretaria', '/secretaria/curso?modo=comparar', { expectStatus: 200 });
+    },
+  },
+  {
     // specs/secretaria-horario-del-curso.spec.md — CH-14 a CH-16.
     // Como el spec de "Horario de materias", si el espejo local no tiene la grilla de módulos
     // se verifica el aviso y el resto se saltea sin fallar.

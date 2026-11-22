@@ -26,6 +26,7 @@ const AuditLog       = require('../models/AuditLog');
 const IngresoDiario  = require('../models/IngresoDiario');
 const NotaDocenteDia = require('../models/NotaDocenteDia');
 const Horario        = require('../models/Horario');
+const HorarioOficial = require('../models/HorarioOficial');
 
 const { requireAuth }  = require('../middleware/auth');
 const { sectionGuard } = require('../middleware/sections');
@@ -39,6 +40,7 @@ const { idMalo }    = require('../middleware/objectId');
 const S = require('../services/secretariaDia');
 const P = require('../services/secretariaPuntualidad');
 const H = require('../services/secretariaHorarioCurso');
+const O = require('../services/secretariaHorarioOficial');
 const live = require('../services/liveRoom');
 const grillaSvc = require('../services/recursos/horario');
 
@@ -372,7 +374,9 @@ router.get('/curso', async (req, res) => {
     // D4: un ?curso= fuera del alcance se ignora y se muestra el primero.
     const curso = inScope(req, req.query.curso) ? String(req.query.curso) : (divisiones[0] ? String(divisiones[0]._id) : '');
     const puedeEditar = puedeCargarHorario(res.locals.user);
-    const modo = req.query.modo === 'cargar' && puedeEditar ? 'cargar' : 'ver';
+    // "comparar" (specs/secretaria-horario-oficial.spec.md) lo ve todo el que ve la pantalla.
+    const modo = req.query.modo === 'cargar' && puedeEditar ? 'cargar'
+      : req.query.modo === 'comparar' ? 'comparar' : 'ver';
     const base = {
       divisiones, curso, fecha, hoy: S.fechaDe(ahora),
       anterior: S.diaAnterior(fecha),
@@ -469,14 +473,113 @@ router.get('/curso', async (req, res) => {
     }
 
     const turno = grillaCurso.turnos.some(t => t.id === req.query.turno) ? req.query.turno : grillaCurso.turnos[0].id;
+
+    // Comparar con el horario oficial: el curso oficial con los mismos números que esta división (D2).
+    let comparacion = null;
+    if (modo === 'comparar') {
+      const div = divisiones.find(d => String(d._id) === curso);
+      const nums = div && O.numerosDeDivision(div.name);
+      const oficial = nums ? await HorarioOficial.findOne({ school, curso: nums[0], division: nums[1] }).lean() : null;
+      comparacion = oficial
+        ? { oficial, ...O.compararCurso({
+            oficial, grilla,
+            materias: materias.map(m => ({ id: String(m._id), name: m.name, horarioClases: m.horarioClases, docentes: docentesDe(m) })),
+          }) }
+        : { oficial: null, hayImportado: !!(await HorarioOficial.exists({ school })) };
+    }
+
     res.render('secretaria/curso', {
       ...base, hayGrilla: true, grillaCurso, turno, diaControl,
       avisos: Object.fromEntries(avisos), control,
       materias: materias.map(m => ({ id: String(m._id), name: m.name })),
+      comparacion, ETIQUETA_ESTADO: O.ETIQUETA_ESTADO,
     });
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).send('Error del servidor');
+  }
+});
+
+// ── Horario oficial (specs/secretaria-horario-oficial.spec.md) ───────────────────────────────
+
+// Los usuarios de la escuela que pueden ser docentes: todos menos alumnos y superadmin.
+const ROLES_DOCENTES = ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'secretaria'];
+
+// GET /secretaria/oficial — importar (quien carga horarios) y el resumen de la escuela.
+router.get('/oficial', async (req, res) => {
+  if (noScope(req, res)) return;
+  try {
+    const school = res.locals.user.school;
+    const [oficiales, divisiones, grilla, usuarios] = await Promise.all([
+      HorarioOficial.find({ school }).sort({ curso: 1, division: 1 }).lean(),
+      Division.find({ school }).select('name').lean(),
+      Horario.findOne({ school }).lean(),
+      User.find({ school, role: { $in: ROLES_DOCENTES } }).select('name').lean(),
+    ]);
+    const divs = divisiones.map(d => ({ id: String(d._id), name: d.name }));
+    const nombreDiv = new Map(divs.map(d => [d.id, d.name]));
+
+    // D7: la secretaria ve los cursos de su alcance; admin y superadmin, todos.
+    const filas = oficiales.map(o => {
+      const divisionId = O.divisionDe(o, divs);
+      return { oficial: o, divisionId, division: divisionId ? nombreDiv.get(divisionId) : null,
+               enAlcance: !divisionId || inScope(req, divisionId) };
+    }).filter(f => f.enAlcance);
+
+    const ids = filas.map(f => f.divisionId).filter(Boolean);
+    const materias = ids.length
+      ? await Course.find({ division: { $in: ids.map(oid) } }).select('name division owner coTeachers horarioClases').lean()
+      : [];
+    const nombre = new Map(usuarios.map(u => [String(u._id), u.name]));
+    const faltantes = [...new Set(materias.flatMap(m => [m.owner, ...(m.coTeachers || [])]).filter(Boolean).map(String))]
+      .filter(id => !nombre.has(id));
+    if (faltantes.length) {
+      for (const u of await User.find({ _id: { $in: faltantes.map(oid) } }).select('name').lean()) nombre.set(String(u._id), u.name);
+    }
+    const docentesDe = (m) => [...new Set([m.owner, ...(m.coTeachers || [])].filter(Boolean).map(String))]
+      .filter(id => nombre.has(id)).map(id => ({ id, name: nombre.get(id) }));
+
+    for (const f of filas) {
+      if (!f.divisionId || !grillaSvc.horarioCargado(grilla)) continue;
+      const delCurso = materias.filter(m => String(m.division) === f.divisionId)
+        .map(m => ({ id: String(m._id), name: m.name, horarioClases: m.horarioClases, docentes: docentesDe(m) }));
+      f.resumen = O.compararCurso({ oficial: f.oficial, grilla, materias: delCurso }).resumen;
+    }
+
+    res.render('secretaria/oficial', {
+      activePage: 'oficial', filas,
+      importado: oficiales.length ? oficiales.reduce((a, o) => (o.updatedAt > a ? o.updatedAt : a), oficiales[0].updatedAt) : null,
+      docentes: O.docentesDelOficial(filas.map(f => f.oficial), usuarios.map(u => ({ id: String(u._id), name: u.name }))),
+      hayGrilla: grillaSvc.horarioCargado(grilla),
+      puedeImportar: puedeCargarHorario(res.locals.user),
+      error: null,
+    });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+// POST /secretaria/oficial — body: el JSON del horario oficial. Reemplaza el de la escuela (D1).
+router.post('/oficial', async (req, res) => {
+  if (!puedeCargarHorario(res.locals.user)) {
+    return res.status(403).json({ error: 'Solo la secretaría o un administrador pueden importar el horario oficial.' });
+  }
+  try {
+    const school = res.locals.user.school;
+    if (!school) return res.status(400).json({ error: 'Tu usuario no tiene escuela asignada.' });
+    const { cursos, errores } = O.validarDocumento(req.body);
+    if (errores.length) return res.status(400).json({ error: 'El archivo tiene errores. No se importó nada.', errores: errores.slice(0, 50) });
+
+    const fuente = String((req.body && req.body.fuente) || '').slice(0, 300);
+    await HorarioOficial.deleteMany({ school });
+    await HorarioOficial.insertMany(cursos.map(c => ({ ...c, school, fuente, importadoPor: res.locals.user._id })));
+    const renglones = cursos.reduce((a, c) => a + c.entradas.length, 0);
+    logAudit(req, 'secretaria.oficial_importar', [], { cursos: cursos.length, renglones });
+    res.json({ ok: true, cursos: cursos.length, renglones });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'No se pudo importar. Probá de nuevo.' });
   }
 });
 

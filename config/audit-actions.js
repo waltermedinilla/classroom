@@ -252,6 +252,9 @@ const ACTIONS = {
   'secretaria.nota_borrar':  { label: 'borró la anotación del día de', icon: 'delete',      color: '#5f6368', category: 'secretaria' },
   // Horario de clases de una materia (specs/secretaria-puntualidad.spec.md).
   'course.horario_clases':   { label: 'cargó el horario de clases de', icon: 'calendar_view_week', color: '#1a73e8', category: 'secretaria' },
+  // Horario oficial importado para comparar (specs/secretaria-horario-oficial.spec.md). Solo la
+  // cantidad de cursos y renglones en la meta: los nombres de los docentes no van a la auditoría.
+  'secretaria.oficial_importar': { label: 'importó el horario oficial', icon: 'fact_check', color: '#1a73e8', category: 'secretaria' },
 };
 
 const CATEGORIES = {
