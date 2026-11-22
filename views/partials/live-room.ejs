@@ -1334,7 +1334,9 @@
       ['lrPresencia',   'lrBSlotQuien'],
       ['txManos',       'lrBManosSlot'],
       ['txControles',   'lrCBarraTx'],
-      ['txCerrar',      'lrCBarraTx'],
+      // "Terminar" NO baja a la barra: se queda en la barra de la transmisión, que va a la
+      // cabecera, en el mismo lugar donde estaba "Transmitir" (pedido del 2026-11-22). Ahí se
+      // llama "Dejar de transmitir" (ver pintarTransmision).
       ['txVer',         'lrCBarraTx'],
       ['txNoVer',       'lrCBarraTx'],
       ['txManoCaja',    'lrCBarraTx'],
@@ -2466,7 +2468,8 @@
       $('txHablar').style.display = (tx.puedoAbrirVoz && !tx.activa)   ? '' : 'none';
       $('txAbrir').style.display  = (tx.puedoAbrirVideo && !tx.activa) ? '' : 'none';
       $('txCerrar').style.display = (tx.puedoEmitir && tx.activa)  ? '' : 'none';
-      $('txCerrarTexto').textContent = soloVoz ? 'Dejar de hablar' : 'Terminar';
+      $('txCerrarTexto').textContent = soloVoz ? 'Dejar de hablar'
+        : disenoActual === 'mixto' ? 'Dejar de transmitir' : 'Terminar';
       $('txCerrarIcono').textContent = soloVoz ? 'mic_off' : 'cast_pause';
       const ctrl = $('txControles');
       if (ctrl) ctrl.style.display = (tx.activa && tx.puedoEmitir) ? 'flex' : 'none';

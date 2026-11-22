@@ -324,3 +324,11 @@ test('FIJO · la solapa "En vivo" sale ya en D y con "Cargando la sala…" hasta
   const css = fs.readFileSync(ESTILOS, 'utf8');
   assert.match(css, /content:"Cargando la sala…"/);
 });
+
+test('D9 · "Dejar de transmitir" se queda en la cabecera, donde estaba "Transmitir"', () => {
+  const src = fs.readFileSync(PARCIAL, 'utf8');
+  const mixto = src.slice(src.indexOf('    mixto: ['), src.indexOf('\n    ],', src.indexOf('    mixto: [')));
+  assert.doesNotMatch(mixto, /\['txCerrar',/, 'en D no baja a la barra');
+  assert.match(mixto, /\['txBarra',\s*'lrDCabTx'\]/, 'viaja con la barra a la cabecera');
+  assert.match(src, /disenoActual === 'mixto' \? 'Dejar de transmitir' : 'Terminar'/);
+});

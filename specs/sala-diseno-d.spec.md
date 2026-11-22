@@ -224,3 +224,16 @@ Lo que se había planteado:
 
 - Las próximas correcciones del usuario.
 - Criterios de aceptación definitivos y prueba en celulares reales (parado y de costado).
+
+
+## D9 · "Dejar de transmitir" en la cabecera (2026-11-22)
+
+> "quiero el botón de dejar de transmitir en el mismo lugar donde está transmitir ahora"
+
+- Mientras se transmite, el botón para cortar la transmisión va en la cabecera, en el mismo
+  lugar donde estaba "Transmitir". Se llama **"Dejar de transmitir"** y es rojo, con la misma
+  forma de pastilla.
+- Ya no está en la barra de abajo. Abajo quedan Micrófono, Pantalla, Cámara y Crear
+  actividad.
+- Cortar la transmisión no cierra la sala ("Cerrar sala" sigue a la derecha y corta todo).
+- En los otros diseños el botón sigue donde estaba y se sigue llamando "Terminar".
