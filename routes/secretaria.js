@@ -38,6 +38,8 @@ const { idMalo }    = require('../middleware/objectId');
 
 const S = require('../services/secretariaDia');
 const P = require('../services/secretariaPuntualidad');
+const H = require('../services/secretariaHorarioCurso');
+const live = require('../services/liveRoom');
 const grillaSvc = require('../services/recursos/horario');
 
 const router = express.Router();
@@ -342,6 +344,174 @@ router.post('/horario/:courseId', async (req, res) => {
     logAudit(req, 'course.horario_clases', [{ type: 'course', id: course._id, name: course.name }],
       { modulos: v.entradas.length });
     res.json({ ok: true, entradas: v.entradas });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).json({ error: 'No se pudo guardar el horario' });
+  }
+});
+
+// ── Horario del curso (specs/secretaria-horario-del-curso.spec.md) ───────────────────────────
+// La grilla de la semana de un curso, como la de la otra plataforma, con el control del día y
+// la carga celda por celda. No hay datos nuevos (D1): todo es Course.horarioClases.
+
+// GET /secretaria/curso?curso=<divisionId>&turno=<id>&fecha=YYYY-MM-DD&modo=ver|cargar
+router.get('/curso', async (req, res) => {
+  if (noScope(req, res)) return;
+  try {
+    const school = res.locals.user.school;
+    const ahora = new Date();
+    const fecha = S.fechaValida(req.query.fecha, ahora);
+    if (req.query.fecha && req.query.fecha !== fecha) {
+      const q = new URLSearchParams({ ...req.query, fecha });
+      return res.redirect(`/secretaria/curso?${q}`);
+    }
+    const [grilla, divisiones] = await Promise.all([
+      Horario.findOne({ school }).lean(),
+      Division.find({ _id: { $in: req.scopeDivisionIds.map(oid) } }).select('name').sort({ name: 1 }).lean(),
+    ]);
+    // D4: un ?curso= fuera del alcance se ignora y se muestra el primero.
+    const curso = inScope(req, req.query.curso) ? String(req.query.curso) : (divisiones[0] ? String(divisiones[0]._id) : '');
+    const puedeEditar = puedeCargarHorario(res.locals.user);
+    const modo = req.query.modo === 'cargar' && puedeEditar ? 'cargar' : 'ver';
+    const base = {
+      divisiones, curso, fecha, hoy: S.fechaDe(ahora),
+      anterior: S.diaAnterior(fecha),
+      siguiente: fecha < S.fechaDe(ahora) ? S.diaSiguiente(fecha) : null,
+      modo, puedeEditar, NOMBRE_DIA: grillaSvc.NOMBRE_DIA, activePage: 'curso',
+    };
+    if (!grillaSvc.horarioCargado(grilla) || !curso) {
+      return res.render('secretaria/curso', { ...base, hayGrilla: grillaSvc.horarioCargado(grilla), grillaCurso: null });
+    }
+
+    const materias = await Course.find({ division: oid(curso) }).select('name owner coTeachers horarioClases').sort({ name: 1 }).lean();
+    const docenteIds = [...new Set(materias.flatMap(m => [m.owner, ...(m.coTeachers || [])]).filter(Boolean).map(String))];
+    const idsOid = docenteIds.map(oid);
+    const ventana = S.ventanaDelDia(fecha);
+    const [usuarios, otrasMaterias, ingresos, hayDato, presencias] = await Promise.all([
+      User.find({ _id: { $in: idsOid } }).select('name').lean(),
+      // Las demás materias de estos docentes en la escuela: para los choques (D6) y para saber
+      // cuál es su primera clase del día (D3).
+      Course.find({
+        school, _id: { $nin: materias.map(m => m._id) },
+        $or: [{ owner: { $in: idsOid } }, { coTeachers: { $in: idsOid } }],
+      }).select('name division owner coTeachers horarioClases').lean(),
+      IngresoDiario.find({ user: { $in: idsOid }, fecha }).lean(),
+      IngresoDiario.exists({ school, fecha: { $lte: fecha } }),
+      RoomPresence.find({ user: { $in: idsOid }, firstSeenAt: ventana }).select('user course firstSeenAt').lean(),
+    ]);
+
+    const nombre = new Map(usuarios.map(u => [String(u._id), u.name]));
+    const docentesDe = (m) => [...new Set([m.owner, ...(m.coTeachers || [])].filter(Boolean).map(String))]
+      .filter(id => nombre.has(id)).map(id => ({ id, name: nombre.get(id) }));
+    const grillaCurso = H.grillaDelCurso({
+      grilla,
+      materias: materias.map(m => ({ id: String(m._id), name: m.name, horarioClases: m.horarioClases, docentes: docentesDe(m) })),
+    });
+
+    // Choques: nombres de curso solo para los del alcance (D4).
+    const divOtras = await Division.find({ _id: { $in: [...new Set(otrasMaterias.map(m => String(m.division)))].map(oid) } }).select('name').lean();
+    const nombreDiv = new Map(divOtras.map(d => [String(d._id), d.name]));
+    const otras = [];
+    for (const m of otrasMaterias) {
+      for (const d of docentesDe(m)) {
+        if (!docenteIds.includes(d.id)) continue;
+        otras.push({
+          docenteId: d.id, materiaId: String(m._id), materia: m.name,
+          curso: nombreDiv.get(String(m.division)) || '', enAlcance: inScope(req, m.division),
+          horarioClases: m.horarioClases,
+        });
+      }
+    }
+    const avisos = H.choques({ grillaCurso, otras });
+
+    // Control del día (D3): solo la columna del día elegido, si es un día de la grilla.
+    const diaControl = P.diaSemana(fecha);
+    const control = {};
+    if (grillaCurso.dias.includes(diaControl)) {
+      const hayDatoIngreso = !!hayDato;
+      const ingresoDe = new Map(ingresos.map(i => [String(i.user), i]));
+      const presDe = new Map();
+      for (const p of presencias) {
+        const k = String(p.user);
+        if (!presDe.has(k)) presDe.set(k, []);
+        presDe.get(k).push(p);
+      }
+      const esHoy = fecha === S.fechaDe(ahora);
+      const ahoraMin = grillaSvc.aMinutos(live.hora(ahora));
+      const porDocente = new Map();
+      for (const id of docenteIds) {
+        const suyas = [...materias, ...otrasMaterias].filter(m => docentesDe(m).some(d => d.id === id));
+        porDocente.set(id, {
+          primerInicio: H.primerInicioDelDia({ fecha, grilla, materiasDelDocente: suyas }),
+          llegada: H.llegadaDelDia({ fecha, ingreso: ingresoDe.get(id), presencias: presDe.get(id) || [], hayDatoIngreso }),
+          presencias: presDe.get(id) || [],
+        });
+      }
+      for (const t of grillaCurso.turnos) {
+        for (const mod of t.modulos) {
+          const celda = mod.celdas[diaControl];
+          for (const mat of celda.materias) {
+            const resultados = mat.docentes.map(d => {
+              const info = porDocente.get(d.id);
+              const r = H.puntualidadDeClase({
+                clase: { materiaId: mat.materiaId, desde: mod.desde, hasta: mod.hasta },
+                fecha, esPrimera: info.primerInicio === grillaSvc.aMinutos(mod.desde),
+                llegada: info.llegada, presencias: info.presencias, esHoy, ahoraMin,
+              });
+              return { docente: d.name, ...r };
+            });
+            control[`${t.id}|${mod.orden}|${mat.materiaId}`] = {
+              estado: H.mejorEstado(resultados.map(r => r.estado)), porDocente: resultados,
+            };
+          }
+        }
+      }
+    }
+
+    const turno = grillaCurso.turnos.some(t => t.id === req.query.turno) ? req.query.turno : grillaCurso.turnos[0].id;
+    res.render('secretaria/curso', {
+      ...base, hayGrilla: true, grillaCurso, turno, diaControl,
+      avisos: Object.fromEntries(avisos), control,
+      materias: materias.map(m => ({ id: String(m._id), name: m.name })),
+    });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+// POST /secretaria/curso/:divisionId/celda — body { dia, turno, orden, courseId | null } (RH-02).
+router.post('/curso/:divisionId/celda', async (req, res) => {
+  if (idMalo(req, res, 'Acceso denegado', { como: 'json', param: 'divisionId' })) return;
+  if (!puedeCargarHorario(res.locals.user)) {
+    return res.status(403).json({ error: 'No tenés permiso para cargar horarios.' });
+  }
+  const school = res.locals.user.school;
+  if (!school || !inScope(req, req.params.divisionId)) return res.status(403).json({ error: 'Acceso denegado' });
+  try {
+    const { dia, turno, orden } = req.body || {};
+    const courseId = (req.body || {}).courseId || null;
+    const grilla = await Horario.findOne({ school }).lean();
+    const v = P.validarHorarioClases([{ dia, turno, orden }], grilla);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    const celda = v.entradas[0];
+
+    const materias = await Course.find({ division: oid(req.params.divisionId) }).select('name horarioClases').lean();
+    if (courseId && !materias.some(m => String(m._id) === String(courseId))) {
+      return res.status(400).json({ error: 'Esa materia no es de este curso' });
+    }
+    const cambios = H.aplicarCelda(materias.map(m => ({ id: String(m._id), horarioClases: m.horarioClases })), celda, courseId);
+    if (cambios.length) {
+      await Course.bulkWrite(cambios.map(c => ({
+        updateOne: { filter: { _id: oid(c.id) }, update: { $set: { horarioClases: c.horarioClases } } },
+      })));
+      const nombreDe = new Map(materias.map(m => [String(m._id), m.name]));
+      for (const c of cambios) {
+        logAudit(req, 'course.horario_clases', [{ type: 'course', id: c.id, name: nombreDe.get(c.id) || '' }],
+          { modulos: c.horarioClases.length, desde: 'grilla' });
+      }
+    }
+    res.json({ ok: true, cambios: cambios.length });
   } catch (err) {
     logDeRuta(err, res);
     res.status(500).json({ error: 'No se pudo guardar el horario' });

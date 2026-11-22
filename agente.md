@@ -6842,6 +6842,14 @@ de calendario del día, y que pueda anotar algo por docente y día. Spec complet
   hasta 10 min después de su **primera** clase, y **naranja** si fue más tarde. Sin registro o
   sin clase: sin color. Se compara en minutos del día con `live.hora`, nunca armando un Date.
   23 unit en `secretariaPuntualidad.test.js` y 1 smoke `secretaria-horario-de-materia`.
+- **Fase 3 — horario del curso** (`specs/secretaria-horario-del-curso.spec.md`): solapa
+  `/secretaria/curso` con la grilla de la semana de un curso (módulos × días, materia y docente
+  en mayúsculas, como la otra plataforma). Modo **ver**: la columna del día lleva el control por
+  clase — la primera del día se mide con la llegada; las siguientes **solo con la sala en vivo de
+  esa materia** (−30 min a fin del módulo); sin dato, sin color. Modo **cargar**: tocar una celda
+  y elegir la materia (reemplaza; mismo `Course.horarioClases`). Avisa choques de docentes (sin
+  nombrar cursos fuera del alcance) y celdas con dos materias. `grillaDelCurso` es la forma que
+  usará la comparación con los horarios de la otra plataforma. 24 unit, 1 smoke.
 
 ---
 

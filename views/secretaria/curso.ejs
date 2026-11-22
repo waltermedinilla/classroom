@@ -1,0 +1,241 @@
+<%# Horario del curso — panel de la Secretaria. Ver specs/secretaria-horario-del-curso.spec.md.
+    La grilla de la semana de un curso (módulos × días), como la de la otra plataforma: en cada
+    celda el horario del módulo, la materia y el docente. Modo ver: la columna del día elegido
+    lleva el control de puntualidad por clase (D3). Modo cargar: tocar una celda y elegir la
+    materia. ⭐ Ningún texto dice "faltó". %>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Horario del curso - Secretaría - Classroom</title>
+  <%- include('../partials/head-iconos') %>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <%- include('../partials/header') %>
+
+  <main class="main-content">
+    <%- include('../partials/secretaria-nav', { activePage }) %>
+    <%- include('_estilos') %>
+    <style>
+      .hc-wrap { overflow-x:auto; background:#fff; border:1px solid #dadce0; border-radius:12px; }
+      .hc { border-collapse:collapse; width:100%; min-width:760px; font-size:12px; }
+      .hc th { font-weight:600; color:#3c4043; padding:8px 6px; border-bottom:1px solid #dadce0; text-align:center; background:#fff; }
+      .hc th.hoy { background:#e8f0fe; color:#174ea6; }
+      .hc td { border-bottom:1px solid #f1f3f4; padding:6px; text-align:center; vertical-align:top; width:18%; }
+      .hc td.hora, .hc th.hora { width:44px; position:sticky; left:0; background:#fff; z-index:1; font-size:13px; color:#3c4043; vertical-align:middle; }
+      .hc td.hoy { background:#f8fbff; }
+      .hc .hh { color:#3c4043; }
+      .hc .mat { color:#5f6368; margin-top:2px; }
+      .hc .doc { font-weight:700; color:#202124; margin-top:2px; }
+      .hc .vacia { color:#bdc1c6; }
+      .hc .estado { font-size:11px; margin-top:3px; }
+      .hc td.pt-aTiempo, .hc td.pt-tarde { background:var(--pt-bg); box-shadow: inset 0 0 0 2px var(--pt); }
+      .hc .estado.e-aTiempo { color:#137333; font-weight:600; }
+      .hc .estado.e-tarde { color:#b45309; font-weight:600; }
+      .hc .estado.e-sinDato, .hc .estado.e-futura { color:#80868b; }
+      .hc .aviso { font-size:11px; color:#8a5300; background:#fef7e0; border-radius:6px; padding:2px 4px; margin-top:4px; }
+      .hc .otra { border-top:1px dashed #dadce0; margin-top:5px; padding-top:5px; }
+      .hc td.editable { cursor:pointer; }
+      .hc td.editable:hover { outline:2px solid #1a73e8; outline-offset:-2px; }
+      .hc-sel { position:fixed; z-index:1000; background:#fff; border:1px solid #dadce0; border-radius:10px;
+                box-shadow:0 6px 24px rgba(0,0,0,.18); padding:6px; min-width:220px; max-height:60vh; overflow:auto; display:none; }
+      .hc-sel button { display:block; width:100%; text-align:left; background:none; border:0; padding:8px 10px;
+                       border-radius:6px; font:inherit; font-size:13px; cursor:pointer; color:#202124; }
+      .hc-sel button:hover { background:#f1f3f4; }
+      .hc-sel button.actual { font-weight:600; color:#174ea6; }
+      .hc-sel .tit { font-size:11px; color:#5f6368; padding:4px 10px 6px; }
+    </style>
+
+    <%
+      const url = (cambios) => {
+        const q = new URLSearchParams({ curso, ...(typeof turno !== 'undefined' ? { turno } : {}), fecha, modo, ...cambios });
+        for (const [k, v] of [...q.entries()]) if (!v) q.delete(k);
+        return '/secretaria/curso?' + q.toString();
+      };
+      const [yy, mm, dd] = fecha.split('-').map(Number);
+      const fechaTexto = fmt.fechaLarga(new Date(Date.UTC(yy, mm - 1, dd, 15)));   // 12 hs Argentina: nunca cambia de día
+    %>
+
+    <div class="sd-barra">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <form method="get" action="/secretaria/curso" style="display:flex;gap:8px;flex-wrap:wrap">
+          <input type="hidden" name="fecha" value="<%= fecha %>">
+          <input type="hidden" name="modo" value="<%= modo %>">
+          <select class="sd-select" name="curso" onchange="this.form.submit()" aria-label="Curso">
+            <% divisiones.forEach(d => { %>
+              <option value="<%= d._id %>" <%= String(d._id) === curso ? 'selected' : '' %>><%= d.name %></option>
+            <% }) %>
+          </select>
+          <% if (grillaCurso && grillaCurso.turnos.length > 1) { %>
+            <select class="sd-select" name="turno" onchange="this.form.submit()" aria-label="Turno">
+              <% grillaCurso.turnos.forEach(t => { %>
+                <option value="<%= t.id %>" <%= t.id === turno ? 'selected' : '' %>><%= t.label %></option>
+              <% }) %>
+            </select>
+          <% } %>
+        </form>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <div class="sd-fecha">
+          <a class="sd-nav" href="<%= url({ fecha: anterior }) %>" aria-label="Día anterior"><span class="material-symbols-outlined">chevron_left</span></a>
+          <b style="min-width:200px"><%= fechaTexto %></b>
+          <a class="sd-nav <%= siguiente ? '' : 'off' %>" href="<%= siguiente ? url({ fecha: siguiente }) : '#' %>" aria-label="Día siguiente"><span class="material-symbols-outlined">chevron_right</span></a>
+          <% if (fecha !== hoy) { %><a class="sd-btn" href="<%= url({ fecha: hoy }) %>">Hoy</a><% } %>
+        </div>
+        <% if (puedeEditar && grillaCurso) { %>
+          <div class="sd-vistas">
+            <a class="sd-btn <%= modo === 'ver' ? 'on' : '' %>" href="<%= url({ modo: 'ver' }) %>">Ver</a>
+            <a class="sd-btn <%= modo === 'cargar' ? 'on' : '' %>" href="<%= url({ modo: 'cargar' }) %>">Cargar</a>
+          </div>
+        <% } %>
+      </div>
+    </div>
+
+    <% if (!hayGrilla) { %>
+      <div class="sd-aviso">
+        La escuela todavía no tiene cargada la grilla de módulos (qué turnos hay y a qué hora empieza cada hora).
+        La carga un administrador en <b>Recursos → Horario</b><% if (['admin', 'superadmin'].includes(user.role)) { %>: <a href="/admin/recursos/horario">ir a cargarla</a><% } %>.
+      </div>
+    <% } else if (grillaCurso) {
+         const t = grillaCurso.turnos.find(x => x.id === turno);
+         const enControl = grillaCurso.dias.includes(diaControl); %>
+      <% if (modo === 'cargar') { %>
+        <div class="sd-aviso" style="background:#e8f0fe;color:#174ea6;border-color:#c6dafc">Tocá una celda para elegir qué materia va en ese módulo. Elegir una materia reemplaza la que había.</div>
+      <% } else if (!enControl) { %>
+        <div class="sd-aviso">Ese día no hay clases en la grilla de la escuela, así que no hay control para mostrar.</div>
+      <% } %>
+
+      <div class="hc-wrap">
+        <table class="hc">
+          <thead>
+            <tr>
+              <th class="hora">Hora</th>
+              <% grillaCurso.dias.forEach(d => { %>
+                <th class="<%= modo === 'ver' && d === diaControl ? 'hoy' : '' %>"><%= NOMBRE_DIA[d].slice(0, 2) %></th>
+              <% }) %>
+            </tr>
+          </thead>
+          <tbody>
+            <% t.modulos.forEach(mod => { %>
+              <tr>
+                <td class="hora"><%= mod.orden %></td>
+                <% grillaCurso.dias.forEach(d => {
+                     const celda = mod.celdas[d];
+                     const k = `${d}|${t.id}|${mod.orden}`;
+                     const esControl = modo === 'ver' && d === diaControl;
+                     const ctrls = esControl ? celda.materias.map(m => control[`${t.id}|${mod.orden}|${m.materiaId}`]).filter(Boolean) : [];
+                     // Con dos materias en la celda, el mejor estado da el color (como mejorEstado del servicio).
+                     const ORD = { aTiempo: 0, tarde: 1, sinDato: 2, futura: 3 };
+                     const estado = ctrls.length ? ctrls.map(c => c.estado).sort((x, y) => ORD[x] - ORD[y])[0] : '';
+                     const clases = [esControl ? 'hoy' : '', (estado === 'aTiempo' || estado === 'tarde') ? 'pt-' + estado : estado, modo === 'cargar' ? 'editable' : ''].join(' ');
+                %>
+                  <td class="<%= clases %>" <% if (modo === 'cargar') { %>data-dia="<%= d %>" data-turno="<%= t.id %>" data-orden="<%= mod.orden %>" data-actual="<%= celda.materias.length === 1 ? celda.materias[0].materiaId : '' %>" data-titulo="<%= NOMBRE_DIA[d] %> · <%= mod.label %>" tabindex="0" role="button"<% } %>>
+                    <div class="hh"><%= mod.desde %> - <%= mod.hasta %></div>
+                    <% if (!celda.materias.length) { %>
+                      <div class="mat vacia">—</div>
+                    <% } %>
+                    <% celda.materias.forEach((m, i) => { const c = esControl ? control[`${t.id}|${mod.orden}|${m.materiaId}`] : null; %>
+                      <div class="<%= i ? 'otra' : '' %>">
+                        <div class="mat"><%= m.materia %></div>
+                        <% m.docentes.forEach(doc => { const pd = c && c.porDocente.find(x => x.docente === doc.name); %>
+                          <div class="doc"><%= doc.name %></div>
+                          <% if (pd) { %><div class="estado e-<%= pd.estado %>"><%= pd.texto %></div><% } %>
+                        <% }) %>
+                        <% if (!m.docentes.length) { %><div class="mat vacia">Sin docente</div><% } %>
+                      </div>
+                    <% }) %>
+                    <% if (celda.doble) { %><div class="aviso">Dos materias en este módulo</div><% } %>
+                    <% (avisos[k] || []).forEach(a => { %><div class="aviso"><%= a %></div><% }) %>
+                  </td>
+                <% }) %>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="sd-ayuda">
+        El horario es el mismo que se carga en "Horario de materias": las dos pantallas muestran siempre lo mismo.
+        En la columna del día elegido, el color compara la llegada con el inicio de cada clase: verde hasta 10 minutos
+        después, naranja si pasó más. La <b>primera</b> clase del día de cada docente se mide con su ingreso a la plataforma
+        o a la sala; las siguientes, <b>solo si entró a la sala en vivo de esa materia</b> (desde 30 minutos antes del inicio
+        hasta el fin del módulo). Si no hay ese dato, la celda queda sin color: <b>no significa que no haya dado la clase</b>.
+      </p>
+
+      <% if (modo === 'cargar') { %>
+        <div class="hc-sel" id="hcSel" role="menu"></div>
+        <script>
+          (function () {
+            var MATERIAS = <%- JSON.stringify(materias).replace(/</g, '\\u003c') %>;
+            var CURSO = '<%= curso %>';
+            var sel = document.getElementById('hcSel');
+            var celdaActiva = null;
+
+            function cerrar() { sel.style.display = 'none'; celdaActiva = null; }
+            function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+            async function guardar(courseId) {
+              var td = celdaActiva; cerrar();
+              td.style.opacity = '.5';
+              try {
+                var res = await fetch('/secretaria/curso/' + CURSO + '/celda', {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ dia: Number(td.dataset.dia), turno: td.dataset.turno, orden: Number(td.dataset.orden), courseId: courseId }),
+                });
+                var data = await res.json().catch(function () { return {}; });
+                if (!res.ok) { alertaSuave(td, data.error || 'No se pudo guardar.'); return; }
+                // Se recarga para que la celda, los choques y la otra pantalla muestren lo mismo.
+                try { sessionStorage.setItem('hc.scroll', String(window.scrollY)); } catch (e) {}
+                location.reload();
+              } catch (e) {
+                alertaSuave(td, 'No se pudo guardar. Revisá la conexión.');
+              }
+            }
+            function alertaSuave(td, msg) {
+              td.style.opacity = '';
+              var d = document.createElement('div'); d.className = 'aviso'; d.textContent = msg; td.appendChild(d);
+            }
+
+            function abrir(td) {
+              celdaActiva = td;
+              var actual = td.dataset.actual;
+              var html = '<div class="tit">' + esc(td.dataset.titulo) + '</div>';
+              MATERIAS.forEach(function (m) {
+                html += '<button type="button" data-id="' + m.id + '" class="' + (m.id === actual ? 'actual' : '') + '">' + esc(m.name) + '</button>';
+              });
+              html += '<button type="button" data-id="" style="color:#c5221f">Vacío</button>';
+              sel.innerHTML = html;
+              sel.style.display = 'block';
+              var r = td.getBoundingClientRect();
+              var top = Math.min(r.bottom + 4, window.innerHeight - sel.offsetHeight - 8);
+              var left = Math.min(r.left, window.innerWidth - sel.offsetWidth - 8);
+              sel.style.top = Math.max(8, top) + 'px';
+              sel.style.left = Math.max(8, left) + 'px';
+            }
+
+            sel.addEventListener('click', function (ev) {
+              var b = ev.target.closest('button'); if (!b || !celdaActiva) return;
+              guardar(b.dataset.id || null);
+            });
+            document.querySelectorAll('td.editable').forEach(function (td) {
+              td.addEventListener('click', function (ev) { ev.stopPropagation(); abrir(td); });
+              td.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); abrir(td); } });
+            });
+            document.addEventListener('click', function (ev) { if (!sel.contains(ev.target)) cerrar(); });
+            document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') cerrar(); });
+            try {
+              var y = sessionStorage.getItem('hc.scroll');
+              if (y) { sessionStorage.removeItem('hc.scroll'); window.scrollTo(0, Number(y)); }
+            } catch (e) {}
+          })();
+        </script>
+      <% } %>
+    <% } %>
+  </main>
+
+  <%- include('../partials/footer') %>
+</body>
+</html>

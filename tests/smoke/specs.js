@@ -7504,6 +7504,47 @@ const specs = [
     },
   },
   {
+    // specs/secretaria-horario-del-curso.spec.md — CH-14 a CH-16.
+    // Como el spec de "Horario de materias", si el espejo local no tiene la grilla de módulos
+    // se verifica el aviso y el resto se saltea sin fallar.
+    id: 'secretaria-horario-del-curso',
+    title: 'La secretaria ve la grilla de su curso y carga una celda; las validaciones cortan',
+    requiresEnv: ['SMOKE_ADMIN_EMAIL', 'SMOKE_ADMIN_PASSWORD'],
+    async run({ client, state, assert }) {
+      const pagina = await client.get('secretaria', '/secretaria/curso?modo=cargar', { expectStatus: 200 });
+      // CH-14: un ?curso= ajeno no muestra ese curso (cae en el suyo).
+      const ajeno = await client.get('secretaria', `/secretaria/curso?curso=${state.otherDivisionId}`, { expectStatus: 200 });
+      assert(!ajeno.text.includes(`value="${state.otherDivisionId}" selected`), 'no debería mostrar un curso fuera de su alcance');
+      // CH-16: preceptor y docente no entran.
+      await client.get('preceptor', '/secretaria/curso', { expectStatus: 403 });
+      await client.get('scopedTeacher', '/secretaria/curso', { expectStatus: 403 });
+      await client.post('preceptor', `/secretaria/curso/${state.divisionId}/celda`, { body: { dia: 1, turno: 'x', orden: 1, courseId: null }, expectStatus: 403 });
+      // Curso fuera del alcance → 403.
+      await client.post('secretaria', `/secretaria/curso/${state.otherDivisionId}/celda`, { body: { dia: 1, turno: 'x', orden: 1, courseId: null }, expectStatus: 403 });
+
+      const celda = pagina.text.match(/data-dia="(\d)" data-turno="([^"]+)" data-orden="(\d+)"/);
+      if (!celda) {
+        assert(/todavía no tiene cargada la grilla/.test(pagina.text), 'sin celdas, la pantalla debería avisar que falta la grilla');
+        return;
+      }
+      const lugar = { dia: Number(celda[1]), turno: celda[2], orden: Number(celda[3]) };
+      const url = `/secretaria/curso/${state.divisionId}/celda`;
+      // CH-15: módulo inexistente → 400.
+      await client.post('secretaria', url, { body: { ...lugar, orden: 99, courseId: state.courseId }, expectStatus: 400 });
+      // Una materia que no es de este curso → 400 (un id con forma válida pero ajeno).
+      await client.post('secretaria', url, { body: { ...lugar, courseId: '000000000000000000000000' }, expectStatus: 400 });
+      // Cargar → aparece en "Horario de materias" (D1: es el mismo dato).
+      await client.post('secretaria', url, { body: { ...lugar, courseId: state.courseId }, expectStatus: 200 });
+      const materias = await client.get('secretaria', '/secretaria/horario', { expectStatus: 200 });
+      const marcada = new RegExp(`data-dia="${lugar.dia}" data-turno="${lugar.turno}" data-orden="${lugar.orden}"\\s+checked`);
+      assert(marcada.test(materias.text), 'la celda cargada desde la grilla debería verse en Horario de materias');
+      const grilla = await client.get('secretaria', '/secretaria/curso', { expectStatus: 200 });
+      assert(grilla.text.includes(`Materia Smoke ${RUN_ID}`), 'la grilla debería mostrar la materia cargada');
+      // Vaciar la celda.
+      await client.post('secretaria', url, { body: { ...lugar, courseId: null }, expectStatus: 200 });
+    },
+  },
+  {
     // RN-09
     id: 'secretaria-fecha-futura',
     title: 'Pedir un día futuro lleva a hoy',

@@ -157,6 +157,9 @@ const SECTIONS = [
   // El horario de clases de cada materia: contra él se mide la puntualidad
   // (specs/secretaria-puntualidad.spec.md). El directivo lo ve; editan secretaria y admin
   // (middleware/secretaria.js ROLES_QUE_CARGAN_HORARIO).
+  // La grilla de la semana de un curso: ver, controlar el día y cargar celda por celda
+  // (specs/secretaria-horario-del-curso.spec.md). Mismo dato que secretaria_horario.
+  { key: 'secretaria_curso', panel: 'secretaria', label: 'Horario del curso', icon: 'grid_view', path: '/secretaria/curso', roles: ['secretaria', 'directivo', 'admin', 'superadmin'] },
   { key: 'secretaria_horario', panel: 'secretaria', label: 'Horario de materias', icon: 'calendar_view_week', path: '/secretaria/horario', roles: ['secretaria', 'directivo', 'admin', 'superadmin'] },
 
   // ── General: los accesos del menú lateral (header.ejs) ─────────────────────
