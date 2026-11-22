@@ -331,6 +331,16 @@
     .lr-diseno-c .lrA-cab { margin:0 -8px 12px; }
   }
 
+  /* ── Hasta el primer poll (data-cargando, solo en la solapa "En vivo" de la materia) ──
+     El render sale con la sala "cerrada" porque la página no consulta la sala; mostrar eso
+     —"La sala no está abierta", el botón "Abrir sala"— medio segundo y después lo real parecía
+     que se entraba por primera vez. Mientras tanto: la cabecera dice "Cargando la sala…" y el
+     resto no se ve. */
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d)[data-cargando] > :not(#lrACab) { visibility:hidden; }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d)[data-cargando] #lrACab :is(.lrA-pill, .lrA-titulo, .lrA-sub, .lrD-cab-tx, .lrC-reloj, .lrC-cuenta, .lrA-cab-acc) { display:none !important; }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d)[data-cargando] #lrACab .lrA-cab-txt::before {
+    content:"Cargando la sala…"; font-size:15px; color:var(--text-secondary); }
+
   /* ── Archivos de la clase en miniatura (B, C y D) — specs/sala-dibujo-y-archivos.spec.md, AR ──
      Solo variables del tema: sigue el botón claro/oscuro sin un par [data-theme="dark"]. */
   :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-archivos { margin-top:10px; padding-top:8px; border-top:1px solid var(--border); }

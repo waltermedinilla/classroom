@@ -350,7 +350,16 @@
               estado: 'cerrada', sessionId: null, seq: 0, puedoEscribir: false,
               puedoCompartirImagen: false, mensajes: [],
               settings: { studentsCanWrite: true, reactionsOn: true, studentsCanShareImages: true,
-                          sonido: false, sonidoDe: 'docente' },
+                          sonido: false, sonidoDe: 'docente',
+                          // El diseño YA en el primer render, para que la solapa no aparezca en
+                          // Clásico y salte a D cuando contesta el poll (reclamo del 2026-11-22).
+                          // Con un diseño fijo, ese; si no, la preferencia del docente.
+                          diseno: (locals.salaDisenos && locals.salaDisenos.lista && locals.salaDisenos.lista.length === 1)
+                            ? locals.salaDisenos.lista[0].id
+                            : (course.canManage(user) && user.salaDiseno) || 'clasico' },
+              // Todavía no se sabe si la sala está abierta: hasta el primer poll la cabecera dice
+              // "Cargando la sala…" en vez de "La sala no está abierta" (ver data-cargando).
+              cargando: true,
               presencia: { presentes: 0, total: course.students.length, asistieron: 0,
                            conectados: [], estuvieron: [], ausentes: [] },
               // La voz y la transmisión viven EN ESTA SOLAPA, que es donde se usa la sala todos

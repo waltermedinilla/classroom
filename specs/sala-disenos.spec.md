@@ -468,3 +468,21 @@ servidor: la sala no parpadea de Clásico al diseño elegido en el primer poll.
     del video. Ahora `#lrACab` tiene `grid-row: 1`.
   - **La tarjeta vacía del docente.** Con la sala cerrada, la tarjeta de controles quedaba
     vacía (antes solo mostraba el botón "Diseño"). Ahora no se muestra.
+
+### Sin salto al entrar a "En vivo" (2026-11-22)
+
+> "porque al entrar, me figura como si fuera la primera vez que ingreso, y luego carga por
+> defecto el diseño elegido"
+
+**Causa.** La página de la materia no consulta la sala, para no hacer más lenta la ruta más
+visitada. Por eso la solapa salía con un estado de relleno: Clásico y la sala "cerrada". Al
+contestar el primer poll saltaba a D y al estado real.
+
+**Arreglo.**
+- **El primer render ya sale en D.** `views/course.ejs` pasa el diseño: el fijo si lo hay; si
+  no, la preferencia del docente.
+- **Mientras no contesta el poll, la cabecera dice "Cargando la sala…"** y el resto no se ve
+  (`data-cargando` en `.lr-wrap`). El primer poll válido lo saca.
+- Si el poll no contesta nunca (sin conexión), a los 8 segundos se muestra lo que hay, que
+  es lo mismo que se veía antes.
+- La sala en ventana aparte no usa este estado: esa ya sale con el estado real.

@@ -357,7 +357,7 @@
   const _disClase  = _disActual ? _disActual.clase : '';
 %>
 <%- include('sala-disenos-estilos') %>
-<div class="lr-wrap<%= _disClase ? ' ' + _disClase : '' %>" data-diseno="<%= _disActual ? _disActual.id : 'clasico' %>">
+<div class="lr-wrap<%= _disClase ? ' ' + _disClase : '' %>" data-diseno="<%= _disActual ? _disActual.id : 'clasico' %>"<% if (sala.cargando) { %> data-cargando="1"<% } %>>
 
   <%# RN-15 — aviso permanente. No dice quién ni cuándo mira (no rompe el modo observación),
       pero hace que nadie escriba creyendo que está en un espacio privado. %>
@@ -1271,6 +1271,9 @@
   //      su estado de lo que manda el servidor. No hay un segundo camino al servidor.
   const DISENOS = <%- JSON.stringify(_disLista.map(d => ({ id: d.id, clase: d.clase }))) %>;
   const WRAP = $('lrChat').closest('.lr-wrap');
+  // Si el primer poll no contesta (sin conexión), el "Cargando…" no puede quedar para siempre:
+  // a los 8 s se muestra lo que hay, que es lo mismo que se veía antes de existir este estado.
+  if (WRAP.dataset.cargando) setTimeout(() => { delete WRAP.dataset.cargando; }, 8000);
 
   // [nodo, lugar] por diseño. Se mudan en este orden y vuelven en el inverso.
   const MUDANZAS = {
@@ -1832,6 +1835,8 @@
       // reclamo del 2026-09-07 — sin él, la respuesta lenta pisaba lo que ya estaba pintado.
       if (d.descartar) return;
       salaConfirmada = true;
+      // Ya se sabe cómo está la sala: fuera el "Cargando la sala…" del primer render.
+      delete WRAP.dataset.cargando;
 
       // `SALA.sessionId` NO se sincroniza acá: desde que existe el cursor, el dueño de ese dato
       // es él y `SALA` solo aporta el valor inicial. Dos copias del mismo estado, movidas desde

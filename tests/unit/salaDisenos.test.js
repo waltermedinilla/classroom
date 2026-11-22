@@ -304,3 +304,23 @@ test('FIJO · la vista sale en D y sin el botón "Diseño", para el docente y el
     assert.ok(!html.includes('id="lrDisenoMenu"'), rol + ': sin menú de diseño');
   }
 });
+
+test('FIJO · la solapa "En vivo" sale ya en D y con "Cargando la sala…" hasta el primer poll', () => {
+  const curso = fs.readFileSync(path.join(raiz, 'views', 'course.ejs'), 'utf8');
+  const i = curso.indexOf("include('partials/live-room'");
+  const bloque = curso.slice(i, curso.indexOf('modo:', i));
+  assert.match(bloque, /diseno: \(locals\.salaDisenos && locals\.salaDisenos\.lista && locals\.salaDisenos\.lista\.length === 1\)/);
+  assert.match(bloque, /cargando: true,/);
+
+  const conCarga = ejs.render(fs.readFileSync(PARCIAL, 'utf8'),
+    (() => { const l = datos.locals('docente', 'mixto', SD.paraVista()); l.sala = { ...l.sala, cargando: true }; return l; })(),
+    { filename: PARCIAL });
+  assert.match(conCarga, /<div class="lr-wrap lr-diseno-d" data-diseno="mixto" data-cargando="1">/);
+  assert.match(render('docente', 'mixto', SD.paraVista()), /<div class="lr-wrap lr-diseno-d" data-diseno="mixto">/, 'la sala en ventana aparte no lo usa');
+
+  const src = fs.readFileSync(PARCIAL, 'utf8');
+  assert.match(src, /salaConfirmada = true;\n\s*\/\/[^\n]*\n\s*delete WRAP\.dataset\.cargando;/);
+  assert.match(src, /setTimeout\(\(\) => \{ delete WRAP\.dataset\.cargando; \}, 8000\)/);
+  const css = fs.readFileSync(ESTILOS, 'utf8');
+  assert.match(css, /content:"Cargando la sala…"/);
+});
