@@ -290,8 +290,12 @@ disenoEfectivo({ guardado, visibles }) → 'clasico' | 'ordenada' | 'panel' | 'a
 
 - Cuerpo `{ diseno }`, uno de los cuatro ids.
 - Detrás de `cargarSala`. Solo quien gestiona; el resto, 403 por `fallar()`.
-- Fuera de la lista → 400 `'Diseño no válido'`. Sin sala abierta → 409 `'La sala está cerrada'`.
-- Guarda `settings.diseno` de la sesión **y** `User.salaDiseno`. Auditoría: acción nueva
+- Fuera de la lista → 400 `'Diseño no válido'`.
+- Guarda `settings.diseno` de la sesión (si hay una abierta) **y** `User.salaDiseno`. **Con la
+  sala cerrada también se puede elegir**: queda como preferencia y la próxima clase abre así.
+  Con la sala cerrada, el poll del docente trae su preferencia como `settings.diseno` (para que
+  vea el diseño elegido antes de abrir); el resto ve Clásico. *(Cambio del 2026-11-22: con 409 el
+  docente veía "No se pudo cambiar el diseño" sin entender por qué.)* Auditoría: acción nueva
   `room.diseno` en `config/audit-actions.js`. Sin mensaje de sistema en el chat.
 
 ### `GET /courses/:id/sala/poll`
@@ -326,7 +330,7 @@ servidor: la sala no parpadea de Clásico al diseño elegido en el primer poll.
   `settings.diseno: 'panel'`.
 - **CA-3** Alumno, preceptoría, dirección o secretaría que piden `POST /sala/diseno` → 403, sin
   cambios.
-- **CA-4** Valor inválido → 400. Sala cerrada → 409.
+- **CA-4** Valor inválido → 400. Sala cerrada → 200, y solo se guarda la preferencia.
 - **CA-5** El docente abre una sala nueva: arranca con su último diseño.
 - **CA-6** Sesión vieja sin el campo → Clásico.
 

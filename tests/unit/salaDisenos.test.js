@@ -226,6 +226,13 @@ test('CA-14 · cada fondo fijo del CSS de los diseños declara su color de texto
 
 // ── La ruta y el poll ────────────────────────────────────────────────────────
 
+test('con la sala cerrada, el docente ve su diseño preferido y el resto Clásico', () => {
+  const src = fs.readFileSync(path.join(raiz, 'routes', 'rooms.js'), 'utf8');
+  const i = src.indexOf("estado: 'cerrada'");
+  const rama = src.slice(i, src.indexOf('apertura: null', i));
+  assert.match(rama, /diseno: req\.esGestor\s*\?\s*live\.disenoEfectivo\(\{ guardado: req\.res && req\.res\.locals\.user && req\.res\.locals\.user\.salaDiseno \}\)\s*:\s*'clasico'/);
+});
+
 test('la ruta del selector existe, exige gestor y valida contra la lista', () => {
   const src = fs.readFileSync(path.join(raiz, 'routes', 'rooms.js'), 'utf8');
   const i = src.indexOf("router.post('/:id/sala/diseno'");
@@ -233,7 +240,10 @@ test('la ruta del selector existe, exige gestor y valida contra la lista', () =>
   const cuerpo = src.slice(i, src.indexOf('\n});', i));
   assert.match(cuerpo, /if \(!req\.esGestor\) return fallar\(req, res, 403/);
   assert.match(cuerpo, /live\.disenoValido\(diseno\)/);
-  assert.match(cuerpo, /'La sala está cerrada'/);
+  // Con la sala cerrada no hay 409: se guarda como preferencia (la próxima clase abre así).
+  assert.doesNotMatch(cuerpo, /fallar\(req, res, 409/);
+  assert.match(cuerpo, /if \(session\) \{\s*await RoomSession\.updateOne/);
+  assert.match(cuerpo, /User\.updateOne\(\{ _id: req\.userId \}, \{ \$set: \{ salaDiseno: diseno \} \}\)/);
   assert.match(cuerpo, /logAudit\(req, 'room\.diseno'/);
 });
 

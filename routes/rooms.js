@@ -324,7 +324,12 @@ async function estadoDeSala(req, session, since = 0, presenciaVista = null) {
       mensajes: [],
       settings: {
         studentsCanWrite: true, reactionsOn: true, studentsCanShareImages: true,
-        sonido: false, sonidoDe: SONIDO_DE_DEFAULT, diseno: 'clasico',
+        sonido: false, sonidoDe: SONIDO_DE_DEFAULT,
+        // Sala cerrada: el docente ve el diseño con el que va a abrir (su preferencia), así lo
+        // puede elegir antes de empezar. El resto, Clásico: no hay clase que seguir.
+        diseno: req.esGestor
+          ? live.disenoEfectivo({ guardado: req.res && req.res.locals.user && req.res.locals.user.salaDiseno })
+          : 'clasico',
       },
       apertura: null,
       ...presenciaParaCliente({
@@ -1256,23 +1261,28 @@ router.post('/:id/sala/diseno', async (req, res, next) => {
     const diseno = String(req.body?.diseno || '');
     if (!live.disenoValido(diseno)) return fallar(req, res, 400, 'Diseño no válido');
 
+    // Con la sala CERRADA también se puede elegir: queda como preferencia del docente y la
+    // próxima clase abre con ese diseño (RN-4). Antes respondía 409 y el docente veía "No se
+    // pudo cambiar el diseño" sin entender por qué (prueba real del 2026-11-22).
     const session = await sesionAbierta(req.course._id);
-    if (!session) return fallar(req, res, 409, 'La sala está cerrada');
-
-    await RoomSession.updateOne({ _id: session._id }, { $set: { 'settings.diseno': diseno } });
+    if (session) {
+      await RoomSession.updateOne({ _id: session._id }, { $set: { 'settings.diseno': diseno } });
+    }
 
     // FALLA ABIERTO, igual que la preferencia de sonido: la clase ya cambió, que es lo que el
     // docente está mirando. Si guardar la preferencia falla, se loguea y se responde 200.
+    // Con la sala cerrada la preferencia ES el cambio: ahí un error sí se informa.
     try {
       await User.updateOne({ _id: req.userId }, { $set: { salaDiseno: diseno } });
       invalidateUser(req.userId);
     } catch (err) {
       logDeRuta(err, res, { codigo: 'DESIGN_PREF_NOT_SAVED', courseId: String(req.course._id) });
+      if (!session) return fallar(req, res, 500, 'No se pudo guardar el diseño');
     }
 
     logAudit(req, 'room.diseno',
       [{ type: 'course', id: req.course._id, name: req.course.name }],
-      { sessionId: String(session._id), diseno });
+      { sessionId: session ? String(session._id) : null, diseno });
 
     res.json({ ok: true, diseno });
   } catch (err) { next(err); }

@@ -9915,7 +9915,7 @@ const specs = [
         await client.post('scopedStudent', `${base}/diseno`, { body: { diseno: 'clasico' }, expectStatus: 403 });
         assert((await poll()).json.settings.diseno === 'ordenada', 'CA-3: el 403 no puede haber cambiado el diseño');
 
-        // CA-4: un valor que no existe, o uno que todavía no está listo, es 400.
+        // CA-4: un valor que no existe es 400.
         await client.post('scopedTeacher', `${base}/diseno`, { body: { diseno: 'inventado' }, expectStatus: 400 });
       } finally {
         // Las specs siguientes miran la sala Clásica: se deja como estaba.
