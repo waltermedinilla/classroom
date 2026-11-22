@@ -6,7 +6,7 @@
 > entre las opciones B y C."*
 
 Estado: **en construcción con el usuario** ("Hazlo y lo voy corrigiendo en el camino",
-2026-11-22). D1 a D7 implementados; se sigue ajustando.
+2026-11-22). D1 a D8 implementados; se sigue ajustando.
 
 Se monta sobre lo que ya existe en `specs/sala-disenos.spec.md` (mismo selector, misma mudanza de
 botones, mismo freno de mano, mismas reglas). D se agrega como un diseño más en
@@ -170,6 +170,22 @@ En la computadora, **mientras hay transmisión** (para el que transmite y para e
   **440 px** de ancho.
 
 En el celular no cambia: parado siguen las solapas, de costado la pantalla completa (D5).
+
+### D8 — Mientras se transmite, los botones van debajo del video, con "3 puntos"
+
+> Pedido del usuario, 2026-11-22 (con captura): *"Quiero que esos botones figuren debajo de la
+> imagen que se está mostrando, y que a su vez figuren 3 puntos para aparecer o desaparecer esos
+> botones."*
+
+- Mientras hay transmisión, la barra de D3 (Micrófono, Pantalla, Cámara, Terminar, Crear actividad
+  para el docente; Levantar la mano y Dejar de ver para el alumno) va **debajo del video**, adentro
+  de la tarjeta de la transmisión, centrada, en vez de al pie de la sala.
+- A la derecha de esos botones, **"⋯" (3 puntos)**: los oculta y los vuelve a mostrar. Ocultos,
+  quedan solo los puntos.
+- Sin transmisión, la barra vuelve al pie de la sala (con "Crear actividad") y los puntos no van.
+- De costado (D5) la barra sigue flotando sobre el video, ahora también con los puntos.
+- *De paso:* "Más opciones" no se muestra en el celular (ahí no hay dos columnas que alternar), y
+  el chat de costado ya no se monta 24 px sobre el video (su ancho no contaba el relleno).
 
 ### Decisiones
 

@@ -37,7 +37,7 @@ const IDS_NUEVOS = new Set([
   'lrCReloj', 'lrCCuenta', 'lrCCuentaTxt', 'lrCBarra', 'lrCBarraTx', 'lrCBarraClase', 'lrCEscribir',
   'lrCFotos', 'lrCBarraFin',
   // D
-  'lrDBarraChat', 'lrDChat', 'lrDChatTxt', 'txSonido', 'lrDCabTx', 'lrDLadoCaja', 'lrDLado', 'lrDLadoIco', 'lrDLadoTxt', 'lrDLadoN',
+  'lrDBarraChat', 'lrDChat', 'lrDChatTxt', 'txSonido', 'lrDCabTx', 'lrDLadoCaja', 'lrDLado', 'lrDLadoIco', 'lrDLadoTxt', 'lrDLadoN', 'lrDPuntos',
   // id agregados a elementos que YA existían (para poder mudarlos o ubicarlos en la grilla)
   'lrAviso', 'lrClasesAnt', 'lrPresencia', 'txBarra', 'txManoCaja', 'txTurnosTit',
 ]);

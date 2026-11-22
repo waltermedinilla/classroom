@@ -26,6 +26,7 @@
   .lr-wrap:not(.lr-diseno-b) .tx-bajo-cuadro,
   .lr-wrap:not(.lr-diseno-d) .tx-sonido,
   .lr-wrap:not(.lr-diseno-d) .lrD-cab-tx,
+  .lr-wrap:not(.lr-diseno-d) .lrD-puntos,
   .lr-wrap:not(.lr-diseno-d) .lrD-grupo-chat,
   .lr-wrap:not(.lr-diseno-c) .lrC-volver,
   .lr-wrap:not(.lr-diseno-c) .lrC-curso,
@@ -381,6 +382,23 @@
     .lr-diseno-d[data-tx="activa"] .lrA-rotulo { display:flex; width:100%; }
   }
 
+  /* D8: mientras se transmite, la barra va debajo del video (adentro de la tarjeta) y unos "3
+     puntos" la muestran u ocultan. Sin transmisión, la barra sigue al pie y los puntos no van. */
+  .lr-diseno-d .lrD-puntos { display:none; }
+  .lr-diseno-d #txCard > #lrCBarra { position:relative; margin:12px 0 0; padding:10px 48px 2px; border:0; min-height:44px;
+                                     border-top:1px solid var(--border); border-radius:0; background:transparent; justify-content:center; }
+  /* Los puntos, siempre en la punta derecha: los botones quedan centrados debajo del video. */
+  .lr-diseno-d #txCard > #lrCBarra .lrD-puntos { display:flex; align-items:center; justify-content:center;
+                                     position:absolute; right:2px; top:8px; width:40px; height:40px; border:0; border-radius:50%;
+                                     background:transparent; color:var(--text); cursor:pointer; }
+  .lr-diseno-d #txCard > #lrCBarra .lrD-puntos:hover { background:var(--bg); }
+  .lr-diseno-d[data-botones="ocultos"] #txCard > #lrCBarra { border-top-color:transparent; padding-top:0; }
+  .lr-diseno-d[data-botones="ocultos"] #txCard > #lrCBarra .lrC-grupo { display:none !important; }
+
+  /* "Más opciones" alterna columnas, y en el celular no hay dos columnas (hay solapas, D4, o
+     pantalla completa, D5): ahí no va. */
+  @media (max-width: 899px) { .lr-diseno-d #lrDLado { display:none !important; } }
+
   /* D2 y D3: con la sala cerrada no hay transmisión ni barra */
   .lr-diseno-d[data-estado="cerrada"] #txCard,
   .lr-diseno-d[data-estado="cerrada"] .lrC-barra { display:none !important; }
@@ -419,13 +437,13 @@
       position:fixed; top:0; left:0; bottom:0; right:38%; z-index:1000; margin:0; padding:0;
       border:0; border-radius:0; background:#000000; color:#ffffff; display:flex !important; align-items:center; justify-content:center; }
     .lr-diseno-d[data-chat="oculto"]:has(#txCuadro:not([style*="none"])) #txCard { right:0; }
-    .lr-diseno-d:has(#txCuadro:not([style*="none"])) #txCard > :not(#txCuadro):not(#txSonido):not(#txHablando) { display:none !important; }
+    .lr-diseno-d:has(#txCuadro:not([style*="none"])) #txCard > :not(#txCuadro):not(#txSonido):not(#txHablando):not(#lrCBarra) { display:none !important; }
     .lr-diseno-d:has(#txCuadro:not([style*="none"])) #txCuadro { width:100%; height:100%; max-width:none; margin:0; border-radius:0; aspect-ratio:auto; }
     .lr-diseno-d:has(#txCuadro:not([style*="none"])) #txCuadro video:not(.tx-chico) { width:100%; height:100%; object-fit:contain; }
     .lr-diseno-d:has(#txCuadro:not([style*="none"])) #txHablando { position:absolute; top:10px; left:10px; z-index:2; margin:0; border-radius:20px; }
 
     .lr-diseno-d:has(#txCuadro:not([style*="none"])) .lr-card-chat {
-      position:fixed; top:0; right:0; bottom:0; width:38%; z-index:1001; margin:0; border-radius:0;
+      position:fixed; top:0; right:0; bottom:0; width:38%; z-index:1001; margin:0; border-radius:0; box-sizing:border-box;
       display:flex !important; flex-direction:column; padding:10px 12px; }
     .lr-diseno-d[data-chat="oculto"]:has(#txCuadro:not([style*="none"])) .lr-card-chat { display:none !important; }
     .lr-diseno-d:has(#txCuadro:not([style*="none"])) .lr-card-chat #lrChat { flex:1; max-height:none; min-height:0; overflow:auto; }
@@ -436,6 +454,13 @@
       position:fixed; left:0; right:38%; bottom:0; z-index:1002; margin:0; border:0; border-radius:0;
       padding:6px 8px; background:rgba(0,0,0,.55); color:#ffffff; justify-content:center; }
     .lr-diseno-d[data-chat="oculto"]:has(#txCuadro:not([style*="none"])) .lrC-barra { right:0; }
+    /* De costado, la barra flota sobre el video aunque esté mudada adentro de la tarjeta (D8). */
+    .lr-diseno-d:has(#txCuadro:not([style*="none"])) #txCard > #lrCBarra {
+      position:fixed; left:0; right:38%; bottom:0; z-index:1002; margin:0; padding:6px 8px;
+      border:0; border-radius:0; background:rgba(0,0,0,.55); color:#ffffff; }
+    .lr-diseno-d[data-chat="oculto"]:has(#txCuadro:not([style*="none"])) #txCard > #lrCBarra { right:0; }
+    .lr-diseno-d:has(#txCuadro:not([style*="none"])) #txCard > #lrCBarra .lrD-puntos { color:#ffffff; top:50%; transform:translateY(-50%); }
+    .lr-diseno-d[data-botones="ocultos"]:has(#txCuadro:not([style*="none"])) #txCard > #lrCBarra { background:transparent; }
     .lr-diseno-d:has(#txCuadro:not([style*="none"])) .lrC-barra :is(.btn, .tx-toggle, .lrC-bot) { color:#ffffff; font-size:11px; min-width:52px; }
     .lr-diseno-d:has(#txCuadro:not([style*="none"])) .lrC-barra :is(.btn, .tx-toggle, .lrC-bot) > .material-symbols-outlined:first-child { width:40px; height:40px; font-size:20px; }
     .lr-diseno-d:has(#txCuadro:not([style*="none"])) .lrD-grupo-chat { display:flex; }

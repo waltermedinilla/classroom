@@ -660,6 +660,12 @@
       </button>
     </div>
     <div class="lrC-grupo" id="lrCBarraTx"></div>
+    <%# Solo D, mientras se transmite (D8): los "3 puntos" que muestran u ocultan los botones de
+        la barra, que en ese momento está debajo del video. Va en la barra pero no se esconde
+        con ella. %>
+    <button type="button" class="lrD-puntos" id="lrDPuntos" aria-pressed="true" aria-label="Mostrar u ocultar los botones" title="Mostrar u ocultar los botones">
+      <span class="material-symbols-outlined">more_horiz</span>
+    </button>
     <% if (esGestor) { %>
       <div class="lrC-grupo" id="lrCBarraClase">
         <button type="button" class="lrC-bot" id="lrCEscribir" data-delega="lrModo" aria-pressed="true">
@@ -1445,6 +1451,26 @@
     if (destino && btn.parentNode !== destino) destino.appendChild(btn);
   }
   $('lrDLado').addEventListener('click', () => ponerLado(WRAP.dataset.lado === 'opciones' ? '' : 'opciones'));
+
+  // D8: en D, mientras se transmite, la barra de botones va DEBAJO del video (adentro de la
+  // tarjeta de la transmisión) y no al pie de la sala. Al terminar vuelve a su lugar, marcado
+  // con un comentario la primera vez, igual que las mudanzas.
+  let marcaBarra = null;
+  function ubicarBarra(transmitiendo) {
+    const barra = $('lrCBarra'), cuadro = $('txCuadro');
+    if (!barra || !cuadro) return;
+    if (!marcaBarra) { marcaBarra = document.createComment('lr-lugar:lrCBarra'); barra.parentNode.insertBefore(marcaBarra, barra); }
+    const debajo = transmitiendo && disenoActual === 'mixto';
+    if (debajo && barra.parentNode !== cuadro.parentNode) cuadro.parentNode.insertBefore(barra, cuadro.nextSibling);
+    if (!debajo && barra.parentNode !== marcaBarra.parentNode) marcaBarra.parentNode.insertBefore(barra, marcaBarra);
+    if (!debajo) delete WRAP.dataset.botones;
+  }
+  // Los "3 puntos": muestran u ocultan los botones (quedan los puntos para volver a mostrarlos).
+  $('lrDPuntos').addEventListener('click', () => {
+    const ocultar = WRAP.dataset.botones !== 'ocultos';
+    if (ocultar) WRAP.dataset.botones = 'ocultos'; else delete WRAP.dataset.botones;
+    $('lrDPuntos').setAttribute('aria-pressed', ocultar ? 'false' : 'true');
+  });
 
   // D5: con el celular de costado, el chat de la derecha se muestra u oculta desde la barra.
   if ($('lrDChat')) $('lrDChat').addEventListener('click', () => {
@@ -2321,6 +2347,7 @@
     // dura, el botón "Más opciones" se ubica adentro de lo que se está mirando.
     if (!tx.activa) { if (WRAP.dataset.lado || $('lrDLado').parentNode !== $('lrDLadoCaja')) ponerLado(''); }
     else ponerLado(WRAP.dataset.lado || '');
+    ubicarBarra(tx.activa);
     const nManos = (tx.activa && tx.manos) ? tx.manos.length : 0;
     $('lrDLadoN').textContent = nManos ? String(nManos) : '';
     $('txCard').classList.toggle('tx-solovoz', !!soloVoz);
