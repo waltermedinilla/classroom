@@ -332,10 +332,20 @@
      Solo variables del tema: sigue el botón claro/oscuro sin un par [data-theme="dark"]. */
   :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-archivos { margin-top:10px; padding-top:8px; border-top:1px solid var(--border); }
   :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-archivos[data-n="0"] { display:none; }
-  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-archivos-tit { display:flex; align-items:center; gap:6px;
-    font-size:12.5px; font-weight:600; color:var(--text-secondary); margin-bottom:6px; }
-  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-archivos-tit .material-symbols-outlined { font-size:17px; }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-archivos-solapas { display:flex; gap:4px; margin-bottom:8px; overflow-x:auto; scrollbar-width:none;
+    border-bottom:1px solid var(--border); }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-arch-solapa { display:inline-flex; align-items:center; gap:5px;
+    padding:6px 10px; margin-bottom:-1px; border:0; border-bottom:2px solid transparent; background:transparent;
+    font:inherit; font-size:12.5px; font-weight:600; color:var(--text-secondary); cursor:pointer; white-space:nowrap; }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-arch-solapa[aria-selected="true"] { color:var(--primary, #1a73e8); border-bottom-color:currentColor; }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-arch-solapa .material-symbols-outlined { font-size:17px; }
   :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-archivos-n { font-weight:400; }
+  @media (max-width:480px) {
+    /* En el celular las dos solapas tienen que entrar en el ancho del chat: sin icono y más justas. */
+    :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-arch-solapa { padding:6px 6px; gap:3px; font-size:12px; }
+    :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-arch-solapa .material-symbols-outlined { display:none; }
+  }
+  :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-archivos-vacio { font-size:12.5px; color:var(--text-secondary); padding:6px 2px 10px; }
   :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-archivos-tira { display:flex; gap:8px; overflow-x:auto;
     padding-bottom:4px; scrollbar-width:thin; }
   :is(.lr-diseno-b, .lr-diseno-c, .lr-diseno-d) .lrB-arch { flex:0 0 56px; width:56px; height:56px; border-radius:8px;

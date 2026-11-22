@@ -105,6 +105,19 @@ escribir: en el lugar del rectángulo verde de la captura.
 5. Con el celular de costado (D5), en el chat angosto de la derecha, la tira se oculta para
    no quitarle lugar a la conversación.
 
+### AR4 · Dos solapas (pedido del 2026-11-22, ya con la tira en producción)
+
+> "Necesito que separen en dos solapas, una que diga archivos - Docente, y otra que diga
+> Archivos - Alumnos"
+
+- **Archivos - Docente**: todo lo que compartió quien no es alumno (docente, co-docente).
+- **Archivos - Alumnos**: lo que compartieron los alumnos (rol `student`).
+- Cada solapa muestra su cantidad entre paréntesis. Una solapa vacía lo dice con un texto
+  ("El docente todavía no compartió archivos.").
+- Mientras nadie elige, se ve la del docente si tiene algo; si no, la de los alumnos. Una vez
+  elegida, se respeta aunque llegue un archivo a la otra.
+- Sin ningún archivo en ninguna de las dos, la tira sigue sin ocupar lugar (AR3.3).
+
 ---
 
 ## Criterios de aceptación

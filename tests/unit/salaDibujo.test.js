@@ -110,7 +110,7 @@ test('DB-4 · el dibujo no agrega id al HTML (Clásico queda igual)', () => {
 
 test('DB · los iconos de las herramientas están en la fuente recortada', () => {
   const head = leer('views', 'partials', 'head-iconos.ejs');
-  for (const i of ['draw', 'edit', 'ink_highlighter', 'flare', 'title', 'undo', 'delete_sweep', 'perm_media']) {
+  for (const i of ['draw', 'edit', 'ink_highlighter', 'flare', 'title', 'undo', 'delete_sweep', 'perm_media', 'photo_library']) {
     assert.match(head, new RegExp('[,=]' + i + '[,&"]'), i);
   }
 });
@@ -127,6 +127,8 @@ test('AR-1 · la tira existe, arranca vacía y es un bloque de los diseños nuev
   for (const rol of ['docente', 'alumno']) {
     const html = render(rol, 'mixto');
     assert.match(html, /<div class="lr-dis lrB-archivos" id="lrArchivos" data-n="0">/);
+    assert.match(html, /id="lrArchSolDoc" data-grupo="docente"[^>]*>[\s\S]*?Archivos - Docente/);
+    assert.match(html, /id="lrArchSolAlu" data-grupo="alumnos"[^>]*>[\s\S]*?Archivos - Alumnos/);
     // Va entre la conversación y el cuadro de escribir.
     assert.ok(html.indexOf('id="lrChat"') < html.indexOf('id="lrArchivos"'));
     assert.ok(html.indexOf('id="lrArchivos"') < html.indexOf('id="lrComposerBox"'));
@@ -142,6 +144,8 @@ test('AR-2 · las miniaturas escapan lo que escribió una persona', () => {
   assert.match(f, /alt="' \+ esc\(a\.nombre\)/);
   assert.match(f, /esc\(a\.ext\)/);
   assert.doesNotMatch(f, /\+ a\.(nombre|url|ext) \+/, 'nada crudo');
+  // AR4: dos solapas, docente y alumnos; "alumnos" es solo el rol student.
+  assert.match(src, /const grupoDe = \(m\) => \(m\.rol === 'student' \? 'alumnos' : 'docente'\);/);
   // Se anota con los mismos mensajes que se pintan.
   assert.match(src, /function pintarMensajes\(msgs, reemplazar\) \{\n    anotarArchivos\(msgs, reemplazar\);/);
 });
