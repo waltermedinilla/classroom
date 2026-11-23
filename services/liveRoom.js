@@ -1129,6 +1129,15 @@ async function getOpenSessions(schoolId, { divisionIds = undefined, now = new Da
       // suponga, que es de donde salía el reclamo "aparecen clases que ya deberían estar
       // cerradas". Solo cuentan titular y suplentes: ver gestorEnLinea.
       docenteEnLinea: gestorEnLinea(r.presentes, gestores, now),
+      // Transmisión de video (pedido del 2026-11-23: que la tarjeta diga "transmitiendo" y "en
+      // vivo"). Qué fuentes viajan, para que dirección sepa si es la cámara, la pantalla o las dos.
+      transmitiendo: !!(r.transmision && r.transmision.activa),
+      transmisionMin: r.transmision && r.transmision.activa && r.transmision.iniciadaAt
+        ? Math.max(0, Math.round((now - new Date(r.transmision.iniciadaAt)) / 60000))
+        : null,
+      transmisionFuentes: r.transmision && r.transmision.activa
+        ? ['camara', 'pantalla', 'micro'].filter(f => r.transmision[f])
+        : [],
       mensajes:  msg.n,
       ultimoMensajeHace: msg.ultimo
         ? Math.max(0, Math.round((now - new Date(msg.ultimo)) / 1000))

@@ -15,6 +15,15 @@
   /* Sala abierta pero sin la docente conectada: la clase puede haber terminado hace un rato y
      la sala todavía no vencer. Ámbar, no verde: no es un error, es "mirá esto". */
   .lc-vivo.sindoc { background:#fef7e0; color:#b06000; }
+  /* Transmisión de video (2026-11-23): rojo, como el "EN VIVO" de la sala. */
+  .lc-tx { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:-4px 0 10px; font-size:12px; color:var(--text-secondary); }
+  .lc-tx-chip { display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:600; letter-spacing:.2px;
+    background:#fce8e6; color:#c5221f; padding:3px 9px; border-radius:12px; }
+  .lc-tx-chip .material-symbols-outlined { font-size:15px; }
+  .lc-tx-punto { width:7px; height:7px; border-radius:50%; background:#d93025; animation:lcLatido 1.4s ease-in-out infinite; }
+  @keyframes lcLatido { 0%, 100% { opacity:1; } 50% { opacity:.25; } }
+  @media (prefers-reduced-motion: reduce) { .lc-tx-punto { animation:none; } }
+  .lc-tx-chip.sindoc { background:var(--bg); color:var(--text-secondary); border:1px solid var(--border); }
   .lc-div { font-size:12px; color:var(--text-secondary); }
   .lc-materia { font-size:15px; font-weight:500; margin-bottom:2px; }
   .lc-docente { font-size:13px; color:var(--text-secondary); margin-bottom:12px; }
@@ -39,6 +48,7 @@
      tocar el modo claro. Medidas: 5,9:1 el verde, 7:1 el ámbar. */
   [data-theme="dark"] .lc-vivo        { background:#12321f; color:#7fd39b; }
   [data-theme="dark"] .lc-vivo.sindoc { background:#3a2c10; color:#f0b45f; }
+  [data-theme="dark"] .lc-tx-chip:not(.sindoc) { background:#3c1614; color:#f28b82; }
   [data-theme="dark"] .lc-pres.bajo   { color:#e8a33d; }
 </style>
 
@@ -128,6 +138,17 @@
         ? '<span class="lc-vivo sindoc">◌ sin docente · ' + s.desdeMin + ' min</span>'
         : '<span class="lc-vivo">● en vivo · ' + s.desdeMin + ' min</span>';
 
+      // Transmitiendo video (2026-11-23). Si la docente no está conectada, la transmisión puede
+      // haber quedado colgada (cerró la pestaña sin "Dejar de transmitir"): no se la anuncia
+      // como en vivo, se dice tal cual.
+      const FUENTE = { camara: 'cámara', pantalla: 'pantalla', micro: 'micrófono' };
+      const tx = !s.transmitiendo ? ''
+        : s.docenteEnLinea === false
+          ? '<div class="lc-tx"><span class="lc-tx-chip sindoc"><span class="material-symbols-outlined">videocam_off</span>Transmisión sin docente conectado</span></div>'
+          : '<div class="lc-tx"><span class="lc-tx-chip"><span class="lc-tx-punto"></span><span class="material-symbols-outlined">videocam</span>Transmitiendo · en vivo</span>' +
+            '<span>' + (s.transmisionMin != null ? s.transmisionMin + ' min' : '') +
+            ((s.transmisionFuentes || []).length ? ' · ' + s.transmisionFuentes.map(f => FUENTE[f] || f).join(', ') : '') + '</span></div>';
+
       return '<a class="lc-card" href="' + url + '">' +
         '<div class="lc-top">' +
           chip +
@@ -135,6 +156,7 @@
         '</div>' +
         '<div class="lc-materia">' + esc(s.materia) + '</div>' +
         '<div class="lc-docente">' + esc(s.docente) + (s.aula ? ' · ' + esc(s.aula) : '') + '</div>' +
+        tx +
         '<div class="lc-bolas">' + bolas + '<span class="lc-pres' + bajo + '">' + pres + '</span></div>' +
         '<div class="lc-pie">' +
           '<span class="lc-meta">' + s.mensajes + ' mensajes · ' + hace(s.ultimoMensajeHace) + '</span>' +
