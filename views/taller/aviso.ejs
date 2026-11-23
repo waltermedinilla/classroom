@@ -1,0 +1,25 @@
+<%- include('_cabeza', { titulo: 'Talleres' }) %>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/taller-nav', { activePage }) %>
+    <div style="max-width:580px;margin:60px auto;text-align:center">
+      <span class="material-symbols-outlined" style="font-size:64px;color:var(--text-hint)">construction</span>
+      <% if (motivo === 'sin-escuela') { %>
+        <h2 style="margin-top:16px">Tu cuenta no está asignada a ninguna escuela</h2>
+        <p class="tl-ayuda">Pedile a un administrador que te asigne a la escuela.</p>
+      <% } else { %>
+        <h2 style="margin-top:16px">Todavía no hay materias de taller marcadas</h2>
+        <p class="tl-ayuda">
+          El panel muestra las materias marcadas como taller.
+          <% if (typeof puedeMarcar !== 'undefined' && puedeMarcar) { %>
+            Marcalas en <a href="/taller/materias">Materias de taller</a>: la plataforma sugiere las que, por el nombre, lo son.
+          <% } else { %>
+            Las marca el Jefe de Taller o un administrador.
+          <% } %>
+        </p>
+      <% } %>
+    </div>
+  </main>
+  <%- include('../partials/footer') %>
+</body>
+</html>

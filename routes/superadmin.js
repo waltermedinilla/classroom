@@ -156,7 +156,7 @@ router.get('/schools/:id', async (req, res) => {
     ]);
 
     // Conteo de usuarios por rol para las tarjetas de resumen
-    const ROLES = ['admin', 'directivo', 'teacher', 'preceptor','jefe','soe', 'secretaria', 'student'];
+    const ROLES = ['admin', 'directivo', 'teacher', 'preceptor','jefe','soe', 'secretaria', 'jefetaller', 'student'];
     const roleCounts = {};
     ROLES.forEach(r => { roleCounts[r] = 0; });
     users.forEach(u => { if (roleCounts[u.role] !== undefined) roleCounts[u.role]++; });

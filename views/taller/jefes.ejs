@@ -1,0 +1,59 @@
+<%# Jefes de Sección y sus MEP (specs/jefe-de-taller.spec.md, P1): qué subió cada uno en el
+    período. Los nombres de usuarios y materias van escapados. %>
+<%- include('_cabeza', { titulo: 'Jefes y MEP' }) %>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/taller-nav', { activePage }) %>
+    <div class="tl-barra">
+      <h1>Jefes de Sección y sus MEP</h1>
+      <a class="tl-btn <%= periodo === 'semana' ? 'on' : '' %>" href="/taller/jefes?periodo=semana">Últimos 7 días</a>
+      <a class="tl-btn <%= periodo === 'mes' ? 'on' : '' %>" href="/taller/jefes?periodo=mes">Últimos 30 días</a>
+    </div>
+    <p class="tl-ayuda" style="margin-top:-6px">
+      Del <%= fmt.diaMes(desde) %> al <%= fmt.diaMes(hasta) %>. Cuenta las actividades y las novedades que publicó cada uno,
+      en cualquier materia. Tocá un nombre para ver su ficha y lo que publicó.
+    </p>
+
+    <% if (!haySecciones) { %>
+      <div class="tl-caja">La escuela no tiene Secciones cargadas. Se crean en Administración → Secciones, con su Jefe de Sección.</div>
+    <% } else if (sinJefes) { %>
+      <div class="tl-caja">Hay Secciones, pero ninguna tiene un Jefe de Sección asignado.</div>
+    <% } %>
+    <% if (!hayTalleres) { %>
+      <div class="tl-caja">Todavía no hay materias de taller marcadas, así que no se puede saber qué MEP tiene cada jefe.</div>
+    <% } %>
+
+    <% jefes.forEach(j => { %>
+      <section class="tl-caja">
+        <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+          <h2 style="margin:0"><a href="/jefatura/docentes/<%= j.id %>"><%= j.name %></a></h2>
+          <span class="tl-ayuda"><%= j.secciones.join(' · ') %></span>
+          <span style="margin-left:auto" class="tl-ayuda">
+            <b class="tl-num"><%= j.actividades %></b> actividades · <b class="tl-num"><%= j.novedades %></b> novedades
+            <% if (j.ultima) { %>· última: <%= fmt.diaMesHora(j.ultima) %><% } %>
+          </span>
+        </div>
+        <% if (!j.meps.length) { %>
+          <p class="tl-ayuda">No tiene MEP a cargo: sus Secciones no tienen materias de taller marcadas.</p>
+        <% } else { %>
+          <table class="tl-tabla" style="margin-top:8px">
+            <thead><tr><th>MEP</th><th>Talleres</th><th>Actividades</th><th>Novedades</th><th>Última publicación</th></tr></thead>
+            <tbody>
+              <% j.meps.forEach(m => { %>
+                <tr>
+                  <td><a href="/jefatura/docentes/<%= m.id %>"><%= m.name %></a></td>
+                  <td class="tl-ayuda"><%= m.materias.join(' · ') %></td>
+                  <td class="tl-num"><%= m.actividades %></td>
+                  <td class="tl-num"><%= m.novedades %></td>
+                  <td class="tl-ayuda"><%= m.ultima ? fmt.diaMesHora(m.ultima) : 'Nada en el período' %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+      </section>
+    <% }) %>
+  </main>
+  <%- include('../partials/footer') %>
+</body>
+</html>

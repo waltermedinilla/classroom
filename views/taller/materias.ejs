@@ -1,0 +1,70 @@
+<%# Materias de taller (specs/jefe-de-taller.spec.md, D2). La sugerencia por nombre se muestra,
+    pero solo se guarda lo que alguien tilda y confirma. %>
+<%- include('_cabeza', { titulo: 'Materias de taller' }) %>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/taller-nav', { activePage }) %>
+    <div class="tl-barra">
+      <h1>Materias de taller</h1>
+      <button type="button" class="tl-btn" id="tmSugeridas">Tildar las sugeridas (<%= sugeridasSinMarcar %>)</button>
+      <button type="button" class="btn btn-primary" id="tmGuardar" disabled>Guardar cambios</button>
+    </div>
+    <p class="tl-ayuda" style="margin-top:-6px">
+      <%= marcadas %> materias marcadas como taller. Son el alcance del Jefe de Taller y definen quiénes son los MEP.
+      Las que dicen <span class="tl-chip clase">sugerida</span> parecen de taller por el nombre: revisalas antes de guardar.
+    </p>
+    <p class="tl-ayuda" id="tmEstado" role="status"></p>
+
+    <div class="tl-grid" style="grid-template-columns:repeat(auto-fill, minmax(300px, 1fr))">
+      <% grupos.forEach(g => { %>
+        <section class="tl-caja" style="margin:0">
+          <h2><%= g.name %></h2>
+          <% g.materias.forEach(m => { %>
+            <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;padding:3px 0;cursor:pointer">
+              <input type="checkbox" class="tm-check" value="<%= m.id %>" data-orig="<%= m.esTaller ? '1' : '0' %>" data-sugerida="<%= m.sugerida ? '1' : '0' %>" <%= m.esTaller ? 'checked' : '' %>>
+              <span><%= m.name %><% if (m.sugerida && !m.esTaller) { %> <span class="tl-chip clase">sugerida</span><% } %></span>
+            </label>
+          <% }) %>
+        </section>
+      <% }) %>
+    </div>
+
+    <script>
+      (function () {
+        var checks = [].slice.call(document.querySelectorAll('.tm-check'));
+        var btn = document.getElementById('tmGuardar'), estado = document.getElementById('tmEstado');
+        function cambios() {
+          var marcar = [], desmarcar = [];
+          checks.forEach(function (c) {
+            var orig = c.dataset.orig === '1';
+            if (c.checked && !orig) marcar.push(c.value);
+            if (!c.checked && orig) desmarcar.push(c.value);
+          });
+          return { marcar: marcar, desmarcar: desmarcar };
+        }
+        function pintar() {
+          var c = cambios(), n = c.marcar.length + c.desmarcar.length;
+          btn.disabled = !n;
+          btn.textContent = n ? 'Guardar cambios (' + n + ')' : 'Guardar cambios';
+        }
+        checks.forEach(function (c) { c.addEventListener('change', pintar); });
+        document.getElementById('tmSugeridas').addEventListener('click', function () {
+          checks.forEach(function (c) { if (c.dataset.sugerida === '1') c.checked = true; });
+          pintar();
+        });
+        btn.addEventListener('click', async function () {
+          btn.disabled = true; estado.textContent = 'Guardando…';
+          try {
+            var res = await fetch('/taller/materias', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cambios()) });
+            var d = await res.json().catch(function () { return {}; });
+            if (!res.ok) { estado.textContent = d.error || 'No se pudo guardar.'; pintar(); return; }
+            estado.textContent = 'Listo: ' + d.marcadas + ' marcadas y ' + d.desmarcadas + ' desmarcadas.';
+            location.reload();
+          } catch (e) { estado.textContent = 'No se pudo guardar. Revisá la conexión.'; pintar(); }
+        });
+      })();
+    </script>
+  </main>
+  <%- include('../partials/footer') %>
+</body>
+</html>

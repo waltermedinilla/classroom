@@ -120,8 +120,8 @@ const SECTIONS = [
   // jefatura puede depender solo de can() — el menú lo cruza con res.locals.esJefeDeSeccion.
   // No "arreglarlo" sacando `teacher` de acá: eso le esconde el nav al Docente jefe. Y va
   // atado a ROLES_JEFATURA_POR_SECCION de services/jefaturaAcceso.js (test CA-52).
-  { key: 'jefe_dashboard', panel: 'jefatura', label: 'Actividades', icon: 'assignment', path: '/jefatura',          roles: ['jefe', 'teacher', 'directivo', 'admin', 'superadmin'], locked: true },
-  { key: 'jefe_teachers',  panel: 'jefatura', label: 'Docentes',    icon: 'badge',      path: '/jefatura/docentes', roles: ['jefe', 'teacher', 'directivo', 'admin', 'superadmin'] },
+  { key: 'jefe_dashboard', panel: 'jefatura', label: 'Actividades', icon: 'assignment', path: '/jefatura',          roles: ['jefe', 'teacher', 'jefetaller', 'directivo', 'admin', 'superadmin'], locked: true },
+  { key: 'jefe_teachers',  panel: 'jefatura', label: 'Docentes',    icon: 'badge',      path: '/jefatura/docentes', roles: ['jefe', 'teacher', 'jefetaller', 'directivo', 'admin', 'superadmin'] },
 
   // ── Panel Orientación Escolar (base: middleware/soe.js requireSoe) ─────────
   // ⚠️ ATENCIÓN, ACÁ LA REGLA ES DISTINTA. Que `directivo` figure en `roles` NO le da acceso:
@@ -163,8 +163,17 @@ const SECTIONS = [
   { key: 'secretaria_horario', panel: 'secretaria', label: 'Horario de materias', icon: 'calendar_view_week', path: '/secretaria/horario', roles: ['secretaria', 'directivo', 'admin', 'superadmin'] },
 
   // ── General: los accesos del menú lateral (header.ejs) ─────────────────────
-  { key: 'app_courses', panel: 'app', label: 'Mis clases',     icon: 'menu_book',       path: '/courses',               roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'secretaria', 'student'], locked: true },
-  { key: 'app_profile', panel: 'app', label: 'Mi perfil',      icon: 'account_circle',  path: '/courses/profile',       roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'secretaria', 'student'] },
+  // ── Panel Taller (specs/jefe-de-taller.spec.md) ─────────────────────────────────
+  // Alcance: TODAS las materias de taller (Course.esTaller) de la escuela. El Jefe de Taller
+  // no escribe en lo ajeno; "Materias de taller" (marcar cuáles son) la usan él y el admin.
+  { key: 'taller_resumen',     panel: 'taller', label: 'Resumen del día', icon: 'construction', path: '/taller',             roles: ['jefetaller', 'directivo', 'admin', 'superadmin'], locked: true },
+  // Las actividades y los docentes (MEP) del Jefe de Taller son las pantallas de /jefatura con
+  // su alcance de talleres (modo 'por-taller', services/jefaturaAcceso.js): no se duplican.
+  { key: 'taller_jefes',       panel: 'taller', label: 'Jefes y MEP',     icon: 'groups',       path: '/taller/jefes',       roles: ['jefetaller', 'directivo', 'admin', 'superadmin'] },
+  { key: 'taller_materias',    panel: 'taller', label: 'Materias de taller', icon: 'checklist', path: '/taller/materias',    roles: ['jefetaller', 'admin', 'superadmin'] },
+
+  { key: 'app_courses', panel: 'app', label: 'Mis clases',     icon: 'menu_book',       path: '/courses',               roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'secretaria', 'jefetaller', 'student'], locked: true },
+  { key: 'app_profile', panel: 'app', label: 'Mi perfil',      icon: 'account_circle',  path: '/courses/profile',       roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'secretaria', 'jefetaller', 'student'] },
   { key: 'app_pending', panel: 'app', label: 'Mis pendientes', icon: 'pending_actions', path: '/activities/my-pending', roles: ['student'] },
   // El calendario de reservas, del lado de quien las pide. Incluye a `preceptor` y
   // `directivo` a propósito: el que organiza un acto o una jornada no siempre es docente.
@@ -210,6 +219,7 @@ const PANELS = [
   { id: 'jefatura',   label: 'Jefatura de Sección' },
   { id: 'soe',        label: 'Orientación Escolar' },
   { id: 'secretaria', label: 'Secretaría' },
+  { id: 'taller', label: 'Taller' },
   { id: 'app',        label: 'General' },
   { id: 'superadmin', label: 'Superadministración' },
 ];

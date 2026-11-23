@@ -1,7 +1,7 @@
 # Jefe de Taller
 
-> **Estado:** Walter cerró **P1 a P4** el 2026-11-22 (ver § Preguntas, ya resueltas). **Falta su
-> "Comienza"** para arrancar F1.
+> **Estado:** APROBADA por Walter el 2026-11-22 ("sí, adelante con la spec"), con P1 a P4
+> cerradas (ver § Preguntas). **F1 implementada**; F2 a F4, pendientes.
 > Flujo SDD: arquitecto → **spec aprobada** → tester → implementador → revisor.
 > Se entrega por fases (F1 a F4). Cada fase se sube y se prueba por separado.
 
@@ -68,8 +68,7 @@ Escribe solo en sus módulos propios: el pañol (F3) y la rotación (F4).
 | Ruta | Qué muestra |
 |---|---|
 | `GET /taller` | **Resumen del día**: materias de taller que tienen clase hoy según la grilla (`horarioClases`), si el MEP entró a la plataforma, si publicó algo esta semana, y la asistencia de la división ese día (presentes y ausentes del preceptor) |
-| `GET /taller/actividades` | Las actividades de **todas** las materias de taller, de solo lectura, con los mismos filtros y paginación que `/jefatura` (`scopeCourseIds` = materias de taller) |
-| `GET /taller/actividades/:id` | El detalle de una actividad, como `/jefatura/actividades/:id` |
+| `GET /jefatura` y `/jefatura/actividades/:id` | Las actividades de **todas** las materias de taller, de solo lectura. **Son las mismas pantallas de la jefatura**, con un modo de alcance nuevo, `por-taller` (`services/jefaturaAcceso.js`): para `jefetaller`, `scopeCourseIds` = materias con `esTaller` de la escuela. No se duplica código. `/jefatura/docentes` da, por lo mismo, la lista de MEP con su ficha |
 | `GET /taller/jefes` | **Qué subió cada Jefe de Sección y cada MEP a su cargo** (P1). Una tarjeta por Jefe de Sección (`Section.heads`) con lo que publicó en el período (actividades, anuncios y materiales) y, adentro, sus MEP: los docentes de las materias de taller de sus Secciones, con lo que publicó cada uno. Se elige el período (semana, mes o fechas) |
 | `GET /taller/jefes/:id` | El detalle de un Jefe de Sección o de un MEP: la lista de lo que subió, con enlace a cada actividad (de solo lectura) |
 | `GET /taller/materias` | Marcar y desmarcar las materias de taller (D2). Lo usan el admin y el Jefe de Taller. Audita `taller.materias` |
@@ -241,8 +240,9 @@ Archivos nuevos en F1: `routes/taller.js`, `middleware/taller.js`, `services/tal
   todas las listas de roles. El barrido de `test:roles` no encuentra ningún lugar sin él.
 - **JT-02** `sugerirTaller(nombre)` marca los nombres de D2 y no marca "Lengua", "Matemática"
   ni "Educación Tecnológica".
-- **JT-03** El alcance son las materias con `esTaller` de la escuela. Una de otra escuela, o
-  una sin la marca, da 404 en `/taller/actividades/:id`.
+- **JT-03** El alcance son las materias con `esTaller` de la escuela: el modo `por-taller` de la
+  jefatura. Una actividad de otra escuela, o de una materia sin la marca, no se ve en
+  `/jefatura/actividades/:id` (la regla de alcance que ya tiene la jefatura).
 - **JT-04** El Jefe de Taller no puede escribir en actividades, entregas, notas ni asistencia.
   Todos esos POST le dan 403.
 - **JT-05** `/taller/materias` lo usan el admin y el Jefe de Taller. El preceptor y el docente

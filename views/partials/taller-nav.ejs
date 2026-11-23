@@ -1,0 +1,36 @@
+<%# Panel Taller (specs/jefe-de-taller.spec.md). Cada solapa depende de can(), como el resto.
+    "Actividades" y "Docentes (MEP)" son las pantallas de /jefatura con el alcance de talleres. %>
+<% const puede = (k) => (typeof can === 'function' ? can(k) : true);
+   const esJefeTaller = typeof user !== 'undefined' && user && user.role === 'jefetaller'; %>
+<nav class="admin-nav">
+  <% if (puede('taller_resumen')) { %>
+  <a href="/taller" class="admin-nav-item <%= activePage === 'resumen' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">construction</span>
+    Resumen del día
+  </a>
+  <% } %>
+  <% if (esJefeTaller && puede('jefe_dashboard')) { %>
+  <a href="/jefatura" class="admin-nav-item">
+    <span class="material-symbols-outlined">assignment</span>
+    Actividades
+  </a>
+  <% } %>
+  <% if (esJefeTaller && puede('jefe_teachers')) { %>
+  <a href="/jefatura/docentes" class="admin-nav-item">
+    <span class="material-symbols-outlined">badge</span>
+    Docentes (MEP)
+  </a>
+  <% } %>
+  <% if (puede('taller_jefes')) { %>
+  <a href="/taller/jefes" class="admin-nav-item <%= activePage === 'jefes' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">groups</span>
+    Jefes y MEP
+  </a>
+  <% } %>
+  <% if (typeof user !== 'undefined' && user && ['jefetaller', 'admin', 'superadmin'].includes(user.role) && puede('taller_materias')) { %>
+  <a href="/taller/materias" class="admin-nav-item <%= activePage === 'materias' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">checklist</span>
+    Materias de taller
+  </a>
+  <% } %>
+</nav>

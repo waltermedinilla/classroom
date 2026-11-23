@@ -2,6 +2,13 @@
     configurado en /superadmin/roles para esta escuela (ver config/sections.js). %>
 <% const puede = (k) => (typeof can === 'function' ? can(k) : true); %>
 <nav class="admin-nav">
+  <%# El Jefe de Taller usa estas mismas pantallas con sus talleres (specs/jefe-de-taller.spec.md). %>
+  <% if (typeof user !== 'undefined' && user && user.role === 'jefetaller' && puede('taller_resumen')) { %>
+  <a href="/taller" class="admin-nav-item">
+    <span class="material-symbols-outlined">construction</span>
+    Talleres
+  </a>
+  <% } %>
   <% if (puede('jefe_dashboard')) { %>
   <a href="/jefatura" class="admin-nav-item <%= activePage === 'actividades' ? 'active' : '' %>">
     <span class="material-symbols-outlined">assignment</span>

@@ -56,6 +56,7 @@ const oid   = (id) => new mongoose.Types.ObjectId(id);
 function sinAlcance(req, res, activePage) {
   const motivo = !res.locals.user.school
     ? 'sin-escuela'
+    : res.locals.sinTalleres ? 'sin-talleres'
     : (req.scopeSections.length ? 'secciones-vacias' : 'sin-secciones');
   return res.render('jefatura/no-scope', { motivo, activePage });
 }

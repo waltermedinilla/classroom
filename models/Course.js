@@ -91,6 +91,11 @@ const courseSchema = new mongoose.Schema({
     }],
     default: [],
   },
+
+  // Materia de taller (specs/jefe-de-taller.spec.md, D2). La marca un admin o el Jefe de
+  // Taller desde /taller/materias; nada la pone sola (la sugerencia por nombre hay que
+  // confirmarla). Es el alcance del Jefe de Taller y lo que define a un MEP.
+  esTaller: { type: Boolean, default: false },
 }, { timestamps: true });
 
 // Único punto de verdad para "¿es docente de esta materia?" — owner O cualquiera de
@@ -155,5 +160,8 @@ function invalidarPorFiltro() {
 
 courseSchema.post(['findOneAndUpdate', 'updateOne', 'findOneAndDelete', 'deleteOne'], invalidarPorFiltro);
 courseSchema.post(['updateMany', 'deleteMany'], function () { courseCache.clear(); });
+
+// Las materias de taller de una escuela (el alcance del Jefe de Taller).
+courseSchema.index({ school: 1, esTaller: 1 });
 
 module.exports = mongoose.model('Course', courseSchema);

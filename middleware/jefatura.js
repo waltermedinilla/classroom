@@ -28,14 +28,14 @@ const Course  = require('../models/Course');
 const logger  = require('../config/logger');
 const { logRechazo } = require('./route-log');
 const {
-  ROLES_JEFATURA_SIN_LIMITE, ROLES_JEFATURA_POR_ROL, ROLES_JEFATURA_POR_SECCION,
+  ROLES_JEFATURA_SIN_LIMITE, ROLES_JEFATURA_POR_ROL, ROLES_JEFATURA_POR_SECCION, ROLES_JEFATURA_POR_TALLER,
   modoJefatura, decidirAccesoJefatura,
 } = require('../services/jefaturaAcceso');
 
 // Roles que pueden entrar al panel. Los de mayor privilegio ven lo mismo que un jefe,
 // misma filosofía que middleware/directivo.js y middleware/preceptor.js. El `teacher` está
 // como candidato: sin ninguna sección a cargo, loadJefaturaScope le contesta 403.
-const ROLES_CON_ACCESO = [...ROLES_JEFATURA_POR_ROL, ...ROLES_JEFATURA_SIN_LIMITE, ...ROLES_JEFATURA_POR_SECCION];
+const ROLES_CON_ACCESO = [...ROLES_JEFATURA_POR_ROL, ...ROLES_JEFATURA_SIN_LIMITE, ...ROLES_JEFATURA_POR_SECCION, ...ROLES_JEFATURA_POR_TALLER];
 
 // Roles que NO están acotados a las secciones donde figuran como jefe: ven todas las
 // secciones de su escuela. Un directivo o un admin entra a mirar el panel sin que nadie
@@ -150,6 +150,19 @@ const loadJefaturaScope = async (req, res, next) => {
   }
 
   try {
+    // Jefe de Taller (specs/jefe-de-taller.spec.md): su alcance son las materias de taller de
+    // la escuela, sin pasar por las secciones. Las secciones se cargan igual, para mostrarlas.
+    if (modoJefatura(user.role) === 'por-taller') {
+      const [secciones, talleres] = await Promise.all([
+        Section.find({ school: user.school }).select('_id name divisions courses').sort({ name: 1 }).lean(),
+        Course.find({ school: user.school, esTaller: true }).select('_id').lean(),
+      ]);
+      req.scopeSections  = secciones;
+      req.scopeCourseIds = talleres.map(m => m._id.toString());
+      res.locals.sinTalleres = !talleres.length;
+      return next();
+    }
+
     const sinLimite = modoJefatura(user.role) === 'sin-limite';
 
     // El filtro por escuela se aplica SIEMPRE, también sobre las secciones donde figura

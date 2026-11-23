@@ -253,7 +253,7 @@ async function resolveScopeDivisions(divisionIds, school) {
 // módulo reusable — para un solo mensaje de error no vale la pena extraerlo).
 const ROLE_LABEL = {
   admin: 'Administrador', directivo: 'Directivo', teacher: 'Docente',
-  preceptor: 'Preceptor', jefe: 'Jefe de Sección', soe: 'SOE', secretaria: 'Secretaria', student: 'Alumno', superadmin: 'Superadministrador',
+  preceptor: 'Preceptor', jefe: 'Jefe de Sección', soe: 'SOE', secretaria: 'Secretaria', jefetaller: 'Jefe de Taller', student: 'Alumno', superadmin: 'Superadministrador',
 };
 
 router.post('/users/create', async (req, res) => {

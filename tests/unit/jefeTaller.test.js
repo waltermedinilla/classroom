@@ -1,0 +1,130 @@
+// Jefe de Taller — F1 (specs/jefe-de-taller.spec.md).
+
+const { test } = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const T = require('../../services/tallerAlcance');
+const raiz = path.join(__dirname, '..', '..');
+const leer = (...p) => fs.readFileSync(path.join(raiz, ...p), 'utf8');
+
+// ── JT-01 ────────────────────────────────────────────────────────────────────
+
+test('JT-01 · el rol existe, aterriza en /taller y figura en todas las listas de roles', () => {
+  const User = require('../../models/User');
+  assert.ok(User.schema.path('role').enumValues.includes('jefetaller'));
+  assert.match(leer('server.js'), /role === 'jefetaller'\) return res\.redirect\('\/taller'\)/);
+  assert.match(leer('server.js'), /jefetaller: 'Jefe de Taller'/);
+  // Cada lista que nombra a la secretaria también tiene que nombrar al jefe de taller.
+  const archivos = [
+    'routes/superadmin.js', 'routes/admin.js', 'views/admin/users.ejs', 'views/admin/user-form.ejs',
+    'views/admin/user-profile.ejs', 'views/profile.ejs', 'views/superadmin/users.ejs',
+    'views/superadmin/school-profile.ejs', 'views/superadmin/import.ejs', 'views/superadmin/monitor.ejs',
+    'tests/roles/check-roles.js', 'config/sections.js',
+  ];
+  for (const a of archivos) assert.match(leer(...a.split('/')), /jefetaller/, a);
+});
+
+// ── JT-02 ────────────────────────────────────────────────────────────────────
+
+test('JT-02 · sugerirTaller marca los talleres por el nombre y no las materias comunes', () => {
+  for (const n of ['Prácticas de Taller de Electricidad II', 'Talleres pre-profesionaliz.', 'Prácticas Profesionalizantes (*)',
+    'Prácticas Mecánicas II', 'Operaciones Mecánicas I', 'Operaciones Constructivas II', 'Taller de Soldadura',
+    'Prácticas de Taller en Construcción II']) {
+    assert.ok(T.sugerirTaller(n), n);
+  }
+  for (const n of ['Lengua', 'Matemática', 'Educación Tecnológica', 'Lengua y Literatura', 'Física', 'Taller de Lengua', '', null]) {
+    assert.ok(!T.sugerirTaller(n), String(n));
+  }
+});
+
+// ── JT-03 ────────────────────────────────────────────────────────────────────
+
+test('JT-03 · la jefatura tiene el modo por-taller: alcance = materias con esTaller de la escuela', () => {
+  const A = require('../../services/jefaturaAcceso');
+  assert.strictEqual(A.modoJefatura('jefetaller'), 'por-taller');
+  assert.deepStrictEqual(A.decidirAccesoJefatura({ role: 'jefetaller', school: 'x' }, 0), { entra: true, scopeAll: false });
+  const mw = leer('middleware', 'jefatura.js');
+  assert.match(mw, /Course\.find\(\{ school: user\.school, esTaller: true \}\)/);
+  const Course = require('../../models/Course');
+  assert.strictEqual(Course.schema.path('esTaller').defaultValue, false);
+  assert.ok(Course.schema.indexes().some(([k]) => k.school === 1 && k.esTaller === 1));
+});
+
+// ── JT-04 ────────────────────────────────────────────────────────────────────
+
+test('JT-04 · el Jefe de Taller no escribe en lo ajeno', () => {
+  // La única escritura del panel es la marca esTaller.
+  const rutas = leer('routes', 'taller.js');
+  const escrituras = rutas.match(/\.(updateMany|updateOne|create|insertMany|deleteMany|deleteOne|findOneAndUpdate|save)\(/g) || [];
+  assert.deepStrictEqual([...new Set(escrituras)], ['.updateMany(']);
+  assert.match(rutas, /\{ \$set: \{ esTaller: true \} \}/);
+  // No es docente, preceptor ni secretaria para el resto del sistema.
+  for (const [archivo, patron] of [
+    ['middleware/secretaria.js', /jefetaller/],
+    ['middleware/preceptor.js', /jefetaller/],
+  ]) assert.doesNotMatch(leer(...archivo.split('/')), patron, archivo);
+});
+
+// ── JT-05 ────────────────────────────────────────────────────────────────────
+
+test('JT-05 · marcar materias: jefe de taller, admin y superadmin; con auditoría y por escuela', () => {
+  const { ROLES_MARCAN_TALLER, ROLES_PANEL_TALLER } = require('../../routes/taller');
+  assert.deepStrictEqual(ROLES_MARCAN_TALLER, ['jefetaller', 'admin', 'superadmin']);
+  assert.ok(ROLES_PANEL_TALLER.includes('directivo') && !ROLES_MARCAN_TALLER.includes('directivo'));
+  for (const r of ['teacher', 'preceptor', 'student', 'secretaria', 'jefe']) assert.ok(!ROLES_PANEL_TALLER.includes(r), r);
+  const rutas = leer('routes', 'taller.js');
+  assert.match(rutas, /Course\.updateMany\(\{ _id: \{ \$in: marcar\.map\(oid\) \}, school \}/);
+  assert.match(rutas, /logAudit\(req, 'taller\.materias'/);
+  assert.ok(require('../../config/audit-actions').ACTIONS?.['taller.materias'] || /'taller\.materias'/.test(leer('config', 'audit-actions.js')));
+});
+
+// ── JT-06 ────────────────────────────────────────────────────────────────────
+
+test('JT-06 · el resumen del día usa el mismo "Docentes del día" de la Secretaria', () => {
+  const rutas = leer('routes', 'taller.js');
+  assert.match(rutas, /const \{ filasDelDia \} = require\('\.\/secretaria'\);/);
+  assert.match(rutas, /S\.docentesDelAlcance\(talleres, divisionIds\)/);
+  assert.strictEqual(typeof require('../../routes/secretaria').filasDelDia, 'function');
+});
+
+// ── JT-07 ────────────────────────────────────────────────────────────────────
+
+test('JT-07 · jefes y sus MEP: por sección, sin repetir, y un MEP en dos secciones sale en las dos', () => {
+  const secciones = [
+    { _id: 's1', name: 'ELECTRICIDAD', heads: ['j1'], divisions: ['d1'], courses: [] },
+    { _id: 's2', name: 'MECÁNICA', heads: ['j2'], divisions: [], courses: ['c3'] },
+    { _id: 's3', name: 'VACÍA', heads: ['j3'], divisions: ['d9'], courses: [] },
+  ];
+  const talleres = [
+    { _id: 'c1', name: 'Prácticas Eléctricas', division: 'd1', owner: 'm1', coTeachers: ['m2'] },
+    { _id: 'c2', name: 'Taller de Bobinado', division: 'd1', owner: 'm1', coTeachers: ['j1'] },
+    { _id: 'c3', name: 'Operaciones Mecánicas', division: 'd5', owner: 'm2', coTeachers: [] },
+  ];
+  const nombres = new Map([['j1', 'Jefe Uno'], ['j2', 'Jefe Dos'], ['j3', 'Jefe Tres'], ['m1', 'Mep Uno'], ['m2', 'Mep Dos']]);
+  const subidas = new Map([['m1', { actividades: 3, novedades: 1, ultima: new Date('2026-11-20') }]]);
+  const r = T.jefesYMeps({ secciones, talleres, nombres, subidas });
+  assert.deepStrictEqual(r.map(j => j.name), ['Jefe Dos', 'Jefe Tres', 'Jefe Uno']);
+  const uno = r.find(j => j.id === 'j1');
+  assert.deepStrictEqual(uno.meps.map(m => m.name), ['Mep Dos', 'Mep Uno'], 'el jefe que da un taller no es su propio MEP');
+  assert.deepStrictEqual(uno.meps.find(m => m.id === 'm1').materias, ['Prácticas Eléctricas', 'Taller de Bobinado']);
+  assert.strictEqual(uno.meps.find(m => m.id === 'm1').actividades, 3);
+  assert.deepStrictEqual(r.find(j => j.id === 'j2').meps.map(m => m.id), ['m2'], 'Mep Dos también está en Mecánica');
+  assert.deepStrictEqual(r.find(j => j.id === 'j3').meps, []);
+});
+
+test('el panel y las vistas: montado en /taller, con pie y sin nada sin escapar', () => {
+  assert.match(leer('server.js'), /app\.use\('\/taller',\s+tallerRoutes\)/);
+  for (const f of fs.readdirSync(path.join(raiz, 'views', 'taller'))) {
+    const src = leer('views', 'taller', f);
+    assert.doesNotMatch(src, /<%-(?!\s*include)/, f);
+    if (f !== '_cabeza.ejs') assert.match(src, /include\('\.\.\/partials\/footer'\)/, f);
+  }
+});
+
+test('ventanaDelPeriodo: semana por defecto, mes a pedido', () => {
+  const ahora = new Date('2026-11-22T12:00:00Z');
+  assert.strictEqual(T.ventanaDelPeriodo('x', ahora).periodo, 'semana');
+  assert.strictEqual(T.ventanaDelPeriodo('mes', ahora).desde.toISOString().slice(0, 10), '2026-10-23');
+});

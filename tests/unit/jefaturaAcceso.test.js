@@ -43,7 +43,7 @@ const { SECTIONS } = require('../../config/sections');
 // ═════════════════════════════════════════════════════════════════════════
 
 describe('modoJefatura', () => {
-  test('clasifica los 9 roles de User.getRoles() sin dejar ninguno afuera', () => {
+  test('clasifica los 10 roles de User.getRoles() sin dejar ninguno afuera', () => {
     // Tabla espejo de la de RN-02. Si mañana se agrega un rol nuevo a models/User.js y
     // nadie lo suma acá, `esperado[rol]` da undefined y el test avisa ANTES de que el rol
     // nuevo quede sin clasificar en producción (fail-closed silencioso).
@@ -58,6 +58,8 @@ describe('modoJefatura', () => {
       // La secretaria mira a los docentes de SUS cursos (specs/secretaria-docentes-del-dia.spec.md),
       // pero la jefatura no es suya: no entra.
       secretaria: null,
+      // El Jefe de Taller ve las actividades de TODAS las materias de taller (specs/jefe-de-taller.spec.md).
+      jefetaller: 'por-taller',
       student: null,
     };
     const roles = User.getRoles();

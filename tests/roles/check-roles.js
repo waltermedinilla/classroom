@@ -50,21 +50,21 @@ const c = new SmokeClient(BASE);
 
 // El superadmin no se crea (no se puede desde el panel de admin, y es único): se usa el
 // del .env si está.
-const ROLES = ['admin', 'directivo', 'preceptor', 'jefe', 'soe', 'secretaria', 'teacher', 'student'];
+const ROLES = ['admin', 'directivo', 'preceptor', 'jefe', 'soe', 'secretaria', 'jefetaller', 'teacher', 'student'];
 
 // `soe` pasó a tener panel propio el 2026-08-18 (specs/soe-orientacion.spec.md). Antes
 // aterrizaba en /courses con las solapas generales, como un docente sin materias.
 const LANDING = {
   superadmin: '/superadmin', admin: '/admin', directivo: '/directivo', preceptor: '/preceptor',
-  jefe: '/jefatura', soe: '/soe', secretaria: '/secretaria', teacher: '/courses', student: '/courses',
+  jefe: '/jefatura', soe: '/soe', secretaria: '/secretaria', jefetaller: '/taller', teacher: '/courses', student: '/courses',
 };
 const PANEL_DE = {
   superadmin: 'superadmin', admin: 'admin', directivo: 'directivo', preceptor: 'preceptor',
-  jefe: 'jefatura', soe: 'soe', secretaria: 'secretaria', teacher: 'app', student: 'app',
+  jefe: 'jefatura', soe: 'soe', secretaria: 'secretaria', jefetaller: 'taller', teacher: 'app', student: 'app',
 };
 const ROL_ES = {
   superadmin: 'Superadministrador', admin: 'Administrador', directivo: 'Directivo',
-  teacher: 'Docente', preceptor: 'Preceptor', jefe: 'Jefe de Sección', soe: 'SOE', secretaria: 'Secretaria', student: 'Alumno',
+  teacher: 'Docente', preceptor: 'Preceptor', jefe: 'Jefe de Sección', soe: 'SOE', secretaria: 'Secretaria', jefetaller: 'Jefe de Taller', student: 'Alumno',
 };
 
 const hallazgos = [];

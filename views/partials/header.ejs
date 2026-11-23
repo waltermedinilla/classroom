@@ -324,7 +324,7 @@ const _activeTheme = (function() {
         // Durante una suplantación, res.locals.user es el usuario suplantado, así que el
         // rótulo acompaña al rol que se está viendo. Es lo correcto.
         const _rolAdministrativo = typeof user !== 'undefined' && user
-          && ['admin', 'superadmin', 'directivo', 'preceptor', 'jefe', 'secretaria'].includes(user.role);
+          && ['admin', 'superadmin', 'directivo', 'preceptor', 'jefe', 'secretaria', 'jefetaller'].includes(user.role);
 
         // can() resuelve rol + lo que el superadmin haya deshabilitado para esta escuela
         // en /superadmin/roles (config/sections.js). Donde abajo se conserva además el
@@ -422,6 +422,19 @@ const _activeTheme = (function() {
           <span>Mis clases</span>
         </a>
         <% } %>
+      <% } %>
+      <%# Jefe de Taller (specs/jefe-de-taller.spec.md). Directivo y admin también ven el panel. %>
+      <% if (typeof user !== 'undefined' && user && ['jefetaller', 'directivo', 'admin'].includes(user.role) && !impersonating && puede('taller_resumen')) { %>
+        <a href="/taller" class="drawer-item">
+          <span class="material-symbols-outlined">construction</span>
+          <span>Talleres</span>
+        </a>
+      <% } %>
+      <% if (typeof user !== 'undefined' && user && user.role === 'jefetaller' && !impersonating && puede('app_courses')) { %>
+        <a href="/courses" class="drawer-item">
+          <span class="material-symbols-outlined">menu_book</span>
+          <span>Mis clases</span>
+        </a>
       <% } %>
       <% if (typeof user !== 'undefined' && user && user.role === 'admin' && !impersonating && puede('admin_dashboard')) { %>
         <a href="/admin" class="drawer-item">

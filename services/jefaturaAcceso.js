@@ -26,6 +26,10 @@ const ROLES_JEFATURA_POR_ROL = ['jefe'];
 // si se cambia uno sin el otro, el test de CA-52 falla.
 const ROLES_JEFATURA_POR_SECCION = ['teacher'];
 
+// Jefe de Taller (specs/jefe-de-taller.spec.md): entra por el rol y su alcance son TODAS las
+// materias de taller de la escuela (Course.esTaller), no las de unas secciones.
+const ROLES_JEFATURA_POR_TALLER = ['jefetaller'];
+
 // Lo que el admin puede AGREGAR a heads (DA-3). No es lo mismo que "quién entra": directivo
 // y admin ya ven todo por su rol, y ponerlos a cargo solo ensuciaría la columna "A cargo de".
 // Un preceptor a cargo sería multirrol, que es de specs/identidad-multiescuela.spec.md.
@@ -35,6 +39,7 @@ function modoJefatura(role) {
   if (ROLES_JEFATURA_SIN_LIMITE.includes(role))  return 'sin-limite';
   if (ROLES_JEFATURA_POR_ROL.includes(role))     return 'por-rol';
   if (ROLES_JEFATURA_POR_SECCION.includes(role)) return 'por-seccion';
+  if (ROLES_JEFATURA_POR_TALLER.includes(role))  return 'por-taller';
   return null;
 }
 
@@ -47,6 +52,7 @@ function decidirAccesoJefatura(user, cantidadSecciones) {
   const modo = user ? modoJefatura(user.role) : null;
   if (modo === 'sin-limite') return { entra: true, scopeAll: true };
   if (modo === 'por-rol')    return { entra: true, scopeAll: false };
+  if (modo === 'por-taller') return { entra: true, scopeAll: false };
   if (modo === 'por-seccion' && user.school && cantidadSecciones >= 1) {
     return { entra: true, scopeAll: false };
   }
@@ -112,6 +118,6 @@ function resolverHeads({ pedidos, actuales, usuarios, school }) {
 }
 
 module.exports = {
-  ROLES_JEFATURA_SIN_LIMITE, ROLES_JEFATURA_POR_ROL, ROLES_JEFATURA_POR_SECCION, ROLES_ELEGIBLES_JEFE,
+  ROLES_JEFATURA_SIN_LIMITE, ROLES_JEFATURA_POR_ROL, ROLES_JEFATURA_POR_SECCION, ROLES_JEFATURA_POR_TALLER, ROLES_ELEGIBLES_JEFE,
   modoJefatura, decidirAccesoJefatura, esElegibleComoJefe, resolverHeads,
 };

@@ -1,0 +1,73 @@
+<%# Resumen del día del Jefe de Taller (specs/jefe-de-taller.spec.md, F1). Los MEP con el mismo
+    "Docentes del día" de la Secretaria (RN-F1-3) y la asistencia de cada división.
+    ⭐ Como en la Secretaria, ningún texto dice "faltó": sin registro no es ausencia. %>
+<%- include('_cabeza', { titulo: 'Resumen del día' }) %>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/taller-nav', { activePage }) %>
+    <% const [yy, mm, dd] = fecha.split('-').map(Number);
+       const fechaTexto = fmt.fechaLarga(new Date(Date.UTC(yy, mm - 1, dd, 15))); %>
+
+    <div class="tl-barra">
+      <h1>Talleres · <%= fechaTexto %></h1>
+      <a class="tl-btn" href="/taller?fecha=<%= anterior %>" aria-label="Día anterior"><span class="material-symbols-outlined" style="font-size:18px">chevron_left</span></a>
+      <% if (fecha !== hoy) { %><a class="tl-btn" href="/taller">Hoy</a><% } %>
+      <% if (siguiente) { %><a class="tl-btn" href="/taller?fecha=<%= siguiente %>" aria-label="Día siguiente"><span class="material-symbols-outlined" style="font-size:18px">chevron_right</span></a><% } %>
+    </div>
+
+    <p class="tl-ayuda" style="margin-top:-6px">
+      <%= cantidadTalleres %> materias de taller · <%= filas.length %> MEP ·
+      <b><%= resumen.actividad %></b> con actividad, <b><%= resumen.ingreso %></b> solo ingresaron,
+      <b><%= resumen.sinRegistro %></b> sin registro en la plataforma.
+      <% if (!hayDatoIngreso) { %>Ese día la plataforma todavía no registraba ingresos.<% } %>
+    </p>
+
+    <section class="tl-caja" style="padding:0;overflow-x:auto">
+      <table class="tl-tabla">
+        <thead><tr><th>MEP</th><th>Talleres</th><th>Estado</th><th>Qué hizo</th></tr></thead>
+        <tbody>
+          <% filas.forEach(f => { %>
+            <tr>
+              <td><a href="/jefatura/docentes/<%= f.id %>"><b><%= f.name %></b></a><% if (!f.active) { %> <span class="tl-ayuda">(inactivo)</span><% } %></td>
+              <td>
+                <% f.materias.forEach(m => { %>
+                  <div><%= m.name %><% if (conClase.has(m.id)) { %> <span class="tl-chip clase">clase hoy</span><% } %></div>
+                <% }) %>
+              </td>
+              <td>
+                <span class="tl-chip <%= f.estado %>"><%= ESTADOS[f.estado] %></span>
+                <% if (f.textoPuntualidad) { %><div class="tl-ayuda"><%= f.textoPuntualidad %></div><% } %>
+              </td>
+              <td class="tl-ayuda">
+                <% if (!f.eventos.length) { %>—<% } %>
+                <% f.eventos.slice(0, 4).forEach(e => { %><div><%= fmt.hora ? fmt.hora(e.desde) : '' %> <%= e.texto %></div><% }) %>
+                <% if (f.eventos.length > 4) { %><div>y <%= f.eventos.length - 4 %> más</div><% } %>
+                <% if (f.nota) { %><div><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px">edit_note</span> <%= f.nota.texto %></div><% } %>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="tl-caja">
+      <h2>Asistencia de los cursos con taller</h2>
+      <p class="tl-ayuda" style="margin-top:0">Lo que cargó el preceptor ese día.</p>
+      <div class="tl-grid">
+        <% divisiones.forEach(d => { const a = d.asistencia; %>
+          <div class="tl-div">
+            <b><%= d.name %></b>
+            <% if (!a) { %><span class="tl-ayuda">Sin toma de asistencia</span>
+            <% } else { %>
+              <span class="tl-num"><%= a.presente %></span> presentes · <span class="tl-num"><%= a.tarde %></span> tarde ·
+              <span class="tl-num"><%= a.ausente %></span> ausentes<% if (a.justificado) { %> · <span class="tl-num"><%= a.justificado %></span> justificados<% } %>
+              <% if (a.abierta) { %><div class="tl-ayuda">Toma abierta<%= a.sinMarcar ? ` · ${a.sinMarcar} sin marcar` : '' %></div><% } %>
+            <% } %>
+          </div>
+        <% }) %>
+      </div>
+    </section>
+  </main>
+  <%- include('../partials/footer') %>
+</body>
+</html>

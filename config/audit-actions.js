@@ -254,6 +254,8 @@ const ACTIONS = {
   'course.horario_clases':   { label: 'cargó el horario de clases de', icon: 'calendar_view_week', color: '#1a73e8', category: 'secretaria' },
   // Horario oficial importado para comparar (specs/secretaria-horario-oficial.spec.md). Solo la
   // cantidad de cursos y renglones en la meta: los nombres de los docentes no van a la auditoría.
+  // Jefe de Taller (specs/jefe-de-taller.spec.md).
+  'taller.materias': { label: 'cambió las materias de taller', icon: 'construction', color: '#795548', category: 'taller' },
   'secretaria.oficial_importar': { label: 'importó el horario oficial', icon: 'fact_check', color: '#1a73e8', category: 'secretaria' },
 };
 
@@ -272,6 +274,7 @@ const CATEGORIES = {
   message:      'Mensajes',
   soe:          'Orientación Escolar',
   secretaria:   'Secretaría',
+  taller:       'Taller',
   import:       'Importación',
   system:       'Sistema',
   auth:         'Sesiones',

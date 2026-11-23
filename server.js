@@ -68,6 +68,7 @@ const attendanceRoutes   = require('./routes/attendance');
 const jefaturaRoutes     = require('./routes/jefatura');
 const soeRoutes          = require('./routes/soe');
 const secretariaRoutes   = require('./routes/secretaria');
+const tallerRoutes     = require('./routes/taller');
 const { BOTON_SUGERENCIAS_VISIBLE } = require('./config/sugerencias');
 const SALA_DISENOS_VISTA = require('./config/salaDisenos').paraVista();
 const backupRoutes       = require('./routes/backup');
@@ -434,6 +435,7 @@ app.use((req, res, next) => {
     jefe:       'Jefe de Sección',
     soe:        'SOE',
     secretaria: 'Secretaria',
+    jefetaller: 'Jefe de Taller',
     student:    'Alumno',
   };
   res.locals.appVersion = APP_VERSION;
@@ -733,6 +735,7 @@ app.get('/', (req, res) => {
   if (res.locals.user.role === 'soe') return res.redirect('/soe');
   // La secretaria cae en "Docentes del día". Mismo motivo: en /courses no tiene nada suyo.
   if (res.locals.user.role === 'secretaria') return res.redirect('/secretaria');
+  if (res.locals.user.role === 'jefetaller') return res.redirect('/taller');
   // Admin/superadmin caen en su propio panel, no en /courses — ese dashboard
   // ("Tus clases") es para docente/alumno. Antes, si el admin también era
   // dueño de alguna materia (Course.owner puede serlo, ver routes/admin.js),
@@ -800,6 +803,7 @@ app.use('/asistencia',  attendanceRoutes.alumnoRouter);
 app.use('/jefatura',    jefaturaRoutes);
 app.use('/soe',         soeRoutes);
 app.use('/secretaria',  secretariaRoutes);
+app.use('/taller',      tallerRoutes);
 // El lado del docente del módulo de recursos. Va suelto en la raíz (y no bajo /admin) porque
 // no es una pantalla de administración: la usa quien da clase.
 app.use('/reservas',    reservasRoutes);

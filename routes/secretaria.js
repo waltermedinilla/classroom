@@ -622,3 +622,5 @@ router.post('/curso/:divisionId/celda', async (req, res) => {
 });
 
 module.exports = router;
+// El panel del Jefe de Taller arma el mismo "Docentes del día" con los MEP (specs/jefe-de-taller.spec.md, RN-F1-3).
+module.exports.filasDelDia = filasDelDia;
