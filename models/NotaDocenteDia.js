@@ -4,6 +4,8 @@ const mongoose = require('mongoose');
 // "clase presencial en el taller"). Una por docente, día y escuela: editarla la reemplaza, y el
 // historial de ediciones queda en AuditLog (secretaria.nota_guardar / secretaria.nota_borrar).
 // Ver RN-12 y RN-13 de specs/secretaria-docentes-del-dia.spec.md.
+// Desde la F2 de specs/jefe-de-taller.spec.md también la escribe el Jefe de Taller sobre un MEP
+// (taller.nota_guardar / taller.nota_borrar): es el MISMO legajo del día, no uno aparte.
 //
 // ⚠️ El DOCENTE NO LA VE (RN-13, decisión de Walter del 2026-11-11). La leen la secretaria con
 // ese docente en su alcance, el directivo y el admin. Ninguna ruta del docente la consulta.

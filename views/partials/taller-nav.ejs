@@ -9,6 +9,12 @@
     Resumen del día
   </a>
   <% } %>
+  <% if (puede('taller_docentes')) { %>
+  <a href="/taller/docentes" class="admin-nav-item <%= activePage === 'docentes' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">fact_check</span>
+    Control de MEP
+  </a>
+  <% } %>
   <% if (esJefeTaller && puede('jefe_dashboard')) { %>
   <a href="/jefatura" class="admin-nav-item">
     <span class="material-symbols-outlined">assignment</span>
@@ -31,6 +37,18 @@
   <a href="/taller/jefes" class="admin-nav-item <%= activePage === 'jefes' ? 'active' : '' %>">
     <span class="material-symbols-outlined">groups</span>
     Jefes y MEP
+  </a>
+  <% } %>
+  <% if (puede('taller_horario')) { %>
+  <a href="/taller/horario" class="admin-nav-item <%= activePage === 'horario' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">calendar_view_week</span>
+    Horarios
+  </a>
+  <% } %>
+  <% if (puede('taller_rotacion')) { %>
+  <a href="/taller/rotacion" class="admin-nav-item <%= activePage === 'rotacion' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">autorenew</span>
+    Rotación
   </a>
   <% } %>
   <% if (typeof user !== 'undefined' && user && ['jefetaller', 'admin', 'superadmin'].includes(user.role) && puede('taller_materias')) { %>

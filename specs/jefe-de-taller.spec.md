@@ -1,9 +1,11 @@
 # Jefe de Taller
 
 > **Estado:** APROBADA por Walter el 2026-11-22 ("sí, adelante con la spec"), con P1 a P4
-> cerradas (ver § Preguntas). **F1 implementada**; F2 a F4, pendientes.
+> cerradas (ver § Preguntas). **F1 implementada** (1.0.135).
+> **2026-11-23:** Walter pidió *"generá la spec F2 y F4, la F3 eliminala, terminá la spec y
+> comenzá inmediatamente"*. **El pañol (F3) sale de la spec** y con él el rol `panolero`.
+> F2 y F4 quedan escritas acá y se implementan en la misma entrega.
 > Flujo SDD: arquitecto → **spec aprobada** → tester → implementador → revisor.
-> Se entrega por fases (F1 a F4). Cada fase se sube y se prueba por separado.
 
 ## Pedido
 
@@ -13,7 +15,7 @@ Respuestas de Walter (2026-11-22):
 
 | Pregunta | Respuesta |
 |---|---|
-| ¿Qué hace? | **Supervisar los talleres**, **controlar a los MEP**, **gestionar el pañol** y **rotación de grupos**. Agregó: *"Puede revisar también qué subió cada jefe de Taller."* |
+| ¿Qué hace? | **Supervisar los talleres**, **controlar a los MEP** y **rotación de grupos**. Agregó: *"Puede revisar también qué subió cada jefe de Taller."* (El pañol estaba en la respuesta y se sacó el 2026-11-23.) |
 | ¿Qué le toca? | **Todos los talleres** de la escuela: un solo alcance, sin asignación por persona. |
 
 ## Contexto: lo que ya existe y se reutiliza
@@ -22,9 +24,9 @@ Respuestas de Walter (2026-11-22):
 |---|---|---|
 | `Section` (`models/Section.js`) | Secciones de taller ("CONSTRUCCIONES 1"), con `divisions`, `courses` y `heads`, que son los **Jefes de Sección** | Ver P1 y P2 |
 | Rol `jefe` y Docente jefe (`specs/docente-jefe-de-seccion.spec.md`) | Ve, sin tocar, las actividades de las materias de sus secciones (`/jefatura`) | La supervisión (F1) usa las mismas consultas con otro alcance |
-| Panel Secretaría (`/secretaria`) | Docentes del día, ficha del docente, horario del curso y comparación con el oficial | El control de los MEP (F2) reutiliza los mismos servicios, filtrados a talleres |
-| `HorarioOficial` (fase 4 de Secretaria) | El horario oficial importado, con docente por renglón | F2: los horarios oficiales de los talleres |
-| Recursos y reservas (`Recurso`, `Reserva`) | Reserva de aulas y equipamiento **por módulo** | **No** alcanza para el pañol: no lleva stock, no presta a alumnos y no registra devoluciones. El pañol (F3) es un módulo nuevo y deja reservas como está |
+| Panel Secretaría (`/secretaria`) | Docentes del día, ficha del docente, notas del día, horario del curso y comparación con el oficial | El control de los MEP (F2) reutiliza `filasDelDia`, `NotaDocenteDia` y `compararCurso`, filtrados a talleres |
+| `HorarioOficial` (fase 4 de Secretaria) | El horario oficial importado, con docente por renglón | F2: los renglones oficiales de los talleres |
+| `Course.students` | Los alumnos inscriptos en cada materia | F4: los alumnos de una división son los inscriptos en sus materias |
 
 ## Decisiones de diseño
 
@@ -34,7 +36,7 @@ Respuestas de Walter (2026-11-22):
   misma importancia que un director").
 - Al entrar, `GET /` lo lleva a **`/taller`**.
 - Panel nuevo **`taller`** en `config/sections.js`, con sus secciones para que el admin pueda
-  apagarlas (ver la tabla de F1 a F4). Directivo, admin y superadmin también ven el panel.
+  apagarlas (ver la tabla de F1, F2 y F4). Directivo, admin y superadmin también ven el panel.
 - **Alcance: todos los talleres de la escuela** (decisión de Walter). No hay
   `assignedDivisions` ni selector de cursos para este rol.
 - Para el resto del sistema no es docente. Si además da clases, es la misma situación que el
@@ -56,9 +58,9 @@ Una **materia de taller** es una materia (`Course`) marcada con el campo nuevo
 
 ### D3 — Solo mira lo que no es suyo
 
-En F1 y F2 el Jefe de Taller **no escribe** actividades, entregas, notas ni asistencia: igual
-que el Jefe de Sección. Sí puede anotar sobre un MEP (la nota del día, como la Secretaria).
-Escribe solo en sus módulos propios: el pañol (F3) y la rotación (F4).
+El Jefe de Taller **no escribe** actividades, entregas, notas ni asistencia: igual que el Jefe
+de Sección. Escribe solo en tres cosas: la marca `esTaller` (F1), **la nota del día sobre un
+MEP** (F2) y **los grupos y las rotaciones** (F4).
 
 ---
 
@@ -105,112 +107,130 @@ Escribe solo en sus módulos propios: el pañol (F3) y la rotación (F4).
 
 ## F2 — Control de los MEP
 
+El Resumen del día (F1) ya muestra a los MEP **de un día**. F2 agrega lo que le falta a un jefe
+para *controlar*: ver la **semana o el mes completo** de cada MEP de un vistazo, abrir la
+**ficha** de uno y dejarle una **nota**, y comparar los **horarios de taller** contra el
+horario oficial.
+
 ### Pantallas
 
 | Ruta | Qué muestra |
 |---|---|
-| `GET /taller/docentes?dia=` | Docentes del día **solo de los MEP**: la misma vista y el mismo servicio que `/secretaria`, con los docentes limitados a los de materias de taller |
-| `GET /taller/docentes/:id` | La ficha del MEP, igual a la de la Secretaria, con sus notas |
-| `GET /taller/horario` | Los horarios de los talleres por curso, con el modo **Comparar** contra el horario oficial (fase 4 de Secretaria). Solo se muestran los renglones oficiales de materias de taller |
+| `GET /taller/docentes?periodo=semana\|mes&fecha=` | **Control de los MEP.** Una fila por MEP y una columna por día hábil del período (los días de la grilla de la escuela, `Horario.dias`; sin grilla, lunes a viernes), hasta hoy. Cada celda es el estado del día de "Docentes del día": **A** (con actividad, verde), **I** (solo ingresó, azul) o **—** (sin registro, gris). El borde dice la puntualidad (naranja = llegó tarde a su primera clase; verde = a tiempo). Un punto marca que ese día tiene nota. Los días en que la grilla no le pone clase se ven atenuados. Al final de la fila, los totales: días con clase, con actividad, solo ingreso, sin registro (de los días con clase) y llegadas tarde. Cada celda lleva a la ficha de ese día. `periodo=dia` redirige al Resumen del día |
+| `GET /taller/docentes/:id?fecha=` | **La ficha del MEP**: estado del día, puntualidad, en la plataforma (de qué hora a qué hora), minutos en la sala en vivo, publicó y corrigió; lo que quedó registrado; y la **nota del día**. Enlace a sus actividades (`/jefatura/docentes/:id`) |
+| `POST /taller/docentes/:id/nota` | Guarda, reemplaza o (vacía) borra la nota del día. Body `{ fecha, texto }`, responde JSON |
+| `GET /taller/horario?curso=&modo=` | **Horarios de taller.** Sin curso: una tarjeta por curso con taller, con el resumen de la comparación contra el oficial (coinciden, diferencias, a confirmar). Con curso: la comparación renglón por renglón (la misma tabla de Secretaría), limitada a los talleres |
 
 ### Reglas
 
-- **RN-F2-1.** Las notas del Jefe de Taller sobre un MEP se guardan en `NotaDocenteDia` con
-  autor y rol. La Secretaria las ve y viceversa: es el mismo legajo del día.
-- **RN-F2-2.** Para comparar se usa `services/secretariaHorarioOficial.js` tal cual. Un renglón
-  oficial cuenta como de taller si su materia coincide (`coincideMateria`) con una materia de
-  taller de esa división.
-
----
-
-## F3 — Pañol
-
-### Modelo nuevo
-
-**`PanolItem`**: lo que hay en el pañol.
-
-| Campo | Tipo | Notas |
-|---|---|---|
-| `school` | ObjectId | |
-| `nombre` | String | Único por escuela |
-| `tipo` | `'herramienta' \| 'maquina' \| 'insumo'` | Los insumos **se consumen**; herramientas y máquinas **se prestan y vuelven** |
-| `seccion` | ObjectId (`Section`) o null | De qué taller es |
-| `cantidad` | Number ≥ 0 | El stock total |
-| `unidad` | String | 'u', 'm', 'kg'… |
-| `minimo` | Number o null | Con el stock por debajo, se muestra el aviso "reponer" |
-| `ubicacion`, `notas`, `codigo` | String | `codigo` es el número de inventario |
-| `estado` | `'ok' \| 'reparacion' \| 'baja'` | En reparación o de baja no se presta |
-
-**`PanolMovimiento`**: cada salida, devolución, consumo o ajuste. Funciona como libro diario:
-**no se edita ni se borra**; un error se corrige con otro movimiento.
-
-| Campo | Notas |
-|---|---|
-| `item`, `school`, `cantidad` | |
-| `tipo` | `'prestamo' \| 'devolucion' \| 'consumo' \| 'ingreso' \| 'ajuste'` |
-| `a` | A quién: un alumno (User), un docente (User) o una división entera |
-| `prestamo` | En una devolución, el préstamo al que corresponde |
-| `devolverAntes` | Fecha prevista de devolución (solo en préstamos) |
-| `estadoAlVolver` | `'ok' \| 'danado' \| 'falta'` (solo en devoluciones) |
-| `registradoPor`, `fecha`, `nota` | |
-
-### Pantallas
-
-| Ruta | Qué hace |
-|---|---|
-| `GET /taller/panol` | Inventario con stock disponible (total menos lo prestado), filtros por sección y tipo, y avisos de "reponer" y de "préstamos vencidos" |
-| `POST /taller/panol/items` y `/items/:id` | Alta y edición de ítems |
-| `POST /taller/panol/prestamos` | Registra una salida; puede llevar varios ítems a la misma persona |
-| `POST /taller/panol/devoluciones` | Registra una vuelta, total o parcial, con el estado |
-| `POST /taller/panol/consumos`, `/ingresos`, `/ajustes` | Insumos y correcciones |
-| `GET /taller/panol/prestamos` | Lo que está afuera, quién lo tiene y desde cuándo |
-| `GET /taller/panol/:id` | Historial del ítem |
-
-### Reglas
-
-- **RN-F3-1.** No se presta más de lo disponible. Se valida con una operación atómica sobre el
-  disponible, como `SlotOcupacion` evita la doble reserva, para que dos préstamos simultáneos
-  no dejen el stock negativo.
-- **RN-F3-2.** Un ítem en reparación o de baja no se presta.
-- **RN-F3-3.** Cada movimiento se audita (`taller.panol.*`).
-- **RN-F3-4.** Registran el **Jefe de Taller** y el **Pañolero** (P3). El Pañolero es un rol
-  nuevo, `panolero`, que **solo** entra al pañol: aterriza en `/taller/panol` y el resto del
-  panel le da 403. Lo crea un admin o un superadmin, como cualquier usuario. Directivo y admin
-  ven el pañol, pero no registran salvo que sean superadmin.
+- **RN-F2-1.** Las notas se guardan en `NotaDocenteDia`, la **misma** colección de la
+  Secretaria: una nota por docente y día, con autor. La Secretaria ve la del Jefe de Taller y al
+  revés; el último que guarda la reemplaza y queda como autor. Es un solo legajo del día. El
+  docente no la ve (RN-13 de Secretaria, sin cambios).
+- **RN-F2-2.** Escribe notas **solo el Jefe de Taller** (y la Secretaria, desde su panel).
+  Directivo, admin y superadmin entran a la ficha y leen. Audita `taller.nota_guardar` y
+  `taller.nota_borrar`. No se anota un día futuro. Máximo 500 caracteres.
+- **RN-F2-3.** La ficha, la nota y el control son **solo de MEP de talleres de la escuela**. Un
+  id que no es MEP de un taller de su escuela da **404** (RN-F1-1).
+- **RN-F2-4.** El control arma cada día con `filasDelDia` de `routes/secretaria.js`, igual que el
+  Resumen (RN-F1-3). No hay una segunda versión de "tuvo clase / llegó tarde". Un mes son como
+  mucho 23 días hábiles: se calcula por día y no se guarda nada.
+- **RN-F2-5.** Para comparar se usa `services/secretariaHorarioOficial.js` tal cual
+  (`compararCurso`). Un renglón oficial es **de taller** si su materia coincide
+  (`coincideMateria`) con una materia de taller de esa división, o si el nombre oficial es de
+  taller (`sugerirTaller`). Del lado de la plataforma entran solo las materias con `esTaller`.
+  Así "No está cargado" y "No está en el oficial" hablan solo de talleres.
+- **RN-F2-6.** La pantalla de horarios es de **solo lectura**. Para corregir un horario se usa
+  Secretaría → Horario del curso (la carga sigue siendo de la Secretaria y el admin).
 
 ---
 
 ## F4 — Rotación de grupos
 
 En los talleres, una división se parte en **grupos** que van pasando por las **estaciones**
-(electricidad, carpintería, herrería…), cada una con su MEP, durante un período.
+(electricidad, carpintería, herrería…), cada una con su taller y su MEP, durante un período.
 
 ### Modelos nuevos
 
-**`GrupoTaller`**: `school`, `division`, `nombre` ("Grupo A"), `alumnos[]` (User, rol
-student, de esa división).
+**`GruposTaller`** — un documento por división (`{ school, division }` único).
 
-**`RotacionTaller`**: `school`, `division`, `nombre` ("1er cuatrimestre 2027"),
-`estaciones[]`, `desde`, `hasta`, `cambiaCada` (ver P4) y `calendario`.
-- Cada estación tiene `nombre`, `course` (la materia de taller), `meps[]` y `seccion`.
-- El `calendario` es la lista de períodos; en cada uno, `{ grupo → estación }`.
+| Campo | Notas |
+|---|---|
+| `school`, `division` | |
+| `grupos[]` | `{ _id, nombre, alumnos: [User] }`. El `_id` de cada grupo es fijo: las rotaciones lo usan |
+| `actualizadoPor` | |
+
+Guardar reemplaza la lista entera de una vez, así la regla "un alumno en un solo grupo" se valida
+completa antes de escribir (RN-F4-1).
+
+**`RotacionTaller`**
+
+| Campo | Notas |
+|---|---|
+| `school`, `division`, `nombre` | "1er cuatrimestre 2027" |
+| `desde`, `hasta` | `'YYYY-MM-DD'`, en hora de Argentina; `hasta` inclusive |
+| `cambiaCada` | `'semana' \| 'quincena' \| 'mes' \| 'manual'` (P4) |
+| `estaciones[]` | `{ _id, nombre, course (la materia de taller), admiteVarios: Boolean }`. Los MEP de la estación son los docentes de su materia: no se copian |
+| `periodos[]` | `{ desde, hasta, asignacion: [{ grupo, estacion \| null }] }`. `null` = ese período el grupo no tiene estación |
+| `creadoPor`, `actualizadoPor` | |
+
+### Cómo se arman los períodos
+
+- **Semana:** el primer período va de `desde` al domingo de esa semana; después, semanas de lunes
+  a domingo; el último termina en `hasta`.
+- **Quincena:** igual, de a dos semanas.
+- **Mes:** el primero de `desde` a fin de mes; después, meses calendario; el último termina en
+  `hasta`.
+- **Manual:** se escriben las **fechas en que cambia** (una por renglón). Cada fecha empieza un
+  período nuevo.
+- Tope: 60 períodos.
+
+### "Generar": la rotación circular
+
+Con los grupos en su orden (G1…Gn) y las estaciones en su orden (E1…Em), en el período *p* el
+grupo *i* va a la estación *(i + p) mod m*. Así, período a período, cada grupo pasa a la
+estación siguiente. Si hay más grupos que estaciones, dos grupos caen juntos: se permite solo si
+esa estación admite varios; si no, "Generar" avisa y no guarda. Si hay más estaciones que
+grupos, alguna queda libre cada período. Después de generar, cada celda se puede corregir a mano.
 
 ### Pantallas
 
 | Ruta | Qué hace |
 |---|---|
-| `GET/POST /taller/grupos/:divisionId` | Armar los grupos: repartir alumnos a mano o "en partes iguales" (al azar u ordenados por apellido) |
-| `GET/POST /taller/rotaciones/...` | Crear la rotación. **"Generar"** arma el calendario circular (cada período, cada grupo pasa a la estación siguiente) y después se puede corregir a mano |
-| `GET /taller/rotaciones/:id` | Grilla de períodos × grupos con la estación de cada uno; resalta el período actual |
+| `GET /taller/rotacion` | Un renglón por curso con taller: cuántos grupos tiene, sus rotaciones (la vigente, resaltada) y los botones **Grupos** y **Nueva rotación** |
+| `GET /taller/rotacion/grupos/:divisionId` y `POST` | **Armar los grupos.** La lista de alumnos de la división con un selector de grupo al lado de cada uno; nombre de cada grupo editable; botones para sumar o sacar grupos, y **"Repartir en partes iguales"** por apellido o al azar (se hace en la pantalla y se revisa antes de guardar). Audita `taller.grupos` |
+| `GET /taller/rotacion/nueva?division=` y `POST /taller/rotacion` | **Crear la rotación**: nombre, desde, hasta, cada cuánto cambia (y las fechas, si es manual) y las estaciones: los talleres de la división con un tilde, el nombre de la estación (por defecto el del taller) y "admite más de un grupo". Al crear, genera el calendario circular. Audita `taller.rotacion_crear` |
+| `GET /taller/rotacion/:id` | **La grilla**: una fila por período y una columna por grupo, con la estación (y su MEP) de cada uno. El período actual va resaltado. Quien edita ve un selector en cada celda, **Guardar**, **Volver a generar** y **Borrar** |
+| `POST /taller/rotacion/:id/calendario` | Guarda las correcciones a mano. Audita `taller.rotacion_editar` |
+| `POST /taller/rotacion/:id/generar` | Vuelve a armar el calendario circular (pierde las correcciones). Audita `taller.rotacion_editar` |
+| `POST /taller/rotacion/:id/borrar` | Borra la rotación (con confirmación). Audita `taller.rotacion_borrar` |
+
+### En la materia (RN-F4-4)
+
+En la página de una materia de taller que es estación de una rotación vigente, debajo de la
+cabecera, una franja:
+
+- **MEP** (titular o co-docente): *"Rotación «1er cuatrimestre» · del 16/11 al 22/11: Grupo B
+  (12 alumnos)"*. Si ningún grupo le toca: *"esta semana no tenés grupo"*.
+- **Alumno**: *"Rotación de talleres · del 16/11 al 22/11 te toca **Electricidad**, con Pérez"*.
+  Si su grupo no tiene estación ese período, lo dice. Si no está en ningún grupo, no se muestra.
+- Los demás (directivo, preceptor…) no ven la franja.
 
 ### Reglas
 
-- **RN-F4-1.** Un alumno está en un solo grupo por división.
-- **RN-F4-2.** En el mismo período, dos grupos no pueden estar en la misma estación, salvo que
-  la estación diga que admite más de uno.
-- **RN-F4-3.** Lo ven también el MEP, en su materia ("esta semana tenés al Grupo B"), y el
-  alumno, en su materia de taller ("esta semana: Electricidad, con Pérez"). Solo lo edita el
-  Jefe de Taller.
+- **RN-F4-1.** Un alumno está en **un solo grupo** por división. Solo entran alumnos inscriptos
+  en alguna materia de esa división. Entre 1 y 12 grupos; nombres de 1 a 40 caracteres, sin
+  repetir.
+- **RN-F4-2.** En el mismo período, **dos grupos no pueden estar en la misma estación**, salvo
+  que la estación admita más de uno.
+- **RN-F4-3.** Editan grupos y rotaciones el **Jefe de Taller**, el **admin** y el
+  **superadmin** (los mismos que marcan materias de taller). El directivo las ve, sin editar.
+- **RN-F4-4.** El MEP y el alumno ven solo la franja de su materia (arriba). No entran al panel.
+- **RN-F4-5.** Las estaciones son materias **de taller de esa división** y de la escuela; una
+  rotación de otra escuela da 404.
+- **RN-F4-6.** Un grupo borrado después de armar una rotación aparece en la grilla como "Grupo
+  eliminado" hasta que se vuelve a generar o se corrige.
+- **RN-F4-7.** `desde` ≤ `hasta`, y como mucho 400 días entre los dos.
 
 ---
 
@@ -219,17 +239,18 @@ student, de esa división).
 | | Respuesta | Qué cambia |
 |---|---|---|
 | **P1** "Qué subió cada jefe de Taller" | *"A los Jefes, y a los MEP que tiene a cargo."* | `/taller/jefes` muestra cada Jefe de Sección y, adentro, sus MEP, con lo que subió cada uno (F1). Hay un solo Jefe de Taller, el general |
-| **P2** Cómo se reconoce un taller | **Marca y Secciones** | `Course.esTaller` para la materia; las Secciones agrupan por especialidad y las usa el pañol |
-| **P3** Quién registra en el pañol | **Jefe de Taller y Pañolero** | Rol nuevo `panolero`, que solo entra al pañol (RN-F3-4). Entra en F3 |
+| **P2** Cómo se reconoce un taller | **Marca y Secciones** | `Course.esTaller` para la materia; las Secciones agrupan por especialidad |
+| **P3** Quién registra en el pañol | ~~Jefe de Taller y Pañolero~~ | **Sin efecto**: el pañol salió de la spec el 2026-11-23 |
 | **P4** Cada cuánto rotan | **Se elige al crear la rotación** | `cambiaCada`: `'semana' \| 'quincena' \| 'mes' \| 'manual'` |
 
 ## Fuera de alcance
 
+- **El pañol** (inventario, préstamos, rol `panolero`): Walter lo sacó el 2026-11-23.
 - Que el Jefe de Taller sea a la vez docente con el mismo usuario. Si hace falta, se resuelve
   como el Docente jefe, en otra spec.
 - Las notas o calificaciones de taller: siguen en la materia, como cualquier otra.
-- Compras o presupuesto del pañol.
 - Asignar Jefes de Taller por especialidad: Walter eligió un alcance único.
+- Que la asistencia de la materia se tome por grupo: la rotación informa, no cambia la asistencia.
 
 ## Lugares a tocar por el rol nuevo (F1)
 
@@ -242,16 +263,31 @@ Es la misma checklist que usó la Secretaria (`specs/secretaria-docentes-del-dia
 | `routes/superadmin.js`, `routes/auth.js` | listas de roles y lista blanca de autoregistro (no se autoregistra) |
 | `server.js` | redirect de `GET /` y `res.locals.roleNames` |
 | `config/sections.js` | panel `taller` y sus secciones; `app_courses` y `app_profile` |
-| `config/audit-actions.js` | `taller.materias`, `taller.panol.*`, `taller.grupos`, `taller.rotacion` |
-| (F3) todo lo anterior otra vez para `panolero` | rol, aterrizaje en `/taller/panol`, nombres y colores, `test:roles` |
+| `config/audit-actions.js` | `taller.materias` |
 | `middleware/auth.js` | `IngresoDiario` (que su ingreso también cuente) |
 | `routes/admin.js` y vistas de usuarios | alta con el rol nuevo; nombre y color del rol |
 | `views/superadmin/*` | listas y nombres de roles |
-| `routes/backup.js` | las colecciones nuevas de F3 y F4 (`optional: true`) |
 | `tests/roles/check-roles.js` | `ROLES` y `LANDING` |
 
-Archivos nuevos en F1: `routes/taller.js`, `middleware/taller.js`, `services/tallerAlcance.js`,
-`views/taller/*`, `views/partials/taller-nav.ejs`.
+Archivos nuevos en F1: `routes/taller.js`, `services/tallerAlcance.js`, `views/taller/*`,
+`views/partials/taller-nav.ejs`.
+
+## Lugares a tocar en F2 y F4
+
+| Archivo | Qué |
+|---|---|
+| `routes/taller.js` | F2: `/docentes`, `/docentes/:id`, `/docentes/:id/nota`, `/horario`; monta las rutas de F4 en `/rotacion` |
+| `routes/tallerRotacion.js` (nuevo) | F4 |
+| `services/tallerControl.js` (nuevo) | F2: días hábiles del período, la matriz MEP × día y sus totales, el filtro de renglones de taller |
+| `services/tallerRotacion.js` (nuevo) | F4: períodos, calendario circular, validaciones, "qué le toca hoy" |
+| `models/GruposTaller.js`, `models/RotacionTaller.js` (nuevos) | F4 |
+| `config/sections.js` | `taller_docentes`, `taller_horario`, `taller_rotacion` |
+| `config/audit-actions.js` | `taller.nota_guardar`, `taller.nota_borrar`, `taller.grupos`, `taller.rotacion_crear`, `taller.rotacion_editar`, `taller.rotacion_borrar` |
+| `routes/backup.js` | `grupostallers` y `rotaciontallers` (`optional: true`) |
+| `routes/courses.js`, `views/course.ejs`, `views/partials/rotacion-taller.ejs` (nuevo) | La franja de RN-F4-4 |
+| `views/secretaria/_comparacion.ejs` | Acepta `enlaceOficial` (el Jefe de Taller no entra a `/secretaria/oficial`) |
+| `views/partials/taller-nav.ejs`, `views/taller/*` | Solapas y pantallas nuevas |
+| `models/NotaDocenteDia.js` | Solo el comentario: ahora también escribe el Jefe de Taller |
 
 ## Criterios de aceptación de F1 (`tests/unit/jefeTaller.test.js`)
 
@@ -263,7 +299,8 @@ Archivos nuevos en F1: `routes/taller.js`, `middleware/taller.js`, `services/tal
   jefatura. Una actividad de otra escuela, o de una materia sin la marca, no se ve en
   `/jefatura/actividades/:id` (la regla de alcance que ya tiene la jefatura).
 - **JT-04** El Jefe de Taller no puede escribir en actividades, entregas, notas ni asistencia.
-  Todos esos POST le dan 403.
+  Todos esos POST le dan 403. En `routes/taller.js` las únicas escrituras son la marca
+  `esTaller` y la nota del día (D3).
 - **JT-05** `/taller/materias` lo usan el admin y el Jefe de Taller. El preceptor y el docente
   reciben 403. Cada cambio se audita.
 - **JT-06** El resumen del día usa `services/secretariaDia.js`: no hay una segunda versión de
@@ -271,17 +308,54 @@ Archivos nuevos en F1: `routes/taller.js`, `middleware/taller.js`, `services/tal
 - **JT-07** `/taller/jefes` lista solo a los `heads` de las Secciones de su escuela, y bajo cada
   uno, solo los MEP de las materias de taller de **sus** Secciones. Un MEP que está en dos
   Secciones aparece en las dos.
-
 - **JT-08** `ventanaDelPeriodo`: día, semana de lunes a domingo y mes; anterior y siguiente;
   nada futuro; hora de Argentina; diciembre → enero.
 - **JT-09** `resumenPorSeccion` suma los talleres de cada Sección (por división o sueltos),
   ordena lo último publicado y junta en "Talleres sin sección" lo que no está en ninguna.
 - **JT-10** En todas las listas de roles, el Jefe de Taller va justo después del Directivo.
 
-Los criterios de F2, F3 y F4 se escriben al empezar cada fase, con las respuestas de P1 a P4.
+## Criterios de aceptación de F2 (`tests/unit/jefeTallerF2.test.js`)
+
+- **JT-11** `diasHabiles(ventana, diasGrilla, hoy)`: solo los días de la grilla (o lunes a
+  viernes sin grilla), dentro del período y nunca después de hoy.
+- **JT-12** `matrizControl` arma una fila por MEP con una celda por día (estado, puntualidad,
+  nota, si tenía clase) y los totales: días con clase, con actividad, solo ingreso, sin registro
+  **contando solo los días con clase**, y llegadas tarde. Un MEP sin fila un día (no existía o
+  no tenía materias) queda con la celda vacía, no "sin registro".
+- **JT-13** `esRenglonDeTaller` acepta el renglón oficial cuya materia coincide con un taller de
+  la división o cuyo nombre es de taller, y rechaza "Lengua" y "Matemática".
+  `filtrarOficialTaller` devuelve una copia del oficial con solo esos renglones.
+- **JT-14** La nota: escribe solo `jefetaller` (`ROLES_ANOTAN_TALLER`); usa `NotaDocenteDia`
+  con la clave `{ school, docente, fecha }`; audita `taller.nota_guardar` / `taller.nota_borrar`;
+  rechaza fechas futuras con `esFutura` y valida con `textoDeNota`.
+- **JT-15** La ficha, la nota y el control resuelven el MEP con `docentesDelAlcance` sobre los
+  talleres de la escuela, y un id fuera de eso da 404.
+- **JT-16** La pantalla de horarios usa `compararCurso` y la tabla `_comparacion.ejs` de
+  Secretaría; la tabla no enlaza a `/secretaria/oficial` cuando se le pasa `enlaceOficial: null`.
+
+## Criterios de aceptación de F4 (`tests/unit/jefeTallerF4.test.js`)
+
+- **JT-20** `armarPeriodos`: semana (el primero hasta el domingo, después lunes a domingo, el
+  último corta en `hasta`), quincena, mes (meses calendario, cambio de año) y manual (fechas
+  ordenadas, sin repetir, solo las que caen dentro). Tope de 60.
+- **JT-21** `generarCalendario`: en el período *p*, el grupo *i* va a la estación *(i+p) mod m*.
+  Con más grupos que estaciones y ninguna que admita varios, devuelve error; si una admite
+  varios, lo permite.
+- **JT-22** `validarCalendario` rechaza dos grupos en la misma estación en un período (salvo
+  `admiteVarios`), grupos o estaciones que no existen, y una cantidad de períodos distinta.
+- **JT-23** `validarGrupos`: un alumno en un solo grupo, solo alumnos de la división, 1 a 12
+  grupos, nombres de 1 a 40 caracteres sin repetir.
+- **JT-24** `queLeToca`: para el alumno, la estación de su grupo en el período que contiene hoy
+  (o `null` si no está en un grupo o no hay período); para el MEP, los grupos que tiene su
+  materia en ese período.
+- **JT-25** Las rutas de F4 escriben solo `GruposTaller` y `RotacionTaller`, editan solo
+  `jefetaller`, `admin` y `superadmin`, auditan cada cambio, y filtran todo por `school`.
+  Las colecciones nuevas están en el backup.
 
 ## Plan de migración
 
 - **F1:** campo nuevo `Course.esTaller` con default false. No cambia nada de lo existente
   hasta que alguien marca materias. El rol nuevo no tiene usuarios hasta que un admin cree uno.
-- **F3 y F4:** colecciones nuevas, sin tocar datos existentes.
+- **F2:** sin cambios de base. Usa `NotaDocenteDia`, que ya existe.
+- **F4:** dos colecciones nuevas (`grupostallers`, `rotaciontallers`), sin tocar datos
+  existentes. Las materias sin rotación no muestran la franja.

@@ -1,0 +1,186 @@
+<%# Armar los grupos de taller de un curso (specs/jefe-de-taller.spec.md, F4, RN-F4-1).
+    Los datos van escapados en data-*: nada de JSON sin escapar en la página. %>
+<%- include('_cabeza', { titulo: 'Grupos · ' + division.name }) %>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/taller-nav', { activePage }) %>
+    <style>
+      .gr-grupos { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+      .gr-grupo { display:flex; align-items:center; gap:4px; border:1px solid var(--border, #dadce0); border-radius:10px; padding:4px 6px 4px 10px; background:var(--surface, #fff); }
+      .gr-grupo input { border:0; font:inherit; font-weight:600; width:110px; background:transparent; color:inherit; }
+      .gr-grupo .n { font-size:12px; color:var(--text-secondary, #5f6368); }
+      .gr-grupo button { border:0; background:transparent; cursor:pointer; color:var(--text-secondary, #5f6368); padding:2px; }
+      .gr-sel { font:inherit; padding:4px 8px; border:1px solid var(--border, #dadce0); border-radius:8px; background:var(--surface, #fff); color:inherit; }
+      #grEstado { font-size:13px; }
+    </style>
+
+    <p style="margin:0 0 10px"><a href="/taller/rotacion" style="color:#1a73e8;text-decoration:none;font-size:13px">
+      <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px">arrow_back</span> Rotación de grupos</a></p>
+    <div class="tl-barra"><h1>Grupos de <%= division.name %></h1></div>
+
+    <div id="grDatos" data-alumnos="<%= JSON.stringify(alumnos) %>" data-grupos="<%= JSON.stringify(grupos) %>"
+         data-editar="<%= puedeEditar ? '1' : '' %>" data-max="<%= MAX_GRUPOS %>" data-division="<%= division._id %>"></div>
+
+    <% if (!alumnos.length) { %>
+      <section class="tl-caja"><p class="tl-ayuda" style="margin:0">Este curso no tiene alumnos inscriptos en sus materias.</p></section>
+    <% } else { %>
+      <section class="tl-caja">
+        <h2>Grupos</h2>
+        <div class="gr-grupos" id="grGrupos"></div>
+        <% if (puedeEditar) { %>
+          <div class="tl-barra" style="margin-bottom:0">
+            <button type="button" class="tl-btn" id="grAgregar"><span class="material-symbols-outlined" style="font-size:18px">add</span> Agregar grupo</button>
+            <span class="tl-ayuda">Repartir en partes iguales:</span>
+            <button type="button" class="tl-btn" id="grApellido">por apellido</button>
+            <button type="button" class="tl-btn" id="grAzar">al azar</button>
+            <span style="flex:1 1 auto"></span>
+            <span id="grEstado" class="tl-ayuda"></span>
+            <button type="button" class="tl-btn on" id="grGuardar">Guardar</button>
+          </div>
+          <p class="tl-ayuda" style="margin-bottom:0">Repartir cambia la pantalla; no se guarda hasta que tocás <b>Guardar</b>. Cada alumno va en un solo grupo.</p>
+        <% } %>
+      </section>
+
+      <section class="tl-caja" style="padding:0;overflow-x:auto">
+        <table class="tl-tabla">
+          <thead><tr><th>Alumno</th><th style="width:200px">Grupo</th></tr></thead>
+          <tbody id="grAlumnos"></tbody>
+        </table>
+      </section>
+    <% } %>
+  </main>
+
+  <script>
+    (function () {
+      var datos = document.getElementById('grDatos');
+      var tbody = document.getElementById('grAlumnos');
+      if (!tbody) return;
+      var alumnos = JSON.parse(datos.dataset.alumnos);
+      var editar = !!datos.dataset.editar;
+      var max = Number(datos.dataset.max);
+      var nuevo = 0;
+      var grupos = JSON.parse(datos.dataset.grupos).map(function (g) { return { key: g.id, id: g.id, nombre: g.nombre }; });
+      var de = {};   // alumnoId → key del grupo
+      JSON.parse(datos.dataset.grupos).forEach(function (g) { g.alumnos.forEach(function (a) { de[a] = g.id; }); });
+      if (!grupos.length && editar) {
+        ['Grupo A', 'Grupo B'].forEach(function (n) { grupos.push({ key: 'n' + (++nuevo), id: null, nombre: n }); });
+      }
+      var LETRAS = 'ABCDEFGHIJKL';
+
+      function pintarGrupos() {
+        var cont = document.getElementById('grGrupos');
+        cont.textContent = '';
+        grupos.forEach(function (g, i) {
+          var cuantos = alumnos.filter(function (a) { return de[a.id] === g.key; }).length;
+          var div = document.createElement('div');
+          div.className = 'gr-grupo';
+          if (editar) {
+            var inp = document.createElement('input');
+            inp.value = g.nombre; inp.maxLength = 40; inp.setAttribute('aria-label', 'Nombre del grupo');
+            inp.addEventListener('input', function () { g.nombre = inp.value; pintarAlumnos(); });
+            div.appendChild(inp);
+          } else {
+            var b = document.createElement('b'); b.textContent = g.nombre; div.appendChild(b);
+          }
+          var n = document.createElement('span'); n.className = 'n'; n.textContent = cuantos + ' alumnos'; div.appendChild(n);
+          if (editar && grupos.length > 1) {
+            var x = document.createElement('button');
+            x.type = 'button'; x.title = 'Sacar el grupo'; x.setAttribute('aria-label', 'Sacar ' + g.nombre);
+            x.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px">close</span>';
+            x.addEventListener('click', function () {
+              grupos.splice(i, 1);
+              Object.keys(de).forEach(function (a) { if (de[a] === g.key) delete de[a]; });
+              pintar();
+            });
+            div.appendChild(x);
+          }
+          cont.appendChild(div);
+        });
+      }
+
+      function pintarAlumnos() {
+        tbody.textContent = '';
+        alumnos.forEach(function (a) {
+          var tr = document.createElement('tr');
+          var td1 = document.createElement('td');
+          td1.textContent = a.name + (a.active ? '' : ' (inactivo)');
+          var td2 = document.createElement('td');
+          if (editar) {
+            var sel = document.createElement('select');
+            sel.className = 'gr-sel'; sel.setAttribute('aria-label', 'Grupo de ' + a.name);
+            var o0 = document.createElement('option'); o0.value = ''; o0.textContent = 'Sin grupo'; sel.appendChild(o0);
+            grupos.forEach(function (g) {
+              var o = document.createElement('option'); o.value = g.key; o.textContent = g.nombre || '(sin nombre)';
+              if (de[a.id] === g.key) o.selected = true;
+              sel.appendChild(o);
+            });
+            sel.addEventListener('change', function () { if (sel.value) de[a.id] = sel.value; else delete de[a.id]; pintarGrupos(); });
+            td2.appendChild(sel);
+          } else {
+            var g = grupos.filter(function (x) { return x.key === de[a.id]; })[0];
+            td2.textContent = g ? g.nombre : 'Sin grupo';
+          }
+          tr.appendChild(td1); tr.appendChild(td2);
+          tbody.appendChild(tr);
+        });
+      }
+
+      function pintar() { pintarGrupos(); pintarAlumnos(); }
+      pintar();
+      if (!editar) return;
+
+      document.getElementById('grAgregar').addEventListener('click', function () {
+        if (grupos.length >= max) return alert('Como mucho ' + max + ' grupos.');
+        grupos.push({ key: 'n' + (++nuevo), id: null, nombre: 'Grupo ' + LETRAS[grupos.length] });
+        pintar();
+      });
+      function repartir(lista) {
+        de = {};
+        lista.forEach(function (a, i) { de[a.id] = grupos[i % grupos.length].key; });
+        pintar();
+      }
+      document.getElementById('grApellido').addEventListener('click', function () {
+        // Por apellido: bloques seguidos (los primeros N al grupo A, etc.), no salteados.
+        var n = alumnos.length, k = grupos.length, base = Math.floor(n / k), resto = n % k, i = 0;
+        de = {};
+        grupos.forEach(function (g, gi) { var tam = base + (gi < resto ? 1 : 0); for (var j = 0; j < tam; j++) de[alumnos[i++].id] = g.key; });
+        pintar();
+      });
+      document.getElementById('grAzar').addEventListener('click', function () {
+        var l = alumnos.slice();
+        for (var i = l.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = l[i]; l[i] = l[j]; l[j] = t; }
+        repartir(l);
+      });
+
+      var est = document.getElementById('grEstado');
+      document.getElementById('grGuardar').addEventListener('click', async function () {
+        var btn = this;
+        btn.disabled = true; est.textContent = 'Guardando…';
+        try {
+          var cuerpo = { grupos: grupos.map(function (g) {
+            return { id: g.id, nombre: g.nombre, alumnos: alumnos.filter(function (a) { return de[a.id] === g.key; }).map(function (a) { return a.id; }) };
+          }) };
+          var res = await fetch('/taller/rotacion/grupos/' + datos.dataset.division, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo),
+          });
+          var data = await res.json().catch(function () { return {}; });
+          if (!res.ok) { est.textContent = data.error || 'No se pudo guardar.'; return; }
+          // Los grupos nuevos ya tienen id: se actualizan las claves para el próximo guardado.
+          data.grupos.forEach(function (g, i) {
+            var viejo = grupos[i].key;
+            Object.keys(de).forEach(function (a) { if (de[a] === viejo) de[a] = g.id; });
+            grupos[i].key = g.id; grupos[i].id = g.id;
+          });
+          pintar();
+          est.textContent = 'Guardado.';
+        } catch (e) {
+          est.textContent = 'No se pudo guardar. Revisá la conexión.';
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    })();
+  </script>
+  <%- include('../partials/footer') %>
+</body>
+</html>

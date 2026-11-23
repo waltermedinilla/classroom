@@ -1,0 +1,41 @@
+<%# Rotación de grupos — inicio (specs/jefe-de-taller.spec.md, F4). Un renglón por curso con taller. %>
+<%- include('_cabeza', { titulo: 'Rotación de grupos' }) %>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/taller-nav', { activePage }) %>
+    <div class="tl-barra"><h1>Rotación de grupos</h1></div>
+    <p class="tl-ayuda" style="margin-top:-6px">Cada curso se parte en grupos que van pasando por las estaciones de taller. Primero se arman los grupos y después la rotación.</p>
+
+    <% cursos.forEach(c => { %>
+      <section class="tl-caja">
+        <div class="tl-barra" style="margin-bottom:6px">
+          <h2 style="flex:1 1 auto;margin:0"><%= c.name %></h2>
+          <a class="tl-btn" href="/taller/rotacion/grupos/<%= c.id %>"><span class="material-symbols-outlined" style="font-size:18px">groups</span> Grupos</a>
+          <% if (puedeEditar) { %><a class="tl-btn on" href="/taller/rotacion/nueva?division=<%= c.id %>"><span class="material-symbols-outlined" style="font-size:18px">add</span> Nueva rotación</a><% } %>
+        </div>
+        <div class="tl-ayuda">Talleres: <%= c.talleres.join(' · ') %></div>
+        <div class="tl-ayuda" style="margin-top:4px">
+          <% if (!c.grupos.length) { %>Sin grupos todavía.
+          <% } else { %>Grupos: <%= c.grupos.map(g => g.nombre + ' (' + g.alumnos + ')').join(' · ') %><% } %>
+        </div>
+        <% if (c.rotaciones.length) { %>
+          <table class="tl-tabla" style="margin-top:8px">
+            <thead><tr><th>Rotación</th><th>Fechas</th><th>Cambia</th><th>Estaciones</th></tr></thead>
+            <tbody>
+              <% c.rotaciones.forEach(r => { %>
+                <tr>
+                  <td><a href="/taller/rotacion/<%= r.id %>"><b><%= r.nombre %></b></a><% if (r.vigente) { %> <span class="tl-chip actividad">vigente</span><% } %></td>
+                  <td class="tl-num"><%= r.desde.split('-').reverse().join('/') %> al <%= r.hasta.split('-').reverse().join('/') %></td>
+                  <td><%= r.cambia %></td>
+                  <td class="tl-num"><%= r.estaciones %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+      </section>
+    <% }) %>
+  </main>
+  <%- include('../partials/footer') %>
+</body>
+</html>

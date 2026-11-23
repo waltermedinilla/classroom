@@ -1,0 +1,119 @@
+<%# La ficha del día de UN MEP — panel Taller (specs/jefe-de-taller.spec.md, F2). La misma
+    información que la ficha de la Secretaria, y la nota del día, que es el MISMO legajo
+    (NotaDocenteDia, RN-F2-1). El MEP no ve la nota. %>
+<%- include('_cabeza', { titulo: fila.name }) %>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/taller-nav', { activePage }) %>
+    <%- include('../secretaria/_estilos') %>
+    <%
+      const s = fila.senales;
+      const [yy, mm, dd] = fecha.split('-').map(Number);
+      const fechaTexto = fmt.fechaLarga(new Date(Date.UTC(yy, mm - 1, dd, 15)));
+      const base = '/taller/docentes/' + fila.id + '?fecha=';
+    %>
+
+    <p style="margin:0 0 10px"><a href="/taller/docentes?fecha=<%= fecha %>" style="color:#1a73e8;text-decoration:none;font-size:13px">
+      <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px">arrow_back</span> Control de los MEP</a></p>
+
+    <div class="sd-barra">
+      <div>
+        <h2 style="margin:0;font-size:20px"><%= fila.name %></h2>
+        <div class="sd-mats" style="margin-top:4px"><%= fila.materias.map(m => m.name).join(' · ') %></div>
+        <% if (!fila.active) { %><div class="sd-desh">Cuenta deshabilitada</div><% } %>
+        <div style="margin-top:6px"><a href="/jefatura/docentes/<%= fila.id %>" style="font-size:13px;color:#1a73e8;text-decoration:none">Ver sus actividades</a></div>
+      </div>
+      <div class="sd-fecha">
+        <a class="sd-nav" href="<%= base + anterior %>" aria-label="Día anterior"><span class="material-symbols-outlined">chevron_left</span></a>
+        <b><%= fechaTexto %></b>
+        <a class="sd-nav <%= siguiente ? '' : 'off' %>" href="<%= siguiente ? base + siguiente : '#' %>" aria-label="Día siguiente"><span class="material-symbols-outlined">chevron_right</span></a>
+        <% if (fecha !== hoy) { %><a class="sd-btn" href="<%= base + hoy %>">Hoy</a><% } %>
+      </div>
+    </div>
+
+    <div class="sd-resumen">
+      <div class="sd-cont <%= ['aTiempo', 'tarde'].includes(fila.puntualidad.estado) ? 'pt-' + fila.puntualidad.estado : '' %>"
+           style="<%= ['aTiempo', 'tarde'].includes(fila.puntualidad.estado) ? 'border:2px solid var(--pt);background:var(--pt-bg)' : '' %>">
+        <div class="t">Estado del día</div><div style="margin-top:4px"><span class="sd-est <%= fila.estado %>"><%= ESTADOS[fila.estado] %></span></div>
+        <% if (fila.textoPuntualidad) { %><div class="sd-pt <%= 'pt-' + fila.puntualidad.estado %>"><%= fila.textoPuntualidad %></div><% } %>
+      </div>
+      <div class="sd-cont"><div class="t">En la plataforma</div><div class="n" style="font-size:16px">
+        <% if (!hayDatoIngreso) { %><span class="sd-off">sin dato</span><% } else if (s.ingreso) { %><%= fmt.hora(s.ingreso.primeraVez) %> – <%= fmt.hora(s.ingreso.ultimaVez) %><% } else { %><span class="sd-off">—</span><% } %></div></div>
+      <div class="sd-cont"><div class="t">Sala en vivo</div><div class="n" style="font-size:16px"><%= s.sala.minutos %> min</div></div>
+      <div class="sd-cont"><div class="t">Publicó · Corrigió</div><div class="n" style="font-size:16px"><%= s.publico.cantidad %> · <%= s.corrigio.cantidad %></div></div>
+    </div>
+
+    <div class="sd-card" style="margin-bottom:14px">
+      <%- include('../secretaria/_linea', { filas: [fila], linkFecha: fecha, hayDatoIngreso }) %>
+    </div>
+
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,360px);gap:14px;align-items:start" class="sd-dos">
+      <div class="sd-card">
+        <h3 style="margin:0 0 10px;font-size:15px">Lo que quedó registrado</h3>
+        <% if (!fila.eventos.length) { %>
+          <p style="color:#5f6368;font-size:13px;margin:0">No hay registro en la plataforma este día. Eso no significa que no haya trabajado.</p>
+        <% } else { %>
+          <table class="sd-tabla"><tbody>
+            <% fila.eventos.forEach(e => { %>
+              <tr>
+                <td style="white-space:nowrap;width:1%"><%= fmt.hora(e.desde) %><% if (e.hasta) { %>–<%= fmt.hora(e.hasta) %><% } %></td>
+                <td><%= e.texto %></td>
+                <td class="sd-mats"><%= e.materia %></td>
+              </tr>
+            <% }) %>
+          </tbody></table>
+        <% } %>
+      </div>
+
+      <div class="sd-card">
+        <h3 style="margin:0 0 10px;font-size:15px">Nota del día</h3>
+        <% if (puedeAnotar) { %>
+          <textarea id="nota" maxlength="<%= NOTA_MAX %>" rows="5" class="sd-input" style="width:100%;box-sizing:border-box;resize:vertical"
+                    placeholder="Por ejemplo: clase práctica en el taller sin plataforma, avisó que llega tarde…"><%= fila.nota ? fila.nota.texto : '' %></textarea>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px">
+            <span id="notaEstado" style="font-size:12px;color:#5f6368"><% if (fila.nota) { %>Última edición: <%= fila.nota.autorNombre %>, <%= fmt.diaMesHora(fila.nota.updatedAt) %><% } %></span>
+            <button id="notaGuardar" class="sd-btn on" type="button">Guardar</button>
+          </div>
+          <p class="sd-ayuda" style="margin-top:8px">La ven la secretaría y la dirección; el MEP no. Es la misma nota del día que usa la secretaría: si una de las dos la cambia, queda la última. Dejala vacía y guardá para borrarla.</p>
+        <% } else if (fila.nota) { %>
+          <p style="font-size:14px;margin:0;white-space:pre-wrap"><%= fila.nota.texto %></p>
+          <p class="sd-ayuda">Anotó <%= fila.nota.autorNombre %>, <%= fmt.diaMesHora(fila.nota.updatedAt) %>.</p>
+        <% } else { %>
+          <p style="color:#5f6368;font-size:13px;margin:0">Sin nota.</p>
+        <% } %>
+      </div>
+    </div>
+    <style>@media (max-width: 800px) { .sd-dos { grid-template-columns:minmax(0,1fr) !important; } }</style>
+  </main>
+
+  <% if (puedeAnotar) { %>
+  <script>
+    (function () {
+      var btn = document.getElementById('notaGuardar');
+      var txt = document.getElementById('nota');
+      var est = document.getElementById('notaEstado');
+      btn.addEventListener('click', async function () {
+        btn.disabled = true;
+        est.textContent = 'Guardando…';
+        try {
+          var res = await fetch('/taller/docentes/<%= fila.id %>/nota', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fecha: '<%= fecha %>', texto: txt.value }),
+          });
+          var data = await res.json().catch(function () { return {}; });
+          if (!res.ok) { est.textContent = data.error || 'No se pudo guardar.'; return; }
+          est.textContent = data.nota ? 'Guardada.' : 'Nota borrada.';
+          if (!data.nota) txt.value = '';
+        } catch (e) {
+          est.textContent = 'No se pudo guardar. Revisá la conexión.';
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    })();
+  </script>
+  <% } %>
+  <%- include('../partials/footer') %>
+</body>
+</html>

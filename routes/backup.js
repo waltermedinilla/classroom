@@ -61,6 +61,8 @@ const ActivityTemplate    = require('../models/ActivityTemplate');
 const IngresoDiario       = require('../models/IngresoDiario');
 const NotaDocenteDia      = require('../models/NotaDocenteDia');
 const HorarioOficial      = require('../models/HorarioOficial');
+const GruposTaller        = require('../models/GruposTaller');
+const RotacionTaller      = require('../models/RotacionTaller');
 const TemplateAssignment  = require('../models/TemplateAssignment');
 const AuditLog            = require('../models/AuditLog');
 const { logDeRuta } = require('../middleware/route-log');
@@ -247,6 +249,10 @@ const COLLECTIONS = [
   // Horario oficial importado para comparar (specs/secretaria-horario-oficial.spec.md).
   // Se puede volver a importar del JSON, pero respaldarlo es barato y evita perderlo.
   { name: 'horariooficials', model: HorarioOficial, optional: true },
+  // Rotación de grupos de taller (specs/jefe-de-taller.spec.md, F4). Van juntas: una rotación
+  // sin los grupos no dice qué alumnos van a cada estación.
+  { name: 'grupostallers',   model: GruposTaller,   optional: true },
+  { name: 'rotaciontallers', model: RotacionTaller, optional: true },
 
   // Auditoría. Es un registro, no datos de la escuela, pero es el único lugar donde queda
   // asentado quién hizo qué — incluida la lectura de un legajo del SOE. Si se pierde, no

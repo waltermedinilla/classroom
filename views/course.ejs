@@ -58,6 +58,9 @@
       <% } %>
     </div>
 
+    <%# Rotación de talleres (specs/jefe-de-taller.spec.md, RN-F4-4). %>
+    <% if (locals.rotacionTaller) { %><%- include('partials/rotacion-taller', { r: rotacionTaller }) %><% } %>
+
     <% if (locals.joinByCode && course.canManage(user)) { %>
     <script>
       function copiarCodigoClase(btn) {

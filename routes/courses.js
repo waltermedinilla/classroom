@@ -18,6 +18,7 @@ const { SYSTEM_OWNER_EMAIL } = require('../config/maintenance');
 const { INTERESTS, MAX_INTERESTS } = require('../config/interests');
 // Constantes de la sala en vivo (la solapa "En vivo" del detalle de materia).
 const live = require('../services/liveRoom');
+const { franjaDeRotacion } = require('../services/tallerFranja');
 const { personasVisibles } = require('../services/personasVisibles');
 // Asistencia de preceptoría: de acá sale el cartel "Dar presente" del inicio del alumno.
 const asistencia = require('../services/attendance');
@@ -707,8 +708,11 @@ router.get('/:id', requireAuth, async (req, res) => {
         .filter(t => !taken.has(t._id.toString()));
     }
 
+    // Rotación de talleres (specs/jefe-de-taller.spec.md, RN-F4-4): solo materias de taller.
+    const rotacionTaller = course.esTaller ? await franjaDeRotacion(course, res.locals.user) : null;
+
     res.render('course', {
-      course, featuredTeacher, joinByCode: JOIN_BY_CODE_ACTIVO,
+      course, featuredTeacher, joinByCode: JOIN_BY_CODE_ACTIVO, rotacionTaller,
       manageTeachers, schoolTeachers, personas,
       // Constantes de la solapa "En vivo" (services/liveRoom.js). Son valores fijos, no
       // consultas: la sala se llena sola con su primer poll — ver el comentario en course.ejs.

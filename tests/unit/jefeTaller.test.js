@@ -55,11 +55,13 @@ test('JT-03 · la jefatura tiene el modo por-taller: alcance = materias con esTa
 // ── JT-04 ────────────────────────────────────────────────────────────────────
 
 test('JT-04 · el Jefe de Taller no escribe en lo ajeno', () => {
-  // La única escritura del panel es la marca esTaller.
+  // Las únicas escrituras del panel son la marca esTaller y la nota del día (D3, F2).
   const rutas = leer('routes', 'taller.js');
-  const escrituras = rutas.match(/\.(updateMany|updateOne|create|insertMany|deleteMany|deleteOne|findOneAndUpdate|save)\(/g) || [];
-  assert.deepStrictEqual([...new Set(escrituras)], ['.updateMany(']);
+  const escrituras = rutas.match(/\.(updateMany|updateOne|create|insertMany|deleteMany|deleteOne|findOneAndUpdate|findOneAndDelete|save)\(/g) || [];
+  assert.deepStrictEqual([...new Set(escrituras)].sort(), ['.findOneAndDelete(', '.findOneAndUpdate(', '.updateMany(']);
   assert.match(rutas, /\{ \$set: \{ esTaller: true \} \}/);
+  for (const m of rutas.matchAll(/(\w+)\.(findOneAndUpdate|findOneAndDelete)\(/g)) assert.strictEqual(m[1], 'NotaDocenteDia', m[0]);
+  for (const m of rutas.matchAll(/(\w+)\.updateMany\(/g)) assert.strictEqual(m[1], 'Course', m[0]);
   // No es docente, preceptor ni secretaria para el resto del sistema.
   for (const [archivo, patron] of [
     ['middleware/secretaria.js', /jefetaller/],

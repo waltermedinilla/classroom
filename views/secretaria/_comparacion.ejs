@@ -1,6 +1,9 @@
 <%# La comparación de un curso con el horario oficial (specs/secretaria-horario-oficial.spec.md, D4).
     Recibe `comparacion` ({ oficial, filas, sobran, resumen } o { oficial: null, hayImportado }),
-    NOMBRE_DIA y ETIQUETA_ESTADO. Todo lo que sale del JSON se escapa. %>
+    NOMBRE_DIA y ETIQUETA_ESTADO. Todo lo que sale del JSON se escapa.
+    `enlaceOficial` (opcional): adónde llevan los enlaces al horario oficial; null los saca
+    (el Jefe de Taller no entra a /secretaria/oficial). %>
+<% const _enlaceOficial = typeof enlaceOficial === 'undefined' ? '/secretaria/oficial' : enlaceOficial; %>
 <style>
   .co-res { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
   .co-res .n { background:#fff; border:1px solid #dadce0; border-radius:10px; padding:8px 12px; font-size:13px; }
@@ -29,7 +32,7 @@
     <% } else { %>
       Todavía no se importó el horario oficial.
     <% } %>
-    <a href="/secretaria/oficial">Ver el horario oficial</a>.
+    <% if (_enlaceOficial) { %><a href="<%= _enlaceOficial %>">Ver el horario oficial</a>.<% } %>
   </div>
 <% } else {
      const o = comparacion.oficial, r = comparacion.resumen;
@@ -37,7 +40,7 @@
   <p class="sd-ayuda" style="margin-top:0">
     Oficial: <b><%= o.curso %>° <%= String(o.division).padStart(2, '0') %>°</b> · <%= o.turno %> · <%= o.carrera %>.
     Se compara por la hora de cada renglón contra los módulos de la grilla de la escuela.
-    <a href="/secretaria/oficial">Resumen de todos los cursos</a>.
+    <% if (_enlaceOficial) { %><a href="<%= _enlaceOficial %>">Resumen de todos los cursos</a>.<% } %>
   </p>
   <% (o.notas || []).forEach(n => { %><div class="sd-aviso"><%= n %></div><% }) %>
 
@@ -103,6 +106,6 @@
   <p class="sd-ayuda">
     <b>Coincide</b>: misma materia y mismo docente en esos módulos. <b>¿Mismo docente?</b>: mismo apellido y parte del nombre,
     hay que confirmarlo. <b>Fuera de la grilla</b>: el horario oficial no cae en ningún módulo de la escuela (por ejemplo,
-    Educación Física a contraturno); no es una diferencia. Para corregir lo cargado, usá el modo <b>Cargar</b>.
+    Educación Física a contraturno); no es una diferencia. <% if (typeof textoCorregir === 'string') { %><%= textoCorregir %><% } else { %>Para corregir lo cargado, usá el modo <b>Cargar</b>.<% } %>
   </p>
 <% } %>

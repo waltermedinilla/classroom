@@ -172,6 +172,10 @@ const SECTIONS = [
   { key: 'taller_secciones',   panel: 'taller', label: 'Secciones',       icon: 'account_tree', path: '/taller/secciones',   roles: ['jefetaller', 'directivo', 'admin', 'superadmin'] },
   { key: 'taller_jefes',       panel: 'taller', label: 'Jefes y MEP',     icon: 'groups',       path: '/taller/jefes',       roles: ['jefetaller', 'directivo', 'admin', 'superadmin'] },
   { key: 'taller_materias',    panel: 'taller', label: 'Materias de taller', icon: 'checklist', path: '/taller/materias',    roles: ['jefetaller', 'admin', 'superadmin'] },
+  // F2: control de los MEP y horarios de taller. F4: rotación de grupos.
+  { key: 'taller_docentes',    panel: 'taller', label: 'Control de MEP',  icon: 'fact_check',   path: '/taller/docentes',    roles: ['jefetaller', 'directivo', 'admin', 'superadmin'] },
+  { key: 'taller_horario',     panel: 'taller', label: 'Horarios',        icon: 'calendar_view_week', path: '/taller/horario', roles: ['jefetaller', 'directivo', 'admin', 'superadmin'] },
+  { key: 'taller_rotacion',    panel: 'taller', label: 'Rotación',        icon: 'autorenew',    path: '/taller/rotacion',    roles: ['jefetaller', 'directivo', 'admin', 'superadmin'] },
 
   { key: 'app_courses', panel: 'app', label: 'Mis clases',     icon: 'menu_book',       path: '/courses',               roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'secretaria', 'jefetaller', 'student'], locked: true },
   { key: 'app_profile', panel: 'app', label: 'Mi perfil',      icon: 'account_circle',  path: '/courses/profile',       roles: ['admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'secretaria', 'jefetaller', 'student'] },

@@ -1,0 +1,91 @@
+<%# Control de los MEP (specs/jefe-de-taller.spec.md, F2): una fila por MEP y una columna por día
+    hábil del período, con el estado de "Docentes del día" y la puntualidad. Sin registro no es
+    ausencia: ningún texto dice "faltó". %>
+<%- include('_cabeza', { titulo: 'Control de los MEP' }) %>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/taller-nav', { activePage }) %>
+    <style>
+      .cm-tabla { border-collapse:separate; border-spacing:0; font-size:13px; min-width:100%; }
+      .cm-tabla th, .cm-tabla td { padding:6px 5px; border-bottom:1px solid var(--border-light, #f1f3f4); text-align:center; white-space:nowrap; }
+      .cm-tabla th { font-weight:600; color:var(--text-secondary, #5f6368); font-size:12px; position:sticky; top:0; background:var(--surface, #fff); }
+      .cm-tabla th.hoy { color:#174ea6; }
+      .cm-tabla td.nom, .cm-tabla th.nom { text-align:left; position:sticky; left:0; background:var(--surface, #fff); z-index:1; white-space:normal; min-width:170px; }
+      .cm-c { display:inline-flex; align-items:center; justify-content:center; position:relative; width:28px; height:28px; border-radius:7px; font-weight:700; font-size:12px; text-decoration:none; border:2px solid transparent; }
+      .cm-c.actividad { background:#e6f4ea; color:#137333; }
+      .cm-c.ingreso { background:#e8f0fe; color:#174ea6; }
+      .cm-c.sinRegistro { background:#f1f3f4; color:#5f6368; }
+      .cm-c.sinClase { opacity:.45; }
+      .cm-c.p-tarde { border-color:#e8710a; }
+      .cm-c.p-aTiempo { border-color:#34a853; }
+      .cm-c .nota { position:absolute; top:-3px; right:-3px; width:8px; height:8px; border-radius:50%; background:#795548; border:1px solid #fff; }
+      .cm-tot { font-variant-numeric:tabular-nums; color:var(--text-secondary, #5f6368); }
+      .cm-tot b { color:var(--text-primary, #202124); }
+      .cm-ley { display:flex; gap:14px; flex-wrap:wrap; align-items:center; font-size:12.5px; color:var(--text-secondary, #5f6368); margin:4px 0 12px; }
+      .cm-ley .cm-c { width:22px; height:22px; font-size:11px; }
+    </style>
+
+    <div class="tl-barra"><h1>Control de los MEP</h1></div>
+    <%- include('_periodo', { ventana, base: '/taller/docentes', soloSemanaMes: true }) %>
+
+    <div class="cm-ley">
+      <span><span class="cm-c actividad">A</span> con actividad</span>
+      <span><span class="cm-c ingreso">I</span> solo ingresó</span>
+      <span><span class="cm-c sinRegistro">—</span> sin registro</span>
+      <span><span class="cm-c sinRegistro p-tarde">&nbsp;</span> llegó tarde</span>
+      <span><span class="cm-c sinRegistro p-aTiempo">&nbsp;</span> a tiempo</span>
+      <span><span class="cm-c sinRegistro sinClase">&nbsp;</span> no tenía clase de taller</span>
+      <span><span class="cm-c sinRegistro"><span class="nota"></span>&nbsp;</span> tiene nota</span>
+    </div>
+    <% if (!hayGrilla) { %><p class="tl-ayuda">La escuela no tiene cargada la grilla de módulos: no se puede saber qué días tenía clase cada MEP ni si llegó a tiempo.</p><% } %>
+
+    <% if (!fechas.length) { %>
+      <section class="tl-caja"><p class="tl-ayuda" style="margin:0">El período todavía no tiene días hábiles.</p></section>
+    <% } else if (!filas.length) { %>
+      <section class="tl-caja"><p class="tl-ayuda" style="margin:0">Las materias de taller no tienen docentes asignados.</p></section>
+    <% } else { %>
+      <section class="tl-caja" style="padding:0;overflow:auto;max-height:75vh">
+        <table class="cm-tabla">
+          <thead>
+            <tr>
+              <th class="nom">MEP</th>
+              <% fechas.forEach(f => { const [, mm, dd] = f.split('-'); %>
+                <th class="<%= f === hoy ? 'hoy' : '' %>"><%= ['', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá', 'Do'][new Date(f + 'T12:00:00Z').getUTCDay() || 7] %><br><%= Number(dd) %>/<%= Number(mm) %></th>
+              <% }) %>
+              <th title="Días con clase de taller según la grilla">Con clase</th>
+              <th title="De los días con clase">A · I · —</th>
+              <th>Tarde</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% filas.forEach(fila => { %>
+              <tr>
+                <td class="nom">
+                  <a href="/taller/docentes/<%= fila.id %>"><b><%= fila.name %></b></a>
+                  <div class="tl-ayuda" style="font-size:11.5px"><%= fila.materias.map(m => m.name).join(' · ') %></div>
+                </td>
+                <% fechas.forEach(f => { const c = fila.celdas[f]; %>
+                  <td>
+                    <% if (!c) { %><span class="tl-ayuda">·</span>
+                    <% } else { %>
+                      <a class="cm-c <%= c.estado %> <%= c.conClase ? 'p-' + c.puntualidad : 'sinClase' %>" href="/taller/docentes/<%= fila.id %>?fecha=<%= f %>"
+                         title="<%= f %> · <%= c.estado === 'actividad' ? 'con actividad' : c.estado === 'ingreso' ? 'solo ingresó' : 'sin registro' %><%= c.texto ? ' · ' + c.texto : '' %><%= c.nota ? ' · tiene nota' : '' %>">
+                        <%= c.estado === 'actividad' ? 'A' : c.estado === 'ingreso' ? 'I' : '—' %><% if (c.nota) { %><span class="nota"></span><% } %>
+                      </a>
+                    <% } %>
+                  </td>
+                <% }) %>
+                <td class="cm-tot"><b><%= fila.totales.conClase %></b></td>
+                <td class="cm-tot"><b><%= fila.totales.actividad %></b> · <%= fila.totales.ingreso %> · <%= fila.totales.sinRegistro %></td>
+                <td class="cm-tot"><b style="<%= fila.totales.tarde ? 'color:#b45309' : '' %>"><%= fila.totales.tarde %></b></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </section>
+      <p class="tl-ayuda">Es lo que quedó registrado en la plataforma: un día sin registro no significa que el MEP no haya trabajado (puede haber dado la clase sin usar la plataforma). Tocá un día para ver la ficha y dejar una nota.</p>
+    <% } %>
+  </main>
+  <%- include('../partials/footer') %>
+</body>
+</html>

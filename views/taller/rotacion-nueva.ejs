@@ -1,0 +1,95 @@
+<%# Crear una rotación de talleres (specs/jefe-de-taller.spec.md, F4). Al crearla se genera el
+    calendario circular; después se corrige en la grilla. %>
+<%- include('_cabeza', { titulo: 'Nueva rotación · ' + division.name }) %>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/taller-nav', { activePage }) %>
+    <style>
+      .rn-campo { display:flex; flex-direction:column; gap:4px; font-size:13px; }
+      .rn-campo input, .rn-campo select, .rn-campo textarea { font:inherit; padding:7px 10px; border:1px solid var(--border, #dadce0); border-radius:8px; background:var(--surface, #fff); color:inherit; }
+      .rn-fila { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+      .rn-est td { vertical-align:middle; }
+      .rn-est input[type=text] { font:inherit; padding:5px 8px; border:1px solid var(--border, #dadce0); border-radius:8px; width:100%; box-sizing:border-box; background:var(--surface, #fff); color:inherit; }
+    </style>
+
+    <p style="margin:0 0 10px"><a href="/taller/rotacion" style="color:#1a73e8;text-decoration:none;font-size:13px">
+      <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px">arrow_back</span> Rotación de grupos</a></p>
+    <div class="tl-barra"><h1>Nueva rotación · <%= division.name %></h1></div>
+
+    <% if (!grupos.length) { %>
+      <section class="tl-caja">
+        <p style="margin:0">Este curso todavía no tiene grupos. <a href="/taller/rotacion/grupos/<%= division._id %>">Armá los grupos</a> y después volvé a crear la rotación.</p>
+      </section>
+    <% } else { %>
+    <form id="rnForm" data-division="<%= division._id %>">
+      <section class="tl-caja">
+        <div class="rn-fila">
+          <label class="rn-campo" style="flex:1 1 260px">Nombre<input name="nombre" required maxlength="80" placeholder="Por ejemplo: 1er cuatrimestre <%= hoy.slice(0, 4) %>"></label>
+          <label class="rn-campo">Desde<input type="date" name="desde" required value="<%= hoy %>"></label>
+          <label class="rn-campo">Hasta<input type="date" name="hasta" required></label>
+          <label class="rn-campo">Los grupos cambian
+            <select name="cambiaCada" id="rnCambia">
+              <% CAMBIA_CADA.forEach(c => { %><option value="<%= c %>"><%= ETIQUETA_CAMBIA[c] %></option><% }) %>
+            </select>
+          </label>
+        </div>
+        <label class="rn-campo" id="rnCortesCaja" style="display:none;max-width:320px">Fechas en que cambian (una por renglón)
+          <textarea name="cortes" rows="4" placeholder="2027-04-05&#10;2027-05-03"></textarea>
+        </label>
+        <p class="tl-ayuda" style="margin-bottom:0">Grupos de este curso: <%= grupos.join(' · ') %>.</p>
+      </section>
+
+      <section class="tl-caja">
+        <h2>Estaciones</h2>
+        <p class="tl-ayuda" style="margin-top:0">Tildá los talleres por los que pasan los grupos, en el orden de la rotación. Cada período, cada grupo pasa a la estación siguiente.</p>
+        <table class="tl-tabla rn-est">
+          <thead><tr><th style="width:1%">Usar</th><th>Taller</th><th>Nombre de la estación</th><th style="width:1%;white-space:nowrap">Admite más de un grupo</th></tr></thead>
+          <tbody>
+            <% talleres.forEach(t => { %>
+              <tr data-course="<%= t.id %>">
+                <td><input type="checkbox" class="rnUsar" checked aria-label="Usar <%= t.name %>"></td>
+                <td><%= t.name %></td>
+                <td><input type="text" class="rnNombre" maxlength="80" value="<%= t.name %>" aria-label="Nombre de la estación"></td>
+                <td style="text-align:center"><input type="checkbox" class="rnVarios" aria-label="Admite más de un grupo"></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </section>
+
+      <div class="tl-barra">
+        <span style="flex:1 1 auto"></span>
+        <span id="rnEstado" class="tl-ayuda"></span>
+        <button type="submit" class="tl-btn on">Crear y generar el calendario</button>
+      </div>
+    </form>
+    <script>
+      (function () {
+        var f = document.getElementById('rnForm');
+        var cambia = document.getElementById('rnCambia');
+        cambia.addEventListener('change', function () { document.getElementById('rnCortesCaja').style.display = cambia.value === 'manual' ? '' : 'none'; });
+        var est = document.getElementById('rnEstado');
+        f.addEventListener('submit', async function (ev) {
+          ev.preventDefault();
+          var cuerpo = {
+            division: f.dataset.division,
+            nombre: f.nombre.value, desde: f.desde.value, hasta: f.hasta.value, cambiaCada: cambia.value,
+            cortes: f.cortes.value.split(/[\s,;]+/).filter(Boolean),
+            estaciones: Array.prototype.filter.call(f.querySelectorAll('tr[data-course]'), function (tr) { return tr.querySelector('.rnUsar').checked; })
+              .map(function (tr) { return { course: tr.dataset.course, nombre: tr.querySelector('.rnNombre').value, admiteVarios: tr.querySelector('.rnVarios').checked }; }),
+          };
+          est.textContent = 'Creando…';
+          try {
+            var res = await fetch('/taller/rotacion', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo) });
+            var data = await res.json().catch(function () { return {}; });
+            if (!res.ok) { est.textContent = data.error || 'No se pudo crear.'; return; }
+            location.href = '/taller/rotacion/' + data.id;
+          } catch (e) { est.textContent = 'No se pudo crear. Revisá la conexión.'; }
+        });
+      })();
+    </script>
+    <% } %>
+  </main>
+  <%- include('../partials/footer') %>
+</body>
+</html>

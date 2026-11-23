@@ -256,6 +256,12 @@ const ACTIONS = {
   // cantidad de cursos y renglones en la meta: los nombres de los docentes no van a la auditoría.
   // Jefe de Taller (specs/jefe-de-taller.spec.md).
   'taller.materias': { label: 'cambió las materias de taller', icon: 'construction', color: '#795548', category: 'taller' },
+  'taller.nota_guardar':     { label: 'anotó sobre el día de un MEP',      icon: 'edit_note',  color: '#795548', category: 'taller' },
+  'taller.nota_borrar':      { label: 'borró la nota del día de un MEP',   icon: 'edit_off',   color: '#795548', category: 'taller' },
+  'taller.grupos':           { label: 'armó los grupos de taller',         icon: 'groups',     color: '#795548', category: 'taller' },
+  'taller.rotacion_crear':   { label: 'creó una rotación de talleres',     icon: 'autorenew',  color: '#795548', category: 'taller' },
+  'taller.rotacion_editar':  { label: 'cambió una rotación de talleres',   icon: 'autorenew',  color: '#795548', category: 'taller' },
+  'taller.rotacion_borrar':  { label: 'borró una rotación de talleres',    icon: 'delete',     color: '#795548', category: 'taller' },
   'secretaria.oficial_importar': { label: 'importó el horario oficial', icon: 'fact_check', color: '#1a73e8', category: 'secretaria' },
 };
 

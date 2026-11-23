@@ -1,0 +1,137 @@
+<%# Una rotación: grilla períodos × grupos (specs/jefe-de-taller.spec.md, F4). El período actual va
+    resaltado. Quien edita corrige cada celda, vuelve a generar o borra. %>
+<%- include('_cabeza', { titulo: rotacion.nombre }) %>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/taller-nav', { activePage }) %>
+    <style>
+      .rv-tabla { border-collapse:separate; border-spacing:0; font-size:13px; min-width:100%; }
+      .rv-tabla th, .rv-tabla td { padding:7px 8px; border-bottom:1px solid var(--border-light, #f1f3f4); text-align:left; vertical-align:top; }
+      .rv-tabla th { position:sticky; top:0; background:var(--surface, #fff); font-weight:600; color:var(--text-secondary, #5f6368); font-size:12px; }
+      .rv-tabla tr.actual td { background:#fef7e0; }
+      .rv-tabla td.f { white-space:nowrap; font-variant-numeric:tabular-nums; }
+      .rv-est { display:inline-block; padding:2px 8px; border-radius:8px; font-weight:600; font-size:12px; }
+      .rv-sel { font:inherit; font-size:12.5px; padding:4px 6px; border:1px solid var(--border, #dadce0); border-radius:8px; background:var(--surface, #fff); color:inherit; max-width:170px; }
+      .rv-sel.choque { border-color:#d93025; background:#fce8e6; }
+      .rv-ley { display:flex; gap:10px; flex-wrap:wrap; }
+    </style>
+    <% const color = (i) => ['#e6f4ea', '#e8f0fe', '#fef7e0', '#fce8e6', '#f3e8fd', '#e0f7fa', '#fff3e0', '#ede7f6'][i % 8];
+       const fecha = (f) => f.split('-').reverse().slice(0, 2).join('/'); %>
+
+    <p style="margin:0 0 10px"><a href="/taller/rotacion" style="color:#1a73e8;text-decoration:none;font-size:13px">
+      <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px">arrow_back</span> Rotación de grupos</a></p>
+    <div class="tl-barra">
+      <h1><%= rotacion.nombre %> · <%= division ? division.name : '' %></h1>
+      <% if (puedeEditar) { %>
+        <button type="button" class="tl-btn" id="rvGenerar" title="Arma de nuevo la rotación circular. Se pierden las correcciones a mano.">Volver a generar</button>
+        <button type="button" class="tl-btn" id="rvBorrar" style="color:#b3261e">Borrar</button>
+      <% } %>
+    </div>
+    <p class="tl-ayuda" style="margin-top:-6px">Del <%= rotacion.desde.split('-').reverse().join('/') %> al <%= rotacion.hasta.split('-').reverse().join('/') %> · los grupos cambian <%= rotacion.cambia %> · <%= rotacion.periodos.length %> períodos.</p>
+
+    <section class="tl-caja">
+      <h2>Estaciones</h2>
+      <div class="rv-ley">
+        <% estaciones.forEach((e, i) => { %>
+          <div class="tl-div" style="flex:1 1 200px">
+            <span class="rv-est" style="background:<%= color(i) %>"><%= e.nombre %></span>
+            <div class="tl-ayuda" style="margin-top:4px"><%= e.materia %><%= e.meps.length ? ' · ' + e.meps.join(', ') : ' · sin docente' %><%= e.admiteVarios ? ' · admite más de un grupo' : '' %></div>
+          </div>
+        <% }) %>
+      </div>
+    </section>
+
+    <% if (!grupos.length) { %>
+      <section class="tl-caja"><p style="margin:0">El curso no tiene grupos. <a href="/taller/rotacion/grupos/<%= division ? division._id : '' %>">Armalos</a> y volvé a generar.</p></section>
+    <% } else { %>
+    <div id="rvDatos" data-id="<%= rotacion.id %>" data-estaciones="<%= JSON.stringify(estaciones.map(e => ({ id: e.id, admiteVarios: e.admiteVarios }))) %>"></div>
+    <section class="tl-caja" style="padding:0;overflow:auto;max-height:75vh">
+      <table class="rv-tabla" id="rvTabla">
+        <thead>
+          <tr>
+            <th>Período</th>
+            <% grupos.forEach(g => { %><th><%= g.nombre %><% if (g.existe) { %> <span class="tl-ayuda">(<%= g.alumnos %>)</span><% } %></th><% }) %>
+          </tr>
+        </thead>
+        <tbody>
+          <% rotacion.periodos.forEach((p, pi) => { %>
+            <tr class="<%= pi === rotacion.actual ? 'actual' : '' %>" data-periodo="<%= pi %>">
+              <td class="f"><%= fecha(p.desde) %> – <%= fecha(p.hasta) %><% if (pi === rotacion.actual) { %><div class="tl-chip clase">ahora</div><% } %></td>
+              <% grupos.forEach(g => { const est = p.asignacion[g.id] || ''; const ei = estaciones.findIndex(e => e.id === est); %>
+                <td>
+                  <% if (puedeEditar && g.existe) { %>
+                    <select class="rv-sel" data-grupo="<%= g.id %>" aria-label="<%= g.nombre %>, del <%= fecha(p.desde) %> al <%= fecha(p.hasta) %>">
+                      <option value="">—</option>
+                      <% estaciones.forEach(e => { %><option value="<%= e.id %>" <%= e.id === est ? 'selected' : '' %>><%= e.nombre %></option><% }) %>
+                    </select>
+                  <% } else if (ei >= 0) { %>
+                    <span class="rv-est" style="background:<%= color(ei) %>"><%= estaciones[ei].nombre %></span>
+                  <% } else { %><span class="tl-ayuda">—</span><% } %>
+                </td>
+              <% }) %>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </section>
+    <% if (puedeEditar) { %>
+      <div class="tl-barra">
+        <span class="tl-ayuda" style="flex:1 1 auto">En rojo: dos grupos en la misma estación, que admite uno solo.</span>
+        <span id="rvEstado" class="tl-ayuda"></span>
+        <button type="button" class="tl-btn on" id="rvGuardar">Guardar cambios</button>
+      </div>
+    <% } %>
+    <% } %>
+  </main>
+
+  <% if (puedeEditar) { %>
+  <script>
+    (function () {
+      var datos = document.getElementById('rvDatos');
+      var est = document.getElementById('rvEstado');
+      var id = datos ? datos.dataset.id : '<%= rotacion.id %>';
+      async function enviar(url, cuerpo) {
+        var res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo || {}) });
+        var data = await res.json().catch(function () { return {}; });
+        if (!res.ok) throw new Error(data.error || 'No se pudo.');
+        return data;
+      }
+      document.getElementById('rvGenerar').addEventListener('click', async function () {
+        if (!confirm('¿Volver a generar la rotación? Se pierden las correcciones hechas a mano.')) return;
+        try { await enviar('/taller/rotacion/' + id + '/generar'); location.reload(); } catch (e) { alert(e.message); }
+      });
+      document.getElementById('rvBorrar').addEventListener('click', async function () {
+        if (!confirm('¿Borrar esta rotación? No se puede deshacer.')) return;
+        try { await enviar('/taller/rotacion/' + id + '/borrar'); location.href = '/taller/rotacion'; } catch (e) { alert(e.message); }
+      });
+      if (!datos) return;
+      var admite = {};
+      JSON.parse(datos.dataset.estaciones).forEach(function (e) { admite[e.id] = e.admiteVarios; });
+      var filas = document.querySelectorAll('#rvTabla tbody tr');
+      function marcarChoques() {
+        filas.forEach(function (tr) {
+          var cuenta = {};
+          var sels = tr.querySelectorAll('select');
+          sels.forEach(function (s) { if (s.value) cuenta[s.value] = (cuenta[s.value] || 0) + 1; });
+          sels.forEach(function (s) { s.classList.toggle('choque', !!s.value && cuenta[s.value] > 1 && !admite[s.value]); });
+        });
+      }
+      document.getElementById('rvTabla').addEventListener('change', marcarChoques);
+      marcarChoques();
+      document.getElementById('rvGuardar').addEventListener('click', async function () {
+        var btn = this;
+        btn.disabled = true; est.textContent = 'Guardando…';
+        try {
+          var periodos = Array.prototype.map.call(filas, function (tr) {
+            return { asignacion: Array.prototype.map.call(tr.querySelectorAll('select'), function (s) { return { grupo: s.dataset.grupo, estacion: s.value || null }; }) };
+          });
+          await enviar('/taller/rotacion/' + id + '/calendario', { periodos: periodos });
+          est.textContent = 'Guardado.';
+        } catch (e) { est.textContent = e.message; } finally { btn.disabled = false; }
+      });
+    })();
+  </script>
+  <% } %>
+  <%- include('../partials/footer') %>
+</body>
+</html>

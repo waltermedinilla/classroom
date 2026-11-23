@@ -1,0 +1,63 @@
+<%# Horarios de taller contra el horario oficial (specs/jefe-de-taller.spec.md, F2, RN-F2-5 y
+    RN-F2-6). Sin curso: una tarjeta por curso con taller. Con curso: la tabla de Secretaría
+    limitada a los talleres. Solo lectura. %>
+<%- include('_cabeza', { titulo: 'Horarios de taller' }) %>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/taller-nav', { activePage }) %>
+    <%- include('../secretaria/_estilos') %>
+
+    <div class="tl-barra">
+      <h1>Horarios de taller<%= division ? ' · ' + division.name : '' %></h1>
+      <form method="get" action="/taller/horario" style="display:flex;gap:6px;align-items:center">
+        <label class="tl-ayuda" for="tlCurso">Curso</label>
+        <select id="tlCurso" name="curso" class="tl-btn" onchange="this.form.submit()">
+          <option value="">Todos</option>
+          <% divisiones.forEach(d => { %><option value="<%= d._id %>" <%= String(d._id) === curso ? 'selected' : '' %>><%= d.name %></option><% }) %>
+        </select>
+      </form>
+    </div>
+
+    <% if (!hayGrilla) { %>
+      <div class="sd-aviso">La escuela no tiene cargada la grilla de módulos: sin ella no se puede comparar con el horario oficial.</div>
+    <% } %>
+
+    <% if (!curso) { %>
+      <% if (!hayImportado) { %>
+        <div class="sd-aviso">Todavía no se importó el horario oficial. Lo importa la secretaría.</div>
+      <% } %>
+      <div class="tl-grid">
+        <% tarjetas.forEach(t => { %>
+          <a class="tl-div" href="/taller/horario?curso=<%= t.id %>" style="text-decoration:none;color:inherit">
+            <b><%= t.name %></b>
+            <div class="tl-ayuda"><%= t.talleres.join(' · ') %></div>
+            <div style="margin-top:6px">
+              <% if (!t.conOficial) { %><span class="tl-chip sinRegistro">Sin horario oficial</span>
+              <% } else { const r = t.resumen; %>
+                <span class="tl-chip actividad"><%= r.coincide %> coinciden</span>
+                <% if (r.diferencias) { %><span class="tl-chip" style="background:#feefe3;color:#b45309"><%= r.diferencias %> diferencias</span><% } %>
+                <% if (r.parecidos) { %><span class="tl-chip clase"><%= r.parecidos %> a confirmar</span><% } %>
+                <% if (!r.renglones) { %><span class="tl-chip sinRegistro">El oficial no tiene talleres</span><% } %>
+              <% } %>
+            </div>
+          </a>
+        <% }) %>
+      </div>
+      <p class="tl-ayuda">Se comparan solo los talleres: los renglones del horario oficial que son de taller y las materias marcadas como taller en la plataforma.</p>
+    <% } else { %>
+      <section class="tl-caja">
+        <h2>Talleres de este curso en la plataforma</h2>
+        <% if (!talleresDelCurso.length) { %><p class="tl-ayuda">No hay.</p><% } %>
+        <% talleresDelCurso.forEach(m => { %>
+          <div style="font-size:13px;margin:3px 0"><b><%= m.name %></b> — <span class="tl-ayuda"><%= m.docentes.length ? m.docentes.map(d => d.name).join(', ') : 'sin docente' %> · <% const _n = (m.horarioClases || []).length; %><%= _n %> <%= _n === 1 ? 'módulo' : 'módulos' %> por semana</span></div>
+        <% }) %>
+      </section>
+      <% if (hayGrilla) { %>
+        <%- include('../secretaria/_comparacion', { comparacion, NOMBRE_DIA, ETIQUETA_ESTADO, enlaceOficial: null,
+              textoCorregir: 'Para corregir lo cargado, pedíselo a la secretaría (Horario del curso).' }) %>
+      <% } %>
+    <% } %>
+  </main>
+  <%- include('../partials/footer') %>
+</body>
+</html>

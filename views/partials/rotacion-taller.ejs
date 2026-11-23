@@ -1,0 +1,20 @@
+<%# Franja de la rotación de talleres en la materia (specs/jefe-de-taller.spec.md, RN-F4-4).
+    Recibe `r` (services/tallerFranja.js): al MEP, qué grupo tiene; al alumno, adónde va. %>
+<% const _f = (x) => x.split('-').reverse().slice(0, 2).join('/'); %>
+<div class="rotacion-taller" style="display:flex;gap:10px;align-items:flex-start;background:#fef7e0;border:1px solid #f6d77a;color:#3c2a00;border-radius:12px;padding:10px 14px;margin:12px 0;font-size:14px">
+  <span class="material-symbols-outlined" style="color:#8a5300">autorenew</span>
+  <div>
+    <div style="font-size:12px;color:#8a5300;font-weight:600">Rotación de talleres · <%= r.rotacion %> · del <%= _f(r.desde) %> al <%= _f(r.hasta) %></div>
+    <% if (r.esAlumno) { %>
+      <% if (r.estacion) { %>
+        <div><%= r.grupo %>: te toca <b><%= r.estacion.nombre %></b><% if (r.estacion.meps && r.estacion.meps.length) { %>, con <%= r.estacion.meps.join(', ') %><% } %>.</div>
+      <% } else { %>
+        <div><%= r.grupo %>: en este período tu grupo no tiene estación asignada.</div>
+      <% } %>
+    <% } else if (r.grupos.length) { %>
+      <div>En este período tenés <b><%= r.grupos.map(g => g.nombre + ' (' + g.alumnos + ' alumnos)').join(', ') %></b>.</div>
+    <% } else { %>
+      <div>En este período no tenés grupo.</div>
+    <% } %>
+  </div>
+</div>

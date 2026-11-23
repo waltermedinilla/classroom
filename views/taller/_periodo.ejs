@@ -1,11 +1,12 @@
 <%# Selector de período del panel Taller: Día / Semana / Mes, con anterior y siguiente.
-    Recibe `ventana` (services/tallerAlcance.js ventanaDelPeriodo) y `base` ('/taller/jefes'). %>
+    Recibe `ventana` (services/tallerAlcance.js ventanaDelPeriodo) y `base` ('/taller/jefes').
+    Con `soloSemanaMes: true` no ofrece "Día" (el control de los MEP: el día es el Resumen). %>
 <% const ir = (cambios) => { const q = new URLSearchParams({ periodo: ventana.periodo, fecha: ventana.fecha, ...cambios }); return base + '?' + q.toString(); };
    const [py, pm, pd] = ventana.inicio.split('-').map(Number);
    const tituloPeriodo = ventana.titulo || fmt.fechaLarga(new Date(Date.UTC(py, pm - 1, pd, 15))); %>
 <div class="tl-barra" style="margin-bottom:6px">
   <div role="group" aria-label="Período" style="display:flex;gap:4px">
-    <a class="tl-btn <%= ventana.periodo === 'dia' ? 'on' : '' %>" href="<%= ir({ periodo: 'dia' }) %>">Día</a>
+    <% if (!(typeof soloSemanaMes !== 'undefined' && soloSemanaMes)) { %><a class="tl-btn <%= ventana.periodo === 'dia' ? 'on' : '' %>" href="<%= ir({ periodo: 'dia' }) %>">Día</a><% } %>
     <a class="tl-btn <%= ventana.periodo === 'semana' ? 'on' : '' %>" href="<%= ir({ periodo: 'semana' }) %>">Semana</a>
     <a class="tl-btn <%= ventana.periodo === 'mes' ? 'on' : '' %>" href="<%= ir({ periodo: 'mes' }) %>">Mes</a>
   </div>
