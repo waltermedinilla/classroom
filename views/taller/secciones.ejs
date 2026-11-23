@@ -1,0 +1,77 @@
+<%# Lo que hizo cada Sección (pedido del 2026-11-22): actividades, novedades y clases en vivo de
+    sus materias de taller, por día, semana o mes. Todo lo que escribió alguien va escapado. %>
+<%- include('_cabeza', { titulo: 'Secciones' }) %>
+  <%- include('../partials/header') %>
+  <main class="main-content">
+    <%- include('../partials/taller-nav', { activePage }) %>
+    <div class="tl-barra"><h1>Qué hizo cada Sección</h1></div>
+    <%- include('_periodo', { ventana, base: '/taller/secciones' }) %>
+    <p class="tl-ayuda">Solo cuenta las materias de taller de cada Sección.</p>
+
+    <% if (!hayTalleres) { %>
+      <div class="tl-caja">Todavía no hay materias de taller marcadas. Se marcan en <a href="/taller/materias">Materias de taller</a>.</div>
+    <% } else if (!tarjetas.length) { %>
+      <div class="tl-caja">La escuela no tiene Secciones cargadas.</div>
+    <% } %>
+
+    <% if (tarjetas.length > 1) { %>
+      <section class="tl-caja" style="padding:0;overflow-x:auto">
+        <table class="tl-tabla">
+          <thead><tr><th>Sección</th><th>Jefe</th><th>Talleres</th><th>MEP</th><th>Actividades</th><th>Novedades</th><th>Clases en vivo</th></tr></thead>
+          <tbody>
+            <% tarjetas.forEach(t => { %>
+              <tr>
+                <td><a href="#sec-<%= t.id || 'sin' %>"><b><%= t.name %></b></a></td>
+                <td class="tl-ayuda"><%= t.jefes.join(', ') || '—' %></td>
+                <td class="tl-num"><%= t.materias.length %></td>
+                <td class="tl-num"><%= t.cantidadMeps %></td>
+                <td class="tl-num"><%= t.actividades %></td>
+                <td class="tl-num"><%= t.novedades %></td>
+                <td class="tl-num"><%= t.clasesEnVivo %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </section>
+    <% } %>
+
+    <% tarjetas.forEach(t => { %>
+      <section class="tl-caja" id="sec-<%= t.id || 'sin' %>">
+        <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+          <h2 style="margin:0"><%= t.name %></h2>
+          <span class="tl-ayuda"><%= t.jefes.length ? 'Jefe: ' + t.jefes.join(', ') : 'Sin Jefe de Sección' %></span>
+          <span class="tl-ayuda" style="margin-left:auto">
+            <b class="tl-num"><%= t.actividades %></b> actividades · <b class="tl-num"><%= t.novedades %></b> novedades · <b class="tl-num"><%= t.clasesEnVivo %></b> clases en vivo
+          </span>
+        </div>
+        <% if (!t.materias.length) { %>
+          <p class="tl-ayuda">Esta Sección no tiene materias de taller marcadas.</p>
+        <% } else { %>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(300px, 1fr));gap:14px;margin-top:8px">
+            <table class="tl-tabla">
+              <thead><tr><th>Taller</th><th>Act.</th><th>Nov.</th><th>En vivo</th></tr></thead>
+              <tbody>
+                <% t.materias.forEach(m => { %>
+                  <tr><td><%= m.name %></td><td class="tl-num"><%= m.actividades %></td><td class="tl-num"><%= m.novedades %></td><td class="tl-num"><%= m.clasesEnVivo %></td></tr>
+                <% }) %>
+              </tbody>
+            </table>
+            <div>
+              <div class="tl-ayuda" style="font-weight:600;margin-bottom:4px">Lo último publicado</div>
+              <% if (!t.ultimos.length) { %><p class="tl-ayuda">Nada en este período.</p><% } %>
+              <% t.ultimos.forEach(i => { %>
+                <div style="font-size:13px;padding:5px 0;border-bottom:1px solid var(--border-light, #f1f3f4)">
+                  <span class="material-symbols-outlined" style="font-size:15px;vertical-align:-3px;color:var(--text-secondary)"><%= i.tipo === 'actividad' ? 'assignment' : 'campaign' %></span>
+                  <% if (i.tipo === 'actividad') { %><a href="/jefatura/actividades/<%= i.id %>"><%= i.titulo %></a><% } else { %><%= i.titulo %><% } %>
+                  <div class="tl-ayuda"><%= i.materia %> · <%= i.autor %> · <%= fmt.diaMesHora(i.fecha) %></div>
+                </div>
+              <% }) %>
+            </div>
+          </div>
+        <% } %>
+      </section>
+    <% }) %>
+  </main>
+  <%- include('../partials/footer') %>
+</body>
+</html>

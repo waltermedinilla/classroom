@@ -21,6 +21,12 @@
     Docentes (MEP)
   </a>
   <% } %>
+  <% if (puede('taller_secciones')) { %>
+  <a href="/taller/secciones" class="admin-nav-item <%= activePage === 'secciones' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">account_tree</span>
+    Secciones
+  </a>
+  <% } %>
   <% if (puede('taller_jefes')) { %>
   <a href="/taller/jefes" class="admin-nav-item <%= activePage === 'jefes' ? 'active' : '' %>">
     <span class="material-symbols-outlined">groups</span>

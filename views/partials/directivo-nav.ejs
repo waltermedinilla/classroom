@@ -50,4 +50,11 @@
     Promedios
   </a>
   <% } %>
+  <%# El panel del Jefe de Taller, a mano para el directivo (specs/jefe-de-taller.spec.md). %>
+  <% if (puede('taller_resumen')) { %>
+  <a href="/taller" class="admin-nav-item">
+    <span class="material-symbols-outlined">construction</span>
+    Talleres
+  </a>
+  <% } %>
 </nav>

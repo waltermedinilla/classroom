@@ -30,7 +30,8 @@ Respuestas de Walter (2026-11-22):
 
 ### D1 — Un rol nuevo: `jefetaller`, "Jefe de Taller"
 
-- `ROLES` suma `'jefetaller'` entre `jefe` y `soe`.
+- `ROLES` suma `'jefetaller'` **inmediatamente después de `directivo`** (2026-11-22: "tiene la
+  misma importancia que un director").
 - Al entrar, `GET /` lo lleva a **`/taller`**.
 - Panel nuevo **`taller`** en `config/sections.js`, con sus secciones para que el admin pueda
   apagarlas (ver la tabla de F1 a F4). Directivo, admin y superadmin también ven el panel.
@@ -72,6 +73,24 @@ Escribe solo en sus módulos propios: el pañol (F3) y la rotación (F4).
 | `GET /taller/jefes` | **Qué subió cada Jefe de Sección y cada MEP a su cargo** (P1). Una tarjeta por Jefe de Sección (`Section.heads`) con lo que publicó en el período (actividades, anuncios y materiales) y, adentro, sus MEP: los docentes de las materias de taller de sus Secciones, con lo que publicó cada uno. Se elige el período (semana, mes o fechas) |
 | `GET /taller/jefes/:id` | El detalle de un Jefe de Sección o de un MEP: la lista de lo que subió, con enlace a cada actividad (de solo lectura) |
 | `GET /taller/materias` | Marcar y desmarcar las materias de taller (D2). Lo usan el admin y el Jefe de Taller. Audita `taller.materias` |
+
+### Agregado el 2026-11-22 (ya con F1 escrita)
+
+> "quiero también que pueda visualizar lo que han hecho las diferentes secciones también, y que
+> pueda visualizar por día, por semana o por mes. Es el jefe, tiene la misma importancia que un
+> director."
+
+| Ruta | Qué muestra |
+|---|---|
+| `GET /taller/secciones?periodo=&fecha=` | **Qué hizo cada Sección.** Una tabla comparativa y una tarjeta por Sección con: su jefe, sus talleres, cuántos MEP tiene, y las actividades, novedades y clases en vivo de sus materias de taller en el período. Cada tarjeta muestra también lo último publicado. "Talleres sin sección" junta los que no están en ninguna |
+
+- **Período (también en `/taller/jefes`):** se elige **Día**, **Semana** (de lunes a domingo) o
+  **Mes**, con anterior, siguiente, "Hoy" y un "Ir a" con fecha. Las fechas son en hora de
+  Argentina y una fecha futura cae en hoy (`ventanaDelPeriodo`).
+- **"La misma importancia que un director":** Walter eligió **"solo talleres, más visible"**. El
+  alcance no cambia: sigue sin entrar al Panel Directivo y ve solo los talleres.
+  - En todas las listas y selectores de roles va **inmediatamente después del Directivo**.
+  - El Panel Directivo tiene un acceso directo a "Talleres".
 
 ### Reglas
 
@@ -252,6 +271,12 @@ Archivos nuevos en F1: `routes/taller.js`, `middleware/taller.js`, `services/tal
 - **JT-07** `/taller/jefes` lista solo a los `heads` de las Secciones de su escuela, y bajo cada
   uno, solo los MEP de las materias de taller de **sus** Secciones. Un MEP que está en dos
   Secciones aparece en las dos.
+
+- **JT-08** `ventanaDelPeriodo`: día, semana de lunes a domingo y mes; anterior y siguiente;
+  nada futuro; hora de Argentina; diciembre → enero.
+- **JT-09** `resumenPorSeccion` suma los talleres de cada Sección (por división o sueltos),
+  ordena lo último publicado y junta en "Talleres sin sección" lo que no está en ninguna.
+- **JT-10** En todas las listas de roles, el Jefe de Taller va justo después del Directivo.
 
 Los criterios de F2, F3 y F4 se escriben al empezar cada fase, con las respuestas de P1 a P4.
 

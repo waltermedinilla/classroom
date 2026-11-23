@@ -18,6 +18,7 @@ const Section        = require('../models/Section');
 const User           = require('../models/User');
 const Activity       = require('../models/Activity');
 const Announcement   = require('../models/Announcement');
+const RoomSession    = require('../models/RoomSession');
 const AttendanceSession = require('../models/AttendanceSession');
 const AttendanceMark = require('../models/AttendanceMark');
 
@@ -121,7 +122,8 @@ router.get('/jefes', async (req, res) => {
   if (sinEscuela(res)) return;
   try {
     const school = res.locals.user.school;
-    const { desde, hasta, periodo } = T.ventanaDelPeriodo(req.query.periodo);
+    const ventana = T.ventanaDelPeriodo(req.query.periodo, req.query.fecha);
+    const { desde, hasta } = ventana;
     const [secciones, talleres] = await Promise.all([
       Section.find({ school }).select('name heads divisions courses').sort({ name: 1 }).lean(),
       talleresDe(school),
@@ -132,7 +134,7 @@ router.get('/jefes', async (req, res) => {
       ...talleres.flatMap(m => [m.owner, ...(m.coTeachers || [])]),
     ].filter(Boolean).map(String))];
 
-    const rango = { $gte: desde, $lte: hasta };
+    const rango = { $gte: desde, $lt: hasta };
     const [usuarios, acts, novs] = ids.length ? await Promise.all([
       User.find({ _id: { $in: ids.map(oid) } }).select('name').lean(),
       Activity.aggregate([
@@ -165,9 +167,67 @@ router.get('/jefes', async (req, res) => {
     });
 
     res.render('taller/jefes', {
-      activePage: 'jefes', jefes, periodo, desde, hasta,
+      activePage: 'jefes', jefes, ventana,
       haySecciones: secciones.length > 0, hayTalleres: talleres.length > 0,
       sinJefes: secciones.length > 0 && !secciones.some(s => (s.heads || []).length),
+    });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
+// ── Lo que hizo cada Sección (pedido del 2026-11-22) ───────────────────────────────────────
+// Por Sección: actividades, novedades y clases en vivo de sus materias de taller en el día, la
+// semana o el mes, con lo último publicado. "Talleres sin sección" junta los que no están en ninguna.
+router.get('/secciones', async (req, res) => {
+  if (sinEscuela(res)) return;
+  try {
+    const school = res.locals.user.school;
+    const ventana = T.ventanaDelPeriodo(req.query.periodo, req.query.fecha);
+    const rango = { $gte: ventana.desde, $lt: ventana.hasta };
+    const [secciones, talleres] = await Promise.all([
+      Section.find({ school }).select('name heads divisions courses').sort({ name: 1 }).lean(),
+      talleresDe(school),
+    ]);
+    const ids = talleres.map(m => m._id);
+    const LIMITE_ITEMS = 400;
+    const [acts, novs, salas] = ids.length ? await Promise.all([
+      Activity.find({ course: { $in: ids }, createdAt: rango }).select('title course author createdAt type').sort({ createdAt: -1 }).limit(LIMITE_ITEMS).lean(),
+      Announcement.find({ course: { $in: ids }, createdAt: rango }).select('text course author createdAt').sort({ createdAt: -1 }).limit(LIMITE_ITEMS).lean(),
+      RoomSession.aggregate([
+        { $match: { course: { $in: ids }, openedAt: rango } },
+        { $group: { _id: '$course', n: { $sum: 1 } } },
+      ]),
+    ]) : [[], [], []];
+
+    // Los conteos salen de lo traído; si se llegó al límite, se cuentan aparte para no mentir.
+    const contar = async (Modelo, lista) => {
+      const m = new Map();
+      if (lista.length < LIMITE_ITEMS) { for (const x of lista) m.set(String(x.course), (m.get(String(x.course)) || 0) + 1); return m; }
+      for (const g of await Modelo.aggregate([{ $match: { course: { $in: ids }, createdAt: rango } }, { $group: { _id: '$course', n: { $sum: 1 } } }])) m.set(String(g._id), g.n);
+      return m;
+    };
+    const [nAct, nNov] = await Promise.all([contar(Activity, acts), contar(Announcement, novs)]);
+    const porMateria = new Map(talleres.map(m => [String(m._id), {
+      actividades: nAct.get(String(m._id)) || 0,
+      novedades: nNov.get(String(m._id)) || 0,
+      clasesEnVivo: (salas.find(x => String(x._id) === String(m._id)) || {}).n || 0,
+    }]));
+
+    const userIds = [...new Set([...acts, ...novs].map(x => String(x.author)).concat(secciones.flatMap(s => (s.heads || []).map(String))))];
+    const usuarios = userIds.length ? await User.find({ _id: { $in: userIds.map(oid) } }).select('name').lean() : [];
+    const nombres = new Map(usuarios.map(u => [String(u._id), u.name]));
+    const materiaDe = new Map(talleres.map(m => [String(m._id), m.name]));
+    const items = [
+      ...acts.map(a => ({ tipo: 'actividad', id: String(a._id), titulo: a.title, course: String(a.course), materia: materiaDe.get(String(a.course)) || '', autor: nombres.get(String(a.author)) || '', fecha: a.createdAt })),
+      ...novs.map(n => ({ tipo: 'novedad', id: String(n._id), titulo: String(n.text || '').slice(0, 120), course: String(n.course), materia: materiaDe.get(String(n.course)) || '', autor: nombres.get(String(n.author)) || '', fecha: n.createdAt })),
+    ];
+
+    res.render('taller/secciones', {
+      activePage: 'secciones', ventana,
+      tarjetas: T.resumenPorSeccion({ secciones, talleres, porMateria, items, nombres }),
+      hayTalleres: talleres.length > 0,
     });
   } catch (err) {
     logDeRuta(err, res);

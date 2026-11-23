@@ -50,7 +50,7 @@ const c = new SmokeClient(BASE);
 
 // El superadmin no se crea (no se puede desde el panel de admin, y es único): se usa el
 // del .env si está.
-const ROLES = ['admin', 'directivo', 'preceptor', 'jefe', 'soe', 'secretaria', 'jefetaller', 'teacher', 'student'];
+const ROLES = ['admin', 'directivo', 'jefetaller', 'preceptor', 'jefe', 'soe', 'secretaria', 'teacher', 'student'];
 
 // `soe` pasó a tener panel propio el 2026-08-18 (specs/soe-orientacion.spec.md). Antes
 // aterrizaba en /courses con las solapas generales, como un docente sin materias.

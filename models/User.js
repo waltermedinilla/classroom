@@ -15,7 +15,7 @@ const { SONIDO_DE, SONIDO_DE_DEFAULT } = require('../public/js/salaSonido');
 // los mismos assignedDivisions/allDivisions del preceptor, con la misma regla fail-closed.
 // 'jefetaller' = Jefe de Taller: supervisa TODOS los talleres de la escuela (materias con
 // Course.esTaller), sin escribir en lo ajeno. Ver specs/jefe-de-taller.spec.md.
-const ROLES = ['superadmin', 'admin', 'directivo', 'teacher', 'preceptor', 'jefe', 'soe', 'secretaria', 'jefetaller', 'student'];
+const ROLES = ['superadmin', 'admin', 'directivo', 'jefetaller', 'teacher', 'preceptor', 'jefe', 'soe', 'secretaria', 'student'];
 
 // Roles cuyo alcance son cursos asignados por un admin (assignedDivisions/allDivisions).
 // La leen el alta y la reasignación de routes/admin.js y las vistas del panel de admin: un rol

@@ -119,12 +119,59 @@ test('el panel y las vistas: montado en /taller, con pie y sin nada sin escapar'
   for (const f of fs.readdirSync(path.join(raiz, 'views', 'taller'))) {
     const src = leer('views', 'taller', f);
     assert.doesNotMatch(src, /<%-(?!\s*include)/, f);
-    if (f !== '_cabeza.ejs') assert.match(src, /include\('\.\.\/partials\/footer'\)/, f);
+    if (!f.startsWith('_')) assert.match(src, /include\('\.\.\/partials\/footer'\)/, f);
   }
 });
 
-test('ventanaDelPeriodo: semana por defecto, mes a pedido', () => {
-  const ahora = new Date('2026-11-22T12:00:00Z');
-  assert.strictEqual(T.ventanaDelPeriodo('x', ahora).periodo, 'semana');
-  assert.strictEqual(T.ventanaDelPeriodo('mes', ahora).desde.toISOString().slice(0, 10), '2026-10-23');
+test('JT-08 · período: día, semana (lunes a domingo) o mes, sin futuro y en hora de Argentina', () => {
+  const ahora = new Date('2026-11-23T02:30:00Z');   // domingo 22, 23:30 en Argentina
+  const d = T.ventanaDelPeriodo('dia', '2026-11-20', ahora);
+  assert.deepStrictEqual([d.inicio, d.fin, d.anterior, d.siguiente], ['2026-11-20', '2026-11-21', '2026-11-19', '2026-11-21']);
+  assert.strictEqual(d.desde.toISOString(), '2026-11-20T03:00:00.000Z');
+  const s = T.ventanaDelPeriodo('semana', '2026-11-20', ahora);
+  assert.deepStrictEqual([s.inicio, s.fin, s.siguiente, s.esActual], ['2026-11-16', '2026-11-23', null, true]);
+  assert.strictEqual(s.titulo, 'Semana del 16 nov al 22 nov');
+  const m = T.ventanaDelPeriodo('mes', '2026-11-20', ahora);
+  assert.deepStrictEqual([m.inicio, m.fin, m.anterior, m.titulo], ['2026-11-01', '2026-12-01', '2026-10-01', 'Noviembre de 2026']);
+  assert.strictEqual(T.ventanaDelPeriodo('x', '2027-01-01', ahora).fecha, '2026-11-22', 'el futuro cae en hoy');
+  assert.strictEqual(T.ventanaDelPeriodo('x', 'mal', ahora).periodo, 'semana');
+  // Un mes de 31 días y el cambio de año.
+  const dic = T.ventanaDelPeriodo('mes', '2025-12-31', ahora);
+  assert.deepStrictEqual([dic.inicio, dic.fin, dic.siguiente], ['2025-12-01', '2026-01-01', '2026-01-01']);
+});
+
+test('JT-09 · qué hizo cada Sección: suma sus talleres y junta los que no tienen sección', () => {
+  const secciones = [
+    { _id: 's1', name: 'ELECTRICIDAD', heads: ['j1'], divisions: ['d1'], courses: [] },
+    { _id: 's2', name: 'MECÁNICA', heads: [], divisions: [], courses: ['c3'] },
+  ];
+  const talleres = [
+    { _id: 'c1', name: 'Prácticas Eléctricas', division: 'd1', owner: 'm1' },
+    { _id: 'c2', name: 'Bobinado', division: 'd1', owner: 'm2' },
+    { _id: 'c3', name: 'Operaciones Mecánicas', division: 'd5', owner: 'm1' },
+    { _id: 'c4', name: 'Taller suelto', division: 'd8', owner: 'm3' },
+  ];
+  const porMateria = new Map([['c1', { actividades: 2, novedades: 1, clasesEnVivo: 3 }], ['c2', { actividades: 1, novedades: 0, clasesEnVivo: 0 }]]);
+  const items = [{ tipo: 'actividad', titulo: 'A', course: 'c1', fecha: new Date('2026-11-20') }, { tipo: 'novedad', titulo: 'N', course: 'c2', fecha: new Date('2026-11-21') }];
+  const r = T.resumenPorSeccion({ secciones, talleres, porMateria, items, nombres: new Map([['j1', 'Jefe Uno']]) });
+  assert.deepStrictEqual(r.map(t => t.name), ['ELECTRICIDAD', 'MECÁNICA', 'Talleres sin sección']);
+  const e = r[0];
+  assert.deepStrictEqual([e.actividades, e.novedades, e.clasesEnVivo, e.cantidadMeps, e.jefes], [3, 1, 3, 2, ['Jefe Uno']]);
+  assert.deepStrictEqual(e.ultimos.map(i => i.titulo), ['N', 'A'], 'lo último primero');
+  assert.deepStrictEqual([r[1].actividades, r[1].jefes], [0, []]);
+  assert.deepStrictEqual(r[2].materias.map(m => m.name), ['Taller suelto']);
+});
+
+test('JT-10 · el Jefe de Taller va al lado del directivo en las listas de roles', () => {
+  const User = require('../../models/User');
+  const roles = User.schema.path('role').enumValues;
+  assert.strictEqual(roles.indexOf('jefetaller'), roles.indexOf('directivo') + 1);
+  // Cada selector de rol que ofrece "Directivo" ofrece también "Jefe de Taller", justo después.
+  for (const f of ['views/admin/users.ejs', 'views/admin/user-form.ejs', 'views/admin/user-profile.ejs', 'views/superadmin/users.ejs']) {
+    const lineas = leer(...f.split('/')).split('\n');
+    lineas.forEach((l, i) => {
+      if (/<option value="directivo"/.test(l)) assert.match(lineas[i + 1], /<option value="jefetaller"/, `${f}:${i + 2}`);
+    });
+  }
+  assert.match(leer('views', 'partials', 'directivo-nav.ejs'), /href="\/taller"/);
 });

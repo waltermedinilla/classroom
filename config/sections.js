@@ -169,6 +169,7 @@ const SECTIONS = [
   { key: 'taller_resumen',     panel: 'taller', label: 'Resumen del día', icon: 'construction', path: '/taller',             roles: ['jefetaller', 'directivo', 'admin', 'superadmin'], locked: true },
   // Las actividades y los docentes (MEP) del Jefe de Taller son las pantallas de /jefatura con
   // su alcance de talleres (modo 'por-taller', services/jefaturaAcceso.js): no se duplican.
+  { key: 'taller_secciones',   panel: 'taller', label: 'Secciones',       icon: 'account_tree', path: '/taller/secciones',   roles: ['jefetaller', 'directivo', 'admin', 'superadmin'] },
   { key: 'taller_jefes',       panel: 'taller', label: 'Jefes y MEP',     icon: 'groups',       path: '/taller/jefes',       roles: ['jefetaller', 'directivo', 'admin', 'superadmin'] },
   { key: 'taller_materias',    panel: 'taller', label: 'Materias de taller', icon: 'checklist', path: '/taller/materias',    roles: ['jefetaller', 'admin', 'superadmin'] },
 

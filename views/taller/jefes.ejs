@@ -4,14 +4,11 @@
   <%- include('../partials/header') %>
   <main class="main-content">
     <%- include('../partials/taller-nav', { activePage }) %>
-    <div class="tl-barra">
-      <h1>Jefes de Sección y sus MEP</h1>
-      <a class="tl-btn <%= periodo === 'semana' ? 'on' : '' %>" href="/taller/jefes?periodo=semana">Últimos 7 días</a>
-      <a class="tl-btn <%= periodo === 'mes' ? 'on' : '' %>" href="/taller/jefes?periodo=mes">Últimos 30 días</a>
-    </div>
-    <p class="tl-ayuda" style="margin-top:-6px">
-      Del <%= fmt.diaMes(desde) %> al <%= fmt.diaMes(hasta) %>. Cuenta las actividades y las novedades que publicó cada uno,
-      en cualquier materia. Tocá un nombre para ver su ficha y lo que publicó.
+    <div class="tl-barra"><h1>Jefes de Sección y sus MEP</h1></div>
+    <%- include('_periodo', { ventana, base: '/taller/jefes' }) %>
+    <p class="tl-ayuda">
+      Cuenta las actividades y las novedades que publicó cada uno en ese período, en cualquier materia.
+      Tocá un nombre para ver su ficha y lo que publicó.
     </p>
 
     <% if (!haySecciones) { %>
