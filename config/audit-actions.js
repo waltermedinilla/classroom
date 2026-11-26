@@ -83,6 +83,7 @@ const ACTIONS = {
   'tx.kick':        { label: 'sacó a alguien de la transmisión',    icon: 'person_remove',   color: '#ea4335', category: 'course' },
   'tx.degraded':    { label: 'bajó la calidad por ancho de banda',  icon: 'network_check',   color: '#ea8600', category: 'course' },
   'tx.rejected':    { label: 'rechazó una transmisión por aforo',   icon: 'block',           color: '#ea4335', category: 'course' },
+  'tx.espera':      { label: 'quedó en la lista de espera para transmitir', icon: 'hourglass_top', color: '#b45309', category: 'course' },
 
   // Hablar (specs/sala-hablar.spec.md). Se audita abrir la voz a los alumnos —le abre el
   // micrófono a un curso de menores— y NO cada pulsación, que sería una línea por frase.

@@ -921,6 +921,13 @@ router.get('/monitor', (req, res) => {
   res.render('superadmin/monitor', { activePage: 'monitor' });
 });
 
+// Cupo automático de transmisiones (specs/transmision-cupo-automatico.spec.md, D6). Lo sabe el
+// proceso de medios; si no contesta, el panel dice que no hay datos en vez de romperse.
+router.get('/monitor/transmisiones', async (req, res) => {
+  const datos = await require('../services/mediaClient').estadoDelCupo();
+  res.json(datos || { sinMedios: true });
+});
+
 router.get('/monitor/stats', async (req, res) => {
   try {
     // "Ahora" (2 min) es más ajustado que "activos" (15 min, métrica histórica que ya

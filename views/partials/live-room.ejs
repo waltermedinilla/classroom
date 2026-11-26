@@ -2651,6 +2651,63 @@
     }
 
     const abrirTx = $('txAbrir');
+
+    // ── Lista de espera (specs/transmision-cupo-automatico.spec.md, D3 y D4) ──────────────
+    // Si la escuela no tiene lugar, /abrir contesta { espera: true } y la cámara NO se abre.
+    // Mientras se espera, cada 5 s se renueva el lugar (si se cierra la pestaña, el lugar se cae
+    // solo a los 30 s). Cuando se libera lugar y es el primero, el servidor le reserva 3 minutos:
+    // acá se le avisa y el botón Transmitir late. Arrancar sigue siendo tocarlo.
+    let reloJEspera = null;
+    // El cartel de espera tiene que verse ANTES de que haya transmisión: en el diseño D la
+    // tarjeta del video (donde vive #txAviso) está oculta hasta que se transmite. Por eso va en
+    // su propia caja, debajo de la cabecera de la sala si se ve, y si no, junto a #txAviso.
+    function cajaDeEspera() {
+      let el = $('txEspera');
+      if (!el) { el = document.createElement('div'); el.id = 'txEspera'; el.setAttribute('role', 'status'); }
+      const cab = $('lrACab');
+      const destino = cab && cab.offsetParent !== null ? cab : $('txAviso').parentNode;
+      if (el.parentNode !== destino) {
+        if (destino === cab) cab.appendChild(el);
+        else destino.insertBefore(el, $('txAviso'));
+      }
+      el.style.gridColumn = '1 / -1';
+      el.style.margin = destino === cab ? '10px 0 0' : '';
+      return el;
+    }
+    function mostrarEspera(d) {
+      const el = cajaDeEspera();
+      el.style.display = '';
+      el.className = d.reservaHasta ? 'tx-lugar' : 'tx-atencion';
+      el.textContent = d.mensaje || 'Estás en la lista de espera para transmitir.';
+      const salir = document.createElement('button');
+      salir.type = 'button'; salir.className = 'tx-salir-espera'; salir.textContent = 'Dejar de esperar';
+      salir.addEventListener('click', async () => {
+        terminarEspera();
+        await post(BASE + '/transmision/cupo/salir').catch(() => {});
+      });
+      el.appendChild(document.createTextNode(' '));
+      el.appendChild(salir);
+      if (abrirTx) abrirTx.classList.toggle('tx-late', !!d.reservaHasta);
+    }
+    function terminarEspera() {
+      if (reloJEspera) { clearInterval(reloJEspera); reloJEspera = null; }
+      const el = $('txEspera');
+      if (el) { el.style.display = 'none'; el.textContent = ''; }
+      if (abrirTx) abrirTx.classList.remove('tx-late');
+    }
+    function esperarLugar(d) {
+      mostrarEspera(d);
+      if (reloJEspera) return;
+      reloJEspera = setInterval(async () => {
+        try {
+          const r = await post(BASE + '/transmision/cupo');
+          const x = await r.json();
+          if (!r.ok || !x.espera) { terminarEspera(); return; }
+          mostrarEspera(x);
+        } catch (e) { /* sin red: se reintenta en la próxima vuelta */ }
+      }, 5000);
+    }
+
     if (abrirTx) abrirTx.addEventListener('click', async () => {
       abrirTx.disabled = true;
       try {
@@ -2661,6 +2718,8 @@
         const r = await post(BASE + '/transmision/abrir', { micro: true, pantalla: false, camara: true });
         const d = await r.json();
         if (!r.ok) { alert(d.error || 'No se pudo empezar a transmitir'); return; }
+        if (d.espera) { esperarLugar(d); return; }
+        terminarEspera();
         await window.Transmision.empezarAEmitir({ micro: true, pantalla: false, camara: true });
         if (d.aviso) { const el = $('txAviso'); el.style.display=''; el.className='tx-aviso tx-atencion'; el.textContent = d.aviso; }
         repintarTodo();

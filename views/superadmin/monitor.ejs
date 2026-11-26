@@ -102,6 +102,17 @@
       margin-bottom: 20px;
       flex-wrap: wrap;
     }
+    .tx-mon-fila { display:flex; gap:22px; flex-wrap:wrap; align-items:baseline; }
+    .tx-mon-fila .n { font-size:22px; font-weight:600; color:var(--text-primary); font-variant-numeric:tabular-nums; }
+    .tx-mon-fila .l { font-size:11.5px; color:var(--text-secondary); }
+    .tx-mon-dos { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:16px; margin-top:14px; }
+    .tx-mon-lista { font-size:13px; }
+    .tx-mon-lista .it { display:flex; gap:8px; align-items:baseline; padding:5px 0; border-bottom:1px solid var(--border-light, #f1f3f4); }
+    .tx-mon-lista .it small { color:var(--text-hint); margin-left:auto; white-space:nowrap; }
+    .tx-chip { font-size:11px; font-weight:600; border-radius:8px; padding:1px 7px; background:#e6f4ea; color:#137333; white-space:nowrap; }
+    .tx-chip.baja { background:#fef7e0; color:#8a5300; }
+    .tx-chip.audio { background:#fce8e6; color:#b3261e; }
+    .tx-chip.clase { background:#e8f0fe; color:#174ea6; }
     .section-title {
       font-size: 12px;
       font-weight: 700;
@@ -387,6 +398,34 @@
       </div>
     </div>
 
+    <!-- ── Transmisiones: el cupo automático (specs/transmision-cupo-automatico.spec.md, D6) ── -->
+    <div class="section-title">Transmisiones</div>
+    <div class="monitor-grid">
+      <div class="metric-card" style="grid-column: 1 / -1" id="m-tx-card">
+        <div class="tx-mon-fila" id="m-tx-resumen"><span style="color:var(--text-hint);font-size:13px">Cargando…</span></div>
+        <div class="tx-mon-dos">
+          <div>
+            <div class="metric-label" style="margin-bottom:6px">Al aire</div>
+            <div id="m-tx-clases" class="tx-mon-lista"></div>
+          </div>
+          <div>
+            <div class="metric-label" style="margin-bottom:6px">Lista de espera</div>
+            <div id="m-tx-espera" class="tx-mon-lista"></div>
+          </div>
+        </div>
+        <details style="margin-top:12px">
+          <summary style="cursor:pointer;font-size:13px;color:var(--text-secondary)">Registro de hoy</summary>
+          <div id="m-tx-registro" class="tx-mon-lista" style="margin-top:8px;max-height:260px;overflow:auto"></div>
+        </details>
+        <div style="font-size:11px;color:var(--text-hint);margin-top:10px;line-height:1.5">
+          Una clase nueva entra si, con ella en calidad media, el consumo queda debajo del 60 % del presupuesto, el
+          procesador del servidor de video debajo del 70 % y la pérdida de paquetes debajo del 3 %. Si no entra, el
+          docente espera (primero quien tiene clase según el horario). Al llenarse, baja primero la calidad de quien
+          menos usó la sala en 30 días. A nadie que ya está transmitiendo se lo corta.
+        </div>
+      </div>
+    </div>
+
     <!-- ── Sala en vivo (specs/monitor-sala-escala.spec.md) ─────────────────── -->
     <div class="section-title">Sala en vivo</div>
 
@@ -652,6 +691,69 @@
 
   <!-- Matemática del gráfico de rate limit. Va aparte para poder testearla con node:test
        (tests/unit/ratelimitChart.test.js); las funciones quedan como globales. -->
+  <script>
+    // Transmisiones (cupo automático, D6). Todo va con textContent: los nombres vienen de la base.
+    (function () {
+      const $ = (id) => document.getElementById(id);
+      const el = (tag, clase, texto) => { const e = document.createElement(tag); if (clase) e.className = clase; if (texto != null) e.textContent = texto; return e; };
+      const CAPA = { '360p': ['Calidad media', ''], '180p': ['Calidad baja', 'baja'], audio: ['Solo audio', 'audio'], arrancando: ['Arrancando', 'clase'] };
+      const EVENTO = { entro: 'empezó a transmitir', espera: 'quedó esperando', reserva: 'recibió lugar reservado', 'reserva-vencida': 'no usó su reserva',
+        termino: 'terminó', bajo: 'bajó de calidad', subio: 'subió de calidad', 'presupuesto-achicado': 'presupuesto achicado por pérdida' };
+      const MOTIVO = { red: 'sin ancho de banda', procesador: 'procesador alto', perdida: 'pérdida de paquetes', puerto: 'puerto lleno', lista: 'había gente esperando', 'sin-mediciones': 'sin mediciones' };
+      const hora = (t) => { const d = new Date(t); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+      function dato(n, l) { const d = el('div'); d.appendChild(el('div', 'n', n)); d.appendChild(el('div', 'l', l)); return d; }
+      async function pintar() {
+        let x;
+        try { x = await (await fetch('/superadmin/monitor/transmisiones')).json(); } catch (e) { return; }
+        const r = $('m-tx-resumen'); r.textContent = '';
+        if (!x || x.sinMedios) { r.appendChild(el('span', '', 'El servidor de video no contesta: no hay datos de transmisiones.')); return; }
+        if (!x.activo) r.appendChild(el('span', 'tx-chip audio', 'Cupo apagado (TX_CUPO=0)'));
+        const m = x.medicion || {};
+        r.appendChild(dato(String(x.clases.length), 'transmitiendo'));
+        r.appendChild(dato(String(x.entranMas), 'entran más (≈30 alumnos c/u)'));
+        r.appendChild(dato(String(x.espera.length), 'esperando'));
+        r.appendChild(dato(m.salidaMbps != null ? m.salidaMbps + ' Mbit/s' : '—', 'salida real'));
+        r.appendChild(dato(x.presupuesto + ' Mbit/s', x.achicado ? 'presupuesto (achicado)' : (x.capacidadMedida ? 'presupuesto (70 % de ' + x.capacidadMedida + ')' : 'presupuesto (sin medir)')));
+        r.appendChild(dato(m.cpu != null ? m.cpu + ' %' : '—', 'procesador video'));
+        r.appendChild(dato(m.perdida != null ? (Math.round(m.perdida * 1000) / 10) + ' %' : '—', 'pérdida'));
+        const c = $('m-tx-clases'); c.textContent = '';
+        if (!x.clases.length) c.appendChild(el('div', '', 'Nadie está transmitiendo.'));
+        x.clases.forEach(k => {
+          const it = el('div', 'it'); const [txt, cl] = CAPA[k.capa] || [k.capa, ''];
+          it.appendChild(el('span', 'tx-chip ' + cl, txt));
+          it.appendChild(el('span', '', (k.docente || 'Docente') + (k.materia ? ' · ' + k.materia : '')));
+          it.appendChild(el('small', '', k.espectadores + ' mirando · ' + k.uso30 + ' clases en 30 días'));
+          c.appendChild(it);
+        });
+        const e = $('m-tx-espera'); e.textContent = '';
+        if (!x.espera.length) e.appendChild(el('div', '', 'Nadie está esperando.'));
+        x.espera.forEach(p => {
+          const it = el('div', 'it');
+          it.appendChild(el('b', '', p.posicion + '.º'));
+          it.appendChild(el('span', '', p.docente + (p.materia ? ' · ' + p.materia : '')));
+          if (p.tieneClase) it.appendChild(el('span', 'tx-chip clase', 'tiene clase'));
+          if (p.reservada) it.appendChild(el('span', 'tx-chip', 'lugar reservado'));
+          it.appendChild(el('small', '', 'espera hace ' + Math.max(1, Math.round(p.esperaSeg / 60)) + ' min'));
+          e.appendChild(it);
+        });
+        const g = $('m-tx-registro'); g.textContent = '';
+        if (!x.registro.length) g.appendChild(el('div', '', 'Sin movimientos desde que arrancó el servidor de video.'));
+        x.registro.forEach(v => {
+          const it = el('div', 'it');
+          it.appendChild(el('b', '', hora(v.t)));
+          const quien = v.docente ? v.docente + (v.materia ? ' · ' + v.materia : '') : '';
+          let t = (quien ? quien + ': ' : '') + (EVENTO[v.tipo] || v.tipo);
+          if (v.motivo && MOTIVO[v.motivo]) t += ' (' + MOTIVO[v.motivo] + ')';
+          if (v.de && v.a && v.tipo !== 'presupuesto-achicado') t += ' · ' + v.de + ' → ' + v.a;
+          if (v.tipo === 'presupuesto-achicado') t += ' · ' + v.de + ' → ' + v.a + ' Mbit/s';
+          it.appendChild(el('span', '', t));
+          g.appendChild(it);
+        });
+      }
+      pintar();
+      setInterval(pintar, 5000);
+    })();
+  </script>
   <script src="/js/ratelimit-chart.js"></script>
   <script src="/js/sala-chart.js"></script>
   <script>

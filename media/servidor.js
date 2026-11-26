@@ -16,7 +16,12 @@ const { WebSocketServer } = require('ws');
 
 const sfu   = require('./sfu');
 const aforo = require('./aforo');
-const { MEDIA_PORT, WS_PATH, MAX_PULSACION_MS } = require('../config/transmision');
+const cupo  = require('./cupo');
+const medicion = require('./medicion');
+const {
+  MEDIA_PORT, WS_PATH, MAX_PULSACION_MS, MAX_CLASES,
+  CUPO_ACTIVO, CUPO, CAPACIDAD_MBPS, presupuestoConfigurado,
+} = require('../config/transmision');
 
 const log = {
   info:  (...a) => console.log(new Date().toISOString(), ...a),
@@ -71,6 +76,7 @@ const api = http.createServer((req, res) => {
       try {
         const { sessionId } = JSON.parse(cuerpo || '{}');
         const cerrada = sfu.cerrarSala(sessionId);
+        liberarCupo(String(sessionId));
         responder(200, { ok: true, cerrada });
       } catch (e) { responder(400, { error: 'cuerpo inválido' }); }
     });
@@ -91,6 +97,24 @@ const api = http.createServer((req, res) => {
       // Con `uid`, solo la de ese alumno: es lo que usa "silenciar" (silenciado = silenciado
       // entero, también la voz). Sin `uid`, la de todos: "Solo yo hablo".
       return responder(200, { ok: true, cerradas: sala ? cerrarVoces(sala, uid) : 0 });
+    });
+    return undefined;
+  }
+
+  // ── Cupo automático (specs/transmision-cupo-automatico.spec.md) ────────────────────────
+  // Express pregunta acá ANTES de prender una transmisión: este proceso es el único que sabe
+  // cuánto se está mandando de verdad (D1) y el único que guarda la lista de espera (D4).
+  if (req.method === 'GET' && req.url === '/cupo/estado') {
+    return responder(200, estadoDelCupo());
+  }
+  if (req.method === 'POST' && (req.url === '/cupo/pedir' || req.url === '/cupo/salir')) {
+    let cuerpo = '';
+    req.on('data', (c) => { cuerpo += c; if (cuerpo.length > 8192) req.destroy(); });
+    req.on('end', () => {
+      let datos;
+      try { datos = JSON.parse(cuerpo || '{}'); } catch (e) { return responder(400, { error: 'cuerpo inválido' }); }
+      if (!datos.sessionId) return responder(400, { error: 'falta sessionId' });
+      return responder(200, req.url === '/cupo/pedir' ? pedirLugar(datos) : salirDeLaLista(String(datos.sessionId)));
     });
     return undefined;
   }
@@ -183,35 +207,221 @@ function cerrarVoces(sala, uid = null) {
   return cerradas;
 }
 
-// Le recalcula la capa a TODAS las salas cuando cambia el aforo.
+// ── EL CUPO: estado en memoria ──────────────────────────────────────────────────────────────
 //
-// Se llama en cada alta y baja de espectador porque el gobernador razona sobre el TOTAL de la
-// escuela, no sobre un aula: un alumno que entra en 2°3° puede bajarle la calidad a 5°1°. Es
-// exactamente lo que tiene que pasar — el puerto es uno solo.
+// Vive acá (D4): la lista de espera es de UN proceso, como los routers de mediasoup. Si el
+// proceso se reinicia, la lista arranca vacía y los que esperaban vuelven a anotarse solos con
+// el próximo pedido de su pantalla: nadie queda "esperando para siempre".
+let espera = { cola: [], reserva: null };
+const admitidas = new Map();   // sessionId → { t, estimados, uso30, docente, materia } (todavía sin cámara)
+const datosDeClase = new Map();   // sessionId → { uso30, desde, docente, materia } de las que están al aire
+let presupuestoAchicado = null;   // D2: solo baja; vuelve al configurado al reiniciar
+const registro = [];
+const med = medicion.crear({ sfu, log, cadaMs: CUPO.MEDICION_MS });
+
+const presupuesto = () => (presupuestoAchicado != null ? Math.min(presupuestoAchicado, presupuestoConfigurado()) : presupuestoConfigurado());
+
+function anotarEvento(tipo, datos = {}) {
+  registro.push({ t: Date.now(), tipo, ...datos });
+  if (registro.length > CUPO.REGISTRO_MAX) registro.shift();
+}
+
+// Las clases que cuentan para el cupo: las salas de video al aire y las recién admitidas que
+// todavía no conectaron la cámara (con los alumnos que se estimaron para ellas).
+function clasesAlAire({ sinContar = null } = {}) {
+  const ahora = Date.now();
+  const out = [];
+  for (const [id, a] of admitidas) {
+    const sala = sfu.salas.get(id);
+    if ((sala && sala.emisor) || ahora - a.t > CUPO.ADMITIDA_TTL_MS) { admitidas.delete(id); continue; }
+  }
+  for (const [id, sala] of sfu.salas) {
+    if (sala.soloVoz || !sala.emisor || id === sinContar) continue;
+    const d = datosDeClase.get(id) || {};
+    const n = sala.espectadores.size;
+    out.push({
+      id, espectadores: n,
+      conPantallaYCamara: sfu.hayFuente(sala, 'pantalla') && sfu.hayFuente(sala, 'camara') ? n : 0,
+      uso30: d.uso30 ?? 0, desde: d.desde ?? sala.creadaAt,
+    });
+  }
+  for (const [id, a] of admitidas) {
+    if (id === sinContar || out.some(c => c.id === id)) continue;
+    out.push({ id, espectadores: a.estimados, conPantallaYCamara: 0, uso30: a.uso30 ?? 0, desde: a.t });
+  }
+  return out;
+}
+
+const MENSAJE_CAPA = {
+  '180p': 'Estás transmitiendo en calidad baja: hay muchas personas mirando clases en la escuela al mismo tiempo.',
+  audio: 'Se cortaron las cámaras: hay muchas personas mirando clases en la escuela. La voz y tu pantalla siguen llegando.',
+};
+
+// Le recalcula la capa a las salas cuando cambia el aforo.
+//
+// Se llama en cada alta y baja de espectador porque se razona sobre el TOTAL de la escuela, no
+// sobre un aula: un alumno que entra en 2°3° puede bajarle la calidad a 5°1°. El puerto es uno.
+//
+// Con el cupo (D5) la capa es POR CLASE: baja primero quien menos usa la sala. Sin el cupo
+// (TX_CUPO=0) es la de siempre: una capa para toda la escuela.
 async function revisarAforo() {
   const e = sfu.estado();
-  const d = aforo.decidir(e.espectadores, { clases: e.clases, conPantallaYCamara: e.conPantallaYCamara });
-  if (!d.capa) return d;
-
-  for (const sala of sfu.salas.values()) {
-    if (sala.capaVigente === d.capa) continue;
-
-    // ⚠️ La PRIMERA asignación no es un cambio: es el valor inicial de la sala. Avisarlo le
-    // mostraría "cambió tu calidad" a todo el que entra, incluida la primera persona de una
-    // escuela vacía — un aviso que no describe nada y que entrena a la gente a ignorarlos.
-    // El valor inicial ya viaja en el 'bienvenido'.
-    const esElPrimero = sala.capaVigente === undefined;
-    sala.capaVigente = d.capa;
-    await sfu.aplicarCapa(sala, d.capa);
-    if (esElPrimero) continue;
-
-    // Se le avisa a todo el mundo en la sala, no solo al docente: el alumno también tiene
-    // derecho a saber por qué se le puso borrosa la pantalla.
-    const aviso = { capa: d.capa, motivo: d.motivo, mensaje: d.mensaje };
-    for (const ws of sala.espectadores) enviar(ws, 'capaCambiada', aviso);
-    if (sala.emisor) enviar(sala.emisor, 'capaCambiada', aviso);
+  if (!CUPO_ACTIVO) {
+    const d = aforo.decidir(e.espectadores, { clases: e.clases, conPantallaYCamara: e.conPantallaYCamara });
+    if (!d.capa) return d;
+    for (const sala of sfu.salas.values()) await ponerCapa(sala, d.capa, { motivo: d.motivo, mensaje: d.mensaje });
+    return d;
   }
-  return d;
+
+  // La red de seguridad sigue valiendo antes que todo.
+  if (e.clases > MAX_CLASES) return aforo.decidir(e.espectadores, { clases: e.clases });
+
+  const clases = clasesAlAire().filter(c => sfu.salas.has(c.id));
+  const previas = {};
+  for (const c of clases) previas[c.id] = sfu.salas.get(c.id).capaVigente;
+  const capas = cupo.capasPorClase(clases, { presupuesto: presupuesto(), previas });
+  for (const [id, sala] of sfu.salas) {
+    if (sala.soloVoz) continue;
+    const capa = capas[id] || sala.capaVigente || '360p';
+    const antes = sala.capaVigente;
+    await ponerCapa(sala, capa, { motivo: capa === '360p' ? '' : 'aforo', mensaje: capa === '360p' ? '' : MENSAJE_CAPA[capa] });
+    if (antes && antes !== capa) anotarEvento(capa === '360p' || (antes === 'audio' && capa === '180p') ? 'subio' : 'bajo', { sessionId: id, de: antes, a: capa, ...(datosDeClase.get(id) || {}) });
+  }
+  return { capa: '360p', motivo: '', mensaje: '' };
+}
+
+async function ponerCapa(sala, capa, aviso) {
+  if (sala.capaVigente === capa) return;
+  // ⚠️ La PRIMERA asignación no es un cambio: es el valor inicial de la sala. Avisarlo le
+  // mostraría "cambió tu calidad" a todo el que entra, incluida la primera persona de una
+  // escuela vacía — un aviso que no describe nada y que entrena a la gente a ignorarlos.
+  // El valor inicial ya viaja en el 'bienvenido'.
+  const esElPrimero = sala.capaVigente === undefined;
+  sala.capaVigente = capa;
+  await sfu.aplicarCapa(sala, capa);
+  if (esElPrimero) return;
+  // Se le avisa a todo el mundo en la sala, no solo al docente: el alumno también tiene
+  // derecho a saber por qué se le puso borrosa la pantalla.
+  const msj = { capa, motivo: aviso.motivo, mensaje: aviso.mensaje };
+  for (const ws of sala.espectadores) enviar(ws, 'capaCambiada', msj);
+  if (sala.emisor) enviar(sala.emisor, 'capaCambiada', msj);
+}
+
+// D3 + D4. Lo que se contesta a quien toca Transmitir (o renueva su espera).
+function pedirLugar(datos) {
+  const sessionId = String(datos.sessionId);
+  const sala = sfu.salas.get(sessionId);
+  // Ya está al aire (o recién admitida): no se vuelve a decidir. RN-2: a quien está, no se lo saca.
+  if ((sala && sala.emisor && !sala.soloVoz) || admitidas.has(sessionId)) return { entra: true, posicion: 0 };
+
+  const ahora = Date.now();
+  const estimados = Math.max(0, Number(datos.estimados) || 0);
+  const pedido = { sessionId, docente: String(datos.docente || ''), materia: String(datos.materia || ''), tieneClase: datos.tieneClase === true, uso30: Number(datos.uso30) || 0, estimados };
+
+  // La renovación de quien espera (cada 5 s): NUNCA admite sola. Mantiene vivo el pedido y, si
+  // se liberó lugar y es el primero, le deja la reserva de 3 minutos para que toque Transmitir.
+  if (datos.consultar) {
+    const yaEstaba = espera.cola.some(p => p.sessionId === sessionId);
+    espera = cupo.pedirLugar({ estado: espera, pedido, ahora, admision: { entra: false, motivo: 'espera' } }).estado;
+    if (!yaEstaba) anotarEvento('espera', { sessionId, docente: pedido.docente, materia: pedido.materia, motivo: 'lista', tieneClase: pedido.tieneClase });
+    revisarReserva();
+    const suya = espera.reserva && espera.reserva.sessionId === sessionId;
+    return { entra: false, posicion: cupo.posicion(espera.cola, sessionId), reservaHasta: suya ? espera.reserva.hasta : null, motivo: 'espera' };
+  }
+
+  const admision = cupo.admitir({
+    clases: clasesAlAire({ sinContar: sessionId }), nueva: { espectadores: estimados },
+    medidas: med.ultima(), presupuesto: presupuesto(), capacidad: CAPACIDAD_MBPS,
+  });
+  const yaEsperaba = espera.cola.some(p => p.sessionId === sessionId);
+  const r = cupo.pedirLugar({ estado: espera, pedido, ahora, admision });
+  espera = r.estado;
+  const quien = { sessionId, docente: datos.docente || '', materia: datos.materia || '' };
+  if (r.entra) {
+    admitidas.set(sessionId, { t: ahora, estimados, uso30: Number(datos.uso30) || 0, docente: datos.docente || '', materia: datos.materia || '' });
+    datosDeClase.set(sessionId, { uso30: Number(datos.uso30) || 0, desde: ahora, docente: datos.docente || '', materia: datos.materia || '' });
+    anotarEvento('entro', { ...quien, motivo: admision.motivo, proyectado: Math.round(admision.proyectado) });
+  } else if (!yaEsperaba) {
+    anotarEvento('espera', { ...quien, motivo: r.motivo === 'espera' ? 'lista' : r.motivo, posicion: r.posicion, tieneClase: datos.tieneClase === true });
+  }
+  return { entra: r.entra, posicion: r.posicion, reservaHasta: r.reservaHasta, motivo: r.motivo };
+}
+
+function salirDeLaLista(sessionId) {
+  espera = { cola: cupo.quitar(espera.cola, sessionId), reserva: espera.reserva && espera.reserva.sessionId === sessionId ? null : espera.reserva };
+  return { ok: true };
+}
+
+function liberarCupo(sessionId) {
+  admitidas.delete(sessionId);
+  const d = datosDeClase.get(sessionId);
+  if (d && datosDeClase.delete(sessionId)) anotarEvento('termino', { sessionId, docente: d.docente, materia: d.materia });
+  salirDeLaLista(sessionId);
+  revisarReserva();
+}
+
+// D4. Si hay lugar y alguien espera, el primero recibe 3 minutos reservados. Lo ve en su
+// pantalla con el próximo pedido (cada 5 s), así que no hace falta empujarle nada.
+function revisarReserva() {
+  const ahora = Date.now();
+  const limpio = cupo.limpiar({ cola: espera.cola, reserva: espera.reserva, ahora });
+  if (espera.reserva && !limpio.reserva) anotarEvento('reserva-vencida', { sessionId: espera.reserva.sessionId });
+  espera = limpio;
+  if (espera.reserva || !espera.cola.length) return;
+  const primero = cupo.ordenarCola(espera.cola)[0];
+  const adm = cupo.admitir({
+    clases: clasesAlAire(), nueva: { espectadores: primero.estimados || 0 },
+    medidas: med.ultima(), presupuesto: presupuesto(), capacidad: CAPACIDAD_MBPS,
+  });
+  const r = cupo.reservarSiHayLugar({ estado: espera, ahora, hayLugar: adm.entra });
+  espera = { cola: r.cola, reserva: r.reserva };
+  if (r.nueva) anotarEvento('reserva', { sessionId: r.nueva.sessionId, docente: primero.docente, materia: primero.materia });
+}
+
+// D1 + D2: cada medición revisa si hay que achicar el presupuesto, reacomoda la calidad y mira
+// si se liberó lugar para alguien que espera.
+if (CUPO_ACTIVO) {
+  med.arrancar(() => {
+    const nuevo = cupo.achique({ historial: med.historial(), presupuesto: presupuesto(), ahora: Date.now() });
+    if (nuevo != null && nuevo < presupuesto()) {
+      anotarEvento('presupuesto-achicado', { de: Math.round(presupuesto()), a: nuevo });
+      log.error(`[cupo] pérdida sostenida: el presupuesto de video baja a ${nuevo} Mbit/s`);
+      presupuestoAchicado = nuevo;
+    }
+    revisarAforo().catch(() => {});
+    revisarReserva();
+  });
+}
+
+// D6. Lo que muestra el Monitor del superadmin.
+function estadoDelCupo() {
+  const ahora = Date.now();
+  const clases = clasesAlAire();
+  const enMedia = clases.reduce((a, c) => a + cupo.costoDeClase(c, '360p'), 0);
+  const p = presupuesto();
+  // ¿Cuántas clases más de 30 alumnos entrarían en calidad media?
+  const libres = Math.max(0, Math.floor((p * CUPO.UMBRAL_ADMISION - enMedia) / cupo.costoDeClase({ espectadores: 30 }, '360p')));
+  return {
+    activo: CUPO_ACTIVO,
+    capacidadMedida: CAPACIDAD_MBPS,
+    presupuesto: Math.round(p),
+    presupuestoConfigurado: Math.round(presupuestoConfigurado()),
+    achicado: presupuestoAchicado != null,
+    medicion: med.ultima(),
+    historial: med.historial().slice(-24),
+    clases: clases.map(c => {
+      const d = datosDeClase.get(c.id) || admitidas.get(c.id) || {};
+      const sala = sfu.salas.get(c.id);
+      return { ...c, docente: d.docente || '', materia: d.materia || '', capa: sala ? sala.capaVigente || '360p' : 'arrancando' };
+    }),
+    entranMas: libres,
+    espera: cupo.ordenarCola(espera.cola).map((x, i) => ({
+      posicion: i + 1, docente: x.docente, materia: x.materia, tieneClase: x.tieneClase,
+      esperaSeg: Math.round((ahora - x.pedidoAt) / 1000),
+      reservada: !!(espera.reserva && espera.reserva.sessionId === x.sessionId),
+    })),
+    registro: registro.slice(-60).reverse(),
+  };
 }
 
 wss.on('connection', (ws) => {
@@ -293,7 +503,7 @@ wss.on('connection', (ws) => {
           rtpCapabilities: cx.sala.router.rtpCapabilities,
           emitir: dat.emitir === 'audio' ? 'audio' : cx.esEmisor,
           video:  dat.video === true,
-          capa:   d.capa || '180p',
+          capa:   cx.sala.capaVigente || d.capa || '180p',
           // Los productores que YA están al aire, para que un alumno que llega tarde vea la
           // clase que empezó hace veinte minutos sin esperar a que el docente vuelva a publicar.
           productores: sfu.describirProductores(cx.sala),

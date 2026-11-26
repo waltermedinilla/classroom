@@ -67,6 +67,13 @@
 
   .tx-aviso { margin-top:10px; padding:9px 12px; border-radius:8px; font-size:13px; display:none; }
   .tx-atencion { background:#fef7e0; border:1px solid #fdd663; color:#5f4b00; }
+  /* Cupo automático (specs/transmision-cupo-automatico.spec.md): ya hay lugar para transmitir. */
+  #txEspera { padding:9px 12px; border-radius:8px; font-size:13px; }
+  .tx-lugar { background:#e6f4ea; border:1px solid #81c995; color:#0d652d; font-weight:500; }
+  .tx-salir-espera { border:0; background:transparent; color:inherit; text-decoration:underline; cursor:pointer; font:inherit; padding:0; margin-left:4px; }
+  #txAbrir.tx-late { box-shadow:0 0 0 0 rgba(52,168,83,.6); animation:txLate 1.6s ease-out infinite; border-color:#34a853; color:#137333; }
+  @keyframes txLate { 0% { box-shadow:0 0 0 0 rgba(52,168,83,.55); } 100% { box-shadow:0 0 0 12px rgba(52,168,83,0); } }
+  @media (prefers-reduced-motion: reduce) { #txAbrir.tx-late { animation:none; } }
   .tx-error    { background:#fce8e6; border:1px solid #f28b82; color:#5f1409; }
 
   <%# La cola de manos levantadas. Es lo que Meet no tiene: el ORDEN de llegada. %>

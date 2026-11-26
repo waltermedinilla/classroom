@@ -252,5 +252,5 @@ function estado() {
 
 module.exports = {
   iniciar, salaDe, crearTransporte, crearConsumidor, aplicarCapa, aplicarCapaA, hayFuente, describirProductores,
-  cerrarSala, estado, salas,
+  cerrarSala, estado, salas, workers,
 };

@@ -49,6 +49,52 @@ const CAMARA_CHICA_MBPS = 0.125;
 // coma el puerto. Con la escuela entera transmitiendo no se llega ni cerca.
 const MAX_CLASES = 20;
 
+// ── Cupo automático (specs/transmision-cupo-automatico.spec.md) ─────────────
+//
+// Apagado con TX_CUPO=0 en el .env: vuelve el comportamiento anterior (una capa para toda la
+// escuela y sin lista de espera) sin necesidad de un deploy.
+const CUPO_ACTIVO = process.env.TX_CUPO !== '0';
+
+// D2. La SUBIDA real del VPS, medida con medir-capacidad.sh (Mbit/s). Mientras no esté medida
+// (null), el presupuesto sigue siendo PRESUPUESTO_MBPS. Con el dato, el video usa el 70 % y el
+// resto queda para las páginas, las entregas y todo lo demás.
+const CAPACIDAD_MBPS = Number(process.env.TX_CAPACIDAD_MBPS) > 0 ? Number(process.env.TX_CAPACIDAD_MBPS) : null;
+const PARTE_VIDEO = 0.70;
+const presupuestoConfigurado = () => (CAPACIDAD_MBPS ? CAPACIDAD_MBPS * PARTE_VIDEO : PRESUPUESTO_MBPS);
+
+const CUPO = {
+  // D3. Entra una clase nueva si, con ella en calidad media, el consumo queda por debajo de
+  // esto (el mismo umbral que hoy tiene la calidad media) …
+  UMBRAL_ADMISION: 0.60,
+  // … el procesador del proceso de medios está por debajo de esto (%) …
+  CPU_MAX: 70,
+  // … y la pérdida de paquetes promedio de los que miran, por debajo de esto (0..1).
+  PERDIDA_MAX: 0.03,
+  // … y la salida REAL del puerto, con la clase nueva, no pasa este porcentaje de la capacidad.
+  PUERTO_MAX: 0.85,
+  // D5. Las clases se mezclan (unas en media, otras en baja) hasta este porcentaje del
+  // presupuesto; si ni así entra, se baja a solo audio hasta el umbral de audio.
+  LIMITE_MEZCLA: 0.75,
+  // D5. Para VOLVER a subir de calidad hay que quedar 10 puntos por debajo (histéresis).
+  HISTERESIS: 0.10,
+  // D4. Reserva del primero de la lista cuando se libera lugar.
+  RESERVA_MS: 3 * 60 * 1000,
+  // Un pedido de la lista que no se renueva (el docente cerró la pestaña) se cae a los 30 s.
+  ESPERA_TTL_MS: 30 * 1000,
+  // Una clase admitida que todavía no conectó su cámara cuenta como "al aire" este rato: sin
+  // esto, dos docentes que tocan a la vez entrarían los dos en el último lugar.
+  ADMITIDA_TTL_MS: 90 * 1000,
+  // D1. Cada cuánto mide el proceso de medios.
+  MEDICION_MS: 5000,
+  // D2. Pérdida sostenida que achica el presupuesto: más de 5 % durante 30 s seguidos.
+  PERDIDA_ACHIQUE: 0.05,
+  ACHIQUE_SOSTENIDO_MS: 30 * 1000,
+  // D6. Cuántos eventos guarda el registro del Monitor.
+  REGISTRO_MAX: 200,
+  // RN-4. Ventana del "uso" de un docente.
+  USO_DIAS: 30,
+};
+
 // ── Ticket de acceso al proceso de medios ────────────────────────────────────
 
 // Vida del ticket JWT que Express le firma al navegador (D4). 60 segundos alcanza de sobra para
@@ -235,6 +281,7 @@ const mbpsDeCapa = (capa) => (capa === 'voz' ? MBPS_VOZ : (CAPAS_BY_ID[capa]?.mb
 module.exports = {
   detectarIp, ipsCandidatas,
   PRESUPUESTO_MBPS, CAPAS, CAPAS_BY_ID, CAPA_MAXIMA_EMISOR, CAMARA_CHICA_MBPS, MAX_CLASES,
+  CUPO_ACTIVO, CAPACIDAD_MBPS, PARTE_VIDEO, presupuestoConfigurado, CUPO,
   TICKET_TTL_S, PALABRA_INACTIVA_MS,
   MAX_VOCES, MAX_PULSACION_MS, VOZ_MAX_BITRATE, VOZ_PTIME, VOZ_KBPS_POR_VOZ, VOZ_KBPS_TIPICO,
   MEDIA_PORT, WS_PATH, RTC_MIN_PORT, RTC_MAX_PORT,

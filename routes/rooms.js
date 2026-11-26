@@ -53,7 +53,8 @@ const medios = require('../services/mediaClient');
 const aforo  = require('../media/aforo');
 const Transmision = require('../models/Transmision');
 const { moduloActivo, moduloActivoPara } = require('../config/modulos');
-const { TICKET_TTL_S } = require('../config/transmision');
+const { TICKET_TTL_S, CUPO_ACTIVO } = require('../config/transmision');
+const cupoTx = require('../services/transmisionCupo');
 
 const router = express.Router();
 
@@ -1389,6 +1390,23 @@ router.post('/:id/sala/transmision/abrir', async (req, res, next) => {
     if (!session) return fallar(req, res, 409, 'Primero abrí la sala');
     if (session.transmision?.activa) return res.json({ ok: true, yaEstaba: true });
 
+    // ⭐ El cupo (specs/transmision-cupo-automatico.spec.md, D3 y D4): antes de prender la
+    // cámara se le pregunta al proceso de medios si entra una clase más en calidad media. Si no
+    // entra, el docente queda en la lista de espera y la cámara NO se abre (RN-1). "Hablar"
+    // (solo voz) no pasa por acá: cuesta 40 kbps por oyente y no es lo que llena el puerto.
+    // Si el proceso de medios no contesta, se decide como antes del cupo (RN-6).
+    if (!soloVoz && CUPO_ACTIVO) {
+      const pedido = await cupoTx.datosDelPedido({ course: req.course, session, docente: usuario(req) });
+      const lugar = await medios.pedirLugar(pedido);
+      if (lugar && !lugar.entra) {
+        logAudit(req, 'tx.espera',
+          [{ type: 'course', id: req.course._id, name: req.course.name }],
+          { sessionId: String(session._id), posicion: lugar.posicion, motivo: lugar.motivo, tieneClase: pedido.tieneClase });
+        return res.json({ ok: false, espera: true, posicion: lugar.posicion, reservaHasta: lugar.reservaHasta || null,
+          mensaje: cupoTx.mensajeDeEspera(lugar) });
+      }
+    }
+
     // El aforo se mide sobre TODA la escuela, no sobre esta aula: el puerto es uno solo.
     const global = await medios.estado();
 
@@ -1413,6 +1431,34 @@ router.post('/:id/sala/transmision/abrir', async (req, res, next) => {
       { sessionId: String(session._id), capa: r.capa });
 
     res.json({ ok: true, capa: r.capa, aviso: r.aviso || '' });
+  } catch (err) { next(err); }
+});
+
+// POST /courses/:id/sala/transmision/cupo — el docente que espera renueva su lugar (cada 5 s).
+//
+// No admite: solo mantiene vivo el pedido, recalcula si ahora tiene clase (RN-3) y contesta el
+// lugar. Si se liberó lugar y es el primero, el proceso de medios le reserva 3 minutos (D4) y
+// acá se le dice; arrancar sigue siendo tocar Transmitir (que pasa por /abrir).
+router.post('/:id/sala/transmision/cupo', async (req, res, next) => {
+  try {
+    if (exigirPoderEmitir(req, res, { video: true })) return;
+    const session = await sesionAbierta(req.course._id);
+    if (!session) return res.json({ espera: false });
+    if (session.transmision?.activa || !CUPO_ACTIVO) return res.json({ espera: false });
+    const pedido = await cupoTx.datosDelPedido({ course: req.course, session, docente: usuario(req) });
+    const lugar = await medios.pedirLugar({ ...pedido, consultar: true });
+    if (!lugar) return res.json({ espera: false, sinMedios: true });
+    res.json({ espera: true, posicion: lugar.posicion, reservaHasta: lugar.reservaHasta || null, mensaje: cupoTx.mensajeDeEspera(lugar) });
+  } catch (err) { next(err); }
+});
+
+// POST /courses/:id/sala/transmision/cupo/salir — "Dejar de esperar".
+router.post('/:id/sala/transmision/cupo/salir', async (req, res, next) => {
+  try {
+    if (exigirPoderEmitir(req, res, { video: true })) return;
+    const session = await sesionAbierta(req.course._id);
+    if (session) await medios.salirDeLaLista(session._id);
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 

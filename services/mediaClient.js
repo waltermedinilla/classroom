@@ -110,10 +110,21 @@ async function datosDeSala(sessionId) {
   return e?.salas?.[String(sessionId)] || null;
 }
 
+// ── Cupo automático (specs/transmision-cupo-automatico.spec.md) ────────────────────────────
+// Sin cache: cada pedido es una decisión del momento. Si el proceso de medios no contesta,
+// devuelven null y la ruta decide como antes del cupo (RN-6): la sala nunca se rompe por esto.
+const postJSON = (ruta, cuerpo) => pedir(ruta, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo),
+});
+const pedirLugar = (datos) => postJSON('/cupo/pedir', { ...datos, sessionId: String(datos.sessionId) });
+const salirDeLaLista = (sessionId) => postJSON('/cupo/salir', { sessionId: String(sessionId) });
+const estadoDelCupo = () => pedir('/cupo/estado');
+
 // Solo para los tests y para el panel: vacía el cache.
 const olvidar = () => { cache = { at: 0, datos: SIN_MEDIOS }; };
 
 module.exports = {
   estado, espectadoresTotales, espectadoresDeSala, cerrarSala, cerrarVoces, datosDeSala, olvidar,
+  pedirLugar, salirDeLaLista, estadoDelCupo,
   SIN_MEDIOS, CACHE_MS,
 };
