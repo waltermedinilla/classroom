@@ -347,6 +347,47 @@
     </section>
     <% } %>
 
+    <%# Novedades guiadas (specs/recorrido-novedades.spec.md, D8): para todos los roles, si
+        alguna novedad le corresponde a esta persona. Vuelven a salir en su pantalla. %>
+    <% if (typeof novedadesPerfil !== 'undefined' && novedadesPerfil > 0) { %>
+    <section class="section" style="margin-top:32px">
+      <div class="section-header">
+        <span class="material-symbols-outlined section-icon">tips_and_updates</span>
+        <h3>Novedades</h3>
+      </div>
+      <div class="profile-action-card" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <p style="font-size:13px;color:var(--text-secondary);margin:0;line-height:1.5;flex:1 1 260px">
+          Las explicaciones que aparecen cuando hay algo nuevo en la plataforma. Si las cerraste y
+          querés repasarlas, volvelas a activar: aparecen otra vez en la pantalla de cada una.
+        </p>
+        <button class="btn btn-outline" type="button" id="novedadesRepetir">
+          <span class="material-symbols-outlined" style="font-size:18px">replay</span> Volver a ver las novedades
+        </button>
+        <span id="novedadesRepetirEstado" style="font-size:13px;color:var(--text-secondary);width:100%"></span>
+      </div>
+    </section>
+    <script>
+      (function () {
+        var b = document.getElementById('novedadesRepetir'), e = document.getElementById('novedadesRepetirEstado');
+        b.addEventListener('click', async function () {
+          if (!confirm('¿Volver a ver las novedades? Te aparecen otra vez en la pantalla de cada una.')) return;
+          b.disabled = true; e.textContent = 'Un momento…';
+          try {
+            var r = await fetch('/novedades/repetir', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            var d = await r.json().catch(function () { return {}; });
+            if (!r.ok) { e.textContent = d.error || 'No se pudo.'; return; }
+            try {
+              Object.keys(localStorage).forEach(function (k) { if (k.indexOf('novedadVista:') === 0) localStorage.removeItem(k); });
+              Object.keys(sessionStorage).forEach(function (k) { if (k.indexOf('novedadVista:') === 0) sessionStorage.removeItem(k); });
+            } catch (x) { /* sin storage */ }
+            e.textContent = 'Listo: las vas a ver otra vez en la pantalla de cada una.';
+          } catch (x) { e.textContent = 'No se pudo. Revisá la conexión.'; }
+          finally { b.disabled = false; }
+        });
+      })();
+    </script>
+    <% } %>
+
     <!-- Stats -->
     <% if (user.role !== 'student') { %>
     <div class="stats-grid" style="margin-top:32px">

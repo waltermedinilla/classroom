@@ -37,6 +37,8 @@ const { SECTIONS_BY_KEY, isAllowed, sectionForPath, normalizePath } = require('.
 // Módulos opcionales por escuela: acá solo se publican en res.locals para que los navs y
 // res.locals.can() los vean. El enforcement vive en middleware/modulos.js.
 const { MODULOS, moduloActivo } = require('./config/modulos');
+const { novedadesPara, queLeCorresponden } = require('./config/novedades');
+const { fechaDe: fechaEscolarDe } = require('./services/secretariaDia');
 const { estadoContacto }        = require('./public/js/estadoVerificacion');
 // Túnel del WebSocket de la transmisión en vivo (ver el comentario donde se monta, más abajo).
 const { montarProxyRtc } = require('./middleware/rtc-proxy');
@@ -53,6 +55,7 @@ const DEPLOY_LOG = path.join(__dirname, 'logs', 'deploy.log');
 const APP_DIR = '/home/walter/classroom';
 
 const authRoutes         = require('./routes/auth');
+const novedadesRoutes    = require('./routes/novedades');
 const courseRoutes       = require('./routes/courses');
 const roomRoutes         = require('./routes/rooms');
 const announcementRoutes = require('./routes/announcements');
@@ -478,6 +481,20 @@ app.use((req, res, next) => {
   // que `fmt` acá abajo. La regla en sí vive en public/js/estadoVerificacion.js, compartida
   // con el navegador.
   res.locals.estadoContacto = estadoContacto;
+  // Novedades guiadas (specs/recorrido-novedades.spec.md, D4): las que corresponden a esta
+  // persona en ESTA página y todavía no vio. El footer las pasa al navegador y carga
+  // public/js/novedades.js solo si hay alguna. Es una lista corta en memoria: no cuesta nada.
+  // `novedadesPerfil`: cuántas le corresponden, vistas o no, para "Volver a ver" en Mi perfil.
+  res.locals.novedades = [];
+  res.locals.novedadesPerfil = 0;
+  if (res.locals.user && req.method === 'GET') {
+    try {
+      const hoy = fechaEscolarDe(new Date());
+      const ctx = { user: res.locals.user, school: res.locals.school, hoy };
+      res.locals.novedades = novedadesPara({ ...ctx, ruta: req.path, impersonando: !!res.locals.impersonating });
+      res.locals.novedadesPerfil = res.locals.impersonating ? 0 : queLeCorresponden(ctx).length;
+    } catch (_) { /* RN-7: una novedad mal armada nunca rompe la página */ }
+  }
   // Helper único para las vistas: ¿este usuario ve esta solapa? Resuelve de una sola vez
   // el rol, los permisos que la escuela configuró en /superadmin/roles y el feature flag,
   // para que los *-nav.ejs no tengan que combinar tres condiciones distintas y se puedan
@@ -750,6 +767,7 @@ app.use('/login',    authLimiter);
 app.use('/register', authLimiter);
 
 app.use('/',           authRoutes);
+app.use('/',           novedadesRoutes);
 // La sala en vivo va ANTES que courseRoutes. No hay colisión real (sus paths tienen el
 // segmento /sala y el GET /courses/:id es de un solo segmento), pero el orden explícito evita
 // que una ruta nueva en courses.js se coma /courses/:id/sala sin que nadie lo note.

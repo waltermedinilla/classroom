@@ -1190,6 +1190,32 @@ router.get('/monitor/funnel', async (req, res) => {
 });
 
 /* ─── Sugerencias ─── */
+// ── Novedades guiadas: cuántos las vieron (specs/recorrido-novedades.spec.md, D7) ──────────
+// Solo lectura. Lee los usuarios de los roles de alguna novedad, con lo mínimo.
+router.get('/novedades', async (req, res) => {
+  try {
+    const { NOVEDADES } = require('../config/novedades');
+    const { cuentasDeNovedad } = require('../services/novedadesCuentas');
+    const escuelasLista = await School.find({}).select('name modules').sort({ name: 1 }).lean();
+    const escuela = escuelasLista.some(e => String(e._id) === String(req.query.escuela)) ? String(req.query.escuela) : '';
+    const roles = [...new Set(NOVEDADES.flatMap(n => n.roles))];
+    const filtro = { role: { $in: roles }, active: { $ne: false } };
+    if (escuela) filtro.school = escuela;
+    const usuarios = await User.find(filtro).select('name role school active novedadesVistas').lean();
+    const escuelas = new Map(escuelasLista.map(e => [String(e._id), e]));
+    const filas = NOVEDADES.slice().sort((a, b) => (a.desde < b.desde ? 1 : -1))
+      .map(n => cuentasDeNovedad(n, { usuarios, escuelas }));
+    const ver = filas.find(f => f.id === req.query.ver) || null;
+    res.render('superadmin/novedades', {
+      activePage: 'novedades', filas, ver, escuela,
+      escuelas: escuelasLista.map(e => ({ id: String(e._id), name: e.name })),
+    });
+  } catch (err) {
+    logDeRuta(err, res);
+    res.status(500).send('Error del servidor');
+  }
+});
+
 router.get('/suggestions', async (req, res) => {
   try {
     // Default "pending": el superadmin entra directo a lo que necesita atención.

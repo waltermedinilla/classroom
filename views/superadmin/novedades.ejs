@@ -1,0 +1,113 @@
+<%# Solapa "Novedades" del superadmin (specs/recorrido-novedades.spec.md, D7): por cada novedad
+    guiada, a cuántos les corresponde y cuántos la vieron. Tocando una fila, los nombres. %>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Novedades - Superadmin</title>
+  <%- include('../partials/head-iconos') %>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .nv-tabla { width:100%; border-collapse:collapse; font-size:14px; }
+    .nv-tabla th, .nv-tabla td { padding:10px 12px; border-bottom:1px solid var(--border); text-align:left; vertical-align:middle; }
+    .nv-tabla th { font-size:12px; color:var(--text-secondary); font-weight:600; }
+    .nv-tabla td.n, .nv-tabla th.n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .nv-tabla tr.on td { background:var(--bg); }
+    .nv-tabla a { color:inherit; text-decoration:none; }
+    .nv-barra { height:8px; border-radius:4px; background:var(--bg); overflow:hidden; min-width:80px; }
+    .nv-barra i { display:block; height:100%; background:#34a853; }
+    .nv-caja { background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+    .nv-dos { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-top:20px; }
+    .nv-lista { list-style:none; margin:0; padding:0; max-height:420px; overflow:auto; }
+    .nv-lista li { padding:8px 14px; border-bottom:1px solid var(--border); font-size:13.5px; display:flex; gap:8px; align-items:baseline; }
+    .nv-lista small { color:var(--text-secondary); margin-left:auto; white-space:nowrap; }
+    .nv-chip { font-size:11px; font-weight:600; border-radius:8px; padding:1px 7px; }
+    .nv-chip.entendido { background:#e6f4ea; color:#137333; }
+    .nv-chip.omitir { background:#f1f3f4; color:#5f6368; }
+    .nv-filtro { display:flex; gap:8px; align-items:center; font-size:13px; color:var(--text-secondary); }
+    .nv-filtro select { font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text); }
+  </style>
+</head>
+<body>
+  <%- include('../partials/header') %>
+  <main class="main-content main-content-ancho">
+    <%- include('../partials/superadmin-nav') %>
+
+    <div class="section-header" style="margin-bottom:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span class="material-symbols-outlined section-icon">tips_and_updates</span>
+      <h3 style="margin:0;flex:1 1 auto">Novedades guiadas</h3>
+      <form method="get" action="/superadmin/novedades" class="nv-filtro">
+        <label for="nvEscuela">Escuela</label>
+        <select id="nvEscuela" name="escuela" onchange="this.form.submit()">
+          <option value="">Todas</option>
+          <% escuelas.forEach(e => { %><option value="<%= e.id %>" <%= e.id === escuela ? 'selected' : '' %>><%= e.name %></option><% }) %>
+        </select>
+        <% if (ver) { %><input type="hidden" name="ver" value="<%= ver.id %>"><% } %>
+      </form>
+    </div>
+    <p style="font-size:13px;color:var(--text-secondary);margin:0 0 16px;line-height:1.5">
+      <b>Les corresponde</b>: los usuarios activos a los que se les puede mostrar (por su rol y, si hace falta, por estar habilitados).
+      Es a quién le podría aparecer, no a quién ya le apareció: un docente que todavía no abrió su sala cuenta igual.
+      <b>La vieron</b>: los que la cerraron, con "Entendido" o con "Omitir".
+    </p>
+
+    <div class="nv-caja" style="overflow-x:auto">
+      <table class="nv-tabla">
+        <thead>
+          <tr>
+            <th>Novedad</th><th>Desde</th><th>Para</th>
+            <th class="n">Les corresponde</th><th class="n">La vieron</th><th class="n">Entendido · Omitir</th><th style="width:140px">%</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (!filas.length) { %><tr><td colspan="7" style="color:var(--text-secondary)">Todavía no hay novedades cargadas.</td></tr><% } %>
+          <% filas.forEach(f => { const q = '?ver=' + f.id + (escuela ? '&escuela=' + escuela : ''); %>
+            <tr class="<%= ver && ver.id === f.id ? 'on' : '' %>">
+              <td><a href="/superadmin/novedades<%= q %>"><b><%= f.titulo %></b></a>
+                <% if (f.hasta) { %><div style="font-size:12px;color:var(--text-secondary)">hasta el <%= f.hasta.split('-').reverse().join('/') %></div><% } %></td>
+              <td style="white-space:nowrap"><%= f.desde.split('-').reverse().join('/') %></td>
+              <td style="font-size:13px;color:var(--text-secondary)"><%= f.para %></td>
+              <td class="n"><%= f.corresponden %></td>
+              <td class="n"><b><%= f.vieron %></b></td>
+              <td class="n"><%= f.entendido %> · <%= f.omitir %></td>
+              <td>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div class="nv-barra" style="flex:1"><i style="width:<%= f.pct %>%"></i></div>
+                  <b style="font-variant-numeric:tabular-nums;white-space:nowrap"><%= f.pct %> %</b>
+                </div>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+
+    <% if (ver) { %>
+      <div class="nv-dos">
+        <div class="nv-caja">
+          <div style="padding:12px 14px;font-weight:600;border-bottom:1px solid var(--border)">La vieron · <%= ver.listaVieron.length %></div>
+          <ul class="nv-lista">
+            <% if (!ver.listaVieron.length) { %><li style="color:var(--text-secondary)">Nadie todavía.</li><% } %>
+            <% ver.listaVieron.forEach(u => { %>
+              <li><span><%= u.name %></span> <span class="nv-chip <%= u.como %>"><%= u.como === 'entendido' ? 'Entendido' : 'Omitir' %></span>
+                <small><%= u.escuela %><%= u.fecha ? ' · ' + fmt.diaMesHora(u.fecha) : '' %></small></li>
+            <% }) %>
+          </ul>
+        </div>
+        <div class="nv-caja">
+          <div style="padding:12px 14px;font-weight:600;border-bottom:1px solid var(--border)">Todavía no · <%= ver.listaFaltan.length %></div>
+          <ul class="nv-lista">
+            <% if (!ver.listaFaltan.length) { %><li style="color:var(--text-secondary)">Ya la vieron todos.</li><% } %>
+            <% ver.listaFaltan.forEach(u => { %>
+              <li><span><%= u.name %></span><small><%= u.escuela %></small></li>
+            <% }) %>
+          </ul>
+        </div>
+      </div>
+    <% } %>
+  </main>
+  <%- include('../partials/footer') %>
+</body>
+</html>

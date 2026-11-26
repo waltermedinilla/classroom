@@ -53,6 +53,11 @@
     <span class="material-symbols-outlined">history</span>
     Auditoría
   </a>
+  <%# Novedades guiadas: cuántos las vieron (specs/recorrido-novedades.spec.md, D7). %>
+  <a href="/superadmin/novedades" class="admin-nav-item <%= activePage === 'novedades' ? 'active' : '' %>">
+    <span class="material-symbols-outlined">tips_and_updates</span>
+    Novedades
+  </a>
   <% if (typeof user !== 'undefined' && user?.email === 'waltermedinilla@gmail.com') { %>
   <a href="/superadmin/backup" class="admin-nav-item <%= activePage === 'backup' ? 'active' : '' %>">
     <span class="material-symbols-outlined">backup</span>

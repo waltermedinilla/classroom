@@ -138,6 +138,21 @@ const userSchema = new mongoose.Schema({
     default: null,
   },
 
+  // ── Novedades guiadas vistas (specs/recorrido-novedades.spec.md) ───────────
+  // Una entrada por novedad de config/novedades.js: cuándo la vio y cómo la cerró. "Volver a
+  // ver las novedades" (Mi perfil) NO borra la entrada: le pone `repetidaEn`, así la cuenta de
+  // la solapa "Novedades" del superadmin no baja porque alguien quiso repasar.
+  novedadesVistas: {
+    type: [{
+      _id: false,
+      id:         { type: String, required: true },
+      fecha:      { type: Date, default: Date.now },
+      como:       { type: String, enum: ['entendido', 'omitir'], default: 'omitir' },
+      repetidaEn: { type: Date, default: null },
+    }],
+    default: [],
+  },
+
   // ── Alcance del preceptor ──────────────────────────────────────────────────
   // Qué divisiones (los "cursos" 1°1°, 2°3°… del lenguaje de la escuela) puede ver y
   // administrar un preceptor. Los lee también la secretaria, para saber de qué cursos ve a

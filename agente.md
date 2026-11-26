@@ -383,6 +383,23 @@ que deja usuarios de prueba sin borrar). Espaciar las corridas o limpiar a mano.
 
 ---
 
+## Regla de trabajo: ¿lleva novedad guiada? (desde el 2026-11-26)
+
+Cada spec que agrega o cambia algo **visible para un rol** (un botón, una solapa, una sección,
+una parte de una pantalla que se movió) responde en una línea: **"¿Lleva novedad guiada? Sí/No"**.
+
+Si es sí, la spec trae la entrada de `config/novedades.js` (id, desde, roles, módulo si hace
+falta, pantalla, pasos con lo que se ilumina, título y texto) y Walter la aprueba junto con el
+resto. Cargarla es agregar esa entrada: la pieza visual (`public/js/novedades.js`) no se toca.
+
+- El `id` es para siempre: cambiarlo hace que todos la vuelvan a ver.
+- Quién la ve: el rol, el módulo (con `moduloActivoPara`, nunca una regla nueva) y que lo
+  iluminado esté a la vista.
+- Los textos son texto; `**así**` va en negrita.
+- Cuántos la vieron: Superadmin → solapa **Novedades**.
+
+Detalle completo: `specs/recorrido-novedades.spec.md`.
+
 ## Subidas de imagen — los seis caminos
 
 Auditoría completa del 2026-08-24: `specs/subidas-de-imagen.spec.md`.

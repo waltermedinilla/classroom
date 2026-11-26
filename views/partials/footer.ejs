@@ -578,5 +578,12 @@
       partials/analytics-init no imprimió el snippet de PostHog (POSTHOG_KEY sin
       configurar). %>
   <script src="/js/analytics.js"></script>
+  <%# Novedades guiadas (specs/recorrido-novedades.spec.md, D4): las que le corresponden a esta
+      persona en esta página y todavía no vio (las calcula server.js). Van escapadas en un data-;
+      el script se baja solo si hay alguna. %>
+  <% if (locals.novedades && locals.novedades.length) { %>
+  <div id="novedadesDatos" hidden data-lista="<%= JSON.stringify(locals.novedades) %>"></div>
+  <script src="/js/novedades.js" defer></script>
+  <% } %>
 </body>
 </html>
